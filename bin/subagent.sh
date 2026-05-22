@@ -6,6 +6,9 @@ ROOT="${MULTIAGENT_ROOT:-$(pwd)}"
 STATE_DIR="${MULTIAGENT_STATE_DIR:-$ROOT/.multiagent}"
 POLICY_FILE="${MULTIAGENT_WRITE_POLICY:-$ROOT/docs/write-policy.paths}"
 CODEX_BIN="${CODEX_BIN:-codex}"
+CLAUDE_BIN="${CLAUDE_BIN:-claude}"
+WORKER_CLI="${WORKER_CLI:-codex}"
+SUBAGENT_CLI="${SUBAGENT_CLI:-$WORKER_CLI}"
 
 usage() {
   cat <<'USAGE'
@@ -35,6 +38,12 @@ context under $MULTIAGENT_STATE_DIR/subagents/NAME.
 Subagents inherit $MULTIAGENT_WRITE_POLICY, defaulting to
 $MULTIAGENT_ROOT/docs/write-policy.paths. They are expected to check planned
 writes with bin/write-policy.sh before writing outside $MULTIAGENT_ROOT.
+
+CLI selection:
+  WORKER_CLI defaults to codex. SUBAGENT_CLI defaults to WORKER_CLI.
+  Supported values are codex and claude. Codex uses --cd,
+  --dangerously-bypass-approvals-and-sandbox, and --no-alt-screen. Claude uses
+  --dangerously-skip-permissions from the target directory.
 USAGE
 }
 
@@ -45,6 +54,52 @@ die() {
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
+}
+
+normalize_cli() {
+  case "$1" in
+    codex|claude)
+      printf '%s\n' "$1"
+      ;;
+    *)
+      die "unsupported CLI '$1' (expected codex or claude)"
+      ;;
+  esac
+}
+
+cli_bin() {
+  case "$1" in
+    codex) printf '%s\n' "$CODEX_BIN" ;;
+    claude) printf '%s\n' "$CLAUDE_BIN" ;;
+    *) die "unsupported CLI '$1' (expected codex or claude)" ;;
+  esac
+}
+
+build_cli_command() {
+  local cli="$1"
+  local cwd="$2"
+  local bin
+  bin="$(cli_bin "$cli")"
+  case "$cli" in
+    codex)
+      printf "%q --cd %q --dangerously-bypass-approvals-and-sandbox --no-alt-screen" "$bin" "$cwd"
+      ;;
+    claude)
+      printf "%q --dangerously-skip-permissions" "$bin"
+      ;;
+    *)
+      die "unsupported CLI '$cli' (expected codex or claude)"
+      ;;
+  esac
+}
+
+read_subagent_meta_value() {
+  local name="$1"
+  local key="$2"
+  local file
+  file="$(subagent_dir "$name")/meta.env"
+  [[ -f "$file" ]] || return 1
+  awk -F= -v key="$key" '$1 == key { sub("^[^=]*=", ""); print; found=1 } END { exit found ? 0 : 1 }' "$file"
 }
 
 timestamp() {
@@ -92,6 +147,9 @@ worktree_meta_file() {
 default_worktree_path() {
   printf '%s/worktrees/%s\n' "$STATE_DIR" "$1"
 }
+
+WORKER_CLI="$(normalize_cli "$WORKER_CLI")"
+SUBAGENT_CLI="$(normalize_cli "$SUBAGENT_CLI")"
 
 set_status() {
   local name="$1"
@@ -265,6 +323,8 @@ branch=$branch
 start_commit=$start_commit
 created_at=$(timestamp)
 root=$ROOT
+worker_cli=$WORKER_CLI
+subagent_cli=$SUBAGENT_CLI
 EOF
   set_assignment_status "$name" "$status"
   printf 'assignment created\t%s\t%s\t%s\n' "$name" "$assignment_id" "$branch"
@@ -525,9 +585,9 @@ window_exists() {
 
 readiness_state() {
   local text="$1"
-  if grep -Eiq '(not authenticated|authentication required|login required|sign in|setup required|api key required|failed to authenticate)' <<<"$text"; then
+  if grep -Eiq '(not authenticated|authentication required|login required|sign in|setup required|api key required|failed to authenticate|claude login|log in to claude|not logged in|select theme|choose your setup|trust this folder|do you trust|press enter to continue)' <<<"$text"; then
     printf 'blocked\n'
-  elif grep -Eiq '(codex prompt ready|prompt ready|restored codex prompt ready|what can i help|ready for input|type your message)' <<<"$text"; then
+  elif grep -Eiq '(codex prompt ready|claude prompt ready|prompt ready|restored codex prompt ready|restored claude prompt ready|what can i help|ready for input|type your message|claude code.*ready|bypass permissions mode|dangerously-skip-permissions)' <<<"$text"; then
     printf 'ready\n'
   else
     printf 'waiting\n'
@@ -634,7 +694,10 @@ spawn_subagent() {
   done
 
   require_cmd tmux
-  require_cmd "$CODEX_BIN"
+  local cli bin
+  cli="$SUBAGENT_CLI"
+  bin="$(cli_bin "$cli")"
+  require_cmd "$bin"
   tmux has-session -t "$SESSION" 2>/dev/null || die "missing tmux session: $SESSION"
   window_exists "$name" && die "subagent window already exists: $name"
 
@@ -646,13 +709,15 @@ name=$name
 session=$SESSION
 root=$ROOT
 write_policy=$POLICY_FILE
+cli=$cli
+cli_bin=$bin
 created_at=$(timestamp)
 EOF
   set_status "$name" "starting"
 
   local command
-  printf -v command "cd %q && export MULTIAGENT_SESSION=%q MULTIAGENT_ROOT=%q MULTIAGENT_STATE_DIR=%q MULTIAGENT_WRITE_POLICY=%q MULTIAGENT_SUBAGENT_NAME=%q && %q --cd %q --dangerously-bypass-approvals-and-sandbox --no-alt-screen" \
-    "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$POLICY_FILE" "$name" "$CODEX_BIN" "$ROOT"
+  printf -v command "cd %q && export MULTIAGENT_SESSION=%q MULTIAGENT_ROOT=%q MULTIAGENT_STATE_DIR=%q MULTIAGENT_WRITE_POLICY=%q MULTIAGENT_SUBAGENT_NAME=%q SUBAGENT_CLI=%q && %s" \
+    "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$POLICY_FILE" "$name" "$cli" "$(build_cli_command "$cli" "$ROOT")"
   tmux new-window -t "$SESSION" -n "$name" "$command"
   set_status "$name" "running"
 
@@ -877,7 +942,11 @@ restore_subagent() {
   done
 
   require_cmd tmux
-  require_cmd "$CODEX_BIN"
+  local cli bin
+  cli="$(read_subagent_meta_value "$name" cli || printf '%s\n' "$SUBAGENT_CLI")"
+  cli="$(normalize_cli "$cli")"
+  bin="$(cli_bin "$cli")"
+  require_cmd "$bin"
   tmux has-session -t "$SESSION" 2>/dev/null || die "missing tmux session: $SESSION"
 
   local dir plan action reason prior_status window
@@ -894,15 +963,15 @@ restore_subagent() {
 
   local instruction command
   instruction="$(restore_instruction "$name" "$prior_status" "$dir")"
-  printf '%s\n' "$(timestamp) prior_status=$prior_status action=$action reason=$reason force=$force" >>"$dir/restore_events.log"
+  printf '%s\n' "$(timestamp) prior_status=$prior_status action=$action reason=$reason force=$force cli=$cli" >>"$dir/restore_events.log"
   {
     printf '\n----- restore seed %s -----\n' "$(timestamp)"
     printf '%s\n' "$instruction"
   } >>"$dir/transcript.log"
   set_status "$name" "restoring"
 
-  printf -v command "cd %q && export MULTIAGENT_SESSION=%q MULTIAGENT_ROOT=%q MULTIAGENT_STATE_DIR=%q MULTIAGENT_WRITE_POLICY=%q MULTIAGENT_SUBAGENT_NAME=%q MULTIAGENT_SUBAGENT_RESTORED=1 && %q --cd %q --dangerously-bypass-approvals-and-sandbox --no-alt-screen" \
-    "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$POLICY_FILE" "$name" "$CODEX_BIN" "$ROOT"
+  printf -v command "cd %q && export MULTIAGENT_SESSION=%q MULTIAGENT_ROOT=%q MULTIAGENT_STATE_DIR=%q MULTIAGENT_WRITE_POLICY=%q MULTIAGENT_SUBAGENT_NAME=%q MULTIAGENT_SUBAGENT_RESTORED=1 SUBAGENT_CLI=%q && %s" \
+    "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$POLICY_FILE" "$name" "$cli" "$(build_cli_command "$cli" "$ROOT")"
   tmux new-window -t "$SESSION" -n "$name" "$command"
   set_status "$name" "running"
   deliver_instruction "$name" "$instruction"

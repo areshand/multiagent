@@ -37,6 +37,7 @@ case "$cmd" in
     ;;
   new-window)
     name=""
+    command=""
     while [[ $# -gt 0 ]]; do
       case "$1" in
         -n)
@@ -44,12 +45,13 @@ case "$cmd" in
           shift 2
           ;;
         *)
+          command="$1"
           shift
           ;;
       esac
     done
     printf '%s\n' "$name" >>"$windows_file"
-    printf 'new-window %s\n' "$name" >>"$log_file"
+    printf 'new-window %s %s\n' "$name" "$command" >>"$log_file"
     ;;
   capture-pane)
     target=""
@@ -119,6 +121,10 @@ export MULTIAGENT_WRITE_POLICY="$TMPDIR/write-policy.paths"
 export MULTIAGENT_READY_ATTEMPTS=1
 export MULTIAGENT_READY_DELAY=0
 export CODEX_BIN="true"
+export CLAUDE_BIN="true"
+export ORCHESTRATOR_CLI="codex"
+export WORKER_CLI="codex"
+export SUBAGENT_CLI="codex"
 
 printf 'orchestrator\n' >"$MOCK_TMUX_WINDOWS"
 printf 'Codex prompt ready\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"
@@ -200,6 +206,8 @@ assignment_create_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR=
 [[ "$assignment_create_output" == $'assignment created\tworker-docs\tdocs-001\tworker/docs' ]]
 assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/assignment.env" "assignment_id=docs-001"
 assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/assignment.env" "branch=worker/docs"
+assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/assignment.env" "worker_cli=codex"
+assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/assignment.env" "subagent_cli=codex"
 assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/status" "assigned"
 assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/owned-paths" "README.md"
 assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/owned-paths" "src"
@@ -269,6 +277,10 @@ assert_file_contains "$MOCK_TMUX_WINDOWS" "subagent-watch"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/status" "running"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/current.txt" "Codex prompt ready"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/meta.env" "write_policy=$MULTIAGENT_WRITE_POLICY"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/meta.env" "cli=codex"
+assert_file_contains "$MOCK_TMUX_LOG" "new-window subagent-watch"
+assert_file_contains "$MOCK_TMUX_LOG" "--cd $ROOT"
+assert_file_contains "$MOCK_TMUX_LOG" "--dangerously-bypass-approvals-and-sandbox --no-alt-screen"
 assert_file_contains "$MOCK_TMUX_LOG" "send-key test-session:subagent-watch Watch builds"
 
 printf 'Login required before Codex can start\n' >"$MOCK_TMUX_CAPTURES/subagent-auth.txt"
@@ -284,6 +296,20 @@ if grep -Fq "Should not send" "$MOCK_TMUX_LOG"; then
   cat "$MOCK_TMUX_LOG" >&2
   exit 1
 fi
+
+printf 'Claude prompt ready\n' >"$MOCK_TMUX_CAPTURES/subagent-claude.txt"
+SUBAGENT_CLI=claude "$ROOT/bin/subagent.sh" spawn subagent-claude --instruction "Use Claude"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-claude/meta.env" "cli=claude"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-claude/current.txt" "Claude prompt ready"
+claude_spawn_line="$(grep -F "new-window subagent-claude " "$MOCK_TMUX_LOG")"
+[[ "$claude_spawn_line" == *"--dangerously-skip-permissions"* ]]
+if [[ "$claude_spawn_line" == *"--cd"* || "$claude_spawn_line" == *"--no-alt-screen"* ]]; then
+  echo "expected Claude command to omit Codex-only flags" >&2
+  echo "$claude_spawn_line" >&2
+  exit 1
+fi
+printf 'Final status: completed\n' >"$MOCK_TMUX_CAPTURES/subagent-claude.txt"
+"$ROOT/bin/subagent.sh" finalize subagent-claude >/dev/null
 
 printf 'Progress update: still running\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"
 poll_output="$("$ROOT/bin/subagent.sh" poll subagent-watch)"
@@ -316,7 +342,16 @@ mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-restore"
 printf 'running\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-restore/status"
 printf 'Previous progress: halfway through recovery work\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-restore/current.txt"
 printf 'Older transcript context\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-restore/transcript.log"
-printf 'Restored Codex prompt ready\n' >"$MOCK_TMUX_CAPTURES/subagent-restore.txt"
+cat >"$MULTIAGENT_STATE_DIR/subagents/subagent-restore/meta.env" <<EOF
+name=subagent-restore
+session=$MULTIAGENT_SESSION
+root=$ROOT
+write_policy=$MULTIAGENT_WRITE_POLICY
+cli=claude
+cli_bin=true
+created_at=2026-01-01T00:00:00Z
+EOF
+printf 'Restored Claude prompt ready\n' >"$MOCK_TMUX_CAPTURES/subagent-restore.txt"
 
 mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-blocked"
 printf 'running\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-blocked/status"
@@ -353,9 +388,17 @@ restore_output="$("$ROOT/bin/subagent.sh" restore subagent-restore)"
 assert_file_contains "$MOCK_TMUX_WINDOWS" "subagent-restore"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-restore/status" "running"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-restore/restore_events.log" "prior_status=running"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-restore/restore_events.log" "cli=claude"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-restore/transcript.log" "You are a restored long-running subagent."
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-restore/transcript.log" "Previous progress: halfway through recovery work"
 assert_file_contains "$MOCK_TMUX_LOG" "send-key test-session:subagent-restore You are a restored long-running subagent."
+claude_restore_line="$(grep -F "new-window subagent-restore " "$MOCK_TMUX_LOG")"
+[[ "$claude_restore_line" == *"--dangerously-skip-permissions"* ]]
+if [[ "$claude_restore_line" == *"--cd"* || "$claude_restore_line" == *"--no-alt-screen"* ]]; then
+  echo "expected restore to use persisted Claude CLI without Codex-only flags" >&2
+  echo "$claude_restore_line" >&2
+  exit 1
+fi
 
 restore_all_output="$("$ROOT/bin/subagent.sh" restore-all)"
 [[ "$restore_all_output" == *$'skipped subagent-blocked\tskip-blocked'* ]]

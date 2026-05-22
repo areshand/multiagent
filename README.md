@@ -22,7 +22,24 @@ Environment:
 - `MULTIAGENT_ROOT`: project root, default `/Users/bowu/projects/multiagent`
 - `MULTIAGENT_STATE_DIR`: durable subagent state, default `$MULTIAGENT_ROOT/.multiagent`
 - `MULTIAGENT_WRITE_POLICY`: repo write policy, default `$MULTIAGENT_ROOT/docs/write-policy.paths`
+- `ORCHESTRATOR_CLI`: orchestrator CLI, default `codex`
+- `WORKER_CLI`: worker CLI for manual worker windows, default `codex`
+- `SUBAGENT_CLI`: named subagent CLI, default `$WORKER_CLI`
 - `CODEX_BIN`: Codex CLI command, default `codex`
+- `CLAUDE_BIN`: Claude CLI command, default `claude`
+
+The default setup preserves the original all-Codex behavior. To keep the
+orchestrator on Codex while using Claude for workers and long-running
+subagents:
+
+```bash
+ORCHESTRATOR_CLI=codex WORKER_CLI=claude SUBAGENT_CLI=claude ./launch.sh
+```
+
+Codex launches with `--cd`, `--dangerously-bypass-approvals-and-sandbox`, and
+`--no-alt-screen`. Claude launches from the target worktree/root with
+`claude --dangerously-skip-permissions`; Codex-only flags are intentionally not
+passed to Claude.
 
 ## Repo Write Guardrails
 
@@ -102,6 +119,14 @@ Worktrees are optional for compatibility, but recommended for worker isolation.
 `$MULTIAGENT_STATE_DIR/worktrees/NAME.env`. Use `worktree-show NAME` to inspect
 the assigned checkout and `worktree-remove NAME` after the worker is finalized.
 When you spawn manually, start the worker from the recorded worktree path.
+For a Claude worker, set `WORKER_CLI=claude` and run the window from the
+worktree without Codex-only flags:
+
+```bash
+WORKTREE_PATH="$(bin/subagent.sh worktree-show worker-01-docs | awk -F= '$1 == "path" {print $2}')"
+tmux new-window -t "$MULTIAGENT_SESSION" -n "worker-01-docs" \
+  "cd '$WORKTREE_PATH' && ${CLAUDE_BIN:-claude} --dangerously-skip-permissions"
+```
 
 Workers and orchestrators can write structured recovery checkpoints:
 
@@ -135,6 +160,7 @@ Use `bin/subagent.sh` for named subagents that should keep working or monitoring
 
 ```bash
 bin/subagent.sh spawn subagent-ci-monitor --instruction "Monitor CI and report status changes."
+SUBAGENT_CLI=claude bin/subagent.sh spawn subagent-ci-monitor --instruction "Monitor CI and report status changes."
 bin/subagent.sh poll subagent-ci-monitor
 bin/subagent.sh inspect subagent-ci-monitor --lines 160
 bin/subagent.sh recover-plan
@@ -151,7 +177,9 @@ $MULTIAGENT_STATE_DIR/subagents/NAME
 
 The state directory includes `meta.env`, `status`, `current.txt`, and
 `transcript.log`, so the orchestrator can recover context after repeated
-polling or after finalization.
+polling or after finalization. `meta.env` records the selected CLI, and
+`restore` uses that persisted CLI so a Claude subagent restores with Claude
+even if the current environment defaults back to Codex.
 
 ### Recovery
 
@@ -186,8 +214,9 @@ rows classified as `restore` and skips finalized, blocked, open, and unknown
 subagents.
 
 `spawn` and `restore` wait for an obvious ready prompt before delivering
-instructions. They record `delivery-blocked` and fail instead of blindly sending
-input when the pane shows authentication/setup blockers or never becomes ready.
+instructions. They record `delivery-blocked` and fail instead of blindly
+sending input when the pane shows Codex authentication/setup blockers, Claude
+login/setup/trust prompts, or never becomes ready.
 
 ## Agent Progress
 

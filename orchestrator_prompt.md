@@ -23,6 +23,16 @@ The launch script exports these values:
 - `MULTIAGENT_PROMPT`: path to this prompt.
 - `MULTIAGENT_STATE_DIR`: directory for persisted subagent metadata and transcripts.
 - `MULTIAGENT_WRITE_POLICY`: repo-local outside-write allowlist, default `$MULTIAGENT_ROOT/docs/write-policy.paths`.
+- `ORCHESTRATOR_CLI`: CLI used for this orchestrator, default `codex`.
+- `WORKER_CLI`: CLI to use when manually spawning worker windows, default `codex`.
+- `SUBAGENT_CLI`: CLI used by `bin/subagent.sh spawn`; defaults to `WORKER_CLI`.
+
+Supported CLI values are `codex` and `claude`. Keep the orchestrator on Codex
+unless the user explicitly asks otherwise. Codex commands use `--cd`,
+`--dangerously-bypass-approvals-and-sandbox`, and `--no-alt-screen`. Claude
+commands must start from the target worktree/root directory and use
+`claude --dangerously-skip-permissions`; do not pass Codex-only `--cd` or
+`--no-alt-screen` flags to Claude.
 
 If a variable is missing, infer the tmux session with:
 
@@ -133,13 +143,26 @@ Template:
 
 ```bash
 WORKTREE_PATH="$(bin/subagent.sh worktree-show worker-01-task | awk -F= '$1 == "path" {print $2}')"
-tmux new-window -t "$MULTIAGENT_SESSION" -n "worker-01-task" \
-  "cd '$WORKTREE_PATH' && codex --cd '$WORKTREE_PATH' --dangerously-bypass-approvals-and-sandbox --no-alt-screen"
+WORKER_CLI="${WORKER_CLI:-codex}"
+case "$WORKER_CLI" in
+  codex)
+    WORKER_COMMAND="cd '$WORKTREE_PATH' && ${CODEX_BIN:-codex} --cd '$WORKTREE_PATH' --dangerously-bypass-approvals-and-sandbox --no-alt-screen"
+    ;;
+  claude)
+    WORKER_COMMAND="cd '$WORKTREE_PATH' && ${CLAUDE_BIN:-claude} --dangerously-skip-permissions"
+    ;;
+  *)
+    echo "Unsupported WORKER_CLI: $WORKER_CLI" >&2
+    exit 2
+    ;;
+esac
+tmux new-window -t "$MULTIAGENT_SESSION" -n "worker-01-task" "$WORKER_COMMAND"
 ```
 
-After the worker window is open, capture repeatedly until the Codex prompt is
-visible. If the pane shows authentication/setup blockers or never becomes
-ready, report the blocker instead of sending instructions.
+After the worker window is open, capture repeatedly until the selected CLI
+prompt is visible. If the pane shows authentication/setup blockers, Claude
+login/setup/trust prompts, or never becomes ready, report the blocker instead
+of sending instructions.
 
 ```bash
 tmux capture-pane -t "$MULTIAGENT_SESSION:worker-01-task" -p -S -200
@@ -153,6 +176,7 @@ Before sending any input, follow the safety rules below.
 Prefer the helper for named long-running subagents because it persists context:
 
 ```bash
+SUBAGENT_CLI=claude bin/subagent.sh spawn subagent-build-watch --instruction "FIRST_INSTRUCTION_TEXT"
 bin/subagent.sh spawn subagent-build-watch --instruction "FIRST_INSTRUCTION_TEXT"
 bin/subagent.sh assignment-create subagent-build-watch --assignment-id ASSIGNMENT_ID --branch BRANCH --owned PATH[,PATH...]
 bin/subagent.sh checkpoint-update subagent-build-watch --step "started" --status running
@@ -169,6 +193,10 @@ bin/subagent.sh finalize subagent-build-watch
 ```
 
 Use `spawn` for work that may run, watch, or iterate for a while. Use `poll` periodically to refresh `current.txt`, append to `transcript.log`, and classify the subagent. Use `inspect` to read the latest captured output without losing the transcript. Use `finalize` only after you have inspected the final output and recorded the result; finalization captures one last time, marks the subagent finalized, and closes its tmux window unless `--keep-window` is supplied.
+
+`spawn` persists the selected subagent CLI in `meta.env`; `restore` uses that
+persisted value so a Claude subagent is restored with Claude even if current
+environment defaults have changed.
 
 Use `checkpoint-update NAME --step TEXT --status STATUS` after meaningful
 progress, before stopping, and whenever a blocker appears. Include

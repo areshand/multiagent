@@ -8,6 +8,8 @@ PROMPT_FILE="$ROOT/orchestrator_prompt.md"
 STATE_DIR="${MULTIAGENT_STATE_DIR:-$ROOT/.multiagent}"
 POLICY_FILE="${MULTIAGENT_WRITE_POLICY:-$ROOT/docs/write-policy.paths}"
 CODEX_BIN="${CODEX_BIN:-codex}"
+CLAUDE_BIN="${CLAUDE_BIN:-claude}"
+ORCHESTRATOR_CLI="${ORCHESTRATOR_CLI:-codex}"
 ATTACH=1
 
 usage() {
@@ -22,7 +24,9 @@ Environment:
   MULTIAGENT_ROOT     Default project root, default: /Users/bowu/projects/multiagent
   MULTIAGENT_STATE_DIR Persisted subagent state, default: $MULTIAGENT_ROOT/.multiagent
   MULTIAGENT_WRITE_POLICY Repo write policy, default: $MULTIAGENT_ROOT/docs/write-policy.paths
+  ORCHESTRATOR_CLI  Orchestrator CLI, default: codex
   CODEX_BIN           Codex CLI command, default: codex
+  CLAUDE_BIN          Claude CLI command, default: claude
 USAGE
 }
 
@@ -65,8 +69,52 @@ require_cmd() {
   fi
 }
 
+normalize_cli() {
+  case "$1" in
+    codex|claude)
+      printf '%s\n' "$1"
+      ;;
+    *)
+      echo "Unsupported CLI '$1' (expected codex or claude)" >&2
+      exit 2
+      ;;
+  esac
+}
+
+cli_bin() {
+  case "$1" in
+    codex) printf '%s\n' "$CODEX_BIN" ;;
+    claude) printf '%s\n' "$CLAUDE_BIN" ;;
+  esac
+}
+
+build_cli_command() {
+  local cli="$1"
+  local cwd="$2"
+  local prompt_file="${3:-}"
+  local bin
+  bin="$(cli_bin "$cli")"
+  case "$cli" in
+    codex)
+      if [[ -n "$prompt_file" ]]; then
+        printf "%q --cd %q --dangerously-bypass-approvals-and-sandbox --no-alt-screen \"\$(cat %q)\"" "$bin" "$cwd" "$prompt_file"
+      else
+        printf "%q --cd %q --dangerously-bypass-approvals-and-sandbox --no-alt-screen" "$bin" "$cwd"
+      fi
+      ;;
+    claude)
+      if [[ -n "$prompt_file" ]]; then
+        printf "%q --dangerously-skip-permissions \"\$(cat %q)\"" "$bin" "$prompt_file"
+      else
+        printf "%q --dangerously-skip-permissions" "$bin"
+      fi
+      ;;
+  esac
+}
+
+ORCHESTRATOR_CLI="$(normalize_cli "$ORCHESTRATOR_CLI")"
 require_cmd tmux
-require_cmd "$CODEX_BIN"
+require_cmd "$(cli_bin "$ORCHESTRATOR_CLI")"
 
 if [[ ! -f "$PROMPT_FILE" ]]; then
   echo "Missing orchestrator prompt: $PROMPT_FILE" >&2
@@ -89,6 +137,7 @@ export MULTIAGENT_ROOT="$ROOT"
 export MULTIAGENT_PROMPT="$PROMPT_FILE"
 export MULTIAGENT_STATE_DIR="$STATE_DIR"
 export MULTIAGENT_WRITE_POLICY="$POLICY_FILE"
+export ORCHESTRATOR_CLI
 
 mkdir -p "$STATE_DIR/subagents" "$STATE_DIR/assignments" "$STATE_DIR/worktrees"
 "$ROOT/bin/write-policy.sh" init
@@ -101,7 +150,8 @@ export MULTIAGENT_ROOT='$ROOT'
 export MULTIAGENT_PROMPT='$PROMPT_FILE'
 export MULTIAGENT_STATE_DIR='$STATE_DIR'
 export MULTIAGENT_WRITE_POLICY='$POLICY_FILE'
-$CODEX_BIN --cd '$ROOT' --dangerously-bypass-approvals-and-sandbox --no-alt-screen "\$(cat '$PROMPT_FILE')"
+export ORCHESTRATOR_CLI='$ORCHESTRATOR_CLI'
+$(build_cli_command "$ORCHESTRATOR_CLI" "$ROOT" "$PROMPT_FILE")
 EOF
 )"
 
