@@ -131,7 +131,7 @@ worktree without Codex-only flags:
 
 ```bash
 WORKTREE_PATH="$(bin/subagent.sh worktree-show worker-01-docs | awk -F= '$1 == "path" {print $2}')"
-tmux new-window -t "$MULTIAGENT_SESSION" -n "worker-01-docs" \
+tmux new-window -d -t "$MULTIAGENT_SESSION" -n "worker-01-docs" \
   "cd '$WORKTREE_PATH' && ${CLAUDE_BIN:-claude} --dangerously-skip-permissions"
 ```
 

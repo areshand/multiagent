@@ -718,7 +718,7 @@ EOF
   local command
   printf -v command "cd %q && export MULTIAGENT_SESSION=%q MULTIAGENT_ROOT=%q MULTIAGENT_STATE_DIR=%q MULTIAGENT_WRITE_POLICY=%q MULTIAGENT_SUBAGENT_NAME=%q SUBAGENT_CLI=%q && %s" \
     "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$POLICY_FILE" "$name" "$cli" "$(build_cli_command "$cli" "$ROOT")"
-  tmux new-window -t "$SESSION" -n "$name" "$command"
+  tmux new-window -d -t "$SESSION" -n "$name" "$command"
   set_status "$name" "running"
 
   capture_subagent "$name" || true
@@ -972,7 +972,7 @@ restore_subagent() {
 
   printf -v command "cd %q && export MULTIAGENT_SESSION=%q MULTIAGENT_ROOT=%q MULTIAGENT_STATE_DIR=%q MULTIAGENT_WRITE_POLICY=%q MULTIAGENT_SUBAGENT_NAME=%q MULTIAGENT_SUBAGENT_RESTORED=1 SUBAGENT_CLI=%q && %s" \
     "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$POLICY_FILE" "$name" "$cli" "$(build_cli_command "$cli" "$ROOT")"
-  tmux new-window -t "$SESSION" -n "$name" "$command"
+  tmux new-window -d -t "$SESSION" -n "$name" "$command"
   set_status "$name" "running"
   deliver_instruction "$name" "$instruction"
 

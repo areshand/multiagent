@@ -137,7 +137,8 @@ otherwise. `worktree-create` defaults to
 `worktree-show NAME`. Remove the worktree with `worktree-remove NAME` only
 after the work is accepted or intentionally abandoned.
 
-Spawn a new worker with `tmux new-window` from that worktree path.
+Spawn a new worker with `tmux new-window -d` from that worktree path so the
+orchestrator's current window remains selected.
 
 Template:
 
@@ -156,7 +157,7 @@ case "$WORKER_CLI" in
     exit 2
     ;;
 esac
-tmux new-window -t "$MULTIAGENT_SESSION" -n "worker-01-task" "$WORKER_COMMAND"
+tmux new-window -d -t "$MULTIAGENT_SESSION" -n "worker-01-task" "$WORKER_COMMAND"
 ```
 
 After the worker window is open, capture repeatedly until the selected CLI
@@ -341,7 +342,7 @@ After running it:
    - Create assignment metadata with `bin/subagent.sh assignment-create` before work starts.
 
 2. Spawn
-   - Create workers with `tmux new-window`.
+   - Create workers with `tmux new-window -d`.
    - Create long-running named subagents with `bin/subagent.sh spawn`.
    - Wait for a visible prompt.
    - Send the required worker rules plus the task assignment.
