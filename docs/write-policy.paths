@@ -1,0 +1,5 @@
+# Multiagent repo write policy
+#
+# Default allowed write root is $MULTIAGENT_ROOT for the launched session.
+# Add one approved outside write root per line, using absolute paths.
+# Blank lines and comments are ignored.
