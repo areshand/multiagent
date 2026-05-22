@@ -1,5 +1,11 @@
 # Multiagent repo write policy
 #
 # Default allowed write root is $MULTIAGENT_ROOT for the launched session.
-# Add one approved outside write root per line, using absolute paths.
-# Blank lines and comments are ignored.
+# Orchestrator-owned: workers should not edit this file directly.
+# Add approvals only with:
+#   bin/write-policy.sh approve PATH --actor ACTOR --assignment-id ID --reason TEXT [--force]
+#
+# Records are TSV:
+#   approval<TAB>timestamp<TAB>actor<TAB>assignment_id<TAB>requested_path<TAB>canonical_path<TAB>reason<TAB>force
+# Blank lines and comments are ignored. Legacy bare absolute path lines are read
+# for compatibility but new approvals must be structured records.

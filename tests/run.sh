@@ -152,10 +152,86 @@ if "$ROOT/bin/write-policy.sh" check "$outside_path" >"$policy_check_file" 2>&1;
 fi
 assert_file_contains "$policy_check_file" $'denied\t'"$outside_path"
 
-approve_output="$("$ROOT/bin/write-policy.sh" approve "$TMPDIR/outside")"
+if "$ROOT/bin/write-policy.sh" approve "$TMPDIR/outside" >"$TMPDIR/old-approve.out" 2>&1; then
+  echo "expected approve without metadata to fail" >&2
+  cat "$TMPDIR/old-approve.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/old-approve.out" "approve requires --actor ACTOR"
+
+approve_output="$("$ROOT/bin/write-policy.sh" approve "$TMPDIR/outside" --actor orchestrator --assignment-id test-policy --reason "test outside output")"
 [[ "$approve_output" == $'approved outside write root: '"$TMPDIR/outside" ]]
+assert_file_contains "$MULTIAGENT_WRITE_POLICY" $'approval\t'
+assert_file_contains "$MULTIAGENT_WRITE_POLICY" $'\torchestrator\ttest-policy\t'
+assert_file_contains "$MULTIAGENT_WRITE_POLICY" $'\ttest outside output\t0'
 policy_check_outside="$("$ROOT/bin/write-policy.sh" check "$outside_path")"
 [[ "$policy_check_outside" == $'allowed\t'"$outside_path" ]]
+
+if "$ROOT/bin/write-policy.sh" approve /tmp --actor orchestrator --assignment-id broad-reject --reason "too broad" >"$TMPDIR/broad-approve.out" 2>&1; then
+  echo "expected broad approval to require force" >&2
+  cat "$TMPDIR/broad-approve.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/broad-approve.out" "refusing broad outside approval without --force"
+
+forced_broad_output="$("$ROOT/bin/write-policy.sh" approve /tmp --actor orchestrator --assignment-id broad-force --reason "explicit user decision" --force)"
+[[ "$forced_broad_output" == *"(forced)" ]]
+assert_file_contains "$MULTIAGENT_WRITE_POLICY" $'\tbroad-force\t'
+assert_file_contains "$MULTIAGENT_WRITE_POLICY" $'\texplicit user decision\t1'
+
+ASSIGN_REPO="$TMPDIR/assignment-repo"
+ASSIGN_STATE="$TMPDIR/assignment-state"
+mkdir -p "$ASSIGN_REPO/src" "$ASSIGN_REPO/docs" "$ASSIGN_STATE"
+(
+  cd "$ASSIGN_REPO"
+  git init -q
+  git config user.email "test@example.com"
+  git config user.name "Test User"
+  printf 'hello\n' >README.md
+  printf 'code\n' >src/app.txt
+  git add README.md src/app.txt
+  git commit -q -m "initial"
+  git switch -q -c worker/docs
+)
+
+assignment_create_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create worker-docs --assignment-id docs-001 --branch worker/docs --owned README.md,src)"
+[[ "$assignment_create_output" == $'assignment created\tworker-docs\tdocs-001\tworker/docs' ]]
+assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/assignment.env" "assignment_id=docs-001"
+assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/assignment.env" "branch=worker/docs"
+assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/status" "assigned"
+assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/owned-paths" "README.md"
+assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/owned-paths" "src"
+
+assignment_show_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-show worker-docs)"
+[[ "$assignment_show_output" == *"agent_name=worker-docs"* ]]
+[[ "$assignment_show_output" == *"status=assigned"* ]]
+
+assignment_status_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-status worker-docs running)"
+[[ "$assignment_status_output" == $'assignment status\tworker-docs\trunning' ]]
+assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/status" "running"
+
+printf 'change\n' >>"$ASSIGN_REPO/README.md"
+assignment_check_ok="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-check worker-docs)"
+[[ "$assignment_check_ok" == *$'branch\tworker/docs\tworker/docs'* ]]
+[[ "$assignment_check_ok" == *$'ok\tREADME.md'* ]]
+[[ "$assignment_check_ok" == *$'accepted\tworker-docs'* ]]
+
+printf 'outside\n' >"$ASSIGN_REPO/docs/notes.txt"
+if MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-check worker-docs >"$TMPDIR/assignment-outside.out" 2>&1; then
+  echo "expected assignment check to reject outside owned paths" >&2
+  cat "$TMPDIR/assignment-outside.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/assignment-outside.out" $'reject\toutside-owned-path\tdocs/notes.txt'
+
+assignment_create_branch_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create worker-branch --assignment-id branch-001 --branch expected/branch --owned README.md,docs)"
+[[ "$assignment_create_branch_output" == $'assignment created\tworker-branch\tbranch-001\texpected/branch' ]]
+if MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-check worker-branch >"$TMPDIR/assignment-branch.out" 2>&1; then
+  echo "expected assignment check to reject branch mismatch" >&2
+  cat "$TMPDIR/assignment-branch.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/assignment-branch.out" $'reject\tbranch-mismatch\texpected=expected/branch\tactual=worker/docs'
 
 "$ROOT/bin/subagent.sh" spawn subagent-watch --instruction "Watch builds"
 assert_file_contains "$MOCK_TMUX_WINDOWS" "subagent-watch"

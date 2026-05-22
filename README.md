@@ -8,6 +8,7 @@ This project launches a tmux session with one `orchestrator` window. The orchest
 - **Long-Running Subagents**: Persistent agents that maintain state across interactions
 - **Flexible Configuration**: Environment-based setup for different project contexts
 - **State Persistence**: Durable subagent state management with transcript logging
+- **Assignment Checks**: Repo-local metadata and post-work acceptance checks for branch and file ownership
 
 ## Launch
 
@@ -39,19 +40,71 @@ Use the helper to initialize, inspect, check, and update the policy:
 bin/write-policy.sh init
 bin/write-policy.sh show
 bin/write-policy.sh check README.md /tmp/outside-file
-bin/write-policy.sh approve /tmp/approved-output
+bin/write-policy.sh approve /tmp/approved-output --actor orchestrator --assignment-id docs-001 --reason "export report"
 ```
 
 The launch script initializes the policy file and prints the active policy at
 startup. The orchestrator must ask for explicit approval before allowing a
 worker to write outside `MULTIAGENT_ROOT`, then record the narrowest practical
-outside path with `bin/write-policy.sh approve PATH`.
+outside path with `bin/write-policy.sh approve PATH --actor ACTOR
+--assignment-id ID --reason TEXT`.
+
+`docs/write-policy.paths` is orchestrator-owned. Workers should not edit it
+directly. Approval records are TSV lines containing timestamp, actor,
+assignment ID, requested path, canonical path, reason, and a force marker.
+Legacy bare path lines are still read for compatibility, but new approvals
+should be created only by the helper.
+
+Broad outside approvals are rejected by default, including `/`, `$HOME`, the
+repo parent, `/tmp`, and broad shared roots such as `/Users`, `/home`, `/usr`,
+`/var`, `/private`, and `/Applications`. Use `--force` only after an explicit
+orchestrator/user decision:
+
+```bash
+bin/write-policy.sh approve /tmp --actor orchestrator --assignment-id build-logs --reason "user approved shared temp output" --force
+```
 
 Mechanical enforcement is limited to the helper's policy checks and startup
 visibility. Codex is still launched with
 `--dangerously-bypass-approvals-and-sandbox`, so shell sandboxing is not
 enforcing the boundary. The orchestrator and worker instructions require agents
 to check and follow the policy before writes.
+
+## Assignment Metadata and Acceptance
+
+Use repo-local assignment records for every worker or named subagent before
+work starts:
+
+```bash
+bin/subagent.sh assignment-create worker-01-docs \
+  --assignment-id docs-001 \
+  --branch worker/docs-001 \
+  --owned README.md,orchestrator_prompt.md
+bin/subagent.sh assignment-show worker-01-docs
+bin/subagent.sh assignment-status worker-01-docs running
+```
+
+Assignment state is stored under:
+
+```bash
+$MULTIAGENT_STATE_DIR/assignments/NAME
+```
+
+Each assignment stores the agent name, assignment ID, expected branch, owned
+repo paths, status, and start commit. Owned paths are repo-relative and may be
+files or directories.
+
+After a worker reports completion, run:
+
+```bash
+bin/subagent.sh assignment-check worker-01-docs
+```
+
+The check mechanically rejects a branch mismatch and rejects any file changed
+since the assignment start commit, in the working tree, in the index, or as an
+untracked file, when that file is outside the assigned owned paths. It does not
+inspect tmux instructions, prove authorship, enforce runtime sandboxing, or
+prevent a worker from editing files before the check runs.
 
 ## Long-Running Subagents
 

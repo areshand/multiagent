@@ -98,11 +98,26 @@ Also include:
 - Repo write policy:
   - Default allowed write root is `$MULTIAGENT_ROOT`.
   - Before writing outside `$MULTIAGENT_ROOT`, stop and ask the orchestrator for explicit permission.
-  - After permission is approved, the orchestrator records the approved outside path with `bin/write-policy.sh approve PATH`.
+  - After permission is approved, the orchestrator records the approved outside path with `bin/write-policy.sh approve PATH --actor ACTOR --assignment-id ID --reason TEXT`.
   - Check uncertain paths with `bin/write-policy.sh check PATH` before writing.
   - The policy file is `$MULTIAGENT_WRITE_POLICY`, default `docs/write-policy.paths`.
+  - Workers must not edit `docs/write-policy.paths` directly.
 
 ## Worker Spawn Skill
+
+Before spawning a worker, create durable assignment metadata:
+
+```bash
+bin/subagent.sh assignment-create worker-01-task \
+  --assignment-id ASSIGNMENT_ID \
+  --branch BRANCH \
+  --owned PATH[,PATH...]
+```
+
+The assignment records the agent name, assignment ID, expected branch, owned
+repo paths, status, and start commit under
+`$MULTIAGENT_STATE_DIR/assignments/NAME`. Give the same assignment ID, branch,
+and owned paths in the worker's first instruction.
 
 Spawn a new worker with `tmux new-window`.
 
@@ -128,6 +143,10 @@ Prefer the helper for named long-running subagents because it persists context:
 
 ```bash
 bin/subagent.sh spawn subagent-build-watch --instruction "FIRST_INSTRUCTION_TEXT"
+bin/subagent.sh assignment-create subagent-build-watch --assignment-id ASSIGNMENT_ID --branch BRANCH --owned PATH[,PATH...]
+bin/subagent.sh assignment-show subagent-build-watch
+bin/subagent.sh assignment-status subagent-build-watch running
+bin/subagent.sh assignment-check subagent-build-watch
 bin/subagent.sh list
 bin/subagent.sh poll subagent-build-watch
 bin/subagent.sh inspect subagent-build-watch --lines 160
@@ -150,8 +169,15 @@ Use the write policy helper before approving any outside-root write:
 ```bash
 bin/write-policy.sh show
 bin/write-policy.sh check PATH
-bin/write-policy.sh approve PATH
+bin/write-policy.sh approve PATH --actor orchestrator --assignment-id ID --reason "why this outside path is needed"
 ```
+
+The policy file is orchestrator-owned. Do not ask workers to edit it directly.
+Approvals are structured audit records with timestamp, actor, assignment ID,
+requested path, canonical path, reason, and force marker. Reject broad outside
+approvals by default, including `/`, `$HOME`, the repo parent, `/tmp`, and
+broad shared roots. Use `--force` only after an explicit orchestrator/user
+decision.
 
 The first instruction for a long-running subagent must include the Required Worker First Instruction rules below plus:
 
@@ -248,9 +274,11 @@ After running it:
 - Never send input to a busy worker.
 - Never send speculative commands to a worker.
 - Never ask a worker to edit outside its assigned files.
-- Never ask a worker to write outside `$MULTIAGENT_ROOT` unless the user explicitly approves the outside path and you record it with `bin/write-policy.sh approve PATH`.
+- Never ask a worker to write outside `$MULTIAGENT_ROOT` unless the user explicitly approves the outside path and you record it with `bin/write-policy.sh approve PATH --actor ACTOR --assignment-id ID --reason TEXT`.
 - When a worker reports it needs an outside-root write, ask the user for approval before continuing. If approved, add the narrowest practical outside path to the policy and tell the worker to retry after checking it with `bin/write-policy.sh check PATH`.
+- Never ask a worker to edit `docs/write-policy.paths`; approvals must go through `bin/write-policy.sh approve`.
 - Never let two workers own the same files unless you explicitly coordinate the overlap.
+- Before accepting completed worker or subagent work, run `bin/subagent.sh assignment-check NAME` and reject branch mismatches or files outside the owned paths.
 - Always capture a worker's output before killing it.
 - Always poll or inspect a long-running subagent before finalizing it.
 - Do not delete `$MULTIAGENT_STATE_DIR`; it is the durable context for long-running subagents.
@@ -263,6 +291,7 @@ After running it:
    - Understand the user's goal.
    - Break it into independent work packages.
    - Assign each package an owner, branch, and file scope.
+   - Create assignment metadata with `bin/subagent.sh assignment-create` before work starts.
 
 2. Spawn
    - Create workers with `tmux new-window`.
@@ -275,6 +304,7 @@ After running it:
    - Periodically use `capture-pane` on each worker.
    - Periodically use `bin/subagent.sh poll NAME` on long-running subagents.
    - Classify each worker as idle, busy, blocked, done, stuck, or unknown.
+   - Update durable assignment status with `bin/subagent.sh assignment-status NAME STATUS` when useful.
    - Do not interrupt busy workers.
 
 4. Coordinate
@@ -284,6 +314,7 @@ After running it:
 
 5. Kill
    - Capture final output from done or stuck workers.
+   - Run `bin/subagent.sh assignment-check NAME` before accepting done work.
    - Finalize completed long-running subagents with `bin/subagent.sh finalize NAME`.
    - Kill worker windows that no longer need to run.
 
