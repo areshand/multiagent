@@ -22,6 +22,7 @@ The launch script exports these values:
 - `MULTIAGENT_ROOT`: working directory where the session was launched.
 - `MULTIAGENT_PROMPT`: path to this prompt.
 - `MULTIAGENT_STATE_DIR`: directory for persisted subagent metadata and transcripts.
+- `MULTIAGENT_WRITE_POLICY`: repo-local outside-write allowlist, default `$MULTIAGENT_ROOT/docs/write-policy.paths`.
 
 If a variable is missing, infer the tmux session with:
 
@@ -70,6 +71,12 @@ Also include:
 - You are a worker agent launched by the orchestrator.
 - Report progress and final status in this tmux window.
 - Do not coordinate directly with other workers unless the orchestrator instructs you.
+- Repo write policy:
+  - Default allowed write root is `$MULTIAGENT_ROOT`.
+  - Before writing outside `$MULTIAGENT_ROOT`, stop and ask the orchestrator for explicit permission.
+  - After permission is approved, the orchestrator records the approved outside path with `bin/write-policy.sh approve PATH`.
+  - Check uncertain paths with `bin/write-policy.sh check PATH` before writing.
+  - The policy file is `$MULTIAGENT_WRITE_POLICY`, default `docs/write-policy.paths`.
 
 ## Worker Spawn Skill
 
@@ -104,6 +111,14 @@ bin/subagent.sh finalize subagent-build-watch
 ```
 
 Use `spawn` for work that may run, watch, or iterate for a while. Use `poll` periodically to refresh `current.txt`, append to `transcript.log`, and classify the subagent. Use `inspect` to read the latest captured output without losing the transcript. Use `finalize` only after you have inspected the final output and recorded the result; finalization captures one last time, marks the subagent finalized, and closes its tmux window unless `--keep-window` is supplied.
+
+Use the write policy helper before approving any outside-root write:
+
+```bash
+bin/write-policy.sh show
+bin/write-policy.sh check PATH
+bin/write-policy.sh approve PATH
+```
 
 The first instruction for a long-running subagent must include the Required Worker First Instruction rules below plus:
 
@@ -200,6 +215,8 @@ After running it:
 - Never send input to a busy worker.
 - Never send speculative commands to a worker.
 - Never ask a worker to edit outside its assigned files.
+- Never ask a worker to write outside `$MULTIAGENT_ROOT` unless the user explicitly approves the outside path and you record it with `bin/write-policy.sh approve PATH`.
+- When a worker reports it needs an outside-root write, ask the user for approval before continuing. If approved, add the narrowest practical outside path to the policy and tell the worker to retry after checking it with `bin/write-policy.sh check PATH`.
 - Never let two workers own the same files unless you explicitly coordinate the overlap.
 - Always capture a worker's output before killing it.
 - Always poll or inspect a long-running subagent before finalizing it.

@@ -6,6 +6,7 @@ DEFAULT_ROOT="/Users/bowu/projects/multiagent"
 ROOT="${MULTIAGENT_ROOT:-$DEFAULT_ROOT}"
 PROMPT_FILE="$ROOT/orchestrator_prompt.md"
 STATE_DIR="${MULTIAGENT_STATE_DIR:-$ROOT/.multiagent}"
+POLICY_FILE="${MULTIAGENT_WRITE_POLICY:-$ROOT/docs/write-policy.paths}"
 CODEX_BIN="${CODEX_BIN:-codex}"
 ATTACH=1
 
@@ -20,6 +21,7 @@ Environment:
   MULTIAGENT_SESSION  Default tmux session name
   MULTIAGENT_ROOT     Default project root, default: /Users/bowu/projects/multiagent
   MULTIAGENT_STATE_DIR Persisted subagent state, default: $MULTIAGENT_ROOT/.multiagent
+  MULTIAGENT_WRITE_POLICY Repo write policy, default: $MULTIAGENT_ROOT/docs/write-policy.paths
   CODEX_BIN           Codex CLI command, default: codex
 USAGE
 }
@@ -33,6 +35,7 @@ while [[ $# -gt 0 ]]; do
     --root)
       ROOT="$(cd "$2" && pwd)"
       PROMPT_FILE="$ROOT/orchestrator_prompt.md"
+      POLICY_FILE="${MULTIAGENT_WRITE_POLICY:-$ROOT/docs/write-policy.paths}"
       shift 2
       ;;
     --attach)
@@ -70,6 +73,11 @@ if [[ ! -f "$PROMPT_FILE" ]]; then
   exit 1
 fi
 
+if [[ ! -x "$ROOT/bin/write-policy.sh" ]]; then
+  echo "Missing write policy helper: $ROOT/bin/write-policy.sh" >&2
+  exit 1
+fi
+
 if tmux has-session -t "$SESSION" 2>/dev/null; then
   echo "tmux session already exists: $SESSION" >&2
   echo "Attach with: tmux attach -t $SESSION" >&2
@@ -80,8 +88,10 @@ export MULTIAGENT_SESSION="$SESSION"
 export MULTIAGENT_ROOT="$ROOT"
 export MULTIAGENT_PROMPT="$PROMPT_FILE"
 export MULTIAGENT_STATE_DIR="$STATE_DIR"
+export MULTIAGENT_WRITE_POLICY="$POLICY_FILE"
 
 mkdir -p "$STATE_DIR/subagents"
+"$ROOT/bin/write-policy.sh" init
 
 ORCHESTRATOR_BOOTSTRAP="$(
   cat <<EOF
@@ -90,6 +100,7 @@ export MULTIAGENT_SESSION='$SESSION'
 export MULTIAGENT_ROOT='$ROOT'
 export MULTIAGENT_PROMPT='$PROMPT_FILE'
 export MULTIAGENT_STATE_DIR='$STATE_DIR'
+export MULTIAGENT_WRITE_POLICY='$POLICY_FILE'
 $CODEX_BIN --cd '$ROOT' --dangerously-bypass-approvals-and-sandbox --no-alt-screen "\$(cat '$PROMPT_FILE')"
 EOF
 )"
@@ -100,6 +111,8 @@ tmux select-window -t "$SESSION:orchestrator"
 echo "Started tmux session: $SESSION"
 echo "Attach with: tmux attach -t $SESSION"
 echo "Subagent state: $STATE_DIR"
+echo "Write policy:"
+"$ROOT/bin/write-policy.sh" show
 
 if [[ "$ATTACH" -eq 1 ]]; then
   tmux attach -t "$SESSION"

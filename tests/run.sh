@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMPDIR="$(mktemp -d)"
+TMPDIR="$(cd "$TMPDIR" && pwd -P)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
 MOCK_BIN="$TMPDIR/bin"
@@ -114,6 +115,7 @@ export MOCK_TMUX_LOG="$TMPDIR/tmux.log"
 export MULTIAGENT_SESSION="test-session"
 export MULTIAGENT_ROOT="$ROOT"
 export MULTIAGENT_STATE_DIR="$TMPDIR/state"
+export MULTIAGENT_WRITE_POLICY="$TMPDIR/write-policy.paths"
 export CODEX_BIN="true"
 
 printf 'orchestrator\n' >"$MOCK_TMUX_WINDOWS"
@@ -131,10 +133,35 @@ assert_file_contains() {
   fi
 }
 
+"$ROOT/bin/write-policy.sh" init
+assert_file_contains "$MULTIAGENT_WRITE_POLICY" "Default allowed write root"
+
+policy_show="$("$ROOT/bin/write-policy.sh" show)"
+[[ "$policy_show" == *"Default write root: $ROOT"* ]]
+[[ "$policy_show" == *"Approved outside write roots:"* ]]
+
+policy_check_inside="$("$ROOT/bin/write-policy.sh" check "$ROOT/README.md")"
+[[ "$policy_check_inside" == $'allowed\t'"$ROOT/README.md" ]]
+
+outside_path="$TMPDIR/outside/result.txt"
+policy_check_file="$TMPDIR/policy-check.out"
+if "$ROOT/bin/write-policy.sh" check "$outside_path" >"$policy_check_file" 2>&1; then
+  echo "expected outside path to be denied before approval" >&2
+  cat "$policy_check_file" >&2
+  exit 1
+fi
+assert_file_contains "$policy_check_file" $'denied\t'"$outside_path"
+
+approve_output="$("$ROOT/bin/write-policy.sh" approve "$TMPDIR/outside")"
+[[ "$approve_output" == $'approved outside write root: '"$TMPDIR/outside" ]]
+policy_check_outside="$("$ROOT/bin/write-policy.sh" check "$outside_path")"
+[[ "$policy_check_outside" == $'allowed\t'"$outside_path" ]]
+
 "$ROOT/bin/subagent.sh" spawn subagent-watch --instruction "Watch builds"
 assert_file_contains "$MOCK_TMUX_WINDOWS" "subagent-watch"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/status" "running"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/current.txt" "Codex prompt ready"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/meta.env" "write_policy=$MULTIAGENT_WRITE_POLICY"
 assert_file_contains "$MOCK_TMUX_LOG" "send-key test-session:subagent-watch Watch builds"
 
 printf 'Progress update: still running\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"

@@ -4,6 +4,7 @@ set -euo pipefail
 SESSION="${MULTIAGENT_SESSION:-multiagent}"
 ROOT="${MULTIAGENT_ROOT:-$(pwd)}"
 STATE_DIR="${MULTIAGENT_STATE_DIR:-$ROOT/.multiagent}"
+POLICY_FILE="${MULTIAGENT_WRITE_POLICY:-$ROOT/docs/write-policy.paths}"
 CODEX_BIN="${CODEX_BIN:-codex}"
 
 usage() {
@@ -18,6 +19,10 @@ Usage:
 
 Manages named long-running subagents in tmux and persists their captured
 context under $MULTIAGENT_STATE_DIR/subagents/NAME.
+
+Subagents inherit $MULTIAGENT_WRITE_POLICY, defaulting to
+$MULTIAGENT_ROOT/docs/write-policy.paths. They are expected to check planned
+writes with bin/write-policy.sh before writing outside $MULTIAGENT_ROOT.
 USAGE
 }
 
@@ -144,13 +149,14 @@ spawn_subagent() {
 name=$name
 session=$SESSION
 root=$ROOT
+write_policy=$POLICY_FILE
 created_at=$(timestamp)
 EOF
   set_status "$name" "starting"
 
   local command
-  printf -v command "cd %q && export MULTIAGENT_SESSION=%q MULTIAGENT_ROOT=%q MULTIAGENT_STATE_DIR=%q MULTIAGENT_SUBAGENT_NAME=%q && %q --cd %q --dangerously-bypass-approvals-and-sandbox --no-alt-screen" \
-    "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$name" "$CODEX_BIN" "$ROOT"
+  printf -v command "cd %q && export MULTIAGENT_SESSION=%q MULTIAGENT_ROOT=%q MULTIAGENT_STATE_DIR=%q MULTIAGENT_WRITE_POLICY=%q MULTIAGENT_SUBAGENT_NAME=%q && %q --cd %q --dangerously-bypass-approvals-and-sandbox --no-alt-screen" \
+    "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$POLICY_FILE" "$name" "$CODEX_BIN" "$ROOT"
   tmux new-window -t "$SESSION" -n "$name" "$command"
   set_status "$name" "running"
 
