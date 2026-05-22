@@ -207,8 +207,11 @@ MOCK_TMUX_HAS_SESSION=0 \
   MULTIAGENT_WRITE_POLICY="$LAUNCH_POLICY" \
   "$ROOT/launch.sh" --session launch-cross-repo --root "$LAUNCH_TARGET" --no-attach >"$TMPDIR/launch.out"
 assert_file_contains "$TMPDIR/launch.out" "Started tmux session: launch-cross-repo"
+assert_file_contains "$TMPDIR/launch.out" "Resume mode: 0"
 assert_file_contains "$TMPDIR/launch.out" "Default write root: $LAUNCH_TARGET"
 assert_file_contains "$MOCK_TMUX_LOG" "--cd $LAUNCH_TARGET"
+assert_file_contains "$MOCK_TMUX_LOG" "export MULTIAGENT_RESUME='0'"
+assert_file_contains "$MOCK_TMUX_LOG" "Multiagent launch mode: MULTIAGENT_RESUME=%s (%s)"
 assert_file_contains "$MOCK_TMUX_LOG" "$(printf '%q' "$ROOT/orchestrator_prompt.md")"
 if grep -Fq "$LAUNCH_TARGET/orchestrator_prompt.md" "$MOCK_TMUX_LOG" "$TMPDIR/launch.out"; then
   echo "expected launch to use script-dir orchestrator prompt, not target-root prompt" >&2
@@ -216,6 +219,18 @@ if grep -Fq "$LAUNCH_TARGET/orchestrator_prompt.md" "$MOCK_TMUX_LOG" "$TMPDIR/la
   cat "$TMPDIR/launch.out" >&2
   exit 1
 fi
+
+rm -f "$MOCK_TMUX_LOG"
+MOCK_TMUX_HAS_SESSION=0 \
+  MULTIAGENT_SESSION="launch-resume" \
+  MULTIAGENT_ROOT= \
+  MULTIAGENT_PROMPT= \
+  MULTIAGENT_STATE_DIR="$TMPDIR/launch-resume-state" \
+  MULTIAGENT_WRITE_POLICY="$TMPDIR/launch-resume-policy/write-policy.paths" \
+  "$ROOT/launch.sh" --session launch-resume --root "$LAUNCH_TARGET" --resume --no-attach >"$TMPDIR/launch-resume.out"
+assert_file_contains "$TMPDIR/launch-resume.out" "Resume mode: 1"
+assert_file_contains "$MOCK_TMUX_LOG" "export MULTIAGENT_RESUME='1'"
+assert_file_contains "$MOCK_TMUX_LOG" "'resume'"
 
 EXPLICIT_PROMPT="$TMPDIR/custom-orchestrator-prompt.md"
 printf 'custom prompt\n' >"$EXPLICIT_PROMPT"
@@ -227,6 +242,12 @@ MOCK_TMUX_HAS_SESSION=0 \
   MULTIAGENT_WRITE_POLICY="$TMPDIR/launch-explicit-policy/write-policy.paths" \
   "$ROOT/launch.sh" --session launch-explicit-prompt --root "$LAUNCH_TARGET" --no-attach >"$TMPDIR/launch-explicit.out"
 assert_file_contains "$MOCK_TMUX_LOG" "$(printf '%q' "$EXPLICIT_PROMPT")"
+
+assert_file_contains "$ROOT/orchestrator_prompt.md" "Do not inspect recovery state"
+assert_file_contains "$ROOT/orchestrator_prompt.md" 'When `MULTIAGENT_RESUME=1`'
+assert_file_contains "$ROOT/orchestrator_prompt.md" 'Only in that mode'
+assert_file_contains "$ROOT/README.md" "Launches are clean by default"
+assert_file_contains "$ROOT/README.md" "./launch.sh --resume"
 
 policy_check_inside="$("$ROOT/bin/write-policy.sh" check "$ROOT/README.md")"
 [[ "$policy_check_inside" == $'allowed\t'"$ROOT/README.md" ]]

@@ -20,6 +20,7 @@ The launch script exports these values:
 
 - `MULTIAGENT_SESSION`: tmux session name.
 - `MULTIAGENT_ROOT`: working directory where the session was launched.
+- `MULTIAGENT_RESUME`: launch recovery mode. `0` means clean launch; `1` means resume mode.
 - `MULTIAGENT_PROMPT`: path to this prompt.
 - `MULTIAGENT_STATE_DIR`: directory for persisted subagent metadata and transcripts.
 - `MULTIAGENT_WRITE_POLICY`: repo-local outside-write allowlist, default `$MULTIAGENT_ROOT/docs/write-policy.paths`.
@@ -40,17 +41,30 @@ If a variable is missing, infer the tmux session with:
 tmux display-message -p '#S'
 ```
 
-## First Action / Recovery Check
+## First Action / Launch Mode
 
-At the start of every orchestrator run, first check for durable subagent state:
+At the start of every orchestrator run, list the current tmux session, worker
+windows, named subagent windows, and persisted assignment/subagent directories.
+Be ready to accept user direction by default. Do not inspect recovery state and
+do not run `bin/subagent.sh recover-plan` on a clean launch.
+
+Clean launch is the default:
+
+```bash
+MULTIAGENT_RESUME=0
+```
+
+When `MULTIAGENT_RESUME=1`, the launch was explicitly started with
+`./launch.sh --resume`. Only in that mode, check for durable subagent recovery
+state before spawning replacement work:
 
 ```bash
 bin/subagent.sh recover-plan
 ```
 
-This is required even if the tmux session looks empty, because a prior
-orchestrator or tmux session may have crashed after subagents persisted memory.
-Read the plan before spawning replacement work.
+Read the plan before spawning replacement work. In resume mode, this is required
+even if the tmux session looks empty, because a prior orchestrator or tmux
+session may have crashed after subagents persisted memory.
 
 Recovery actions:
 

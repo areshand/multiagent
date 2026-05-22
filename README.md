@@ -16,10 +16,25 @@ This project launches a tmux session with one `orchestrator` window. The orchest
 ./launch.sh --session multiagent --root /Users/bowu/projects/multiagent
 ```
 
+Launches are clean by default. The orchestrator receives
+`MULTIAGENT_RESUME=0`, lists the current session/windows/subagents, and waits
+for direction without inspecting recovery state.
+
+To explicitly resume after a previous crashed or interrupted session:
+
+```bash
+./launch.sh --resume --session multiagent --root /Users/bowu/projects/multiagent
+```
+
+With `--resume`, the orchestrator receives `MULTIAGENT_RESUME=1` and should run
+`bin/subagent.sh recover-plan` before deciding whether to restore persisted
+subagents.
+
 Environment:
 
 - `MULTIAGENT_SESSION`: tmux session name, default `multiagent`
 - `MULTIAGENT_ROOT`: project root, default launcher directory
+- `MULTIAGENT_RESUME`: launch mode exported by `launch.sh`; `0` clean launch, `1` explicit `--resume`
 - `MULTIAGENT_STATE_DIR`: durable subagent state, default `$MULTIAGENT_ROOT/.multiagent`
 - `MULTIAGENT_WRITE_POLICY`: repo write policy, default `$MULTIAGENT_ROOT/docs/write-policy.paths`
 - `MULTIAGENT_PROMPT`: orchestrator prompt, default `<launcher directory>/orchestrator_prompt.md`
@@ -190,7 +205,8 @@ even if the current environment defaults back to Codex.
 
 ### Recovery
 
-If the tmux session or orchestrator crashes, start a new orchestrator and run:
+If the tmux session or orchestrator crashes, start a new orchestrator with
+`--resume`. In resume mode, the orchestrator should run:
 
 ```bash
 bin/subagent.sh recover-plan
