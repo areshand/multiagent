@@ -10,17 +10,18 @@ Usage:
   bin/write-policy.sh init
   bin/write-policy.sh show
   bin/write-policy.sh check PATH [...]
-  bin/write-policy.sh approve PATH
+  bin/write-policy.sh approve PATH --actor ACTOR --assignment-id ID --reason TEXT [--force]
 
 Repo write guardrail helper.
 
 By default, writes are allowed only inside $MULTIAGENT_ROOT. Paths outside that
-root are allowed only when they are listed in the repo-local policy file:
+root are allowed only when they are approved in the repo-local policy file:
 
   $MULTIAGENT_WRITE_POLICY, default $MULTIAGENT_ROOT/docs/write-policy.paths
 
-This helper evaluates policy and updates the allowlist. It does not sandbox
-Codex; workers still need to follow the policy before writing.
+Approvals are structured audit records. This helper evaluates policy and
+updates the allowlist. It does not sandbox Codex; workers still need to follow
+the policy before writing.
 USAGE
 }
 
@@ -96,19 +97,33 @@ init_policy() {
 # Multiagent repo write policy
 #
 # Default allowed write root is $MULTIAGENT_ROOT for the launched session.
-# Add one approved outside write root per line, using absolute paths.
-# Blank lines and comments are ignored.
+# Orchestrator-owned: workers should not edit this file directly.
+# Add approvals only with:
+#   bin/write-policy.sh approve PATH --actor ACTOR --assignment-id ID --reason TEXT [--force]
+#
+# Records are TSV:
+#   approval<TAB>timestamp<TAB>actor<TAB>assignment_id<TAB>requested_path<TAB>canonical_path<TAB>reason<TAB>force
+# Blank lines and comments are ignored. Legacy bare absolute path lines are read
+# for compatibility but new approvals must be structured records.
 POLICY
 }
 
 approved_paths() {
   [[ -f "$POLICY_FILE" ]] || return 0
+  local line type timestamp actor assignment_id requested canonical reason force
   while IFS= read -r line; do
     line="${line%%#*}"
     line="${line#"${line%%[![:space:]]*}"}"
     line="${line%"${line##*[![:space:]]}"}"
     [[ -n "$line" ]] || continue
-    printf '%s\n' "$(canonical_path "$line")"
+
+    if [[ "$line" == approval$'\t'* ]]; then
+      IFS=$'\t' read -r type timestamp actor assignment_id requested canonical reason force <<<"$line"
+      [[ "$type" == "approval" && -n "${canonical:-}" ]] || continue
+      printf '%s\n' "$(canonical_path "$canonical")"
+    else
+      printf '%s\n' "$(canonical_path "$line")"
+    fi
   done <"$POLICY_FILE"
 }
 
@@ -177,6 +192,37 @@ check_paths() {
 approve_path() {
   local path="${1:-}"
   [[ -n "$path" ]] || die "approve requires PATH"
+  shift || true
+
+  local actor="" assignment_id="" reason="" force=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --actor)
+        actor="${2:-}"
+        shift 2
+        ;;
+      --assignment-id)
+        assignment_id="${2:-}"
+        shift 2
+        ;;
+      --reason)
+        reason="${2:-}"
+        shift 2
+        ;;
+      --force)
+        force=1
+        shift
+        ;;
+      *)
+        die "unknown approve argument: $1"
+        ;;
+    esac
+  done
+
+  [[ -n "$actor" ]] || die "approve requires --actor ACTOR"
+  [[ -n "$assignment_id" ]] || die "approve requires --assignment-id ID"
+  [[ -n "$reason" ]] || die "approve requires --reason TEXT"
+
   init_policy
 
   local root canonical existing
@@ -196,8 +242,40 @@ approve_path() {
     fi
   done < <(approved_paths)
 
-  printf '%s\n' "$canonical" >>"$POLICY_FILE"
-  printf 'approved outside write root: %s\n' "$canonical"
+  if is_broad_approval "$canonical" "$root" && [[ "$force" -eq 0 ]]; then
+    die "refusing broad outside approval without --force: $canonical"
+  fi
+
+  printf 'approval\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$(timestamp)" "$actor" "$assignment_id" "$path" "$canonical" "$reason" "$force" >>"$POLICY_FILE"
+  if [[ "$force" -eq 1 ]]; then
+    printf 'approved outside write root: %s (forced)\n' "$canonical"
+  else
+    printf 'approved outside write root: %s\n' "$canonical"
+  fi
+}
+
+timestamp() {
+  date -u +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+is_broad_approval() {
+  local canonical="$1"
+  local root="$2"
+  local home="${HOME:-}"
+  local repo_parent
+  repo_parent="$(dirname "$root")"
+
+  case "$canonical" in
+    /|/tmp|/private/tmp|/var/tmp|/Users|/home|/opt|/usr|/var|/private|/Applications)
+      return 0
+      ;;
+  esac
+
+  [[ -n "$home" && "$canonical" == "$home" ]] && return 0
+  [[ "$canonical" == "$repo_parent" ]] && return 0
+
+  return 1
 }
 
 cmd="${1:-}"
@@ -218,8 +296,8 @@ case "$cmd" in
     ;;
   approve)
     shift
-    [[ $# -eq 1 ]] || die "approve requires exactly one PATH"
-    approve_path "$1"
+    [[ $# -ge 1 ]] || die "approve requires PATH"
+    approve_path "$@"
     ;;
   -h|--help|"")
     usage

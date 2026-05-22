@@ -12,6 +12,10 @@ usage() {
 Usage:
   bin/subagent.sh spawn NAME [--instruction TEXT]
   bin/subagent.sh list
+  bin/subagent.sh assignment-create NAME --assignment-id ID --branch BRANCH --owned PATH[,PATH...] [--status STATUS] [--start-commit COMMIT]
+  bin/subagent.sh assignment-show NAME
+  bin/subagent.sh assignment-status NAME STATUS
+  bin/subagent.sh assignment-check NAME
   bin/subagent.sh poll NAME
   bin/subagent.sh inspect NAME [--lines N]
   bin/subagent.sh recover-plan
@@ -56,6 +60,22 @@ status_file() {
   printf '%s/status\n' "$(subagent_dir "$1")"
 }
 
+assignment_dir() {
+  printf '%s/assignments/%s\n' "$STATE_DIR" "$1"
+}
+
+assignment_meta_file() {
+  printf '%s/assignment.env\n' "$(assignment_dir "$1")"
+}
+
+assignment_owned_file() {
+  printf '%s/owned-paths\n' "$(assignment_dir "$1")"
+}
+
+assignment_status_file() {
+  printf '%s/status\n' "$(assignment_dir "$1")"
+}
+
 set_status() {
   local name="$1"
   local status="$2"
@@ -70,6 +90,224 @@ get_status() {
   else
     printf 'unknown\n'
   fi
+}
+
+read_assignment_value() {
+  local name="$1"
+  local key="$2"
+  local file
+  file="$(assignment_meta_file "$name")"
+  [[ -f "$file" ]] || return 1
+  awk -F= -v key="$key" '$1 == key { sub("^[^=]*=", ""); print; found=1 } END { exit found ? 0 : 1 }' "$file"
+}
+
+set_assignment_status() {
+  local name="$1"
+  local status="$2"
+  [[ -f "$(assignment_meta_file "$name")" ]] || die "no assignment for agent: $name"
+  printf '%s\n' "$status" >"$(assignment_status_file "$name")"
+}
+
+get_assignment_status() {
+  local name="$1"
+  if [[ -f "$(assignment_status_file "$name")" ]]; then
+    tr -d '\n' <"$(assignment_status_file "$name")"
+  else
+    printf 'unknown\n'
+  fi
+}
+
+normalize_repo_path() {
+  local path="$1"
+  local root canonical rel
+  root="$(cd "$ROOT" && pwd -P)"
+  if [[ "$path" = /* ]]; then
+    canonical="$path"
+  else
+    canonical="$root/$path"
+  fi
+
+  if [[ -e "$canonical" ]]; then
+    canonical="$(cd "$(dirname "$canonical")" && pwd -P)/$(basename "$canonical")"
+  else
+    local rest="" parent="$canonical" base
+    while [[ ! -e "$parent" ]]; do
+      base="$(basename "$parent")"
+      if [[ -n "$rest" ]]; then
+        rest="$base/$rest"
+      else
+        rest="$base"
+      fi
+      parent="$(dirname "$parent")"
+      [[ "$parent" != "/" ]] || break
+    done
+    if [[ -e "$parent" ]]; then
+      canonical="$(cd "$parent" && pwd -P)/$rest"
+    fi
+  fi
+
+  [[ "$canonical" == "$root" || "$canonical" == "$root/"* ]] || die "assigned path is outside MULTIAGENT_ROOT: $path"
+  rel="${canonical#"$root"/}"
+  rel="${rel#./}"
+  rel="${rel%/}"
+  [[ -n "$rel" && "$rel" != "$root" ]] || die "assigned path may not be the whole repo root"
+  printf '%s\n' "$rel"
+}
+
+path_in_assignment() {
+  local changed="$1"
+  local owned
+  while IFS= read -r owned; do
+    [[ -n "$owned" ]] || continue
+    if [[ "$changed" == "$owned" || "$changed" == "$owned/"* ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+assignment_create() {
+  local name="${1:-}"
+  [[ -n "$name" ]] || die "assignment-create requires NAME"
+  validate_name "$name"
+  shift
+
+  local assignment_id="" branch="" owned_csv="" status="assigned" start_commit=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --assignment-id)
+        assignment_id="${2:-}"
+        shift 2
+        ;;
+      --branch)
+        branch="${2:-}"
+        shift 2
+        ;;
+      --owned)
+        owned_csv="${2:-}"
+        shift 2
+        ;;
+      --status)
+        status="${2:-}"
+        shift 2
+        ;;
+      --start-commit)
+        start_commit="${2:-}"
+        shift 2
+        ;;
+      *)
+        die "unknown assignment-create argument: $1"
+        ;;
+    esac
+  done
+
+  [[ -n "$assignment_id" ]] || die "assignment-create requires --assignment-id ID"
+  [[ -n "$branch" ]] || die "assignment-create requires --branch BRANCH"
+  [[ -n "$owned_csv" ]] || die "assignment-create requires --owned PATH[,PATH...]"
+  if [[ -z "$start_commit" ]]; then
+    start_commit="$(git -C "$ROOT" rev-parse HEAD)"
+  else
+    git -C "$ROOT" rev-parse --verify "$start_commit^{commit}" >/dev/null || die "invalid start commit: $start_commit"
+    start_commit="$(git -C "$ROOT" rev-parse "$start_commit^{commit}")"
+  fi
+
+  local dir owned_file item normalized
+  dir="$(assignment_dir "$name")"
+  mkdir -p "$dir"
+  owned_file="$(assignment_owned_file "$name")"
+  : >"$owned_file"
+  IFS=',' read -ra owned_items <<<"$owned_csv"
+  for item in "${owned_items[@]}"; do
+    item="${item#"${item%%[![:space:]]*}"}"
+    item="${item%"${item##*[![:space:]]}"}"
+    [[ -n "$item" ]] || continue
+    normalized="$(normalize_repo_path "$item")"
+    grep -Fx -- "$normalized" "$owned_file" >/dev/null 2>&1 || printf '%s\n' "$normalized" >>"$owned_file"
+  done
+  [[ -s "$owned_file" ]] || die "assignment must own at least one path"
+
+  cat >"$(assignment_meta_file "$name")" <<EOF
+agent_name=$name
+assignment_id=$assignment_id
+branch=$branch
+start_commit=$start_commit
+created_at=$(timestamp)
+root=$ROOT
+EOF
+  set_assignment_status "$name" "$status"
+  printf 'assignment created\t%s\t%s\t%s\n' "$name" "$assignment_id" "$branch"
+}
+
+assignment_show() {
+  local name="${1:-}"
+  [[ -n "$name" ]] || die "assignment-show requires NAME"
+  validate_name "$name"
+  [[ -f "$(assignment_meta_file "$name")" ]] || die "no assignment for agent: $name"
+
+  cat "$(assignment_meta_file "$name")"
+  printf 'status=%s\n' "$(get_assignment_status "$name")"
+  printf 'owned_paths=\n'
+  sed 's/^/  /' "$(assignment_owned_file "$name")"
+}
+
+assignment_status() {
+  local name="${1:-}"
+  local status="${2:-}"
+  [[ -n "$name" && -n "$status" ]] || die "assignment-status requires NAME STATUS"
+  validate_name "$name"
+  set_assignment_status "$name" "$status"
+  printf 'assignment status\t%s\t%s\n' "$name" "$status"
+}
+
+assignment_changed_files() {
+  local start_commit="$1"
+  {
+    git -C "$ROOT" diff --name-only "$start_commit"..HEAD
+    git -C "$ROOT" diff --name-only
+    git -C "$ROOT" diff --name-only --cached
+    git -C "$ROOT" ls-files --others --exclude-standard
+  } | sed '/^$/d' | sort -u
+}
+
+assignment_check() {
+  local name="${1:-}"
+  [[ -n "$name" ]] || die "assignment-check requires NAME"
+  validate_name "$name"
+  [[ -f "$(assignment_meta_file "$name")" ]] || die "no assignment for agent: $name"
+
+  local expected_branch start_commit current_branch owned_file failed=0 changed
+  expected_branch="$(read_assignment_value "$name" branch)"
+  start_commit="$(read_assignment_value "$name" start_commit)"
+  owned_file="$(assignment_owned_file "$name")"
+  current_branch="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)"
+
+  printf 'assignment\t%s\t%s\n' "$name" "$(read_assignment_value "$name" assignment_id)"
+  printf 'branch\t%s\t%s\n' "$expected_branch" "$current_branch"
+  if [[ "$current_branch" != "$expected_branch" ]]; then
+    printf 'reject\tbranch-mismatch\texpected=%s\tactual=%s\n' "$expected_branch" "$current_branch"
+    failed=1
+  fi
+
+  local any=0
+  while IFS= read -r changed; do
+    [[ -n "$changed" ]] || continue
+    any=1
+    if path_in_assignment "$changed" <"$owned_file"; then
+      printf 'ok\t%s\n' "$changed"
+    else
+      printf 'reject\toutside-owned-path\t%s\n' "$changed"
+      failed=1
+    fi
+  done < <(assignment_changed_files "$start_commit")
+
+  if [[ "$any" -eq 0 ]]; then
+    printf 'ok\tno-changes\n'
+  fi
+
+  if [[ "$failed" -eq 0 ]]; then
+    printf 'accepted\t%s\n' "$name"
+  fi
+  return "$failed"
 }
 
 window_exists() {
@@ -476,6 +714,22 @@ case "$cmd" in
   list)
     shift
     list_subagents "$@"
+    ;;
+  assignment-create)
+    shift
+    assignment_create "$@"
+    ;;
+  assignment-show)
+    shift
+    assignment_show "$@"
+    ;;
+  assignment-status)
+    shift
+    assignment_status "$@"
+    ;;
+  assignment-check)
+    shift
+    assignment_check "$@"
     ;;
   poll)
     shift
