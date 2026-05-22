@@ -116,6 +116,8 @@ export MULTIAGENT_SESSION="test-session"
 export MULTIAGENT_ROOT="$ROOT"
 export MULTIAGENT_STATE_DIR="$TMPDIR/state"
 export MULTIAGENT_WRITE_POLICY="$TMPDIR/write-policy.paths"
+export MULTIAGENT_READY_ATTEMPTS=1
+export MULTIAGENT_READY_DELAY=0
 export CODEX_BIN="true"
 
 printf 'orchestrator\n' >"$MOCK_TMUX_WINDOWS"
@@ -233,12 +235,55 @@ if MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bi
 fi
 assert_file_contains "$TMPDIR/assignment-branch.out" $'reject\tbranch-mismatch\texpected=expected/branch\tactual=worker/docs'
 
+worktree_assignment_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create worker-wt --assignment-id wt-001 --branch worker/wt --owned README.md)"
+[[ "$worktree_assignment_output" == $'assignment created\tworker-wt\twt-001\tworker/wt' ]]
+worktree_create_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" worktree-create worker-wt)"
+[[ "$worktree_create_output" == *$'worktree created\tworker-wt\tworker/wt\t'"$ASSIGN_STATE/worktrees/worker-wt" ]]
+assert_file_contains "$ASSIGN_STATE/worktrees/worker-wt.env" "agent_name=worker-wt"
+assert_file_contains "$ASSIGN_STATE/worktrees/worker-wt.env" "branch=worker/wt"
+assert_file_contains "$ASSIGN_STATE/worktrees/worker-wt.env" "path=$ASSIGN_STATE/worktrees/worker-wt"
+[[ -f "$ASSIGN_STATE/worktrees/worker-wt/README.md" ]]
+worktree_show_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" worktree-show worker-wt)"
+[[ "$worktree_show_output" == *"branch=worker/wt"* ]]
+worktree_remove_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" worktree-remove worker-wt)"
+[[ "$worktree_remove_output" == *$'worktree removed\tworker-wt\t'"$ASSIGN_STATE/worktrees/worker-wt" ]]
+[[ ! -e "$ASSIGN_STATE/worktrees/worker-wt.env" ]]
+
+current_branch="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)"
+checkpoint_assignment_output="$("$ROOT/bin/subagent.sh" assignment-create subagent-structured --assignment-id structured-001 --branch "$current_branch" --owned README.md)"
+[[ "$checkpoint_assignment_output" == $'assignment created\tsubagent-structured\tstructured-001\t'"$current_branch" ]]
+checkpoint_update_output="$("$ROOT/bin/subagent.sh" checkpoint-update subagent-structured --step "implemented checkpoint metadata" --idempotency "rerun checkpoint-update safely" --status running)"
+[[ "$checkpoint_update_output" == $'checkpoint updated\tsubagent-structured\trunning' ]]
+checkpoint_show_output="$("$ROOT/bin/subagent.sh" checkpoint-show subagent-structured)"
+[[ "$checkpoint_show_output" == *"assignment_id=structured-001"* ]]
+[[ "$checkpoint_show_output" == *"completed_step=implemented checkpoint metadata"* ]]
+[[ "$checkpoint_show_output" == *"idempotency=rerun checkpoint-update safely"* ]]
+assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/subagent-structured/checkpoint.env" "status=running"
+
+mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-structured"
+printf 'Final status: completed according to stale transcript text\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-structured/current.txt"
+printf 'Done and finished, but this is fallback context only\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-structured/transcript.log"
+
 "$ROOT/bin/subagent.sh" spawn subagent-watch --instruction "Watch builds"
 assert_file_contains "$MOCK_TMUX_WINDOWS" "subagent-watch"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/status" "running"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/current.txt" "Codex prompt ready"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/meta.env" "write_policy=$MULTIAGENT_WRITE_POLICY"
 assert_file_contains "$MOCK_TMUX_LOG" "send-key test-session:subagent-watch Watch builds"
+
+printf 'Login required before Codex can start\n' >"$MOCK_TMUX_CAPTURES/subagent-auth.txt"
+if "$ROOT/bin/subagent.sh" spawn subagent-auth --instruction "Should not send" >"$TMPDIR/auth-spawn.out" 2>&1; then
+  echo "expected spawn to stop when the subagent is not ready" >&2
+  cat "$TMPDIR/auth-spawn.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/auth-spawn.out" "subagent window is not ready for instruction delivery: subagent-auth"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-auth/status" "delivery-blocked"
+if grep -Fq "Should not send" "$MOCK_TMUX_LOG"; then
+  echo "expected readiness gate to prevent send-keys" >&2
+  cat "$MOCK_TMUX_LOG" >&2
+  exit 1
+fi
 
 printf 'Progress update: still running\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"
 poll_output="$("$ROOT/bin/subagent.sh" poll subagent-watch)"
@@ -291,6 +336,9 @@ recover_plan="$("$ROOT/bin/subagent.sh" recover-plan)"
 [[ "$recover_plan" == *$'subagent-blocked\tskip-blocked\trequires-orchestrator-decision\trunning\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-blocked"* ]]
 [[ "$recover_plan" == *$'subagent-open\tskip-open\ttmux-window-already-open\trunning\topen\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-open"* ]]
 [[ "$recover_plan" == *$'subagent-unknown\tskip-unknown\tno-current-or-transcript\tunknown\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-unknown"* ]]
+[[ "$recover_plan" == *$'subagent-structured\trestore\tcheckpoint-resumable\trunning\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-structured"* ]]
+structured_blocked_output="$("$ROOT/bin/subagent.sh" checkpoint-update subagent-structured --step "verified checkpoint recovery preference" --blocker "aggregate restore-all test should not restore this fixture")"
+[[ "$structured_blocked_output" == $'checkpoint updated\tsubagent-structured\tblocked' ]]
 
 blocked_restore_file="$TMPDIR/blocked-restore.out"
 if "$ROOT/bin/subagent.sh" restore subagent-blocked >"$blocked_restore_file" 2>&1; then

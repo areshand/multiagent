@@ -16,6 +16,11 @@ Usage:
   bin/subagent.sh assignment-show NAME
   bin/subagent.sh assignment-status NAME STATUS
   bin/subagent.sh assignment-check NAME
+  bin/subagent.sh checkpoint-update NAME --step TEXT [--blocker TEXT] [--idempotency TEXT] [--last-commit COMMIT] [--status STATUS]
+  bin/subagent.sh checkpoint-show NAME
+  bin/subagent.sh worktree-create NAME [--branch BRANCH] [--path PATH]
+  bin/subagent.sh worktree-show NAME
+  bin/subagent.sh worktree-remove NAME [--force]
   bin/subagent.sh poll NAME
   bin/subagent.sh inspect NAME [--lines N]
   bin/subagent.sh recover-plan
@@ -76,6 +81,18 @@ assignment_status_file() {
   printf '%s/status\n' "$(assignment_dir "$1")"
 }
 
+checkpoint_file() {
+  printf '%s/checkpoint.env\n' "$(assignment_dir "$1")"
+}
+
+worktree_meta_file() {
+  printf '%s/worktrees/%s.env\n' "$STATE_DIR" "$1"
+}
+
+default_worktree_path() {
+  printf '%s/worktrees/%s\n' "$STATE_DIR" "$1"
+}
+
 set_status() {
   local name="$1"
   local status="$2"
@@ -99,6 +116,21 @@ read_assignment_value() {
   file="$(assignment_meta_file "$name")"
   [[ -f "$file" ]] || return 1
   awk -F= -v key="$key" '$1 == key { sub("^[^=]*=", ""); print; found=1 } END { exit found ? 0 : 1 }' "$file"
+}
+
+read_checkpoint_value() {
+  local name="$1"
+  local key="$2"
+  local file
+  file="$(checkpoint_file "$name")"
+  [[ -f "$file" ]] || return 1
+  awk -F= -v key="$key" '$1 == key { sub("^[^=]*=", ""); print; found=1 } END { exit found ? 0 : 1 }' "$file"
+}
+
+reject_newline() {
+  local label="$1"
+  local value="$2"
+  [[ "$value" != *$'\n'* ]] || die "$label may not contain newlines"
 }
 
 set_assignment_status() {
@@ -246,6 +278,10 @@ assignment_show() {
 
   cat "$(assignment_meta_file "$name")"
   printf 'status=%s\n' "$(get_assignment_status "$name")"
+  if [[ -f "$(checkpoint_file "$name")" ]]; then
+    printf 'checkpoint=\n'
+    sed 's/^/  /' "$(checkpoint_file "$name")"
+  fi
   printf 'owned_paths=\n'
   sed 's/^/  /' "$(assignment_owned_file "$name")"
 }
@@ -310,10 +346,229 @@ assignment_check() {
   return "$failed"
 }
 
+checkpoint_update() {
+  local name="${1:-}"
+  [[ -n "$name" ]] || die "checkpoint-update requires NAME"
+  validate_name "$name"
+  shift
+  [[ -f "$(assignment_meta_file "$name")" ]] || die "no assignment for agent: $name"
+
+  local step="" blocker="" idempotency="" last_commit="" status=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --step)
+        step="${2:-}"
+        shift 2
+        ;;
+      --blocker)
+        blocker="${2:-}"
+        shift 2
+        ;;
+      --idempotency)
+        idempotency="${2:-}"
+        shift 2
+        ;;
+      --last-commit)
+        last_commit="${2:-}"
+        shift 2
+        ;;
+      --status)
+        status="${2:-}"
+        shift 2
+        ;;
+      *)
+        die "unknown checkpoint-update argument: $1"
+        ;;
+    esac
+  done
+
+  [[ -n "$step" ]] || die "checkpoint-update requires --step TEXT"
+  if [[ -z "$last_commit" ]]; then
+    last_commit="$(git -C "$ROOT" rev-parse HEAD)"
+  else
+    git -C "$ROOT" rev-parse --verify "$last_commit^{commit}" >/dev/null || die "invalid last commit: $last_commit"
+    last_commit="$(git -C "$ROOT" rev-parse "$last_commit^{commit}")"
+  fi
+  if [[ -z "$status" ]]; then
+    if [[ -n "$blocker" ]]; then
+      status="blocked"
+    else
+      status="$(get_assignment_status "$name")"
+    fi
+  fi
+
+  reject_newline "--step" "$step"
+  reject_newline "--blocker" "$blocker"
+  reject_newline "--idempotency" "$idempotency"
+  reject_newline "--status" "$status"
+
+  local file
+  file="$(checkpoint_file "$name")"
+  mkdir -p "$(dirname "$file")"
+  cat >"$file" <<EOF
+agent_name=$name
+assignment_id=$(read_assignment_value "$name" assignment_id)
+branch=$(read_assignment_value "$name" branch)
+owned_paths_file=$(assignment_owned_file "$name")
+last_commit=$last_commit
+completed_step=$step
+blocker=$blocker
+idempotency=$idempotency
+status=$status
+updated_at=$(timestamp)
+EOF
+  set_assignment_status "$name" "$status"
+  set_status "$name" "$status"
+  printf 'checkpoint updated\t%s\t%s\n' "$name" "$status"
+}
+
+checkpoint_show() {
+  local name="${1:-}"
+  [[ -n "$name" ]] || die "checkpoint-show requires NAME"
+  validate_name "$name"
+  [[ -f "$(checkpoint_file "$name")" ]] || die "no checkpoint for agent: $name"
+  cat "$(checkpoint_file "$name")"
+}
+
+worktree_create() {
+  local name="${1:-}"
+  [[ -n "$name" ]] || die "worktree-create requires NAME"
+  validate_name "$name"
+  shift
+
+  local branch="" path=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --branch)
+        branch="${2:-}"
+        shift 2
+        ;;
+      --path)
+        path="${2:-}"
+        shift 2
+        ;;
+      *)
+        die "unknown worktree-create argument: $1"
+        ;;
+    esac
+  done
+  if [[ -z "$branch" && -f "$(assignment_meta_file "$name")" ]]; then
+    branch="$(read_assignment_value "$name" branch)"
+  fi
+  [[ -n "$branch" ]] || die "worktree-create requires --branch BRANCH or assignment metadata"
+  [[ -n "$path" ]] || path="$(default_worktree_path "$name")"
+
+  mkdir -p "$(dirname "$path")" "$(dirname "$(worktree_meta_file "$name")")"
+  if [[ ! -d "$path/.git" && ! -f "$path/.git" ]]; then
+    if git -C "$ROOT" show-ref --verify --quiet "refs/heads/$branch"; then
+      git -C "$ROOT" worktree add "$path" "$branch"
+    else
+      git -C "$ROOT" worktree add -b "$branch" "$path" HEAD
+    fi
+  fi
+
+  cat >"$(worktree_meta_file "$name")" <<EOF
+agent_name=$name
+branch=$branch
+path=$path
+created_at=$(timestamp)
+root=$ROOT
+EOF
+  if [[ -f "$(assignment_meta_file "$name")" ]] && ! grep -q '^worktree_path=' "$(assignment_meta_file "$name")"; then
+    printf 'worktree_path=%s\n' "$path" >>"$(assignment_meta_file "$name")"
+  fi
+  printf 'worktree created\t%s\t%s\t%s\n' "$name" "$branch" "$path"
+}
+
+worktree_show() {
+  local name="${1:-}"
+  [[ -n "$name" ]] || die "worktree-show requires NAME"
+  validate_name "$name"
+  [[ -f "$(worktree_meta_file "$name")" ]] || die "no worktree metadata for agent: $name"
+  cat "$(worktree_meta_file "$name")"
+}
+
+worktree_remove() {
+  local name="${1:-}"
+  [[ -n "$name" ]] || die "worktree-remove requires NAME"
+  validate_name "$name"
+  shift
+
+  local force=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --force)
+        force=1
+        shift
+        ;;
+      *)
+        die "unknown worktree-remove argument: $1"
+        ;;
+    esac
+  done
+
+  local meta path args=()
+  meta="$(worktree_meta_file "$name")"
+  [[ -f "$meta" ]] || die "no worktree metadata for agent: $name"
+  path="$(awk -F= '$1 == "path" { sub("^[^=]*=", ""); print; found=1 } END { exit found ? 0 : 1 }' "$meta")"
+  [[ "$force" -eq 1 ]] && args+=(--force)
+  git -C "$ROOT" worktree remove "${args[@]}" "$path"
+  rm -f "$meta"
+  printf 'worktree removed\t%s\t%s\n' "$name" "$path"
+}
+
 window_exists() {
   local name="$1"
   command -v tmux >/dev/null 2>&1 || return 1
   tmux list-windows -t "$SESSION" -F '#W' 2>/dev/null | grep -Fx -- "$name" >/dev/null 2>&1
+}
+
+readiness_state() {
+  local text="$1"
+  if grep -Eiq '(not authenticated|authentication required|login required|sign in|setup required|api key required|failed to authenticate)' <<<"$text"; then
+    printf 'blocked\n'
+  elif grep -Eiq '(codex prompt ready|prompt ready|restored codex prompt ready|what can i help|ready for input|type your message)' <<<"$text"; then
+    printf 'ready\n'
+  else
+    printf 'waiting\n'
+  fi
+}
+
+wait_for_ready() {
+  local name="$1"
+  local attempts="${MULTIAGENT_READY_ATTEMPTS:-20}"
+  local delay="${MULTIAGENT_READY_DELAY:-0.5}"
+  local capture="" state i
+  for ((i = 1; i <= attempts; i++)); do
+    if capture="$(tmux capture-pane -t "$SESSION:$name" -p -S -200 2>&1)"; then
+      state="$(readiness_state "$capture")"
+      if [[ "$state" == "ready" ]]; then
+        printf '%s\n' "$capture" >"$(subagent_dir "$name")/current.txt"
+        return 0
+      fi
+      if [[ "$state" == "blocked" ]]; then
+        printf '%s\n' "$capture" >"$(subagent_dir "$name")/last-error.txt"
+        return 2
+      fi
+    fi
+    sleep "$delay"
+  done
+  printf '%s\n' "${capture:-no capture available}" >"$(subagent_dir "$name")/last-error.txt"
+  return 1
+}
+
+deliver_instruction() {
+  local name="$1"
+  local instruction="$2"
+  local dir
+  dir="$(subagent_dir "$name")"
+  mkdir -p "$dir"
+  if ! wait_for_ready "$name"; then
+    set_status "$name" "delivery-blocked"
+    die "subagent window is not ready for instruction delivery: $name; see $dir/last-error.txt"
+  fi
+  tmux send-keys -t "$SESSION:$name" "$instruction" Enter
+  capture_subagent "$name" || true
 }
 
 capture_subagent() {
@@ -403,8 +658,7 @@ EOF
 
   capture_subagent "$name" || true
   if [[ -n "$instruction" ]]; then
-    tmux send-keys -t "$SESSION:$name" "$instruction" Enter
-    capture_subagent "$name" || true
+    deliver_instruction "$name" "$instruction"
   fi
 
   printf 'spawned %s\n' "$name"
@@ -502,7 +756,7 @@ classify_recovery() {
   local name="$1"
   validate_name "$name"
 
-  local dir status lowered current transcript combined action reason window
+  local dir status lowered current transcript combined action reason window checkpoint_status checkpoint_blocker
   dir="$(subagent_dir "$name")"
   status="$(get_status "$name")"
   lowered="$(printf '%s' "$status" | tr '[:upper:]' '[:lower:]')"
@@ -523,6 +777,23 @@ classify_recovery() {
   elif [[ "$lowered" =~ ^(killed|stopped|cancelled|canceled)$ ]]; then
     action="skip-finalized"
     reason="intentionally-stopped-$lowered"
+  elif [[ -f "$(checkpoint_file "$name")" ]]; then
+    checkpoint_status="$(read_checkpoint_value "$name" status || true)"
+    checkpoint_blocker="$(read_checkpoint_value "$name" blocker || true)"
+    checkpoint_status="$(printf '%s' "$checkpoint_status" | tr '[:upper:]' '[:lower:]')"
+    if [[ -n "$checkpoint_blocker" || "$checkpoint_status" == "blocked" ]]; then
+      action="skip-blocked"
+      reason="checkpoint-blocked"
+    elif [[ "$checkpoint_status" =~ ^(done|complete|completed|finalized)$ ]]; then
+      action="skip-finalized"
+      reason="checkpoint-$checkpoint_status"
+    elif ! has_recovery_context "$name"; then
+      action="skip-unknown"
+      reason="checkpoint-without-captured-context"
+    else
+      action="restore"
+      reason="checkpoint-resumable"
+    fi
   else
     combined=""
     [[ -f "$current" ]] && combined="$combined"$'\n'"$(tail -n 120 "$current")"
@@ -634,8 +905,7 @@ restore_subagent() {
     "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$POLICY_FILE" "$name" "$CODEX_BIN" "$ROOT"
   tmux new-window -t "$SESSION" -n "$name" "$command"
   set_status "$name" "running"
-  tmux send-keys -t "$SESSION:$name" "$instruction" Enter
-  capture_subagent "$name" || true
+  deliver_instruction "$name" "$instruction"
 
   printf 'restored %s\n' "$name"
 }
@@ -730,6 +1000,26 @@ case "$cmd" in
   assignment-check)
     shift
     assignment_check "$@"
+    ;;
+  checkpoint-update)
+    shift
+    checkpoint_update "$@"
+    ;;
+  checkpoint-show)
+    shift
+    checkpoint_show "$@"
+    ;;
+  worktree-create)
+    shift
+    worktree_create "$@"
+    ;;
+  worktree-show)
+    shift
+    worktree_show "$@"
+    ;;
+  worktree-remove)
+    shift
+    worktree_remove "$@"
     ;;
   poll)
     shift

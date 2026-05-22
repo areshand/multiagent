@@ -112,6 +112,8 @@ bin/subagent.sh assignment-create worker-01-task \
   --assignment-id ASSIGNMENT_ID \
   --branch BRANCH \
   --owned PATH[,PATH...]
+bin/subagent.sh worktree-create worker-01-task
+bin/subagent.sh checkpoint-update worker-01-task --step "assignment created" --status assigned
 ```
 
 The assignment records the agent name, assignment ID, expected branch, owned
@@ -119,16 +121,25 @@ repo paths, status, and start commit under
 `$MULTIAGENT_STATE_DIR/assignments/NAME`. Give the same assignment ID, branch,
 and owned paths in the worker's first instruction.
 
-Spawn a new worker with `tmux new-window`.
+Use a separate git worktree per worker unless the user explicitly directs
+otherwise. `worktree-create` defaults to
+`$MULTIAGENT_STATE_DIR/worktrees/NAME` and records metadata with
+`worktree-show NAME`. Remove the worktree with `worktree-remove NAME` only
+after the work is accepted or intentionally abandoned.
+
+Spawn a new worker with `tmux new-window` from that worktree path.
 
 Template:
 
 ```bash
+WORKTREE_PATH="$(bin/subagent.sh worktree-show worker-01-task | awk -F= '$1 == "path" {print $2}')"
 tmux new-window -t "$MULTIAGENT_SESSION" -n "worker-01-task" \
-  "cd '$MULTIAGENT_ROOT' && codex --cd '$MULTIAGENT_ROOT' --dangerously-bypass-approvals-and-sandbox --no-alt-screen"
+  "cd '$WORKTREE_PATH' && codex --cd '$WORKTREE_PATH' --dangerously-bypass-approvals-and-sandbox --no-alt-screen"
 ```
 
-After the worker window is open and the Codex prompt is visible, send the first instruction:
+After the worker window is open, capture repeatedly until the Codex prompt is
+visible. If the pane shows authentication/setup blockers or never becomes
+ready, report the blocker instead of sending instructions.
 
 ```bash
 tmux capture-pane -t "$MULTIAGENT_SESSION:worker-01-task" -p -S -200
@@ -144,6 +155,7 @@ Prefer the helper for named long-running subagents because it persists context:
 ```bash
 bin/subagent.sh spawn subagent-build-watch --instruction "FIRST_INSTRUCTION_TEXT"
 bin/subagent.sh assignment-create subagent-build-watch --assignment-id ASSIGNMENT_ID --branch BRANCH --owned PATH[,PATH...]
+bin/subagent.sh checkpoint-update subagent-build-watch --step "started" --status running
 bin/subagent.sh assignment-show subagent-build-watch
 bin/subagent.sh assignment-status subagent-build-watch running
 bin/subagent.sh assignment-check subagent-build-watch
@@ -158,9 +170,16 @@ bin/subagent.sh finalize subagent-build-watch
 
 Use `spawn` for work that may run, watch, or iterate for a while. Use `poll` periodically to refresh `current.txt`, append to `transcript.log`, and classify the subagent. Use `inspect` to read the latest captured output without losing the transcript. Use `finalize` only after you have inspected the final output and recorded the result; finalization captures one last time, marks the subagent finalized, and closes its tmux window unless `--keep-window` is supplied.
 
+Use `checkpoint-update NAME --step TEXT --status STATUS` after meaningful
+progress, before stopping, and whenever a blocker appears. Include
+`--blocker TEXT` for decisions needed from the orchestrator/user and
+`--idempotency TEXT` for what can be safely retried after restore.
+
 Use `recover-plan` after a crash or fresh orchestrator start to classify
-persisted subagents. Use `restore NAME` to open a fresh named tmux window seeded
-with the prior status, state path, and a concise tail of previous
+persisted subagents. It prefers structured assignment/checkpoint status over
+pane transcript text. Treat transcript/current text as fallback context only
+when structured state is absent. Use `restore NAME` to open a fresh named tmux
+window seeded with the prior status, state path, and a concise tail of previous
 `current.txt`/`transcript.log` context. `restore-all` only restores conservative
 `restore` rows from the plan.
 

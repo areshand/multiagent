@@ -80,8 +80,10 @@ bin/subagent.sh assignment-create worker-01-docs \
   --assignment-id docs-001 \
   --branch worker/docs-001 \
   --owned README.md,orchestrator_prompt.md
+bin/subagent.sh worktree-create worker-01-docs
 bin/subagent.sh assignment-show worker-01-docs
 bin/subagent.sh assignment-status worker-01-docs running
+bin/subagent.sh checkpoint-update worker-01-docs --step "started implementation" --status running
 ```
 
 Assignment state is stored under:
@@ -93,6 +95,27 @@ $MULTIAGENT_STATE_DIR/assignments/NAME
 Each assignment stores the agent name, assignment ID, expected branch, owned
 repo paths, status, and start commit. Owned paths are repo-relative and may be
 files or directories.
+
+Worktrees are optional for compatibility, but recommended for worker isolation.
+`worktree-create` places the checkout at
+`$MULTIAGENT_STATE_DIR/worktrees/NAME` by default and records metadata at
+`$MULTIAGENT_STATE_DIR/worktrees/NAME.env`. Use `worktree-show NAME` to inspect
+the assigned checkout and `worktree-remove NAME` after the worker is finalized.
+When you spawn manually, start the worker from the recorded worktree path.
+
+Workers and orchestrators can write structured recovery checkpoints:
+
+```bash
+bin/subagent.sh checkpoint-update worker-01-docs \
+  --step "tests passing locally" \
+  --idempotency "rerun tests/run.sh before acceptance" \
+  --last-commit HEAD \
+  --status running
+bin/subagent.sh checkpoint-show worker-01-docs
+```
+
+Checkpoints include the assignment ID, branch, owned path file, last commit,
+completed step, blocker, idempotency notes, status, and update timestamp.
 
 After a worker reports completion, run:
 
@@ -126,7 +149,9 @@ Each subagent persists state under:
 $MULTIAGENT_STATE_DIR/subagents/NAME
 ```
 
-The state directory includes `meta.env`, `status`, `current.txt`, and `transcript.log`, so the orchestrator can recover context after repeated polling or after finalization.
+The state directory includes `meta.env`, `status`, `current.txt`, and
+`transcript.log`, so the orchestrator can recover context after repeated
+polling or after finalization.
 
 ### Recovery
 
@@ -136,7 +161,10 @@ If the tmux session or orchestrator crashes, start a new orchestrator and run:
 bin/subagent.sh recover-plan
 ```
 
-The plan prints one row per persisted subagent with a conservative action:
+The plan prints one row per persisted subagent with a conservative action.
+Structured status and checkpoint metadata are the primary recovery signal.
+`current.txt` and `transcript.log` are fallback context only when structured
+state is missing.
 
 - `restore`: closed subagent with enough prior context to resume.
 - `skip-open`: a tmux window with that name already exists.
@@ -156,6 +184,10 @@ its name, prior status, state directory, and a concise tail of `current.txt` and
 `bin/subagent.sh restore-all` only after reviewing the plan; it restores only
 rows classified as `restore` and skips finalized, blocked, open, and unknown
 subagents.
+
+`spawn` and `restore` wait for an obvious ready prompt before delivering
+instructions. They record `delivery-blocked` and fail instead of blindly sending
+input when the pane shows authentication/setup blockers or never becomes ready.
 
 ## Agent Progress
 

@@ -90,7 +90,7 @@ export MULTIAGENT_PROMPT="$PROMPT_FILE"
 export MULTIAGENT_STATE_DIR="$STATE_DIR"
 export MULTIAGENT_WRITE_POLICY="$POLICY_FILE"
 
-mkdir -p "$STATE_DIR/subagents" "$STATE_DIR/assignments"
+mkdir -p "$STATE_DIR/subagents" "$STATE_DIR/assignments" "$STATE_DIR/worktrees"
 "$ROOT/bin/write-policy.sh" init
 
 ORCHESTRATOR_BOOTSTRAP="$(
