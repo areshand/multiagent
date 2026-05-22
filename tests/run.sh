@@ -27,7 +27,10 @@ window_name_from_target() {
 
 case "$cmd" in
   has-session)
-    exit 0
+    if [[ "${MOCK_TMUX_HAS_SESSION:-1}" -eq 1 ]]; then
+      exit 0
+    fi
+    exit 1
     ;;
   list-windows)
     while IFS= read -r window; do
@@ -52,6 +55,35 @@ case "$cmd" in
     done
     printf '%s\n' "$name" >>"$windows_file"
     printf 'new-window %s %s\n' "$name" "$command" >>"$log_file"
+    ;;
+  new-session)
+    name=""
+    window=""
+    command=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -d)
+          shift
+          ;;
+        -s)
+          name="$2"
+          shift 2
+          ;;
+        -n)
+          window="$2"
+          shift 2
+          ;;
+        *)
+          command="$1"
+          shift
+          ;;
+      esac
+    done
+    printf '%s\n' "$window" >>"$windows_file"
+    printf 'new-session %s %s %s\n' "$name" "$window" "$command" >>"$log_file"
+    ;;
+  select-window)
+    printf 'select-window %s\n' "${1:-}" >>"$log_file"
     ;;
   capture-pane)
     target=""
@@ -147,6 +179,40 @@ assert_file_contains "$MULTIAGENT_WRITE_POLICY" "Default allowed write root"
 policy_show="$("$ROOT/bin/write-policy.sh" show)"
 [[ "$policy_show" == *"Default write root: $ROOT"* ]]
 [[ "$policy_show" == *"Approved outside write roots:"* ]]
+
+LAUNCH_TARGET="$TMPDIR/target-repo"
+LAUNCH_STATE="$TMPDIR/launch-state"
+LAUNCH_POLICY="$TMPDIR/launch-policy/write-policy.paths"
+mkdir -p "$LAUNCH_TARGET"
+rm -f "$MOCK_TMUX_LOG"
+MOCK_TMUX_HAS_SESSION=0 \
+  MULTIAGENT_SESSION="launch-cross-repo" \
+  MULTIAGENT_ROOT= \
+  MULTIAGENT_PROMPT= \
+  MULTIAGENT_STATE_DIR="$LAUNCH_STATE" \
+  MULTIAGENT_WRITE_POLICY="$LAUNCH_POLICY" \
+  "$ROOT/launch.sh" --session launch-cross-repo --root "$LAUNCH_TARGET" --no-attach >"$TMPDIR/launch.out"
+assert_file_contains "$TMPDIR/launch.out" "Started tmux session: launch-cross-repo"
+assert_file_contains "$TMPDIR/launch.out" "Default write root: $LAUNCH_TARGET"
+assert_file_contains "$MOCK_TMUX_LOG" "--cd $LAUNCH_TARGET"
+assert_file_contains "$MOCK_TMUX_LOG" "$(printf '%q' "$ROOT/orchestrator_prompt.md")"
+if grep -Fq "$LAUNCH_TARGET/orchestrator_prompt.md" "$MOCK_TMUX_LOG" "$TMPDIR/launch.out"; then
+  echo "expected launch to use script-dir orchestrator prompt, not target-root prompt" >&2
+  cat "$MOCK_TMUX_LOG" >&2
+  cat "$TMPDIR/launch.out" >&2
+  exit 1
+fi
+
+EXPLICIT_PROMPT="$TMPDIR/custom-orchestrator-prompt.md"
+printf 'custom prompt\n' >"$EXPLICIT_PROMPT"
+rm -f "$MOCK_TMUX_LOG"
+MOCK_TMUX_HAS_SESSION=0 \
+  MULTIAGENT_SESSION="launch-explicit-prompt" \
+  MULTIAGENT_PROMPT="$EXPLICIT_PROMPT" \
+  MULTIAGENT_STATE_DIR="$TMPDIR/launch-explicit-state" \
+  MULTIAGENT_WRITE_POLICY="$TMPDIR/launch-explicit-policy/write-policy.paths" \
+  "$ROOT/launch.sh" --session launch-explicit-prompt --root "$LAUNCH_TARGET" --no-attach >"$TMPDIR/launch-explicit.out"
+assert_file_contains "$MOCK_TMUX_LOG" "$(printf '%q' "$EXPLICIT_PROMPT")"
 
 policy_check_inside="$("$ROOT/bin/write-policy.sh" check "$ROOT/README.md")"
 [[ "$policy_check_inside" == $'allowed\t'"$ROOT/README.md" ]]

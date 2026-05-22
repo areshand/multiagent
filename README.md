@@ -19,9 +19,10 @@ This project launches a tmux session with one `orchestrator` window. The orchest
 Environment:
 
 - `MULTIAGENT_SESSION`: tmux session name, default `multiagent`
-- `MULTIAGENT_ROOT`: project root, default `/Users/bowu/projects/multiagent`
+- `MULTIAGENT_ROOT`: project root, default launcher directory
 - `MULTIAGENT_STATE_DIR`: durable subagent state, default `$MULTIAGENT_ROOT/.multiagent`
 - `MULTIAGENT_WRITE_POLICY`: repo write policy, default `$MULTIAGENT_ROOT/docs/write-policy.paths`
+- `MULTIAGENT_PROMPT`: orchestrator prompt, default `<launcher directory>/orchestrator_prompt.md`
 - `ORCHESTRATOR_CLI`: orchestrator CLI, default `codex`
 - `WORKER_CLI`: worker CLI for manual worker windows, default `codex`
 - `SUBAGENT_CLI`: named subagent CLI, default `$WORKER_CLI`
@@ -40,6 +41,12 @@ Codex launches with `--cd`, `--dangerously-bypass-approvals-and-sandbox`, and
 `--no-alt-screen`. Claude launches from the target worktree/root with
 `claude --dangerously-skip-permissions`; Codex-only flags are intentionally not
 passed to Claude.
+
+`--root` selects the target project repo for `MULTIAGENT_ROOT`, state, write
+policy, and the orchestrator CLI working directory. The default orchestrator
+prompt is still loaded from this launcher's directory, so cross-repo launches do
+not need an `orchestrator_prompt.md` in the target repo. Set
+`MULTIAGENT_PROMPT=/path/to/prompt.md` to override that default.
 
 ## Repo Write Guardrails
 

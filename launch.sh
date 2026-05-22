@@ -2,11 +2,10 @@
 set -euo pipefail
 
 SESSION="${MULTIAGENT_SESSION:-multiagent}"
-DEFAULT_ROOT="/Users/bowu/projects/multiagent"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_ROOT="$SCRIPT_DIR"
 ROOT="${MULTIAGENT_ROOT:-$DEFAULT_ROOT}"
-PROMPT_FILE="$ROOT/orchestrator_prompt.md"
-STATE_DIR="${MULTIAGENT_STATE_DIR:-$ROOT/.multiagent}"
-POLICY_FILE="${MULTIAGENT_WRITE_POLICY:-$ROOT/docs/write-policy.paths}"
+PROMPT_FILE="${MULTIAGENT_PROMPT:-$SCRIPT_DIR/orchestrator_prompt.md}"
 CODEX_BIN="${CODEX_BIN:-codex}"
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 ORCHESTRATOR_CLI="${ORCHESTRATOR_CLI:-codex}"
@@ -21,9 +20,10 @@ Starts a tmux multi-agent session with one window:
 
 Environment:
   MULTIAGENT_SESSION  Default tmux session name
-  MULTIAGENT_ROOT     Default project root, default: /Users/bowu/projects/multiagent
+  MULTIAGENT_ROOT     Default project root, default: launcher directory
   MULTIAGENT_STATE_DIR Persisted subagent state, default: $MULTIAGENT_ROOT/.multiagent
   MULTIAGENT_WRITE_POLICY Repo write policy, default: $MULTIAGENT_ROOT/docs/write-policy.paths
+  MULTIAGENT_PROMPT   Orchestrator prompt, default: <launcher directory>/orchestrator_prompt.md
   ORCHESTRATOR_CLI  Orchestrator CLI, default: codex
   CODEX_BIN           Codex CLI command, default: codex
   CLAUDE_BIN          Claude CLI command, default: claude
@@ -38,8 +38,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --root)
       ROOT="$(cd "$2" && pwd)"
-      PROMPT_FILE="$ROOT/orchestrator_prompt.md"
-      POLICY_FILE="${MULTIAGENT_WRITE_POLICY:-$ROOT/docs/write-policy.paths}"
       shift 2
       ;;
     --attach)
@@ -61,6 +59,9 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+STATE_DIR="${MULTIAGENT_STATE_DIR:-$ROOT/.multiagent}"
+POLICY_FILE="${MULTIAGENT_WRITE_POLICY:-$ROOT/docs/write-policy.paths}"
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -121,8 +122,8 @@ if [[ ! -f "$PROMPT_FILE" ]]; then
   exit 1
 fi
 
-if [[ ! -x "$ROOT/bin/write-policy.sh" ]]; then
-  echo "Missing write policy helper: $ROOT/bin/write-policy.sh" >&2
+if [[ ! -x "$SCRIPT_DIR/bin/write-policy.sh" ]]; then
+  echo "Missing write policy helper: $SCRIPT_DIR/bin/write-policy.sh" >&2
   exit 1
 fi
 
@@ -140,7 +141,7 @@ export MULTIAGENT_WRITE_POLICY="$POLICY_FILE"
 export ORCHESTRATOR_CLI
 
 mkdir -p "$STATE_DIR/subagents" "$STATE_DIR/assignments" "$STATE_DIR/worktrees"
-"$ROOT/bin/write-policy.sh" init
+"$SCRIPT_DIR/bin/write-policy.sh" init
 
 ORCHESTRATOR_BOOTSTRAP="$(
   cat <<EOF
@@ -162,7 +163,7 @@ echo "Started tmux session: $SESSION"
 echo "Attach with: tmux attach -t $SESSION"
 echo "Subagent state: $STATE_DIR"
 echo "Write policy:"
-"$ROOT/bin/write-policy.sh" show
+"$SCRIPT_DIR/bin/write-policy.sh" show
 
 if [[ "$ATTACH" -eq 1 ]]; then
   tmux attach -t "$SESSION"
