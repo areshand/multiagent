@@ -61,6 +61,9 @@ Use `bin/subagent.sh` for named subagents that should keep working or monitoring
 bin/subagent.sh spawn subagent-ci-monitor --instruction "Monitor CI and report status changes."
 bin/subagent.sh poll subagent-ci-monitor
 bin/subagent.sh inspect subagent-ci-monitor --lines 160
+bin/subagent.sh recover-plan
+bin/subagent.sh restore subagent-ci-monitor
+bin/subagent.sh restore-all
 bin/subagent.sh finalize subagent-ci-monitor
 ```
 
@@ -71,6 +74,35 @@ $MULTIAGENT_STATE_DIR/subagents/NAME
 ```
 
 The state directory includes `meta.env`, `status`, `current.txt`, and `transcript.log`, so the orchestrator can recover context after repeated polling or after finalization.
+
+### Recovery
+
+If the tmux session or orchestrator crashes, start a new orchestrator and run:
+
+```bash
+bin/subagent.sh recover-plan
+```
+
+The plan prints one row per persisted subagent with a conservative action:
+
+- `restore`: closed subagent with enough prior context to resume.
+- `skip-open`: a tmux window with that name already exists.
+- `skip-finalized`: the subagent appears completed, finalized, killed, or intentionally stopped.
+- `skip-blocked`: the subagent needs an orchestrator/user decision before resuming.
+- `skip-unknown`: state is missing or unclear; inspect manually before acting.
+
+Restore a specific resumable subagent with:
+
+```bash
+bin/subagent.sh restore NAME
+```
+
+The restored subagent gets a fresh tmux window with an instruction containing
+its name, prior status, state directory, and a concise tail of `current.txt` and
+`transcript.log`. Existing memory files are not deleted. Use
+`bin/subagent.sh restore-all` only after reviewing the plan; it restores only
+rows classified as `restore` and skips finalized, blocked, open, and unknown
+subagents.
 
 ## Agent Progress
 

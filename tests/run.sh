@@ -191,4 +191,52 @@ fi
 inspect_output="$("$ROOT/bin/subagent.sh" inspect subagent-watch --lines 5)"
 [[ "$inspect_output" == *"Final status: completed"* ]]
 
+mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-restore"
+printf 'running\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-restore/status"
+printf 'Previous progress: halfway through recovery work\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-restore/current.txt"
+printf 'Older transcript context\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-restore/transcript.log"
+printf 'Restored Codex prompt ready\n' >"$MOCK_TMUX_CAPTURES/subagent-restore.txt"
+
+mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-blocked"
+printf 'running\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-blocked/status"
+printf 'Blocked: need input from orchestrator\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-blocked/current.txt"
+
+mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-open"
+printf 'running\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-open/status"
+printf 'Still active in tmux\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-open/current.txt"
+printf 'subagent-open\n' >>"$MOCK_TMUX_WINDOWS"
+printf 'Open subagent prompt\n' >"$MOCK_TMUX_CAPTURES/subagent-open.txt"
+
+mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-unknown"
+
+recover_plan="$("$ROOT/bin/subagent.sh" recover-plan)"
+[[ "$recover_plan" == *$'subagent-watch\tskip-finalized\tstatus-finalized\tfinalized\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-watch"* ]]
+[[ "$recover_plan" == *$'subagent-restore\trestore\tclosed-with-recoverable-context\trunning\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-restore"* ]]
+[[ "$recover_plan" == *$'subagent-blocked\tskip-blocked\trequires-orchestrator-decision\trunning\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-blocked"* ]]
+[[ "$recover_plan" == *$'subagent-open\tskip-open\ttmux-window-already-open\trunning\topen\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-open"* ]]
+[[ "$recover_plan" == *$'subagent-unknown\tskip-unknown\tno-current-or-transcript\tunknown\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-unknown"* ]]
+
+blocked_restore_file="$TMPDIR/blocked-restore.out"
+if "$ROOT/bin/subagent.sh" restore subagent-blocked >"$blocked_restore_file" 2>&1; then
+  echo "expected blocked subagent restore to require force" >&2
+  cat "$blocked_restore_file" >&2
+  exit 1
+fi
+assert_file_contains "$blocked_restore_file" "refusing to restore subagent-blocked: skip-blocked"
+
+restore_output="$("$ROOT/bin/subagent.sh" restore subagent-restore)"
+[[ "$restore_output" == "restored subagent-restore" ]]
+assert_file_contains "$MOCK_TMUX_WINDOWS" "subagent-restore"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-restore/status" "running"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-restore/restore_events.log" "prior_status=running"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-restore/transcript.log" "You are a restored long-running subagent."
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-restore/transcript.log" "Previous progress: halfway through recovery work"
+assert_file_contains "$MOCK_TMUX_LOG" "send-key test-session:subagent-restore You are a restored long-running subagent."
+
+restore_all_output="$("$ROOT/bin/subagent.sh" restore-all)"
+[[ "$restore_all_output" == *$'skipped subagent-blocked\tskip-blocked'* ]]
+[[ "$restore_all_output" == *$'skipped subagent-open\tskip-open'* ]]
+[[ "$restore_all_output" == *$'skipped subagent-watch\tskip-finalized'* ]]
+[[ "$restore_all_output" == *"restore-all complete: restored=0"* ]]
+
 echo "tests passed"

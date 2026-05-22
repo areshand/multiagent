@@ -14,6 +14,9 @@ Usage:
   bin/subagent.sh list
   bin/subagent.sh poll NAME
   bin/subagent.sh inspect NAME [--lines N]
+  bin/subagent.sh recover-plan
+  bin/subagent.sh restore NAME [--force]
+  bin/subagent.sh restore-all
   bin/subagent.sh finalize NAME [--keep-window]
   bin/subagent.sh kill NAME
 
@@ -63,7 +66,7 @@ set_status() {
 get_status() {
   local name="$1"
   if [[ -f "$(status_file "$name")" ]]; then
-    cat "$(status_file "$name")"
+    tr -d '\n' <"$(status_file "$name")"
   else
     printf 'unknown\n'
   fi
@@ -233,6 +236,193 @@ inspect_subagent() {
   tail -n "$lines" "$current"
 }
 
+has_recovery_context() {
+  local name="$1"
+  local dir
+  dir="$(subagent_dir "$name")"
+  [[ -s "$dir/current.txt" || -s "$dir/transcript.log" ]]
+}
+
+recovery_text() {
+  local name="$1"
+  local dir
+  dir="$(subagent_dir "$name")"
+
+  {
+    if [[ -s "$dir/current.txt" ]]; then
+      printf 'Current pane tail:\n'
+      tail -n 80 "$dir/current.txt"
+    fi
+    if [[ -s "$dir/transcript.log" ]]; then
+      printf '\nTranscript tail:\n'
+      tail -n 120 "$dir/transcript.log"
+    fi
+  } | tail -n 180
+}
+
+classify_recovery() {
+  local name="$1"
+  validate_name "$name"
+
+  local dir status lowered current transcript combined action reason window
+  dir="$(subagent_dir "$name")"
+  status="$(get_status "$name")"
+  lowered="$(printf '%s' "$status" | tr '[:upper:]' '[:lower:]')"
+  current="$dir/current.txt"
+  transcript="$dir/transcript.log"
+  window="closed"
+
+  if window_exists "$name"; then
+    window="open"
+    action="skip-open"
+    reason="tmux-window-already-open"
+  elif [[ ! -d "$dir" ]]; then
+    action="skip-unknown"
+    reason="missing-state-dir"
+  elif [[ "$lowered" =~ ^(finalized|done|complete|completed)$ ]]; then
+    action="skip-finalized"
+    reason="status-$lowered"
+  elif [[ "$lowered" =~ ^(killed|stopped|cancelled|canceled)$ ]]; then
+    action="skip-finalized"
+    reason="intentionally-stopped-$lowered"
+  else
+    combined=""
+    [[ -f "$current" ]] && combined="$combined"$'\n'"$(tail -n 120 "$current")"
+    [[ -f "$transcript" ]] && combined="$combined"$'\n'"$(tail -n 160 "$transcript")"
+
+    if [[ "$lowered" == "blocked" ]] || grep -Eiq '\b(blocked|need input|waiting for|cannot proceed)\b' <<<"$combined"; then
+      action="skip-blocked"
+      reason="requires-orchestrator-decision"
+    elif grep -Eiq '\b(done|complete|completed|final status|finished)\b' <<<"$combined"; then
+      action="skip-finalized"
+      reason="context-looks-final"
+    elif ! has_recovery_context "$name"; then
+      action="skip-unknown"
+      reason="no-current-or-transcript"
+    elif [[ "$lowered" =~ ^(running|starting|exited|missing|restoring|unknown)$ ]]; then
+      action="restore"
+      reason="closed-with-recoverable-context"
+    else
+      action="skip-unknown"
+      reason="unrecognized-status-$lowered"
+    fi
+  fi
+
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$action" "$reason" "$status" "$window" "$dir"
+}
+
+recover_plan() {
+  local base="$STATE_DIR/subagents"
+  printf 'NAME\tACTION\tREASON\tSTATUS\tWINDOW\tSTATE_DIR\n'
+  [[ -d "$base" ]] || return 0
+
+  local dir name
+  for dir in "$base"/*; do
+    [[ -d "$dir" ]] || continue
+    name="$(basename "$dir")"
+    classify_recovery "$name"
+  done
+}
+
+restore_instruction() {
+  local name="$1"
+  local prior_status="$2"
+  local dir="$3"
+  local context
+  context="$(recovery_text "$name")"
+
+  cat <<EOF
+You are a restored long-running subagent.
+
+Restoration details:
+- Subagent name: $name
+- Prior persisted status: $prior_status
+- Persisted state directory: $dir
+- This is a fresh tmux window after an orchestrator/session recovery.
+- Do not delete, overwrite, or reset prior memory in the state directory.
+- Read the prior context below, continue only if the assignment is still valid, and report progress/final status in this tmux window.
+- If the prior state shows completion, intentional stop, stale instructions, or a blocker that needs orchestrator/user input, stop and state what you need instead of guessing.
+
+Concise prior context:
+$(printf '%s\n' "$context")
+EOF
+}
+
+restore_subagent() {
+  local name="${1:-}"
+  [[ -n "$name" ]] || die "restore requires NAME"
+  validate_name "$name"
+  shift
+
+  local force=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --force)
+        force=1
+        shift
+        ;;
+      *)
+        die "unknown restore argument: $1"
+        ;;
+    esac
+  done
+
+  require_cmd tmux
+  require_cmd "$CODEX_BIN"
+  tmux has-session -t "$SESSION" 2>/dev/null || die "missing tmux session: $SESSION"
+
+  local dir plan action reason prior_status window
+  dir="$(subagent_dir "$name")"
+  [[ -d "$dir" ]] || die "no persisted subagent state: $name"
+
+  plan="$(classify_recovery "$name")"
+  IFS=$'\t' read -r _ action reason prior_status window _ <<<"$plan"
+  if [[ "$action" != "restore" && "$force" -eq 0 ]]; then
+    die "refusing to restore $name: $action ($reason); use --force only after an explicit orchestrator/user decision"
+  fi
+  [[ "$window" != "open" ]] || die "subagent window already exists: $name"
+  has_recovery_context "$name" || die "no captured context to restore: $name"
+
+  local instruction command
+  instruction="$(restore_instruction "$name" "$prior_status" "$dir")"
+  printf '%s\n' "$(timestamp) prior_status=$prior_status action=$action reason=$reason force=$force" >>"$dir/restore_events.log"
+  {
+    printf '\n----- restore seed %s -----\n' "$(timestamp)"
+    printf '%s\n' "$instruction"
+  } >>"$dir/transcript.log"
+  set_status "$name" "restoring"
+
+  printf -v command "cd %q && export MULTIAGENT_SESSION=%q MULTIAGENT_ROOT=%q MULTIAGENT_STATE_DIR=%q MULTIAGENT_WRITE_POLICY=%q MULTIAGENT_SUBAGENT_NAME=%q MULTIAGENT_SUBAGENT_RESTORED=1 && %q --cd %q --dangerously-bypass-approvals-and-sandbox --no-alt-screen" \
+    "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$POLICY_FILE" "$name" "$CODEX_BIN" "$ROOT"
+  tmux new-window -t "$SESSION" -n "$name" "$command"
+  set_status "$name" "running"
+  tmux send-keys -t "$SESSION:$name" "$instruction" Enter
+  capture_subagent "$name" || true
+
+  printf 'restored %s\n' "$name"
+}
+
+restore_all() {
+  local base="$STATE_DIR/subagents"
+  [[ -d "$base" ]] || return 0
+
+  local dir name plan action restored=0 skipped=0
+  for dir in "$base"/*; do
+    [[ -d "$dir" ]] || continue
+    name="$(basename "$dir")"
+    plan="$(classify_recovery "$name")"
+    IFS=$'\t' read -r _ action _ _ _ _ <<<"$plan"
+    if [[ "$action" == "restore" ]]; then
+      restore_subagent "$name"
+      restored=$((restored + 1))
+    else
+      printf 'skipped %s\t%s\n' "$name" "$action"
+      skipped=$((skipped + 1))
+    fi
+  done
+  printf 'restore-all complete: restored=%s skipped=%s\n' "$restored" "$skipped"
+}
+
 finalize_subagent() {
   local name="${1:-}"
   [[ -n "$name" ]] || die "finalize requires NAME"
@@ -294,6 +484,18 @@ case "$cmd" in
   inspect)
     shift
     inspect_subagent "$@"
+    ;;
+  recover-plan)
+    shift
+    recover_plan "$@"
+    ;;
+  restore)
+    shift
+    restore_subagent "$@"
+    ;;
+  restore-all)
+    shift
+    restore_all "$@"
     ;;
   finalize)
     shift

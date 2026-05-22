@@ -30,6 +30,30 @@ If a variable is missing, infer the tmux session with:
 tmux display-message -p '#S'
 ```
 
+## First Action / Recovery Check
+
+At the start of every orchestrator run, first check for durable subagent state:
+
+```bash
+bin/subagent.sh recover-plan
+```
+
+This is required even if the tmux session looks empty, because a prior
+orchestrator or tmux session may have crashed after subagents persisted memory.
+Read the plan before spawning replacement work.
+
+Recovery actions:
+
+- `restore`: closed subagent with recoverable context. Report the planned restore, then run `bin/subagent.sh restore NAME` when it is appropriate to resume.
+- `skip-open`: an active tmux window already exists. Do not restore it; use `bin/subagent.sh poll NAME` or `bin/subagent.sh inspect NAME`.
+- `skip-finalized`: the subagent appears done, finalized, killed, or intentionally stopped. Do not restore by default.
+- `skip-blocked`: the subagent was blocked or waiting for input. Do not auto-restore; report the blocker and ask the user or make an explicit orchestrator decision before using `bin/subagent.sh restore NAME --force`.
+- `skip-unknown`: state is missing, stale, or unclear. Inspect the state directory manually before deciding.
+
+Use `bin/subagent.sh restore-all` only after reviewing the plan. It restores
+only rows classified as `restore`; it does not revive finalized, blocked,
+already-open, or unknown subagents.
+
 ## Worker Naming
 
 Use clear worker window names:
@@ -107,10 +131,19 @@ bin/subagent.sh spawn subagent-build-watch --instruction "FIRST_INSTRUCTION_TEXT
 bin/subagent.sh list
 bin/subagent.sh poll subagent-build-watch
 bin/subagent.sh inspect subagent-build-watch --lines 160
+bin/subagent.sh recover-plan
+bin/subagent.sh restore subagent-build-watch
+bin/subagent.sh restore-all
 bin/subagent.sh finalize subagent-build-watch
 ```
 
 Use `spawn` for work that may run, watch, or iterate for a while. Use `poll` periodically to refresh `current.txt`, append to `transcript.log`, and classify the subagent. Use `inspect` to read the latest captured output without losing the transcript. Use `finalize` only after you have inspected the final output and recorded the result; finalization captures one last time, marks the subagent finalized, and closes its tmux window unless `--keep-window` is supplied.
+
+Use `recover-plan` after a crash or fresh orchestrator start to classify
+persisted subagents. Use `restore NAME` to open a fresh named tmux window seeded
+with the prior status, state path, and a concise tail of previous
+`current.txt`/`transcript.log` context. `restore-all` only restores conservative
+`restore` rows from the plan.
 
 Use the write policy helper before approving any outside-root write:
 
