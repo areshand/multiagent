@@ -83,7 +83,10 @@ The orchestrator reviews the verifier's findings and gives the verdict. Only
 accepted follow-ups are passed back to the original worker. The worker then
 reports done again, the orchestrator reruns assignment checks, and verification
 may repeat until no accepted follow-up remains or the max iteration cap is
-reached.
+reached. The cap limits accepted worker follow-up cycles after verifier review.
+If the final allowed verifier pass still finds accepted follow-up, the
+orchestrator stops the loop at the cap and explicitly accepts with residual
+risk, rejects the work, or asks the user.
 
 The loop cap is exported by `launch.sh`:
 

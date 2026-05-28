@@ -237,6 +237,20 @@ assert_file_contains "$MOCK_TMUX_LOG" "export MULTIAGENT_RESUME='1'"
 assert_file_contains "$MOCK_TMUX_LOG" "export MULTIAGENT_VERIFIER_MAX_ITERATIONS='5'"
 assert_file_contains "$MOCK_TMUX_LOG" "'resume'"
 
+if MOCK_TMUX_HAS_SESSION=0 \
+  MULTIAGENT_SESSION="launch-invalid-verifier-cap" \
+  MULTIAGENT_ROOT= \
+  MULTIAGENT_PROMPT= \
+  MULTIAGENT_VERIFIER_MAX_ITERATIONS=0 \
+  MULTIAGENT_STATE_DIR="$TMPDIR/launch-invalid-state" \
+  MULTIAGENT_WRITE_POLICY="$TMPDIR/launch-invalid-policy/write-policy.paths" \
+  "$ROOT/launch.sh" --session launch-invalid-verifier-cap --root "$LAUNCH_TARGET" --no-attach >"$TMPDIR/launch-invalid.out" 2>&1; then
+  echo "expected invalid verifier max iterations to fail" >&2
+  cat "$TMPDIR/launch-invalid.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/launch-invalid.out" "MULTIAGENT_VERIFIER_MAX_ITERATIONS must be a positive integer"
+
 EXPLICIT_PROMPT="$TMPDIR/custom-orchestrator-prompt.md"
 printf 'custom prompt\n' >"$EXPLICIT_PROMPT"
 rm -f "$MOCK_TMUX_LOG"
