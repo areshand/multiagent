@@ -37,6 +37,7 @@ Environment:
 - `MULTIAGENT_RESUME`: launch mode exported by `launch.sh`; `0` clean launch, `1` explicit `--resume`
 - `MULTIAGENT_STATE_DIR`: durable subagent state, default `$MULTIAGENT_ROOT/.multiagent`
 - `MULTIAGENT_WRITE_POLICY`: repo write policy, default `$MULTIAGENT_ROOT/docs/write-policy.paths`
+- `MULTIAGENT_VERIFIER_MAX_ITERATIONS`: worker/verifier follow-up loop cap, default `3`
 - `MULTIAGENT_PROMPT`: orchestrator prompt, default `<launcher directory>/orchestrator_prompt.md`
 - `ORCHESTRATOR_CLI`: orchestrator CLI, default `codex`
 - `WORKER_CLI`: worker CLI for manual worker windows, default `codex`
@@ -62,6 +63,44 @@ policy, and the orchestrator CLI working directory. The default orchestrator
 prompt is still loaded from this launcher's directory, so cross-repo launches do
 not need an `orchestrator_prompt.md` in the target repo. Set
 `MULTIAGENT_PROMPT=/path/to/prompt.md` to override that default.
+
+## Verifier Workflow
+
+After a worker reports completion, the orchestrator may spawn one read-only
+verifier window for that assignment, usually named from the worker, such as
+`verifier-01-docs` for `worker-01-docs`. The verifier reviews the finished work
+and reports findings back to the orchestrator only.
+
+The verifier checks:
+
+- correctness gaps
+- quality gaps
+- missing tests or docs
+- whether the task scope is fully satisfied
+- whether there is a simpler approach
+
+The orchestrator reviews the verifier's findings and gives the verdict. Only
+accepted follow-ups are passed back to the original worker. The worker then
+reports done again, the orchestrator reruns assignment checks, and verification
+may repeat until no accepted follow-up remains or the max iteration cap is
+reached.
+
+The loop cap is exported by `launch.sh`:
+
+```bash
+MULTIAGENT_VERIFIER_MAX_ITERATIONS=3
+```
+
+Override it when launching if needed:
+
+```bash
+MULTIAGENT_VERIFIER_MAX_ITERATIONS=2 ./launch.sh
+```
+
+Verifiers are reviewers, not implementers. They should not receive duplicate
+writable ownership over worker-owned files, should not edit or commit code, and
+should not coordinate directly with workers. This preserves orchestrator
+authority over verdicts and prevents worker/verifier ownership conflicts.
 
 ## Repo Write Guardrails
 

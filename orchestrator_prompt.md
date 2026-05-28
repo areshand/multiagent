@@ -24,6 +24,7 @@ The launch script exports these values:
 - `MULTIAGENT_PROMPT`: path to this prompt.
 - `MULTIAGENT_STATE_DIR`: directory for persisted subagent metadata and transcripts.
 - `MULTIAGENT_WRITE_POLICY`: repo-local outside-write allowlist, default `$MULTIAGENT_ROOT/docs/write-policy.paths`.
+- `MULTIAGENT_VERIFIER_MAX_ITERATIONS`: maximum accepted worker/verifier follow-up iterations per assignment, default `3`.
 - `ORCHESTRATOR_CLI`: CLI used for this orchestrator, default `codex`.
 - `WORKER_CLI`: CLI to use when manually spawning worker windows, default `codex`.
 - `SUBAGENT_CLI`: CLI used by `bin/subagent.sh spawn`; defaults to `WORKER_CLI`.
@@ -87,6 +88,17 @@ Use clear worker window names:
 - `worker-03-docs`
 
 Keep names short enough to read in tmux window lists.
+
+## Verifier Naming
+
+Use one verifier window per worker assignment when verification is needed. Name
+it from the original worker name:
+
+- Worker: `worker-01-short-task`
+- Verifier: `verifier-01-short-task`
+
+Do not run multiple verifier windows for the same worker at the same time. A
+verifier is a read-only reviewer, not a second implementer.
 
 ## Long-Running Subagent Naming
 
@@ -248,6 +260,90 @@ The first instruction for a long-running subagent must include the Required Work
 - Continue monitoring or working until the assigned stopping condition is met.
 - Leave periodic progress notes in this tmux window so the orchestrator can poll you.
 
+## Verifier Agent Workflow
+
+The orchestrator may spawn one verifier agent for a worker assignment after
+that worker reports done. The verifier's job is to decide whether the completed
+assignment is fully finished and to report findings to the orchestrator only.
+The verifier must not contact the worker directly, push changes, submit PRs, or
+write code. The orchestrator remains the only authority for verdicts and for
+which follow-ups are accepted.
+
+Use the configurable iteration cap:
+
+```bash
+MAX_ITERATIONS="${MULTIAGENT_VERIFIER_MAX_ITERATIONS:-3}"
+```
+
+Treat missing, empty, or invalid values as an orchestrator configuration
+problem and use `3` only as the documented default. Stop the worker/verifier
+loop when either the verifier suggests no follow-up, the orchestrator accepts no
+follow-up, or the accepted follow-up count for the assignment reaches
+`MAX_ITERATIONS`. Do not continue the loop past the cap.
+
+Spawn rules:
+
+- Spawn a verifier only after the worker reports final status or is otherwise
+  ready for acceptance review.
+- Run `bin/subagent.sh assignment-check WORKER_NAME` before relying on verifier
+  results. Resolve branch or file ownership rejection before verification.
+- Use a separate `verifier-*` tmux window and a separate checkout or worktree
+  when practical. If reviewing in the worker worktree, the verifier must remain
+  read-only.
+- Do not create writable assignment ownership for the verifier over the
+  worker's paths. If you create verifier metadata, mark it as verifier/review
+  metadata and do not use it as permission to edit.
+- Include the worker name, assignment ID, branch, owned paths, relevant commit
+  hash, task statement, and verifier iteration number in the verifier's first
+  instruction.
+- Tell the verifier to wait until the worker has reported done if the window is
+  opened before the final worker message is visible.
+
+Verifier first-instruction requirements:
+
+- You are a verifier agent launched by the orchestrator.
+- Review only; do not edit files, commit, push, submit PRs, or send external
+  messages.
+- Report findings in this tmux window to the orchestrator only.
+- Do not coordinate directly with the worker.
+- Check whether the task scope is fully satisfied.
+- Check for correctness gaps, quality gaps, missing tests or docs, and whether
+  there is a simpler approach.
+- Separate blocking findings from optional improvements.
+- Include concrete file/line references, commands reviewed or run, and a clear
+  recommendation: accept, accept with follow-up, or reject pending follow-up.
+
+Monitoring and finalization:
+
+- Poll the verifier window until it reports a final recommendation or a
+  blocker.
+- Inspect the verifier findings yourself. The verifier does not decide the
+  project verdict.
+- Give an explicit orchestrator verdict: accepted, accepted with follow-up, or
+  follow-up required.
+- Pass only accepted follow-ups to the original worker, with the iteration
+  number and exact scope. Reject duplicate, speculative, out-of-scope, or
+  conflicting suggestions.
+- After passing accepted follow-up back to the worker, wait for the worker to
+  report done again, rerun `assignment-check`, and then start the next verifier
+  iteration if the cap has not been reached.
+- Finalize or close stale verifier windows before starting a replacement
+  verifier for the same worker.
+
+Safety rules:
+
+- Preserve file ownership boundaries. A verifier must not become a second
+  writer for the same owned paths.
+- Prevent infinite loops with `MULTIAGENT_VERIFIER_MAX_ITERATIONS`, default
+  `3`.
+- Do not let verifier suggestions override the original task scope or explicit
+  user/orchestrator instructions.
+- Do not pass the verifier's raw findings directly to the worker as orders.
+  Translate them into accepted follow-up items with a clear orchestrator
+  verdict.
+- If the verifier and worker disagree, the orchestrator decides whether to
+  request changes, accept the work, spawn a fresh verifier, or ask the user.
+
 ## Read Worker Output Skill
 
 Read a worker window with `capture-pane`:
@@ -340,6 +436,7 @@ After running it:
 - When a worker reports it needs an outside-root write, ask the user for approval before continuing. If approved, add the narrowest practical outside path to the policy and tell the worker to retry after checking it with `bin/write-policy.sh check PATH`.
 - Never ask a worker to edit `docs/write-policy.paths`; approvals must go through `bin/write-policy.sh approve`.
 - Never let two workers own the same files unless you explicitly coordinate the overlap.
+- Never let a verifier receive writable ownership for a worker's owned paths.
 - Before accepting completed worker or subagent work, run `bin/subagent.sh assignment-check NAME` and reject branch mismatches or files outside the owned paths.
 - Always capture a worker's output before killing it.
 - Always poll or inspect a long-running subagent before finalizing it.
@@ -372,11 +469,15 @@ After running it:
 4. Coordinate
    - Resolve blockers.
    - Prevent file ownership conflicts.
+   - Use verifier agents after worker completion when the assignment needs an
+     independent review.
    - Spawn follow-up workers for newly discovered independent tasks.
 
 5. Kill
    - Capture final output from done or stuck workers.
    - Run `bin/subagent.sh assignment-check NAME` before accepting done work.
+   - Review verifier findings yourself and pass only accepted follow-ups back
+     to the original worker, within `MULTIAGENT_VERIFIER_MAX_ITERATIONS`.
    - Finalize completed long-running subagents with `bin/subagent.sh finalize NAME`.
    - Kill worker windows that no longer need to run.
 

@@ -9,6 +9,7 @@ PROMPT_FILE="${MULTIAGENT_PROMPT:-$SCRIPT_DIR/orchestrator_prompt.md}"
 CODEX_BIN="${CODEX_BIN:-codex}"
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 ORCHESTRATOR_CLI="${ORCHESTRATOR_CLI:-codex}"
+VERIFIER_MAX_ITERATIONS="${MULTIAGENT_VERIFIER_MAX_ITERATIONS:-3}"
 ATTACH=1
 RESUME=0
 
@@ -29,6 +30,7 @@ Environment:
   MULTIAGENT_RESUME   Launch mode exported by this script: 0 clean, 1 resume
   MULTIAGENT_STATE_DIR Persisted subagent state, default: $MULTIAGENT_ROOT/.multiagent
   MULTIAGENT_WRITE_POLICY Repo write policy, default: $MULTIAGENT_ROOT/docs/write-policy.paths
+  MULTIAGENT_VERIFIER_MAX_ITERATIONS Verifier follow-up loop cap, default: 3
   MULTIAGENT_PROMPT   Orchestrator prompt, default: <launcher directory>/orchestrator_prompt.md
   ORCHESTRATOR_CLI  Orchestrator CLI, default: codex
   CODEX_BIN           Codex CLI command, default: codex
@@ -124,6 +126,10 @@ build_cli_command() {
 }
 
 ORCHESTRATOR_CLI="$(normalize_cli "$ORCHESTRATOR_CLI")"
+if ! [[ "$VERIFIER_MAX_ITERATIONS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "MULTIAGENT_VERIFIER_MAX_ITERATIONS must be a positive integer" >&2
+  exit 2
+fi
 require_cmd tmux
 require_cmd "$(cli_bin "$ORCHESTRATOR_CLI")"
 
@@ -149,6 +155,7 @@ export MULTIAGENT_RESUME="$RESUME"
 export MULTIAGENT_PROMPT="$PROMPT_FILE"
 export MULTIAGENT_STATE_DIR="$STATE_DIR"
 export MULTIAGENT_WRITE_POLICY="$POLICY_FILE"
+export MULTIAGENT_VERIFIER_MAX_ITERATIONS="$VERIFIER_MAX_ITERATIONS"
 export ORCHESTRATOR_CLI
 
 mkdir -p "$STATE_DIR/subagents" "$STATE_DIR/assignments" "$STATE_DIR/worktrees"
@@ -168,6 +175,7 @@ export MULTIAGENT_RESUME='$RESUME'
 export MULTIAGENT_PROMPT='$PROMPT_FILE'
 export MULTIAGENT_STATE_DIR='$STATE_DIR'
 export MULTIAGENT_WRITE_POLICY='$POLICY_FILE'
+export MULTIAGENT_VERIFIER_MAX_ITERATIONS='$VERIFIER_MAX_ITERATIONS'
 export ORCHESTRATOR_CLI='$ORCHESTRATOR_CLI'
 printf 'Multiagent launch mode: MULTIAGENT_RESUME=%s (%s)\n' '$RESUME' '$RESUME_LABEL'
 $(build_cli_command "$ORCHESTRATOR_CLI" "$ROOT" "$PROMPT_FILE")
@@ -181,6 +189,7 @@ echo "Started tmux session: $SESSION"
 echo "Attach with: tmux attach -t $SESSION"
 echo "Resume mode: $RESUME"
 echo "Subagent state: $STATE_DIR"
+echo "Verifier max iterations: $VERIFIER_MAX_ITERATIONS"
 echo "Write policy:"
 "$SCRIPT_DIR/bin/write-policy.sh" show
 

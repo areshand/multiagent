@@ -208,9 +208,11 @@ MOCK_TMUX_HAS_SESSION=0 \
   "$ROOT/launch.sh" --session launch-cross-repo --root "$LAUNCH_TARGET" --no-attach >"$TMPDIR/launch.out"
 assert_file_contains "$TMPDIR/launch.out" "Started tmux session: launch-cross-repo"
 assert_file_contains "$TMPDIR/launch.out" "Resume mode: 0"
+assert_file_contains "$TMPDIR/launch.out" "Verifier max iterations: 3"
 assert_file_contains "$TMPDIR/launch.out" "Default write root: $LAUNCH_TARGET"
 assert_file_contains "$MOCK_TMUX_LOG" "--cd $LAUNCH_TARGET"
 assert_file_contains "$MOCK_TMUX_LOG" "export MULTIAGENT_RESUME='0'"
+assert_file_contains "$MOCK_TMUX_LOG" "export MULTIAGENT_VERIFIER_MAX_ITERATIONS='3'"
 assert_file_contains "$MOCK_TMUX_LOG" "Multiagent launch mode: MULTIAGENT_RESUME=%s (%s)"
 assert_file_contains "$MOCK_TMUX_LOG" "$(printf '%q' "$ROOT/orchestrator_prompt.md")"
 if grep -Fq "$LAUNCH_TARGET/orchestrator_prompt.md" "$MOCK_TMUX_LOG" "$TMPDIR/launch.out"; then
@@ -225,11 +227,14 @@ MOCK_TMUX_HAS_SESSION=0 \
   MULTIAGENT_SESSION="launch-resume" \
   MULTIAGENT_ROOT= \
   MULTIAGENT_PROMPT= \
+  MULTIAGENT_VERIFIER_MAX_ITERATIONS=5 \
   MULTIAGENT_STATE_DIR="$TMPDIR/launch-resume-state" \
   MULTIAGENT_WRITE_POLICY="$TMPDIR/launch-resume-policy/write-policy.paths" \
   "$ROOT/launch.sh" --session launch-resume --root "$LAUNCH_TARGET" --resume --no-attach >"$TMPDIR/launch-resume.out"
 assert_file_contains "$TMPDIR/launch-resume.out" "Resume mode: 1"
+assert_file_contains "$TMPDIR/launch-resume.out" "Verifier max iterations: 5"
 assert_file_contains "$MOCK_TMUX_LOG" "export MULTIAGENT_RESUME='1'"
+assert_file_contains "$MOCK_TMUX_LOG" "export MULTIAGENT_VERIFIER_MAX_ITERATIONS='5'"
 assert_file_contains "$MOCK_TMUX_LOG" "'resume'"
 
 EXPLICIT_PROMPT="$TMPDIR/custom-orchestrator-prompt.md"
@@ -246,8 +251,12 @@ assert_file_contains "$MOCK_TMUX_LOG" "$(printf '%q' "$EXPLICIT_PROMPT")"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "Do not inspect recovery state"
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'When `MULTIAGENT_RESUME=1`'
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'Only in that mode'
+assert_file_contains "$ROOT/orchestrator_prompt.md" 'MULTIAGENT_VERIFIER_MAX_ITERATIONS'
+assert_file_contains "$ROOT/orchestrator_prompt.md" 'verifier suggests no follow-up'
 assert_file_contains "$ROOT/README.md" "Launches are clean by default"
 assert_file_contains "$ROOT/README.md" "./launch.sh --resume"
+assert_file_contains "$ROOT/README.md" "Verifier Workflow"
+assert_file_contains "$ROOT/README.md" "MULTIAGENT_VERIFIER_MAX_ITERATIONS=3"
 
 policy_check_inside="$("$ROOT/bin/write-policy.sh" check "$ROOT/README.md")"
 [[ "$policy_check_inside" == $'allowed\t'"$ROOT/README.md" ]]
