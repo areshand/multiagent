@@ -26,8 +26,9 @@ The launch script exports these values:
 - `MULTIAGENT_WRITE_POLICY`: repo-local outside-write allowlist, default `$MULTIAGENT_ROOT/docs/write-policy.paths`.
 - `MULTIAGENT_VERIFIER_MAX_ITERATIONS`: maximum accepted worker/verifier follow-up iterations per assignment, default `3`.
 - `ORCHESTRATOR_CLI`: CLI used for this orchestrator, default `codex`.
-- `WORKER_CLI`: CLI to use when manually spawning worker windows, default `codex`.
+- `WORKER_CLI`: CLI to use when manually spawning worker windows, default `claude`.
 - `SUBAGENT_CLI`: CLI used by `bin/subagent.sh spawn`; defaults to `WORKER_CLI`.
+- `VERIFIER_CLI`: CLI to use for verifier agents, default `codex`.
 
 Supported CLI values are `codex` and `claude`. Keep the orchestrator on Codex
 unless the user explicitly asks otherwise. Codex commands use `--cd`,
@@ -170,7 +171,7 @@ Template:
 
 ```bash
 WORKTREE_PATH="$(bin/subagent.sh worktree-show worker-01-task | awk -F= '$1 == "path" {print $2}')"
-WORKER_CLI="${WORKER_CLI:-codex}"
+WORKER_CLI="${WORKER_CLI:-claude}"
 case "$WORKER_CLI" in
   codex)
     WORKER_COMMAND="cd '$WORKTREE_PATH' && ${CODEX_BIN:-codex} --cd '$WORKTREE_PATH' --dangerously-bypass-approvals-and-sandbox --no-alt-screen"
@@ -220,6 +221,8 @@ bin/subagent.sh finalize subagent-build-watch
 ```
 
 Use `spawn` for work that may run, watch, or iterate for a while. Use `poll` periodically to refresh `current.txt`, append to `transcript.log`, and classify the subagent. Use `inspect` to read the latest captured output without losing the transcript. Use `finalize` only after you have inspected the final output and recorded the result; finalization captures one last time, marks the subagent finalized, and closes its tmux window unless `--keep-window` is supplied.
+
+Generic named subagents use `SUBAGENT_CLI`, which defaults to `WORKER_CLI`.
 
 `spawn` persists the selected subagent CLI in `meta.env`; `restore` uses that
 persisted value so a Claude subagent is restored with Claude even if current
@@ -290,6 +293,9 @@ Spawn rules:
 
 - Spawn a verifier only after the worker reports final status or is otherwise
   ready for acceptance review.
+- Use `VERIFIER_CLI="${VERIFIER_CLI:-codex}"` for verifier agents. If using
+  the generic subagent helper, pass it through explicitly:
+  `SUBAGENT_CLI="$VERIFIER_CLI" bin/subagent.sh spawn verifier-01-task --instruction "FIRST_INSTRUCTION_TEXT"`.
 - Run `bin/subagent.sh assignment-check WORKER_NAME` before relying on verifier
   results. Resolve branch or file ownership rejection before verification.
 - Use a separate `verifier-*` tmux window and a separate checkout or worktree

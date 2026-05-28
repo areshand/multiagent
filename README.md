@@ -40,17 +40,18 @@ Environment:
 - `MULTIAGENT_VERIFIER_MAX_ITERATIONS`: worker/verifier follow-up loop cap, default `3`
 - `MULTIAGENT_PROMPT`: orchestrator prompt, default `<launcher directory>/orchestrator_prompt.md`
 - `ORCHESTRATOR_CLI`: orchestrator CLI, default `codex`
-- `WORKER_CLI`: worker CLI for manual worker windows, default `codex`
+- `WORKER_CLI`: worker CLI for manual worker windows, default `claude`
 - `SUBAGENT_CLI`: named subagent CLI, default `$WORKER_CLI`
+- `VERIFIER_CLI`: verifier CLI, default `codex`
 - `CODEX_BIN`: Codex CLI command, default `codex`
 - `CLAUDE_BIN`: Claude CLI command, default `claude`
 
-The default setup preserves the original all-Codex behavior. To keep the
-orchestrator on Codex while using Claude for workers and long-running
-subagents:
+The default setup keeps the orchestrator on Codex, uses Claude for workers and
+generic named subagents, and uses Codex for verifier agents. To use Codex for
+workers and generic named subagents too:
 
 ```bash
-ORCHESTRATOR_CLI=codex WORKER_CLI=claude SUBAGENT_CLI=claude ./launch.sh
+ORCHESTRATOR_CLI=codex WORKER_CLI=codex SUBAGENT_CLI=codex ./launch.sh
 ```
 
 Codex launches with `--cd`, `--dangerously-bypass-approvals-and-sandbox`, and
@@ -98,6 +99,14 @@ Override it when launching if needed:
 
 ```bash
 MULTIAGENT_VERIFIER_MAX_ITERATIONS=2 ./launch.sh
+```
+
+Verifier agents use `VERIFIER_CLI`, which defaults to Codex. There is no
+dedicated verifier spawn helper; when using the generic subagent helper, pass
+the verifier CLI explicitly:
+
+```bash
+SUBAGENT_CLI="${VERIFIER_CLI:-codex}" bin/subagent.sh spawn verifier-01-docs --instruction "Review worker-01-docs."
 ```
 
 Verifiers are reviewers, not implementers. They should not receive duplicate
@@ -183,8 +192,8 @@ Worktrees are optional for compatibility, but recommended for worker isolation.
 `$MULTIAGENT_STATE_DIR/worktrees/NAME.env`. Use `worktree-show NAME` to inspect
 the assigned checkout and `worktree-remove NAME` after the worker is finalized.
 When you spawn manually, start the worker from the recorded worktree path.
-For a Claude worker, set `WORKER_CLI=claude` and run the window from the
-worktree without Codex-only flags:
+Workers default to Claude, so run the window from the worktree without
+Codex-only flags:
 
 ```bash
 WORKTREE_PATH="$(bin/subagent.sh worktree-show worker-01-docs | awk -F= '$1 == "path" {print $2}')"

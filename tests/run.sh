@@ -169,11 +169,12 @@ export MULTIAGENT_READY_DELAY=0
 export CODEX_BIN="true"
 export CLAUDE_BIN="true"
 export ORCHESTRATOR_CLI="codex"
-export WORKER_CLI="codex"
-export SUBAGENT_CLI="codex"
+export WORKER_CLI="claude"
+export SUBAGENT_CLI="claude"
+export VERIFIER_CLI="codex"
 
 printf 'orchestrator\n' >"$MOCK_TMUX_WINDOWS"
-printf 'Codex prompt ready\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"
+printf 'Claude prompt ready\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"
 printf 'Worker progress: editing README\n' >"$MOCK_TMUX_CAPTURES/worker-01-docs.txt"
 
 assert_file_contains() {
@@ -199,7 +200,8 @@ LAUNCH_STATE="$TMPDIR/launch-state"
 LAUNCH_POLICY="$TMPDIR/launch-policy/write-policy.paths"
 mkdir -p "$LAUNCH_TARGET"
 rm -f "$MOCK_TMUX_LOG"
-MOCK_TMUX_HAS_SESSION=0 \
+env -u WORKER_CLI -u SUBAGENT_CLI -u VERIFIER_CLI \
+  MOCK_TMUX_HAS_SESSION=0 \
   MULTIAGENT_SESSION="launch-cross-repo" \
   MULTIAGENT_ROOT= \
   MULTIAGENT_PROMPT= \
@@ -209,10 +211,16 @@ MOCK_TMUX_HAS_SESSION=0 \
 assert_file_contains "$TMPDIR/launch.out" "Started tmux session: launch-cross-repo"
 assert_file_contains "$TMPDIR/launch.out" "Resume mode: 0"
 assert_file_contains "$TMPDIR/launch.out" "Verifier max iterations: 3"
+assert_file_contains "$TMPDIR/launch.out" "Worker CLI: claude"
+assert_file_contains "$TMPDIR/launch.out" "Subagent CLI: claude"
+assert_file_contains "$TMPDIR/launch.out" "Verifier CLI: codex"
 assert_file_contains "$TMPDIR/launch.out" "Default write root: $LAUNCH_TARGET"
 assert_file_contains "$MOCK_TMUX_LOG" "--cd $LAUNCH_TARGET"
 assert_file_contains "$MOCK_TMUX_LOG" "export MULTIAGENT_RESUME='0'"
 assert_file_contains "$MOCK_TMUX_LOG" "export MULTIAGENT_VERIFIER_MAX_ITERATIONS='3'"
+assert_file_contains "$MOCK_TMUX_LOG" "export WORKER_CLI='claude'"
+assert_file_contains "$MOCK_TMUX_LOG" "export SUBAGENT_CLI='claude'"
+assert_file_contains "$MOCK_TMUX_LOG" "export VERIFIER_CLI='codex'"
 assert_file_contains "$MOCK_TMUX_LOG" "Multiagent launch mode: MULTIAGENT_RESUME=%s (%s)"
 assert_file_contains "$MOCK_TMUX_LOG" "$(printf '%q' "$ROOT/orchestrator_prompt.md")"
 if grep -Fq "$LAUNCH_TARGET/orchestrator_prompt.md" "$MOCK_TMUX_LOG" "$TMPDIR/launch.out"; then
@@ -233,6 +241,8 @@ MOCK_TMUX_HAS_SESSION=0 \
   "$ROOT/launch.sh" --session launch-resume --root "$LAUNCH_TARGET" --resume --no-attach >"$TMPDIR/launch-resume.out"
 assert_file_contains "$TMPDIR/launch-resume.out" "Resume mode: 1"
 assert_file_contains "$TMPDIR/launch-resume.out" "Verifier max iterations: 5"
+assert_file_contains "$TMPDIR/launch-resume.out" "Worker CLI: claude"
+assert_file_contains "$TMPDIR/launch-resume.out" "Verifier CLI: codex"
 assert_file_contains "$MOCK_TMUX_LOG" "export MULTIAGENT_RESUME='1'"
 assert_file_contains "$MOCK_TMUX_LOG" "export MULTIAGENT_VERIFIER_MAX_ITERATIONS='5'"
 assert_file_contains "$MOCK_TMUX_LOG" "'resume'"
@@ -267,10 +277,14 @@ assert_file_contains "$ROOT/orchestrator_prompt.md" 'When `MULTIAGENT_RESUME=1`'
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'Only in that mode'
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'MULTIAGENT_VERIFIER_MAX_ITERATIONS'
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'verifier suggests no follow-up'
+assert_file_contains "$ROOT/orchestrator_prompt.md" 'WORKER_CLI="${WORKER_CLI:-claude}"'
+assert_file_contains "$ROOT/orchestrator_prompt.md" 'SUBAGENT_CLI="$VERIFIER_CLI" bin/subagent.sh spawn'
 assert_file_contains "$ROOT/README.md" "Launches are clean by default"
 assert_file_contains "$ROOT/README.md" "./launch.sh --resume"
 assert_file_contains "$ROOT/README.md" "Verifier Workflow"
 assert_file_contains "$ROOT/README.md" "MULTIAGENT_VERIFIER_MAX_ITERATIONS=3"
+assert_file_contains "$ROOT/README.md" 'WORKER_CLI`: worker CLI for manual worker windows, default `claude`'
+assert_file_contains "$ROOT/README.md" 'VERIFIER_CLI`: verifier CLI, default `codex`'
 
 policy_check_inside="$("$ROOT/bin/write-policy.sh" check "$ROOT/README.md")"
 [[ "$policy_check_inside" == $'allowed\t'"$ROOT/README.md" ]]
@@ -330,8 +344,9 @@ assignment_create_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR=
 [[ "$assignment_create_output" == $'assignment created\tworker-docs\tdocs-001\tworker/docs' ]]
 assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/assignment.env" "assignment_id=docs-001"
 assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/assignment.env" "branch=worker/docs"
-assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/assignment.env" "worker_cli=codex"
-assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/assignment.env" "subagent_cli=codex"
+assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/assignment.env" "worker_cli=claude"
+assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/assignment.env" "subagent_cli=claude"
+assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/assignment.env" "verifier_cli=codex"
 assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/status" "assigned"
 assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/owned-paths" "README.md"
 assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/owned-paths" "src"
@@ -399,15 +414,28 @@ printf 'Done and finished, but this is fallback context only\n' >"$MULTIAGENT_ST
 "$ROOT/bin/subagent.sh" spawn subagent-watch --instruction "Watch builds"
 assert_file_contains "$MOCK_TMUX_WINDOWS" "subagent-watch"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/status" "running"
-assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/current.txt" "Codex prompt ready"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/current.txt" "Claude prompt ready"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/meta.env" "write_policy=$MULTIAGENT_WRITE_POLICY"
-assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/meta.env" "cli=codex"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/meta.env" "cli=claude"
 assert_file_contains "$MOCK_TMUX_LOG" "new-window -d test-session subagent-watch"
-assert_file_contains "$MOCK_TMUX_LOG" "--cd $ROOT"
-assert_file_contains "$MOCK_TMUX_LOG" "--dangerously-bypass-approvals-and-sandbox --no-alt-screen"
+watch_spawn_line="$(grep -F "new-window -d test-session subagent-watch " "$MOCK_TMUX_LOG")"
+[[ "$watch_spawn_line" == *"--dangerously-skip-permissions"* ]]
+if [[ "$watch_spawn_line" == *"--cd"* || "$watch_spawn_line" == *"--no-alt-screen"* ]]; then
+  echo "expected default subagent command to follow WORKER_CLI=claude without Codex-only flags" >&2
+  echo "$watch_spawn_line" >&2
+  exit 1
+fi
 assert_file_contains "$MOCK_TMUX_LOG" "send-key test-session:subagent-watch Watch builds"
 
-printf 'Login required before Codex can start\n' >"$MOCK_TMUX_CAPTURES/subagent-auth.txt"
+printf 'Codex prompt ready\n' >"$MOCK_TMUX_CAPTURES/verifier-01-docs.txt"
+SUBAGENT_CLI="$VERIFIER_CLI" "$ROOT/bin/subagent.sh" spawn verifier-01-docs --instruction "Review worker-01-docs"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-01-docs/meta.env" "cli=codex"
+assert_file_contains "$MOCK_TMUX_LOG" "send-key test-session:verifier-01-docs Review worker-01-docs"
+verifier_spawn_line="$(grep -F "new-window -d test-session verifier-01-docs " "$MOCK_TMUX_LOG")"
+[[ "$verifier_spawn_line" == *"--cd $ROOT"* ]]
+[[ "$verifier_spawn_line" == *"--dangerously-bypass-approvals-and-sandbox --no-alt-screen"* ]]
+
+printf 'Login required before Claude can start\n' >"$MOCK_TMUX_CAPTURES/subagent-auth.txt"
 if "$ROOT/bin/subagent.sh" spawn subagent-auth --instruction "Should not send" >"$TMPDIR/auth-spawn.out" 2>&1; then
   echo "expected spawn to stop when the subagent is not ready" >&2
   cat "$TMPDIR/auth-spawn.out" >&2

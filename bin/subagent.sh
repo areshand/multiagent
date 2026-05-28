@@ -7,8 +7,9 @@ STATE_DIR="${MULTIAGENT_STATE_DIR:-$ROOT/.multiagent}"
 POLICY_FILE="${MULTIAGENT_WRITE_POLICY:-$ROOT/docs/write-policy.paths}"
 CODEX_BIN="${CODEX_BIN:-codex}"
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
-WORKER_CLI="${WORKER_CLI:-codex}"
+WORKER_CLI="${WORKER_CLI:-claude}"
 SUBAGENT_CLI="${SUBAGENT_CLI:-$WORKER_CLI}"
+VERIFIER_CLI="${VERIFIER_CLI:-codex}"
 
 usage() {
   cat <<'USAGE'
@@ -40,7 +41,9 @@ $MULTIAGENT_ROOT/docs/write-policy.paths. They are expected to check planned
 writes with bin/write-policy.sh before writing outside $MULTIAGENT_ROOT.
 
 CLI selection:
-  WORKER_CLI defaults to codex. SUBAGENT_CLI defaults to WORKER_CLI.
+  WORKER_CLI defaults to claude. SUBAGENT_CLI defaults to WORKER_CLI.
+  VERIFIER_CLI defaults to codex; pass SUBAGENT_CLI="$VERIFIER_CLI" when
+  using generic subagent spawning for verifier windows.
   Supported values are codex and claude. Codex uses --cd,
   --dangerously-bypass-approvals-and-sandbox, and --no-alt-screen. Claude uses
   --dangerously-skip-permissions from the target directory.
@@ -150,6 +153,7 @@ default_worktree_path() {
 
 WORKER_CLI="$(normalize_cli "$WORKER_CLI")"
 SUBAGENT_CLI="$(normalize_cli "$SUBAGENT_CLI")"
+VERIFIER_CLI="$(normalize_cli "$VERIFIER_CLI")"
 
 set_status() {
   local name="$1"
@@ -325,6 +329,7 @@ created_at=$(timestamp)
 root=$ROOT
 worker_cli=$WORKER_CLI
 subagent_cli=$SUBAGENT_CLI
+verifier_cli=$VERIFIER_CLI
 EOF
   set_assignment_status "$name" "$status"
   printf 'assignment created\t%s\t%s\t%s\n' "$name" "$assignment_id" "$branch"
@@ -716,8 +721,8 @@ EOF
   set_status "$name" "starting"
 
   local command
-  printf -v command "cd %q && export MULTIAGENT_SESSION=%q MULTIAGENT_ROOT=%q MULTIAGENT_STATE_DIR=%q MULTIAGENT_WRITE_POLICY=%q MULTIAGENT_SUBAGENT_NAME=%q SUBAGENT_CLI=%q && %s" \
-    "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$POLICY_FILE" "$name" "$cli" "$(build_cli_command "$cli" "$ROOT")"
+  printf -v command "cd %q && export MULTIAGENT_SESSION=%q MULTIAGENT_ROOT=%q MULTIAGENT_STATE_DIR=%q MULTIAGENT_WRITE_POLICY=%q MULTIAGENT_SUBAGENT_NAME=%q WORKER_CLI=%q SUBAGENT_CLI=%q VERIFIER_CLI=%q && %s" \
+    "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$POLICY_FILE" "$name" "$WORKER_CLI" "$cli" "$VERIFIER_CLI" "$(build_cli_command "$cli" "$ROOT")"
   tmux new-window -d -t "$SESSION" -n "$name" "$command"
   set_status "$name" "running"
 
@@ -970,8 +975,8 @@ restore_subagent() {
   } >>"$dir/transcript.log"
   set_status "$name" "restoring"
 
-  printf -v command "cd %q && export MULTIAGENT_SESSION=%q MULTIAGENT_ROOT=%q MULTIAGENT_STATE_DIR=%q MULTIAGENT_WRITE_POLICY=%q MULTIAGENT_SUBAGENT_NAME=%q MULTIAGENT_SUBAGENT_RESTORED=1 SUBAGENT_CLI=%q && %s" \
-    "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$POLICY_FILE" "$name" "$cli" "$(build_cli_command "$cli" "$ROOT")"
+  printf -v command "cd %q && export MULTIAGENT_SESSION=%q MULTIAGENT_ROOT=%q MULTIAGENT_STATE_DIR=%q MULTIAGENT_WRITE_POLICY=%q MULTIAGENT_SUBAGENT_NAME=%q MULTIAGENT_SUBAGENT_RESTORED=1 WORKER_CLI=%q SUBAGENT_CLI=%q VERIFIER_CLI=%q && %s" \
+    "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$POLICY_FILE" "$name" "$WORKER_CLI" "$cli" "$VERIFIER_CLI" "$(build_cli_command "$cli" "$ROOT")"
   tmux new-window -d -t "$SESSION" -n "$name" "$command"
   set_status "$name" "running"
   deliver_instruction "$name" "$instruction"

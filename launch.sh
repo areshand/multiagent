@@ -9,6 +9,9 @@ PROMPT_FILE="${MULTIAGENT_PROMPT:-$SCRIPT_DIR/orchestrator_prompt.md}"
 CODEX_BIN="${CODEX_BIN:-codex}"
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 ORCHESTRATOR_CLI="${ORCHESTRATOR_CLI:-codex}"
+WORKER_CLI="${WORKER_CLI:-claude}"
+SUBAGENT_CLI="${SUBAGENT_CLI:-$WORKER_CLI}"
+VERIFIER_CLI="${VERIFIER_CLI:-codex}"
 VERIFIER_MAX_ITERATIONS="${MULTIAGENT_VERIFIER_MAX_ITERATIONS:-3}"
 ATTACH=1
 RESUME=0
@@ -33,6 +36,9 @@ Environment:
   MULTIAGENT_VERIFIER_MAX_ITERATIONS Verifier follow-up loop cap, default: 3
   MULTIAGENT_PROMPT   Orchestrator prompt, default: <launcher directory>/orchestrator_prompt.md
   ORCHESTRATOR_CLI  Orchestrator CLI, default: codex
+  WORKER_CLI        Worker CLI, default: claude
+  SUBAGENT_CLI      Named subagent CLI, default: $WORKER_CLI
+  VERIFIER_CLI      Verifier CLI, default: codex
   CODEX_BIN           Codex CLI command, default: codex
   CLAUDE_BIN          Claude CLI command, default: claude
 USAGE
@@ -126,6 +132,9 @@ build_cli_command() {
 }
 
 ORCHESTRATOR_CLI="$(normalize_cli "$ORCHESTRATOR_CLI")"
+WORKER_CLI="$(normalize_cli "$WORKER_CLI")"
+SUBAGENT_CLI="$(normalize_cli "$SUBAGENT_CLI")"
+VERIFIER_CLI="$(normalize_cli "$VERIFIER_CLI")"
 if ! [[ "$VERIFIER_MAX_ITERATIONS" =~ ^[1-9][0-9]*$ ]]; then
   echo "MULTIAGENT_VERIFIER_MAX_ITERATIONS must be a positive integer" >&2
   exit 2
@@ -157,6 +166,9 @@ export MULTIAGENT_STATE_DIR="$STATE_DIR"
 export MULTIAGENT_WRITE_POLICY="$POLICY_FILE"
 export MULTIAGENT_VERIFIER_MAX_ITERATIONS="$VERIFIER_MAX_ITERATIONS"
 export ORCHESTRATOR_CLI
+export WORKER_CLI
+export SUBAGENT_CLI
+export VERIFIER_CLI
 
 mkdir -p "$STATE_DIR/subagents" "$STATE_DIR/assignments" "$STATE_DIR/worktrees"
 "$SCRIPT_DIR/bin/write-policy.sh" init
@@ -177,6 +189,9 @@ export MULTIAGENT_STATE_DIR='$STATE_DIR'
 export MULTIAGENT_WRITE_POLICY='$POLICY_FILE'
 export MULTIAGENT_VERIFIER_MAX_ITERATIONS='$VERIFIER_MAX_ITERATIONS'
 export ORCHESTRATOR_CLI='$ORCHESTRATOR_CLI'
+export WORKER_CLI='$WORKER_CLI'
+export SUBAGENT_CLI='$SUBAGENT_CLI'
+export VERIFIER_CLI='$VERIFIER_CLI'
 printf 'Multiagent launch mode: MULTIAGENT_RESUME=%s (%s)\n' '$RESUME' '$RESUME_LABEL'
 $(build_cli_command "$ORCHESTRATOR_CLI" "$ROOT" "$PROMPT_FILE")
 EOF
@@ -190,6 +205,9 @@ echo "Attach with: tmux attach -t $SESSION"
 echo "Resume mode: $RESUME"
 echo "Subagent state: $STATE_DIR"
 echo "Verifier max iterations: $VERIFIER_MAX_ITERATIONS"
+echo "Worker CLI: $WORKER_CLI"
+echo "Subagent CLI: $SUBAGENT_CLI"
+echo "Verifier CLI: $VERIFIER_CLI"
 echo "Write policy:"
 "$SCRIPT_DIR/bin/write-policy.sh" show
 
