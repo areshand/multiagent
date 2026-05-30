@@ -926,7 +926,7 @@ DAG_SUBAGENT_ASSIGN_OUTPUT="$(MULTIAGENT_ROOT="$DAG_ASSIGN_REPO" MULTIAGENT_STAT
 
 status_dag_output="$(cd "$ROOT" && MULTIAGENT_ROOT="$DAG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$DAG_ASSIGN_STATE" bin/status.sh)"
 [[ "$status_dag_output" == *$'TYPE\tNAME\tSTATUS\tWINDOW\tLAST_PROGRESS\tSTATE_DIR\tROLE\tDECISION_ID\tPLAN_ID\tWORKFLOW_ID\tNODE_ID'* ]]
-[[ "$status_dag_output" == *$'subagent\tsubagent-dag-test\trunning\tclosed\tTesting DAG metadata in subagents\t'"$DAG_ASSIGN_STATE/subagents/subagent-dag-test"$'\tverifier\t\t\tWF-002\tNODE-X'* ]]
+[[ "$status_dag_output" == *$'subagent\tsubagent-dag-test\trunning\tclosed\tTesting DAG metadata in subagents\t'"$DAG_ASSIGN_STATE/subagents/subagent-dag-test"$'\tverifier\t-\t-\tWF-002\tNODE-X'* ]]
 
 # Test documentation consistency - ensure docs do not reference unsupported DAG commands
 if grep -Fq "dag.sh update-status" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
