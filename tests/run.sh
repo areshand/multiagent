@@ -793,11 +793,24 @@ node_b_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-no
 [[ "$node_b_output" == $'node added\tWF-001\tNODE-B\tworker-b' ]]
 
 # Test bin/dag.sh ready - node A should be ready, node B should not
+# Also test that ready emits only node IDs, one per line, with no READY_NODES header
 ready_initial_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" ready WF-001)"
 [[ "$ready_initial_output" == *"NODE-A"* ]]
 if [[ "$ready_initial_output" == *"NODE-B"* ]]; then
   echo "expected NODE-B to not be ready before NODE-A is done" >&2
   echo "$ready_initial_output" >&2
+  exit 1
+fi
+# Verify no header is present
+if [[ "$ready_initial_output" == *"READY_NODES"* ]]; then
+  echo "expected ready output to have no READY_NODES header" >&2
+  echo "$ready_initial_output" >&2
+  exit 1
+fi
+# Verify output is just node IDs, one per line
+if [[ "$ready_initial_output" != "NODE-A" ]]; then
+  echo "expected ready output to be just node ID with no extra content" >&2
+  echo "Got: '$ready_initial_output'" >&2
   exit 1
 fi
 
@@ -830,6 +843,25 @@ MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" status WF-001 NODE-D sk
 ready_after_skip_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" ready WF-001)"
 [[ "$ready_after_skip_output" == *"NODE-E"* ]]
 
+# Test explicitly marked ready nodes
+MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-001 NODE-F --agent worker-f --assignment-id assign-f --role qa --branch worker/f --owned file-f.txt
+
+# Mark NODE-F as explicitly ready
+MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" status WF-001 NODE-F ready --reason "manually marked ready"
+
+# NODE-F should appear in ready output even though it was explicitly marked ready
+ready_explicit_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" ready WF-001)"
+[[ "$ready_explicit_output" == *"NODE-F"* ]]
+
+# Mark NODE-F as running and verify it no longer appears in ready output
+MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" status WF-001 NODE-F running --reason "started execution"
+ready_after_running_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" ready WF-001)"
+if [[ "$ready_after_running_output" == *"NODE-F"* ]]; then
+  echo "expected NODE-F to not appear in ready output when marked running" >&2
+  echo "$ready_after_running_output" >&2
+  exit 1
+fi
+
 # Test duplicate workflow rejection
 if MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" init WF-001 --title "Duplicate" >"$TMPDIR/duplicate-workflow.out" 2>&1; then
   echo "expected duplicate workflow to fail" >&2
@@ -861,6 +893,24 @@ if MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" status WF-001 NODE-A
   exit 1
 fi
 assert_file_contains "$TMPDIR/invalid-status.out" "invalid status: invalid-status"
+
+# Test role validation - invalid roles should be rejected
+if MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-001 NODE-INVALID-ROLE --agent worker-invalid --assignment-id assign-invalid --role decision --branch worker/invalid --owned file-invalid.txt >"$TMPDIR/invalid-role.out" 2>&1; then
+  echo "expected invalid role 'decision' to fail" >&2
+  cat "$TMPDIR/invalid-role.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/invalid-role.out" "invalid role: decision"
+
+# Test role validation - valid roles should be accepted
+valid_roles=("exploitation" "exploration" "reflection" "architecture" "qa" "verifier")
+for i in "${!valid_roles[@]}"; do
+  role="${valid_roles[$i]}"
+  node_id="NODE-ROLE-$i"
+  role_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-001 "$node_id" --agent "worker-$role" --assignment-id "assign-$role" --role "$role" --branch "worker/$role" --owned "file-$role.txt")"
+  [[ "$role_output" == *"node added"* ]]
+  [[ "$role_output" == *"$node_id"* ]]
+done
 
 # Test invalid workflow ID rejection
 if MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" init "WF/INVALID" --title "Bad ID" >"$TMPDIR/invalid-workflow-id.out" 2>&1; then
@@ -959,6 +1009,20 @@ if grep -Fq "dag.sh status --workflow" "$ROOT/README.md" "$ROOT/orchestrator_pro
 fi
 if grep -Fq "role decision" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
   echo "docs should not reference unsupported role decision" >&2
+  exit 1
+fi
+
+# Test documentation consistency - ensure docs don't contain fragile parsing examples
+if grep -Fq 'grep.*assignment-id' "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+  echo "docs should not contain fragile grep parsing examples with assignment-id" >&2
+  exit 1
+fi
+if grep -Fq 'cut -d:' "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+  echo "docs should not contain fragile cut -d: parsing examples" >&2
+  exit 1
+fi
+if grep -Fq 'grep.*\$node.*assignment-id' "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+  echo "docs should not contain fragile node assignment-id parsing examples" >&2
   exit 1
 fi
 
