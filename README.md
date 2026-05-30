@@ -305,6 +305,204 @@ worker windows, polls open named subagents, refreshes subagent state, and prints
 a table with agent type, name, status, window state, latest progress line, and
 state directory.
 
+## Organizational Learning Workflow
+
+The orchestrator supports exploration/exploitation/reflection cycles for complex decisions requiring multiple approaches.
+
+### Decision Management
+
+Create and manage decisions with competing options:
+
+```bash
+# Create a new decision
+bin/decision.sh create --decision-id DEC-001 \
+  --question "Which API authentication approach?" \
+  --context "Need secure auth for mobile and web clients" \
+  --deadline "2026-06-15"
+
+# Add competing options discovered during exploration
+bin/decision.sh add-option DEC-001 \
+  --option-id OPT-A \
+  --title "OAuth 2.0 with PKCE" \
+  --champion exploration-agent-01 \
+  --evidence "auth-analysis.md,security-review.pdf"
+
+bin/decision.sh add-option DEC-001 \
+  --option-id OPT-B \
+  --title "Custom JWT with refresh tokens" \
+  --champion exploration-agent-02 \
+  --evidence "jwt-poc/,performance-tests.json"
+
+# Resolve decision and create implementation plan
+bin/decision.sh resolve DEC-001 \
+  --chosen OPT-A \
+  --rationale "Better security posture and industry standard" \
+  --plan-id PLN-001
+
+# View decision history
+bin/decision.sh list
+bin/decision.sh show DEC-001
+```
+
+### Role-Tagged Agent Assignments
+
+Assign specific roles to agents for structured workflows:
+
+```bash
+# Create exploration assignments for different approaches
+bin/subagent.sh assignment-create worker-01-explore-oauth \
+  --assignment-id AUTH-001 \
+  --role exploration \
+  --decision-id DEC-001 \
+  --branch explore/oauth-approach \
+  --owned exploration/oauth/
+
+bin/subagent.sh assignment-create worker-02-explore-jwt \
+  --assignment-id AUTH-002 \
+  --role exploration \
+  --decision-id DEC-001 \
+  --branch explore/jwt-approach \
+  --owned exploration/jwt/
+
+# Create exploitation assignment after decision resolution
+bin/subagent.sh assignment-create worker-03-implement-oauth \
+  --assignment-id AUTH-003 \
+  --role exploitation \
+  --decision-id DEC-001 \
+  --plan-id PLN-001 \
+  --branch implement/oauth-auth \
+  --owned src/auth/,tests/auth/
+
+# Create reflection assignment after implementation
+bin/subagent.sh assignment-create reflection-01-auth \
+  --assignment-id REF-001 \
+  --role reflection \
+  --decision-id DEC-001 \
+  --plan-id PLN-001 \
+  --branch main \
+  --owned docs/reflection/auth-decision.md
+
+# Architecture review across multiple decisions
+bin/subagent.sh assignment-create arch-01-security \
+  --assignment-id ARCH-001 \
+  --role architecture \
+  --decision-id DEC-001,DEC-002 \
+  --branch main \
+  --owned architecture/security/
+
+# QA verification of implementation
+bin/subagent.sh assignment-create qa-01-auth-tests \
+  --assignment-id QA-001 \
+  --role qa \
+  --decision-id DEC-001 \
+  --plan-id PLN-001 \
+  --branch implement/oauth-auth \
+  --owned tests/integration/auth/
+```
+
+### Example Workflow: Multi-Approach Decision
+
+Complete workflow for a complex architectural decision:
+
+```bash
+# 1. Create decision context
+bin/decision.sh create --decision-id DEC-003 \
+  --question "Database scaling strategy for user growth" \
+  --context "Expecting 10x user growth in next 6 months"
+
+# 2. Spawn exploration agents for different approaches
+bin/subagent.sh assignment-create worker-01-explore-sharding \
+  --assignment-id DB-001 --role exploration --decision-id DEC-003 \
+  --branch explore/db-sharding --owned exploration/sharding/
+
+bin/subagent.sh assignment-create worker-02-explore-replication \
+  --assignment-id DB-002 --role exploration --decision-id DEC-003 \
+  --branch explore/db-replication --owned exploration/replication/
+
+bin/subagent.sh assignment-create worker-03-explore-nosql \
+  --assignment-id DB-003 --role exploration --decision-id DEC-003 \
+  --branch explore/nosql-migration --owned exploration/nosql/
+
+# 3. Architecture agent reviews consistency across approaches
+bin/subagent.sh assignment-create arch-01-db-review \
+  --assignment-id ARCH-002 --role architecture --decision-id DEC-003 \
+  --branch main --owned architecture/database/
+
+# 4. After exploration, record options and make decision
+bin/decision.sh add-option DEC-003 --option-id OPT-A \
+  --title "Horizontal sharding" --champion worker-01-explore-sharding \
+  --evidence "exploration/sharding/"
+
+bin/decision.sh add-option DEC-003 --option-id OPT-B \
+  --title "Read replicas with write scaling" --champion worker-02-explore-replication \
+  --evidence "exploration/replication/"
+
+bin/decision.sh resolve DEC-003 --chosen OPT-A \
+  --rationale "Sharding provides better long-term scalability" \
+  --plan-id PLN-003
+
+# 5. Implementation with focused exploitation
+bin/subagent.sh assignment-create worker-04-implement-sharding \
+  --assignment-id DB-004 --role exploitation --decision-id DEC-003 \
+  --plan-id PLN-003 --branch implement/db-sharding \
+  --owned src/database/,migrations/,config/sharding.yaml
+
+# 6. QA verification against exploration predictions
+bin/subagent.sh assignment-create qa-01-sharding-tests \
+  --assignment-id QA-002 --role qa --decision-id DEC-003 \
+  --plan-id PLN-003 --branch implement/db-sharding \
+  --owned tests/performance/sharding/
+
+# 7. Retrospective reflection on decision quality
+bin/subagent.sh assignment-create reflection-01-db-scaling \
+  --assignment-id REF-002 --role reflection --decision-id DEC-003 \
+  --plan-id PLN-003 --branch main \
+  --owned docs/reflection/db-scaling-decision.md
+```
+
+### Plan Management
+
+Track implementation plans and handle pivots:
+
+```bash
+# Create implementation plan
+bin/plan.sh create PLN-002 \
+  --title "OAuth 2.0 implementation with PKCE" \
+  --based-on DEC-001:OPT-A \
+  --assigned-to worker-03-implement-oauth
+
+# Create contingency plan
+bin/plan.sh create PLN-002-fallback \
+  --title "JWT implementation fallback" \
+  --based-on DEC-001:OPT-B \
+  --status contingency
+
+# Activate primary plan
+bin/plan.sh activate PLN-002
+
+# Track progress
+bin/plan.sh progress PLN-002 \
+  --worker worker-03-implement-oauth \
+  --status running \
+  --completion 30
+
+# Handle pivot if needed
+bin/plan.sh deactivate PLN-002 --reason "PKCE compatibility issues"
+bin/plan.sh activate PLN-002-fallback
+```
+
+### Role-Specific Agent Instructions
+
+The orchestrator automatically includes role-specific guidance when spawning agents:
+
+- **Exploration agents**: Encouraged to disagree, document evidence, explore assigned approach independently
+- **Exploitation workers**: Focus on chosen plan, report blockers rather than abandoning approach  
+- **Reflection agents**: Retrospective analysis, compare predictions to outcomes, extract lessons
+- **Architecture agents**: Maintain system coherence, identify integration points, review for consistency
+- **QA/Verifier agents**: Validate implementations against exploration promises and requirements
+
+Each role receives appropriate file ownership boundaries and collaboration constraints to prevent conflicts while preserving valuable disagreement during exploration phases.
+
 ## Tests
 
 ```bash

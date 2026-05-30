@@ -496,6 +496,203 @@ After running it:
    - Report worker/subagent status, branches, commits, blockers, state paths, and next steps.
    - Do not claim implementation work as your own.
 
+## Organizational Learning Workflow
+
+The orchestrator supports an exploration/exploitation/reflection cycle for complex tasks requiring multiple approaches or uncertain outcomes.
+
+### Exploration vs Exploitation
+
+**Exploration** discovers options, gathers information, and tests hypotheses. **Exploitation** executes chosen approaches with focused implementation.
+
+Exploration rules:
+- Spawn multiple exploration agents with different angles or approaches
+- Exploration agents are encouraged to disagree and propose competing solutions
+- Each exploration agent stays in its assigned files and reports evidence/findings
+- Do not merge exploration results immediately; preserve competing viewpoints
+- Record findings in decision logs for later synthesis
+
+Exploitation rules:
+- Begin exploitation only after exploration phase completes
+- Choose one primary approach based on exploration evidence
+- Exploitation workers implement the chosen approach with full focus
+- Monitor exploitation progress against exploration predictions
+- Be ready to pivot if exploitation reveals flaws in the chosen approach
+
+### Decision Logs
+
+Record major decisions with structured metadata:
+
+```bash
+bin/decision.sh create --decision-id DEC-001 \
+  --question "Which API design approach to use?" \
+  --context "Three competing designs from exploration phase" \
+  --deadline "2026-06-15" \
+  --stakeholders "backend-team,frontend-team"
+
+bin/decision.sh add-option DEC-001 \
+  --option-id OPT-A \
+  --title "REST with OpenAPI" \
+  --champion exploration-agent-01 \
+  --evidence "existing-patterns.md,performance-tests.json"
+
+bin/decision.sh add-option DEC-001 \
+  --option-id OPT-B \
+  --title "GraphQL federation" \
+  --champion exploration-agent-02 \
+  --evidence "federation-poc/,query-analysis.md"
+
+bin/decision.sh resolve DEC-001 \
+  --chosen OPT-A \
+  --rationale "Performance data shows 40% better latency" \
+  --plan-id PLN-001
+```
+
+Decision logs create audit trails linking exploration findings to exploitation plans.
+
+### Competing Plans
+
+When exploration reveals multiple viable approaches, create competing plans rather than forcing premature convergence:
+
+```bash
+bin/plan.sh create PLN-001 \
+  --title "REST API implementation" \
+  --based-on DEC-001:OPT-A \
+  --assigned-to worker-05-rest-api
+
+bin/plan.sh create PLN-002 \
+  --title "GraphQL fallback plan" \
+  --based-on DEC-001:OPT-B \
+  --status contingency
+
+bin/plan.sh activate PLN-001
+bin/plan.sh progress PLN-001 --worker worker-05-rest-api --status running
+```
+
+Plans track implementation progress and provide rollback targets if the active plan encounters blockers.
+
+### Reflection Reviews
+
+After exploitation cycles, spawn reflection agents to assess outcomes:
+
+```bash
+bin/subagent.sh assignment-create reflection-01-api \
+  --assignment-id REF-001 \
+  --role reflection \
+  --decision-id DEC-001 \
+  --plan-id PLN-001 \
+  --owned docs/reflection/
+
+bin/subagent.sh spawn reflection-01-api \
+  --instruction "Reflection agent: review PLN-001 implementation against DEC-001 predictions."
+```
+
+Reflection agents:
+- Compare actual outcomes to exploration predictions
+- Identify gaps between chosen and alternative approaches
+- Document lessons learned for similar future decisions
+- Recommend process improvements for exploration/exploitation cycles
+- Stay in reflection-specific documentation paths
+
+### Rollback/Pivot Handling
+
+The orchestrator handles rollback and pivot decisions. Workers propose but do not execute rollbacks:
+
+Rollback triggers:
+- Exploitation reveals fundamental flaws in the chosen approach
+- External constraints change (deadline, requirements, resources)
+- Reflection review identifies critical gaps
+- Multiple exploitation attempts fail despite worker competence
+
+Orchestrator rollback process:
+1. Capture current exploitation state with `bin/subagent.sh checkpoint-update`
+2. Review alternative plans from the original decision
+3. If alternatives exist, activate contingency plan
+4. If no alternatives, restart exploration phase with lessons learned
+5. Update decision log with rollback rationale and new direction
+
+Workers must not decide to abandon their assigned plans. Report blockers to the orchestrator instead.
+
+### Role-Specific Agent Guidance
+
+#### Exploration Agents
+- **Purpose**: Discover and validate approaches before commitment
+- **Behavior**: Research broadly, prototype minimally, document findings thoroughly
+- **Autonomy**: High - encouraged to pursue different directions
+- **Collaboration**: Through decision logs and evidence artifacts, not direct coordination
+- **Files**: Each exploration agent gets its own exploration/ subdirectory
+
+#### Exploitation Workers  
+- **Purpose**: Implement the chosen approach with focus and efficiency
+- **Behavior**: Follow the selected plan, optimize for delivery, request help for blockers
+- **Autonomy**: Medium - stay within chosen approach unless orchestrator pivots
+- **Collaboration**: Coordinate through orchestrator when dependencies arise
+- **Files**: Assigned implementation files per worker
+
+#### Reflection Agents
+- **Purpose**: Learn from completed cycles to improve future decisions
+- **Behavior**: Analyze outcomes, compare predictions to reality, extract patterns
+- **Autonomy**: Medium - retrospective analysis, not real-time course correction
+- **Collaboration**: Read-only access to exploration and exploitation artifacts
+- **Files**: reflection/ directory for lessons learned documentation
+
+#### Architecture Agents
+- **Purpose**: Maintain system coherence across multiple exploration/exploitation cycles
+- **Behavior**: Review proposals for consistency, identify integration points, flag conflicts
+- **Autonomy**: High - architectural decisions require broad perspective
+- **Collaboration**: Review artifacts from all agent types, propose constraints
+- **Files**: architecture/ directory for system-wide design decisions
+
+#### QA/Verifier Agents
+- **Purpose**: Validate that exploitation delivers on exploration promises
+- **Behavior**: Test implementations against exploration predictions and requirements
+- **Autonomy**: Low - follow test plans derived from exploration evidence
+- **Collaboration**: Read-only review of worker outputs, report findings to orchestrator
+- **Files**: No file ownership - read-only verification role
+
+## Enhanced Worker/Subagent Instructions
+
+When spawning workers or subagents for organizational learning workflows, include these fields in assignment creation and first instructions:
+
+Role assignment:
+```bash
+bin/subagent.sh assignment-create worker-03-explore-auth \
+  --assignment-id AUTH-003 \
+  --role exploration \
+  --decision-id DEC-002 \
+  --plan-id none \
+  --owned exploration/auth/
+```
+
+First instruction template:
+```
+You are a [ROLE] agent launched by the orchestrator.
+
+Assignment details:
+- Role: [exploration|exploitation|reflection|architecture|qa]
+- Decision ID: [DEC-XXX] (decision context this work contributes to)
+- Plan ID: [PLN-XXX|none] (exploitation plan being implemented, if any)
+- Assignment ID: [unique identifier]
+
+[Include standard worker rules 1-5 from Required Worker First Instruction]
+
+Role-specific guidance:
+[Insert appropriate role guidance from sections above]
+
+Task: [specific assignment details]
+```
+
+For exploration agents, explicitly state:
+- You are expected to pursue your assigned approach independently
+- Disagreement with other exploration agents is normal and valuable
+- Document your evidence thoroughly in your owned files
+- Do not try to reconcile with competing approaches - the orchestrator will synthesize
+
+For exploitation workers, add:
+- You are implementing the chosen approach from decision [DEC-XXX]
+- Stay focused on plan [PLN-XXX] unless the orchestrator directs a pivot
+- Report blockers rather than abandoning the plan
+- Request clarification if the plan conflicts with implementation reality
+
 ## First Action
 
 When this session starts:
