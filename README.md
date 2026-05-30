@@ -744,11 +744,14 @@ bin/dag.sh ready db-scaling-workflow | while read node_id; do
   # or inspects bin/dag.sh show db-scaling-workflow manually
   case "$node_id" in
     explore-sharding)
-      ASSIGNMENT_ID="DB-001"; AGENT="worker-explore-sharding" ;;
+      ASSIGNMENT_ID="DB-001"; AGENT="worker-explore-sharding"
+      BRANCH="explore/sharding"; OWNED="exploration/sharding/" ;;
     explore-replication)  
-      ASSIGNMENT_ID="DB-002"; AGENT="worker-explore-replication" ;;
+      ASSIGNMENT_ID="DB-002"; AGENT="worker-explore-replication"
+      BRANCH="explore/replication"; OWNED="exploration/replication/" ;;
     explore-nosql)
-      ASSIGNMENT_ID="DB-003"; AGENT="worker-explore-nosql" ;;
+      ASSIGNMENT_ID="DB-003"; AGENT="worker-explore-nosql"
+      BRANCH="explore/nosql"; OWNED="exploration/nosql/" ;;
     *)
       continue ;;
   esac
@@ -756,6 +759,8 @@ bin/dag.sh ready db-scaling-workflow | while read node_id; do
   bin/subagent.sh assignment-create "$AGENT" \
     --assignment-id "$ASSIGNMENT_ID" \
     --role exploration \
+    --branch "$BRANCH" \
+    --owned "$OWNED" \
     --workflow-id db-scaling-workflow \
     --node-id "$node_id"
 done
