@@ -656,13 +656,16 @@ assert_file_contains "$TMPDIR/newline.out" "--title may not contain newlines"
 # Test duplicate plan ID with a new decision
 MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" init DEC-002 --title "Test Duplicates"
 MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" add-alternative DEC-002 --plan-id PLAN-B --summary "First plan" --proposed-by agent-1
-if MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" add-alternative DEC-002 --plan-id PLAN-B --summary "Duplicate" --proposed-by agent-2 >"$TMPDIR/duplicate-plan.out" 2>&1; then
+set +e  # Temporarily disable exit on error
+MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" add-alternative DEC-002 --plan-id PLAN-B --summary "Duplicate" --proposed-by agent-2 >"$TMPDIR/duplicate-plan.out" 2>&1
+duplicate_result=$?
+set -e  # Re-enable exit on error
+if [[ "$duplicate_result" -eq 0 ]]; then
   echo "expected duplicate plan ID to fail" >&2
   cat "$TMPDIR/duplicate-plan.out" >&2
   exit 1
 fi
 assert_file_contains "$TMPDIR/duplicate-plan.out" "plan ID already exists: PLAN-B"
-
 # Test assignment-create with organizational metadata
 ORG_ASSIGN_REPO="$TMPDIR/org-assignment-repo"
 ORG_ASSIGN_STATE="$TMPDIR/org-assignment-state"
@@ -684,15 +687,17 @@ assert_file_contains "$ORG_ASSIGN_STATE/assignments/worker-org/assignment.env" "
 assert_file_contains "$ORG_ASSIGN_STATE/assignments/worker-org/assignment.env" "role=qa"
 assert_file_contains "$ORG_ASSIGN_STATE/assignments/worker-org/assignment.env" "decision_id=DEC-001"
 assert_file_contains "$ORG_ASSIGN_STATE/assignments/worker-org/assignment.env" "plan_id=PLAN-A"
-
 # Test invalid role rejection
-if MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ORG_ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create worker-bad --assignment-id bad-001 --branch worker/org-task --owned README.md --role invalid-role >"$TMPDIR/invalid-role.out" 2>&1; then
+set +e
+MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ORG_ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create worker-bad --assignment-id bad-001 --branch worker/org-task --owned README.md --role invalid-role >"$TMPDIR/invalid-role.out" 2>&1
+invalid_role_result=$?
+set -e
+if [[ "$invalid_role_result" -eq 0 ]]; then
   echo "expected invalid role to fail" >&2
   cat "$TMPDIR/invalid-role.out" >&2
   exit 1
 fi
 assert_file_contains "$TMPDIR/invalid-role.out" "invalid role 'invalid-role'"
-
 # Test checkpoint-update includes organizational metadata
 checkpoint_org_output="$(MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ORG_ASSIGN_STATE" "$ROOT/bin/subagent.sh" checkpoint-update worker-org --step "implemented org metadata" --status running)"
 [[ "$checkpoint_org_output" == $'checkpoint updated\tworker-org\trunning' ]]
@@ -700,7 +705,6 @@ checkpoint_show_org_output="$(MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STAT
 [[ "$checkpoint_show_org_output" == *"role=qa"* ]]
 [[ "$checkpoint_show_org_output" == *"decision_id=DEC-001"* ]]
 [[ "$checkpoint_show_org_output" == *"plan_id=PLAN-A"* ]]
-
 # Test status.sh includes organizational metadata columns
 # Create a persisted subagent with organizational metadata that won't trigger polling
 mkdir -p "$ORG_ASSIGN_STATE/subagents/subagent-org-test"
@@ -713,7 +717,6 @@ ORG_SUBAGENT_ASSIGN_OUTPUT="$(MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STAT
 status_org_output="$(cd "$ROOT" && MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ORG_ASSIGN_STATE" bin/status.sh)"
 [[ "$status_org_output" == *$'TYPE\tNAME\tSTATUS\tWINDOW\tLAST_PROGRESS\tSTATE_DIR\tROLE\tDECISION_ID\tPLAN_ID'* ]]
 [[ "$status_org_output" == *$'subagent\tsubagent-org-test\trunning\tclosed\tTesting organizational metadata in subagents\t'"$ORG_ASSIGN_STATE/subagents/subagent-org-test"$'\tverifier\tDEC-002\tPLAN-B'* ]]
-
 # Test that subagents without metadata show "-" for organizational fields
 mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-no-meta"
 printf 'running\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-no-meta/status"
@@ -721,8 +724,7 @@ printf 'Subagent without org metadata\n' >"$MULTIAGENT_STATE_DIR/subagents/subag
 printf 'subagent-no-meta\n' >>"$MOCK_TMUX_WINDOWS"
 printf 'Subagent without org metadata progress\n' >"$MOCK_TMUX_CAPTURES/subagent-no-meta.txt"
 status_no_meta_output="$("$ROOT/bin/status.sh")"
-[[ "$status_no_meta_output" == *$'subagent\tsubagent-no-meta\trunning\topen\tSubagent without org metadata\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-no-meta"$'\t-\t-\t-'* ]]
-
+[[ "$status_no_meta_output" == *$'subagent\tsubagent-no-meta\trunning\topen\tSubagent without org metadata progress\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-no-meta"$'\t-\t-\t-'* ]]
 # Test documentation consistency - no unsupported plan.sh or decision.sh resolve commands
 if grep -Fq "bin/plan.sh" "$ROOT/README.md"; then
   echo "README.md should not reference unsupported bin/plan.sh" >&2
