@@ -526,19 +526,19 @@ Record major decisions with structured metadata:
 bin/decision.sh init DEC-001 --title "Which API design approach to use?"
 
 bin/decision.sh add-alternative DEC-001 \
-  --plan-id OPT-A \
+  --plan-id PLN-001 \
   --summary "REST with OpenAPI" \
   --proposed-by exploration-agent-01 \
   --expected-outcome "Standard REST API with existing patterns and good performance"
 
 bin/decision.sh add-alternative DEC-001 \
-  --plan-id OPT-B \
+  --plan-id PLN-002 \
   --summary "GraphQL federation" \
   --proposed-by exploration-agent-02 \
   --expected-outcome "Federated GraphQL API with flexible querying"
 
 bin/decision.sh commit DEC-001 \
-  --selected-plan OPT-A \
+  --selected-plan PLN-001 \
   --reason "Performance data shows 40% better latency"
 ```
 
@@ -551,7 +551,7 @@ When exploration reveals multiple viable approaches, use the decision log to tra
 ```bash
 # Record decision resolution  
 bin/decision.sh commit DEC-001 \
-  --selected-plan OPT-A \
+  --selected-plan PLN-001 \
   --reason "Performance data shows 40% better latency"
 
 # Create primary implementation assignment
