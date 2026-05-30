@@ -523,28 +523,23 @@ Exploitation rules:
 Record major decisions with structured metadata:
 
 ```bash
-bin/decision.sh init --decision-id DEC-001 \
-  --question "Which API design approach to use?" \
-  --context "Three competing designs from exploration phase" \
-  --deadline "2026-06-15" \
-  --stakeholders "backend-team,frontend-team"
+bin/decision.sh init DEC-001 --title "Which API design approach to use?"
 
 bin/decision.sh add-alternative DEC-001 \
-  --option-id OPT-A \
-  --title "REST with OpenAPI" \
-  --champion exploration-agent-01 \
-  --evidence "existing-patterns.md,performance-tests.json"
+  --plan-id OPT-A \
+  --summary "REST with OpenAPI" \
+  --proposed-by exploration-agent-01 \
+  --expected-outcome "Standard REST API with existing patterns and good performance"
 
 bin/decision.sh add-alternative DEC-001 \
-  --option-id OPT-B \
-  --title "GraphQL federation" \
-  --champion exploration-agent-02 \
-  --evidence "federation-poc/,query-analysis.md"
+  --plan-id OPT-B \
+  --summary "GraphQL federation" \
+  --proposed-by exploration-agent-02 \
+  --expected-outcome "Federated GraphQL API with flexible querying"
 
 bin/decision.sh commit DEC-001 \
-  --chosen OPT-A \
-  --rationale "Performance data shows 40% better latency" \
-  --plan-id PLN-001
+  --selected-plan OPT-A \
+  --reason "Performance data shows 40% better latency"
 ```
 
 Decision logs create audit trails linking exploration findings to exploitation plans.
@@ -556,9 +551,8 @@ When exploration reveals multiple viable approaches, use the decision log to tra
 ```bash
 # Record decision resolution  
 bin/decision.sh commit DEC-001 \
-  --chosen OPT-A \
-  --rationale "Performance data shows 40% better latency" \
-  --plan-id PLN-001
+  --selected-plan OPT-A \
+  --reason "Performance data shows 40% better latency"
 
 # Create primary implementation assignment
 bin/subagent.sh assignment-create worker-05-rest-api \

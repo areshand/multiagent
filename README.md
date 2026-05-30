@@ -315,29 +315,25 @@ Create and manage decisions with competing options:
 
 ```bash
 # Create a new decision
-bin/decision.sh init --decision-id DEC-001 \
-  --question "Which API authentication approach?" \
-  --context "Need secure auth for mobile and web clients" \
-  --deadline "2026-06-15"
+bin/decision.sh init DEC-001 --title "Which API authentication approach?"
 
 # Add competing options discovered during exploration
 bin/decision.sh add-alternative DEC-001 \
-  --option-id OPT-A \
-  --title "OAuth 2.0 with PKCE" \
-  --champion exploration-agent-01 \
-  --evidence "auth-analysis.md,security-review.pdf"
+  --plan-id OPT-A \
+  --summary "OAuth 2.0 with PKCE" \
+  --proposed-by exploration-agent-01 \
+  --expected-outcome "Secure auth with industry standard OAuth 2.0 and PKCE for mobile"
 
 bin/decision.sh add-alternative DEC-001 \
-  --option-id OPT-B \
-  --title "Custom JWT with refresh tokens" \
-  --champion exploration-agent-02 \
-  --evidence "jwt-poc/,performance-tests.json"
+  --plan-id OPT-B \
+  --summary "Custom JWT with refresh tokens" \
+  --proposed-by exploration-agent-02 \
+  --expected-outcome "Fast custom JWT implementation with refresh token security"
 
 # Resolve decision and create implementation plan
 bin/decision.sh commit DEC-001 \
-  --chosen OPT-A \
-  --rationale "Better security posture and industry standard" \
-  --plan-id PLN-001
+  --selected-plan OPT-A \
+  --reason "Better security posture and industry standard"
 
 # View decision history
 bin/decision.sh list
@@ -406,9 +402,7 @@ Complete workflow for a complex architectural decision:
 
 ```bash
 # 1. Create decision context
-bin/decision.sh init --decision-id DEC-003 \
-  --question "Database scaling strategy for user growth" \
-  --context "Expecting 10x user growth in next 6 months"
+bin/decision.sh init DEC-003 --title "Database scaling strategy for user growth"
 
 # 2. Spawn exploration agents for different approaches
 bin/subagent.sh assignment-create worker-01-explore-sharding \
@@ -429,17 +423,21 @@ bin/subagent.sh assignment-create arch-01-db-review \
   --branch main --owned architecture/database/
 
 # 4. After exploration, record options and make decision
-bin/decision.sh add-alternative DEC-003 --option-id OPT-A \
-  --title "Horizontal sharding" --champion worker-01-explore-sharding \
-  --evidence "exploration/sharding/"
+bin/decision.sh add-alternative DEC-003 \
+  --plan-id OPT-A \
+  --summary "Horizontal sharding" \
+  --proposed-by worker-01-explore-sharding \
+  --expected-outcome "Scalable database with horizontal partitioning"
 
-bin/decision.sh add-alternative DEC-003 --option-id OPT-B \
-  --title "Read replicas with write scaling" --champion worker-02-explore-replication \
-  --evidence "exploration/replication/"
+bin/decision.sh add-alternative DEC-003 \
+  --plan-id OPT-B \
+  --summary "Read replicas with write scaling" \
+  --proposed-by worker-02-explore-replication \
+  --expected-outcome "Improved read performance with replica scaling"
 
-bin/decision.sh commit DEC-003 --chosen OPT-A \
-  --rationale "Sharding provides better long-term scalability" \
-  --plan-id PLN-003
+bin/decision.sh commit DEC-003 \
+  --selected-plan OPT-A \
+  --reason "Sharding provides better long-term scalability"
 
 # 5. Implementation with focused exploitation
 bin/subagent.sh assignment-create worker-04-implement-sharding \
