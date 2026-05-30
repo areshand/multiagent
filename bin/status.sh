@@ -39,6 +39,18 @@ read_assignment_value() {
   awk -F= -v key="$key" '$1 == key { sub("^[^=]*=", ""); print; found=1 } END { exit found ? 0 : 1 }' "$file"
 }
 
+read_assignment_value_or_dash() {
+  local name="$1"
+  local key="$2"
+  local value
+  value="$(read_assignment_value "$name" "$key" 2>/dev/null || true)"
+  if [[ -n "$value" ]]; then
+    printf '%s' "$value"
+  else
+    printf '%s' '-'
+  fi
+}
+
 capture_window() {
   local name="$1"
   tmux capture-pane -t "$SESSION:$name" -p -S -300 2>/dev/null || true
@@ -122,11 +134,11 @@ main() {
     progress="$(last_progress_line "$capture")"
 
     # Try to read assignment metadata for workers, use "-" if not available
-    role="$(read_assignment_value "$name" role 2>/dev/null || printf '%s' '-')"
-    decision_id="$(read_assignment_value "$name" decision_id 2>/dev/null || printf '%s' '-')"
-    plan_id="$(read_assignment_value "$name" plan_id 2>/dev/null || printf '%s' '-')"
-    workflow_id="$(read_assignment_value "$name" workflow_id 2>/dev/null || printf '%s' '-')"
-    node_id="$(read_assignment_value "$name" node_id 2>/dev/null || printf '%s' '-')"
+    role="$(read_assignment_value_or_dash "$name" role)"
+    decision_id="$(read_assignment_value_or_dash "$name" decision_id)"
+    plan_id="$(read_assignment_value_or_dash "$name" plan_id)"
+    workflow_id="$(read_assignment_value_or_dash "$name" workflow_id)"
+    node_id="$(read_assignment_value_or_dash "$name" node_id)"
 
     print_row "worker" "$name" "$status" "open" "$progress" "-" "$role" "$decision_id" "$plan_id" "$workflow_id" "$node_id"
   done <<<"$windows"
@@ -151,11 +163,11 @@ main() {
     progress="$(last_progress_line "$state/current.txt")"
 
     # Try to read assignment metadata for subagents, use "-" if not available
-    role="$(read_assignment_value "$name" role 2>/dev/null || printf '%s' '-')"
-    decision_id="$(read_assignment_value "$name" decision_id 2>/dev/null || printf '%s' '-')"
-    plan_id="$(read_assignment_value "$name" plan_id 2>/dev/null || printf '%s' '-')"
-    workflow_id="$(read_assignment_value "$name" workflow_id 2>/dev/null || printf '%s' '-')"
-    node_id="$(read_assignment_value "$name" node_id 2>/dev/null || printf '%s' '-')"
+    role="$(read_assignment_value_or_dash "$name" role)"
+    decision_id="$(read_assignment_value_or_dash "$name" decision_id)"
+    plan_id="$(read_assignment_value_or_dash "$name" plan_id)"
+    workflow_id="$(read_assignment_value_or_dash "$name" workflow_id)"
+    node_id="$(read_assignment_value_or_dash "$name" node_id)"
 
     print_row "subagent" "$name" "$status" "$window" "$progress" "$state" "$role" "$decision_id" "$plan_id" "$workflow_id" "$node_id"
   done
