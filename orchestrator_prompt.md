@@ -523,25 +523,25 @@ Exploitation rules:
 Record major decisions with structured metadata:
 
 ```bash
-bin/decision.sh create --decision-id DEC-001 \
+bin/decision.sh init --decision-id DEC-001 \
   --question "Which API design approach to use?" \
   --context "Three competing designs from exploration phase" \
   --deadline "2026-06-15" \
   --stakeholders "backend-team,frontend-team"
 
-bin/decision.sh add-option DEC-001 \
+bin/decision.sh add-alternative DEC-001 \
   --option-id OPT-A \
   --title "REST with OpenAPI" \
   --champion exploration-agent-01 \
   --evidence "existing-patterns.md,performance-tests.json"
 
-bin/decision.sh add-option DEC-001 \
+bin/decision.sh add-alternative DEC-001 \
   --option-id OPT-B \
   --title "GraphQL federation" \
   --champion exploration-agent-02 \
   --evidence "federation-poc/,query-analysis.md"
 
-bin/decision.sh resolve DEC-001 \
+bin/decision.sh commit DEC-001 \
   --chosen OPT-A \
   --rationale "Performance data shows 40% better latency" \
   --plan-id PLN-001
@@ -555,7 +555,7 @@ When exploration reveals multiple viable approaches, use the decision log to tra
 
 ```bash
 # Record decision resolution  
-bin/decision.sh resolve DEC-001 \
+bin/decision.sh commit DEC-001 \
   --chosen OPT-A \
   --rationale "Performance data shows 40% better latency" \
   --plan-id PLN-001

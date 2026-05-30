@@ -315,26 +315,26 @@ Create and manage decisions with competing options:
 
 ```bash
 # Create a new decision
-bin/decision.sh create --decision-id DEC-001 \
+bin/decision.sh init --decision-id DEC-001 \
   --question "Which API authentication approach?" \
   --context "Need secure auth for mobile and web clients" \
   --deadline "2026-06-15"
 
 # Add competing options discovered during exploration
-bin/decision.sh add-option DEC-001 \
+bin/decision.sh add-alternative DEC-001 \
   --option-id OPT-A \
   --title "OAuth 2.0 with PKCE" \
   --champion exploration-agent-01 \
   --evidence "auth-analysis.md,security-review.pdf"
 
-bin/decision.sh add-option DEC-001 \
+bin/decision.sh add-alternative DEC-001 \
   --option-id OPT-B \
   --title "Custom JWT with refresh tokens" \
   --champion exploration-agent-02 \
   --evidence "jwt-poc/,performance-tests.json"
 
 # Resolve decision and create implementation plan
-bin/decision.sh resolve DEC-001 \
+bin/decision.sh commit DEC-001 \
   --chosen OPT-A \
   --rationale "Better security posture and industry standard" \
   --plan-id PLN-001
@@ -406,7 +406,7 @@ Complete workflow for a complex architectural decision:
 
 ```bash
 # 1. Create decision context
-bin/decision.sh create --decision-id DEC-003 \
+bin/decision.sh init --decision-id DEC-003 \
   --question "Database scaling strategy for user growth" \
   --context "Expecting 10x user growth in next 6 months"
 
@@ -429,15 +429,15 @@ bin/subagent.sh assignment-create arch-01-db-review \
   --branch main --owned architecture/database/
 
 # 4. After exploration, record options and make decision
-bin/decision.sh add-option DEC-003 --option-id OPT-A \
+bin/decision.sh add-alternative DEC-003 --option-id OPT-A \
   --title "Horizontal sharding" --champion worker-01-explore-sharding \
   --evidence "exploration/sharding/"
 
-bin/decision.sh add-option DEC-003 --option-id OPT-B \
+bin/decision.sh add-alternative DEC-003 --option-id OPT-B \
   --title "Read replicas with write scaling" --champion worker-02-explore-replication \
   --evidence "exploration/replication/"
 
-bin/decision.sh resolve DEC-003 --chosen OPT-A \
+bin/decision.sh commit DEC-003 --chosen OPT-A \
   --rationale "Sharding provides better long-term scalability" \
   --plan-id PLN-003
 
