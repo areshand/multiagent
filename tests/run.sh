@@ -757,4 +757,210 @@ decision_commands_prompt="$(grep "bin/decision.sh" "$ROOT/orchestrator_prompt.md
 [[ "$decision_commands_prompt" == *"bin/decision.sh add-alternative"* ]]
 [[ "$decision_commands_prompt" == *"bin/decision.sh commit"* ]]
 
+# Test DAG workflow control functionality
+
+# Test basic DAG commands with temporary state
+DAG_STATE_DIR="$TMPDIR/dag-state"
+mkdir -p "$DAG_STATE_DIR"
+
+# Test bin/dag.sh init
+init_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" init WF-001 --title "Test Workflow" --owner "test-user")"
+[[ "$init_output" == $'workflow created\tWF-001\tTest Workflow' ]]
+assert_file_contains "$DAG_STATE_DIR/workflows/WF-001/workflow.env" "workflow_id=WF-001"
+assert_file_contains "$DAG_STATE_DIR/workflows/WF-001/workflow.env" "title=Test Workflow"
+assert_file_contains "$DAG_STATE_DIR/workflows/WF-001/workflow.env" "owner=test-user"
+assert_file_contains "$DAG_STATE_DIR/workflows/WF-001/workflow.env" "status=active"
+
+# Test bin/dag.sh add-node
+node_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-001 NODE-A --agent worker-a --assignment-id assign-a --role qa --branch worker/a --owned file-a.txt)"
+[[ "$node_output" == $'node added\tWF-001\tNODE-A\tworker-a' ]]
+assert_file_contains "$DAG_STATE_DIR/workflows/WF-001/nodes.tsv" "NODE-A"
+assert_file_contains "$DAG_STATE_DIR/workflows/WF-001/nodes.tsv" "worker-a"
+assert_file_contains "$DAG_STATE_DIR/workflows/WF-001/nodes.tsv" "pending"
+
+# Test bin/dag.sh list
+list_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" list)"
+[[ "$list_output" == *$'WF-001\tactive\tTest Workflow\ttest-user'* ]]
+
+# Test bin/dag.sh show
+show_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" show WF-001)"
+[[ "$show_output" == *"Workflow: WF-001"* ]]
+[[ "$show_output" == *"workflow_id=WF-001"* ]]
+[[ "$show_output" == *"NODE-A"* ]]
+
+# Test DAG sequencing: node A ready first, node B ready only after A is done
+node_b_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-001 NODE-B --agent worker-b --assignment-id assign-b --role qa --branch worker/b --owned file-b.txt --depends-on NODE-A)"
+[[ "$node_b_output" == $'node added\tWF-001\tNODE-B\tworker-b' ]]
+
+# Test bin/dag.sh ready - node A should be ready, node B should not
+ready_initial_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" ready WF-001)"
+[[ "$ready_initial_output" == *"NODE-A"* ]]
+if [[ "$ready_initial_output" == *"NODE-B"* ]]; then
+  echo "expected NODE-B to not be ready before NODE-A is done" >&2
+  echo "$ready_initial_output" >&2
+  exit 1
+fi
+
+# Mark NODE-A as done
+MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" status WF-001 NODE-A done --reason "completed task A"
+
+# Now NODE-B should be ready
+ready_after_a_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" ready WF-001)"
+[[ "$ready_after_a_output" == *"NODE-B"* ]]
+
+# Test failed upstream node causes downstream node to appear in blocked output
+MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-001 NODE-C --agent worker-c --assignment-id assign-c --role qa --branch worker/c --owned file-c.txt --depends-on NODE-B
+
+# Mark NODE-B as failed
+MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" status WF-001 NODE-B failed --reason "task failed"
+
+# Test bin/dag.sh blocked - NODE-C should be blocked
+blocked_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" blocked WF-001)"
+[[ "$blocked_output" == *"NODE-C"* ]]
+[[ "$blocked_output" == *"dependency NODE-B failed"* ]]
+
+# Test skipped upstream node satisfies dependencies
+MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-001 NODE-D --agent worker-d --assignment-id assign-d --role qa --branch worker/d --owned file-d.txt
+MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-001 NODE-E --agent worker-e --assignment-id assign-e --role qa --branch worker/e --owned file-e.txt --depends-on NODE-D
+
+# Mark NODE-D as skipped
+MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" status WF-001 NODE-D skipped --reason "conditions not met"
+
+# NODE-E should now be ready (skipped dependencies satisfy constraints)
+ready_after_skip_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" ready WF-001)"
+[[ "$ready_after_skip_output" == *"NODE-E"* ]]
+
+# Test duplicate workflow rejection
+if MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" init WF-001 --title "Duplicate" >"$TMPDIR/duplicate-workflow.out" 2>&1; then
+  echo "expected duplicate workflow to fail" >&2
+  cat "$TMPDIR/duplicate-workflow.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/duplicate-workflow.out" "workflow already exists: WF-001"
+
+# Test duplicate node rejection
+if MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-001 NODE-A --agent worker-dup --assignment-id assign-dup --role qa --branch worker/dup --owned file-dup.txt >"$TMPDIR/duplicate-node.out" 2>&1; then
+  echo "expected duplicate node to fail" >&2
+  cat "$TMPDIR/duplicate-node.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/duplicate-node.out" "node ID already exists: NODE-A"
+
+# Test missing dependency rejection
+if MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-001 NODE-MISSING --agent worker-missing --assignment-id assign-missing --role qa --branch worker/missing --owned file-missing.txt --depends-on NONEXISTENT >"$TMPDIR/missing-dep.out" 2>&1; then
+  echo "expected missing dependency to fail" >&2
+  cat "$TMPDIR/missing-dep.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/missing-dep.out" "dependency does not exist: NONEXISTENT"
+
+# Test invalid status rejection
+if MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" status WF-001 NODE-A invalid-status >"$TMPDIR/invalid-status.out" 2>&1; then
+  echo "expected invalid status to fail" >&2
+  cat "$TMPDIR/invalid-status.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/invalid-status.out" "invalid status: invalid-status"
+
+# Test invalid workflow ID rejection
+if MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" init "WF/INVALID" --title "Bad ID" >"$TMPDIR/invalid-workflow-id.out" 2>&1; then
+  echo "expected invalid workflow ID to fail" >&2
+  cat "$TMPDIR/invalid-workflow-id.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/invalid-workflow-id.out" "invalid workflow ID: WF/INVALID"
+
+# Test cycle detection
+MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" init WF-CYCLE --title "Cycle Test"
+MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-CYCLE CYCLE-A --agent worker-cycle-a --assignment-id assign-cycle-a --role qa --branch worker/cycle-a --owned file-cycle-a.txt
+MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-CYCLE CYCLE-B --agent worker-cycle-b --assignment-id assign-cycle-b --role qa --branch worker/cycle-b --owned file-cycle-b.txt --depends-on CYCLE-A
+
+# This should create a cycle: CYCLE-A -> CYCLE-B -> CYCLE-A
+if MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-CYCLE CYCLE-C --agent worker-cycle-c --assignment-id assign-cycle-c --role qa --branch worker/cycle-c --owned file-cycle-c.txt --depends-on CYCLE-B && \
+   MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-CYCLE CYCLE-D --agent worker-cycle-d --assignment-id assign-cycle-d --role qa --branch worker/cycle-d --owned file-cycle-d.txt --depends-on CYCLE-A; then
+  # Now try to create a cycle by making CYCLE-A depend on CYCLE-C
+  temp_edges="$DAG_STATE_DIR/workflows/WF-CYCLE/edges.tsv"
+  printf 'CYCLE-C\tCYCLE-A\t%s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >>"$temp_edges"
+  if ! MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-CYCLE CYCLE-TEST --agent worker-test --assignment-id assign-test --role qa --branch worker/test --owned file-test.txt --depends-on CYCLE-A >"$TMPDIR/cycle-test.out" 2>&1; then
+    assert_file_contains "$TMPDIR/cycle-test.out" "dependency cycle detected"
+  fi
+fi
+
+# Test assignment-create accepts DAG metadata
+DAG_ASSIGN_REPO="$TMPDIR/dag-assignment-repo"
+DAG_ASSIGN_STATE="$TMPDIR/dag-assignment-state"
+mkdir -p "$DAG_ASSIGN_REPO" "$DAG_ASSIGN_STATE"
+(
+  cd "$DAG_ASSIGN_REPO"
+  git init -q
+  git config user.email "test@example.com"
+  git config user.name "Test User"
+  printf 'hello\n' >README.md
+  git add README.md
+  git commit -q -m "initial"
+  git switch -q -c worker/dag-task
+)
+
+dag_assignment_create_output="$(MULTIAGENT_ROOT="$DAG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$DAG_ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create worker-dag --assignment-id dag-001 --branch worker/dag-task --owned README.md --role qa --workflow-id WF-001 --node-id NODE-A --depends-on NODE-B,NODE-C)"
+[[ "$dag_assignment_create_output" == $'assignment created\tworker-dag\tdag-001\tworker/dag-task' ]]
+assert_file_contains "$DAG_ASSIGN_STATE/assignments/worker-dag/assignment.env" "workflow_id=WF-001"
+assert_file_contains "$DAG_ASSIGN_STATE/assignments/worker-dag/assignment.env" "node_id=NODE-A"
+assert_file_contains "$DAG_ASSIGN_STATE/assignments/worker-dag/assignment.env" "depends_on=NODE-B,NODE-C"
+
+# Test checkpoint-update includes DAG metadata
+checkpoint_dag_output="$(MULTIAGENT_ROOT="$DAG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$DAG_ASSIGN_STATE" "$ROOT/bin/subagent.sh" checkpoint-update worker-dag --step "implemented dag metadata support" --status running)"
+[[ "$checkpoint_dag_output" == $'checkpoint updated\tworker-dag\trunning' ]]
+checkpoint_show_dag_output="$(MULTIAGENT_ROOT="$DAG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$DAG_ASSIGN_STATE" "$ROOT/bin/subagent.sh" checkpoint-show worker-dag)"
+[[ "$checkpoint_show_dag_output" == *"workflow_id=WF-001"* ]]
+[[ "$checkpoint_show_dag_output" == *"node_id=NODE-A"* ]]
+[[ "$checkpoint_show_dag_output" == *"depends_on=NODE-B,NODE-C"* ]]
+
+# Test status.sh emits WORKFLOW_ID and NODE_ID columns with metadata
+# Create a persisted subagent with DAG metadata
+mkdir -p "$DAG_ASSIGN_STATE/subagents/subagent-dag-test"
+printf 'running\n' >"$DAG_ASSIGN_STATE/subagents/subagent-dag-test/status"
+printf 'Testing DAG metadata in subagents\n' >"$DAG_ASSIGN_STATE/subagents/subagent-dag-test/current.txt"
+
+# Create assignment metadata for the subagent with DAG metadata
+DAG_SUBAGENT_ASSIGN_OUTPUT="$(MULTIAGENT_ROOT="$DAG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$DAG_ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create subagent-dag-test --assignment-id dag-sub-001 --branch worker/dag-task --owned README.md --role verifier --workflow-id WF-002 --node-id NODE-X)"
+
+status_dag_output="$(cd "$ROOT" && MULTIAGENT_ROOT="$DAG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$DAG_ASSIGN_STATE" bin/status.sh)"
+[[ "$status_dag_output" == *$'TYPE\tNAME\tSTATUS\tWINDOW\tLAST_PROGRESS\tSTATE_DIR\tROLE\tDECISION_ID\tPLAN_ID\tWORKFLOW_ID\tNODE_ID'* ]]
+[[ "$status_dag_output" == *$'subagent\tsubagent-dag-test\trunning\tclosed\tTesting DAG metadata in subagents\t'"$DAG_ASSIGN_STATE/subagents/subagent-dag-test"$'\tverifier\t\t\tWF-002\tNODE-X'* ]]
+
+# Test documentation consistency - ensure docs do not reference unsupported DAG commands
+if grep -Fq "dag.sh update-status" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+  echo "docs should not reference unsupported dag.sh update-status command" >&2
+  exit 1
+fi
+if grep -Fq "dag.sh.*--description" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+  echo "docs should not reference unsupported dag.sh --description flag" >&2
+  exit 1
+fi
+if grep -Fq "dag.sh show --node" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+  echo "docs should not reference unsupported dag.sh show --node flag" >&2
+  exit 1
+fi
+if grep -Fq "dag.sh show --verbose" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+  echo "docs should not reference unsupported dag.sh show --verbose flag" >&2
+  exit 1
+fi
+if grep -Fq "dag.sh ready --watch" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+  echo "docs should not reference unsupported dag.sh ready --watch flag" >&2
+  exit 1
+fi
+if grep -Fq "dag.sh export" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+  echo "docs should not reference unsupported dag.sh export command" >&2
+  exit 1
+fi
+if grep -Fq "dag.sh status --workflow" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+  echo "docs should not reference unsupported dag.sh status --workflow flag" >&2
+  exit 1
+fi
+if grep -Fq "role decision" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+  echo "docs should not reference unsupported role decision" >&2
+  exit 1
+fi
+
+echo "DAG workflow tests passed"
 echo "organizational learning tests passed"
