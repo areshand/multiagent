@@ -551,24 +551,36 @@ Decision logs create audit trails linking exploration findings to exploitation p
 
 ### Competing Plans
 
-When exploration reveals multiple viable approaches, create competing plans rather than forcing premature convergence:
+When exploration reveals multiple viable approaches, use the decision log to track active and contingency implementations rather than forcing premature convergence:
 
 ```bash
-bin/plan.sh create PLN-001 \
-  --title "REST API implementation" \
-  --based-on DEC-001:OPT-A \
-  --assigned-to worker-05-rest-api
+# Record decision resolution  
+bin/decision.sh resolve DEC-001 \
+  --chosen OPT-A \
+  --rationale "Performance data shows 40% better latency" \
+  --plan-id PLN-001
 
-bin/plan.sh create PLN-002 \
-  --title "GraphQL fallback plan" \
-  --based-on DEC-001:OPT-B \
+# Create primary implementation assignment
+bin/subagent.sh assignment-create worker-05-rest-api \
+  --assignment-id API-001 \
+  --role exploitation \
+  --decision-id DEC-001 \
+  --plan-id PLN-001 \
+  --branch implement/rest-api \
+  --owned src/api/
+
+# Create contingency assignment (ready but not active)  
+bin/subagent.sh assignment-create worker-06-graphql-fallback \
+  --assignment-id API-002 \
+  --role exploitation \
+  --decision-id DEC-001 \
+  --plan-id PLN-002 \
+  --branch fallback/graphql-api \
+  --owned src/graphql/ \
   --status contingency
-
-bin/plan.sh activate PLN-001
-bin/plan.sh progress PLN-001 --worker worker-05-rest-api --status running
 ```
 
-Plans track implementation progress and provide rollback targets if the active plan encounters blockers.
+Multiple assignment records track implementation options and provide rollback targets if the active implementation encounters blockers.
 
 ### Reflection Reviews
 
@@ -605,10 +617,10 @@ Rollback triggers:
 
 Orchestrator rollback process:
 1. Capture current exploitation state with `bin/subagent.sh checkpoint-update`
-2. Review alternative plans from the original decision
-3. If alternatives exist, activate contingency plan
-4. If no alternatives, restart exploration phase with lessons learned
-5. Update decision log with rollback rationale and new direction
+2. Review alternative options from the original decision log  
+3. If contingency assignments exist, activate them by changing status from contingency to running
+4. If no alternatives exist, restart exploration phase with lessons learned from the failed approach
+5. Document rollback decision and rationale in orchestrator logs or decision follow-up documentation
 
 Workers must not decide to abandon their assigned plans. Report blockers to the orchestrator instead.
 

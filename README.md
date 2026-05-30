@@ -460,35 +460,43 @@ bin/subagent.sh assignment-create reflection-01-db-scaling \
   --owned docs/reflection/db-scaling-decision.md
 ```
 
-### Plan Management
+### Implementation Tracking and Pivots
 
-Track implementation plans and handle pivots:
+Track implementations and handle pivots using assignment metadata:
 
 ```bash
-# Create implementation plan
-bin/plan.sh create PLN-002 \
-  --title "OAuth 2.0 implementation with PKCE" \
-  --based-on DEC-001:OPT-A \
-  --assigned-to worker-03-implement-oauth
+# Create primary implementation assignment
+bin/subagent.sh assignment-create worker-03-oauth-impl \
+  --assignment-id AUTH-003 \
+  --role exploitation \
+  --decision-id DEC-001 \
+  --plan-id PLN-002 \
+  --branch implement/oauth \
+  --owned src/auth/
 
-# Create contingency plan
-bin/plan.sh create PLN-002-fallback \
-  --title "JWT implementation fallback" \
-  --based-on DEC-001:OPT-B \
+# Create contingency implementation (ready but not active)
+bin/subagent.sh assignment-create worker-04-jwt-fallback \
+  --assignment-id AUTH-004 \
+  --role exploitation \
+  --decision-id DEC-001 \
+  --plan-id PLN-002-fallback \
+  --branch fallback/jwt \
+  --owned src/jwt/ \
   --status contingency
 
-# Activate primary plan
-bin/plan.sh activate PLN-002
+# Track progress via assignment status
+bin/subagent.sh assignment-status worker-03-oauth-impl running
+bin/subagent.sh checkpoint-update worker-03-oauth-impl \
+  --step "PKCE flow implemented" --status running
 
-# Track progress
-bin/plan.sh progress PLN-002 \
-  --worker worker-03-implement-oauth \
-  --status running \
-  --completion 30
+# Handle pivot when primary approach encounters blockers
+bin/subagent.sh checkpoint-update worker-03-oauth-impl \
+  --step "blocked on PKCE library compatibility" \
+  --blocker "third-party PKCE library incompatible with mobile framework" \
+  --status blocked
 
-# Handle pivot if needed
-bin/plan.sh deactivate PLN-002 --reason "PKCE compatibility issues"
-bin/plan.sh activate PLN-002-fallback
+# Orchestrator activates contingency by changing assignment status
+bin/subagent.sh assignment-status worker-04-jwt-fallback running
 ```
 
 ### Role-Specific Agent Instructions
