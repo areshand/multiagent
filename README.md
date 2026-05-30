@@ -319,20 +319,20 @@ bin/decision.sh init DEC-001 --title "Which API authentication approach?"
 
 # Add competing options discovered during exploration
 bin/decision.sh add-alternative DEC-001 \
-  --plan-id OPT-A \
+  --plan-id PLN-001 \
   --summary "OAuth 2.0 with PKCE" \
   --proposed-by exploration-agent-01 \
   --expected-outcome "Secure auth with industry standard OAuth 2.0 and PKCE for mobile"
 
 bin/decision.sh add-alternative DEC-001 \
-  --plan-id OPT-B \
+  --plan-id PLN-002 \
   --summary "Custom JWT with refresh tokens" \
   --proposed-by exploration-agent-02 \
   --expected-outcome "Fast custom JWT implementation with refresh token security"
 
 # Resolve decision and create implementation plan
 bin/decision.sh commit DEC-001 \
-  --selected-plan OPT-A \
+  --selected-plan PLN-001 \
   --reason "Better security posture and industry standard"
 
 # View decision history
@@ -424,19 +424,19 @@ bin/subagent.sh assignment-create arch-01-db-review \
 
 # 4. After exploration, record options and make decision
 bin/decision.sh add-alternative DEC-003 \
-  --plan-id OPT-A \
+  --plan-id PLN-001 \
   --summary "Horizontal sharding" \
   --proposed-by worker-01-explore-sharding \
   --expected-outcome "Scalable database with horizontal partitioning"
 
 bin/decision.sh add-alternative DEC-003 \
-  --plan-id OPT-B \
+  --plan-id PLN-002 \
   --summary "Read replicas with write scaling" \
   --proposed-by worker-02-explore-replication \
   --expected-outcome "Improved read performance with replica scaling"
 
 bin/decision.sh commit DEC-003 \
-  --selected-plan OPT-A \
+  --selected-plan PLN-001 \
   --reason "Sharding provides better long-term scalability"
 
 # 5. Implementation with focused exploitation
