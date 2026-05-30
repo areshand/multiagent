@@ -22,6 +22,23 @@ is_subagent() {
   [[ -d "$(subagent_dir "$1")" ]]
 }
 
+assignment_dir() {
+  printf '%s/assignments/%s\n' "$STATE_DIR" "$1"
+}
+
+assignment_meta_file() {
+  printf '%s/assignment.env\n' "$(assignment_dir "$1")"
+}
+
+read_assignment_value() {
+  local name="$1"
+  local key="$2"
+  local file
+  file="$(assignment_meta_file "$name")"
+  [[ -f "$file" ]] || return 1
+  awk -F= -v key="$key" '$1 == key { sub("^[^=]*=", ""); print; found=1 } END { exit found ? 0 : 1 }' "$file"
+}
+
 capture_window() {
   local name="$1"
   tmux capture-pane -t "$SESSION:$name" -p -S -300 2>/dev/null || true
@@ -75,8 +92,11 @@ print_row() {
   local window="$4"
   local progress="$5"
   local state="$6"
+  local role="$7"
+  local decision_id="$8"
+  local plan_id="$9"
 
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$type" "$name" "$status" "$window" "$progress" "$state"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$type" "$name" "$status" "$window" "$progress" "$state" "$role" "$decision_id" "$plan_id"
 }
 
 main() {
@@ -86,9 +106,9 @@ main() {
   local windows
   windows="$(list_window_names)"
 
-  printf 'TYPE\tNAME\tSTATUS\tWINDOW\tLAST_PROGRESS\tSTATE_DIR\n'
+  printf 'TYPE\tNAME\tSTATUS\tWINDOW\tLAST_PROGRESS\tSTATE_DIR\tROLE\tDECISION_ID\tPLAN_ID\n'
 
-  local name status progress state
+  local name status progress state role decision_id plan_id
   while IFS= read -r name; do
     [[ -n "$name" ]] || continue
     [[ "$name" != "orchestrator" ]] || continue
@@ -98,7 +118,13 @@ main() {
     capture="$(capture_window "$name")"
     status="$(classify_capture "$capture")"
     progress="$(last_progress_line "$capture")"
-    print_row "worker" "$name" "$status" "open" "$progress" "-"
+
+    # Try to read assignment metadata for workers, use "-" if not available
+    role="$(read_assignment_value "$name" role 2>/dev/null || printf '%s' '-')"
+    decision_id="$(read_assignment_value "$name" decision_id 2>/dev/null || printf '%s' '-')"
+    plan_id="$(read_assignment_value "$name" plan_id 2>/dev/null || printf '%s' '-')"
+
+    print_row "worker" "$name" "$status" "open" "$progress" "-" "$role" "$decision_id" "$plan_id"
   done <<<"$windows"
 
   local base="$STATE_DIR/subagents"
@@ -119,7 +145,13 @@ main() {
 
     status="$(read_status_file "$name")"
     progress="$(last_progress_line "$state/current.txt")"
-    print_row "subagent" "$name" "$status" "$window" "$progress" "$state"
+
+    # Try to read assignment metadata for subagents, use "-" if not available
+    role="$(read_assignment_value "$name" role 2>/dev/null || printf '%s' '-')"
+    decision_id="$(read_assignment_value "$name" decision_id 2>/dev/null || printf '%s' '-')"
+    plan_id="$(read_assignment_value "$name" plan_id 2>/dev/null || printf '%s' '-')"
+
+    print_row "subagent" "$name" "$status" "$window" "$progress" "$state" "$role" "$decision_id" "$plan_id"
   done
 }
 
