@@ -509,6 +509,309 @@ The orchestrator should include role-specific guidance when spawning agents:
 
 Each role receives appropriate file ownership boundaries and collaboration constraints to prevent conflicts while preserving valuable disagreement during exploration phases.
 
+## DAG-Controlled Workflows
+
+The orchestrator supports DAG (Directed Acyclic Graph) workflow control for complex tasks with multiple dependencies. The orchestrator owns the workflow DAG and controls node sequencing, while agents execute individual nodes.
+
+### Basic DAG Operations
+
+Create and manage workflow DAGs:
+
+```bash
+# Initialize a new workflow
+bin/dag.sh init auth-workflow-001 --title "Authentication system implementation"
+
+# Add nodes with dependencies and role assignments
+bin/dag.sh add-node auth-workflow-001 initial-architecture \
+  --role architecture \
+  --depends-on "" \
+  --assignment-id ARCH-001 \
+  --branch main \
+  --owned architecture/auth/ \
+  --description "Define authentication system architecture"
+
+bin/dag.sh add-node auth-workflow-001 explore-oauth \
+  --role exploration \
+  --depends-on initial-architecture \
+  --assignment-id AUTH-001 \
+  --branch explore/oauth \
+  --owned exploration/oauth/ \
+  --description "Explore OAuth 2.0 implementation approach"
+
+bin/dag.sh add-node auth-workflow-001 explore-jwt \
+  --role exploration \
+  --depends-on initial-architecture \
+  --assignment-id AUTH-002 \
+  --branch explore/jwt \
+  --owned exploration/jwt/ \
+  --description "Explore custom JWT implementation approach"
+
+bin/dag.sh add-node auth-workflow-001 auth-decision \
+  --role decision \
+  --depends-on explore-oauth,explore-jwt \
+  --description "Decision between OAuth and JWT approaches"
+
+bin/dag.sh add-node auth-workflow-001 implement-auth \
+  --role exploitation \
+  --depends-on auth-decision,initial-architecture \
+  --assignment-id IMPL-001 \
+  --branch implement/auth \
+  --owned src/auth/,tests/auth/ \
+  --description "Implement chosen authentication approach"
+
+bin/dag.sh add-node auth-workflow-001 verify-auth \
+  --role qa \
+  --depends-on implement-auth \
+  --assignment-id QA-001 \
+  --branch implement/auth \
+  --owned tests/integration/auth/ \
+  --description "Verify authentication implementation"
+
+bin/dag.sh add-node auth-workflow-001 reflect-auth \
+  --role reflection \
+  --depends-on verify-auth \
+  --assignment-id REF-001 \
+  --branch main \
+  --owned docs/reflection/auth-decision.md \
+  --description "Reflect on authentication implementation decisions"
+
+# Check workflow status and ready nodes
+bin/dag.sh status auth-workflow-001
+bin/dag.sh ready auth-workflow-001
+
+# Show workflow visualization
+bin/dag.sh show auth-workflow-001
+bin/dag.sh show auth-workflow-001 --node initial-architecture
+```
+
+### DAG-Driven Agent Spawning
+
+The orchestrator uses DAG status to determine which agents to spawn:
+
+```bash
+# Get ready nodes (nodes with satisfied dependencies)
+bin/dag.sh ready auth-workflow-001
+
+# For each ready node, create assignment and spawn agent
+bin/subagent.sh assignment-create worker-initial-arch \
+  --assignment-id ARCH-001 \
+  --role architecture \
+  --branch main \
+  --owned architecture/auth/ \
+  --workflow-id auth-workflow-001 \
+  --node-id initial-architecture
+
+# Update node status when agent starts working
+bin/dag.sh update-status auth-workflow-001 initial-architecture running
+
+# Update node status when agent completes
+bin/dag.sh update-status auth-workflow-001 initial-architecture done
+
+# Check for newly ready nodes after status update
+bin/dag.sh ready auth-workflow-001
+```
+
+### Node Status Management
+
+Track and update node progress through the workflow:
+
+```bash
+# Update node status based on agent reports
+bin/dag.sh update-status auth-workflow-001 explore-oauth running
+bin/dag.sh update-status auth-workflow-001 explore-jwt running
+
+# Mark nodes as completed when agents finish
+bin/dag.sh update-status auth-workflow-001 explore-oauth done
+bin/dag.sh update-status auth-workflow-001 explore-jwt done
+
+# Handle blocked nodes
+bin/dag.sh update-status auth-workflow-001 implement-auth blocked \
+  --reason "Waiting for external API keys"
+
+# Skip nodes when conditions change
+bin/dag.sh update-status auth-workflow-001 verify-auth skipped \
+  --reason "Implementation approach changed, verification not needed"
+
+# Mark failed nodes for retry decisions
+bin/dag.sh update-status auth-workflow-001 implement-auth failed \
+  --reason "Implementation approach incompatible with requirements"
+
+# Check overall workflow progress
+bin/dag.sh status auth-workflow-001 --verbose
+```
+
+### Complete Multi-Phase Workflow Example
+
+End-to-end example of a complex feature implementation:
+
+```bash
+# 1. Initialize workflow for database scaling feature
+bin/dag.sh init db-scaling-workflow --title "Database scaling implementation"
+
+# 2. Add architecture and exploration nodes
+bin/dag.sh add-node db-scaling-workflow db-architecture \
+  --role architecture \
+  --assignment-id ARCH-003 \
+  --branch main \
+  --owned architecture/database/ \
+  --description "Database scaling architecture review"
+
+bin/dag.sh add-node db-scaling-workflow explore-sharding \
+  --role exploration \
+  --depends-on db-architecture \
+  --assignment-id DB-001 \
+  --branch explore/sharding \
+  --owned exploration/sharding/ \
+  --description "Explore horizontal sharding approach"
+
+bin/dag.sh add-node db-scaling-workflow explore-replication \
+  --role exploration \
+  --depends-on db-architecture \
+  --assignment-id DB-002 \
+  --branch explore/replication \
+  --owned exploration/replication/ \
+  --description "Explore read replica scaling approach"
+
+bin/dag.sh add-node db-scaling-workflow explore-nosql \
+  --role exploration \
+  --depends-on db-architecture \
+  --assignment-id DB-003 \
+  --branch explore/nosql \
+  --owned exploration/nosql/ \
+  --description "Explore NoSQL migration approach"
+
+# 3. Add decision and implementation nodes
+bin/dag.sh add-node db-scaling-workflow scaling-decision \
+  --role decision \
+  --depends-on explore-sharding,explore-replication,explore-nosql \
+  --description "Choose database scaling approach"
+
+bin/dag.sh add-node db-scaling-workflow implement-scaling \
+  --role exploitation \
+  --depends-on scaling-decision,db-architecture \
+  --assignment-id IMPL-002 \
+  --branch implement/db-scaling \
+  --owned src/database/,migrations/,config/ \
+  --description "Implement chosen scaling solution"
+
+# 4. Add verification and metrics nodes
+bin/dag.sh add-node db-scaling-workflow performance-tests \
+  --role qa \
+  --depends-on implement-scaling \
+  --assignment-id QA-002 \
+  --branch implement/db-scaling \
+  --owned tests/performance/ \
+  --description "Performance testing of scaling implementation"
+
+bin/dag.sh add-node db-scaling-workflow load-testing \
+  --role qa \
+  --depends-on implement-scaling \
+  --assignment-id QA-003 \
+  --branch implement/db-scaling \
+  --owned tests/load/ \
+  --description "Load testing for scalability verification"
+
+bin/dag.sh add-node db-scaling-workflow metrics-collection \
+  --role qa \
+  --depends-on performance-tests,load-testing \
+  --assignment-id METRICS-001 \
+  --branch main \
+  --owned monitoring/scaling-metrics/ \
+  --description "Collect and analyze scaling metrics"
+
+# 5. Add reflection node
+bin/dag.sh add-node db-scaling-workflow scaling-reflection \
+  --role reflection \
+  --depends-on metrics-collection \
+  --assignment-id REF-002 \
+  --branch main \
+  --owned docs/reflection/db-scaling.md \
+  --description "Reflect on scaling implementation and decision quality"
+
+# 6. Execute workflow (orchestrator loop)
+# Check ready nodes
+bin/dag.sh ready db-scaling-workflow
+
+# Spawn agent for ready architecture node
+bin/subagent.sh assignment-create worker-db-architecture \
+  --assignment-id ARCH-003 \
+  --role architecture \
+  --workflow-id db-scaling-workflow \
+  --node-id db-architecture \
+  --branch main \
+  --owned architecture/database/
+
+# Update status and check for next ready nodes
+bin/dag.sh update-status db-scaling-workflow db-architecture running
+# ... (agent works) ...
+bin/dag.sh update-status db-scaling-workflow db-architecture done
+bin/dag.sh ready db-scaling-workflow
+
+# Now exploration nodes should be ready - spawn multiple parallel agents
+bin/dag.sh ready db-scaling-workflow
+# Returns: explore-sharding,explore-replication,explore-nosql
+
+# Spawn all ready exploration agents
+for node in explore-sharding explore-replication explore-nosql; do
+  bin/subagent.sh assignment-create "worker-${node}" \
+    --assignment-id "$(bin/dag.sh show db-scaling-workflow --node $node | grep assignment-id | cut -d: -f2)" \
+    --role exploration \
+    --workflow-id db-scaling-workflow \
+    --node-id "$node"
+done
+
+# Continue workflow execution cycle...
+```
+
+### DAG Workflow Status Monitoring
+
+Monitor workflow progress and agent coordination:
+
+```bash
+# Check overall workflow status
+bin/dag.sh status db-scaling-workflow
+
+# Get detailed node information
+bin/dag.sh show db-scaling-workflow --verbose
+
+# Monitor ready nodes for agent spawning
+bin/dag.sh ready db-scaling-workflow --watch
+
+# List all active workflows
+bin/dag.sh list
+
+# Export workflow for documentation
+bin/dag.sh export db-scaling-workflow --format dot > workflow.dot
+bin/dag.sh export db-scaling-workflow --format json > workflow.json
+```
+
+### Integration with Agent Management
+
+DAG workflows integrate with existing agent assignment and status tracking:
+
+```bash
+# Create agent assignments with workflow context
+bin/subagent.sh assignment-create worker-implement-scaling \
+  --assignment-id IMPL-002 \
+  --role exploitation \
+  --workflow-id db-scaling-workflow \
+  --node-id implement-scaling \
+  --branch implement/db-scaling \
+  --owned src/database/,migrations/
+
+# Check agent assignment against workflow node
+bin/subagent.sh assignment-check worker-implement-scaling
+
+# Update workflow status based on agent progress
+bin/subagent.sh assignment-status worker-implement-scaling done
+bin/dag.sh update-status db-scaling-workflow implement-scaling done
+
+# Workflow-aware progress reporting
+bin/status.sh --workflow db-scaling-workflow
+```
+
+Note: DAG workflows provide structure and dependency tracking, but the orchestrator remains the active workflow controller. Agent spawning and status updates are orchestrator-driven, not automatic, preserving human oversight and intervention capabilities.
+
 ## Tests
 
 ```bash

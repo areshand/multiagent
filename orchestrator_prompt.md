@@ -701,6 +701,219 @@ For exploitation workers, add:
 - Report blockers rather than abandoning the plan
 - Request clarification if the plan conflicts with implementation reality
 
+## DAG-Controlled Orchestration
+
+The orchestrator supports DAG (Directed Acyclic Graph) workflow control for complex multi-dependency tasks. The orchestrator owns the workflow DAG and controls node status updates and sequencing. Workers execute individual nodes but do not control workflow progression.
+
+### DAG Workflow Ownership
+
+The orchestrator maintains exclusive control over:
+
+- Workflow DAG creation and modification
+- Node status updates (ready → running → done/blocked/failed/skipped)
+- Dependency resolution and ready node computation
+- Agent spawning decisions based on ready nodes
+- Workflow progression and completion detection
+
+Workers and subagents implement assigned nodes but cannot:
+
+- Update their own node status in the DAG
+- Spawn dependent nodes
+- Modify workflow structure or dependencies
+- Skip or abandon nodes without orchestrator approval
+
+### DAG Sequencing Loop
+
+The orchestrator follows this sequencing pattern:
+
+1. **Create Workflow**: Initialize DAG with `bin/dag.sh init` and add nodes with dependencies
+2. **Add Nodes**: Use `bin/dag.sh add-node` with role assignments and dependency specifications
+3. **Compute Ready**: Run `bin/dag.sh ready` to identify nodes with satisfied dependencies
+4. **Spawn Agents**: Launch agents only for ready nodes using existing assignment creation flow
+5. **Monitor Progress**: Track agent status and capture completion reports
+6. **Update Node Status**: Mark nodes as running/done/blocked/failed/skipped based on agent reports
+7. **Recompute Ready**: After status changes, recompute ready nodes for next iteration
+8. **Continue**: Repeat steps 3-7 until no ready nodes remain or workflow completes
+
+### Node Status Lifecycle
+
+```
+[pending] → [ready] → [running] → [done]
+    ↓           ↓          ↓         ↑
+    └─→ [blocked] ←─ [failed] ←─────┘
+            ↓
+       [skipped]
+```
+
+Status transitions:
+
+- `pending`: Node exists but dependencies not satisfied
+- `ready`: Dependencies satisfied, eligible for agent spawning
+- `running`: Agent spawned and actively working on node
+- `done`: Node completed successfully, outputs available
+- `blocked`: Node cannot proceed due to external blockers
+- `failed`: Node implementation failed, may need retry or skip decision
+- `skipped`: Node intentionally bypassed due to conditions or failures
+
+Only the orchestrator updates node status. Agents report their state, but the orchestrator translates agent reports into DAG node status updates.
+
+### Role Integration with DAG Nodes
+
+DAG nodes integrate with organizational learning roles:
+
+#### Exploration Nodes
+- **Dependencies**: Typically depend only on initial architecture or research nodes
+- **Role**: `exploration`
+- **Spawning**: Multiple exploration nodes can run in parallel for different approaches
+- **Output**: Evidence and findings for decision alternatives
+
+#### Decision Nodes  
+- **Dependencies**: Depend on completion of exploration nodes
+- **Role**: Special orchestrator-handled nodes for decision resolution
+- **Spawning**: Orchestrator processes decision nodes directly, no agent spawned
+- **Output**: Selected plan ID and decision record
+
+#### Architecture Nodes
+- **Dependencies**: May depend on exploration nodes or run early for constraints
+- **Role**: `architecture`  
+- **Spawning**: Single architecture agent per domain area
+- **Output**: System design constraints and integration requirements
+
+#### Exploitation Nodes
+- **Dependencies**: Depend on decision nodes and architecture nodes
+- **Role**: `exploitation`
+- **Spawning**: Primary implementation agents for chosen approaches
+- **Output**: Working implementation of selected plans
+
+#### QA/Verifier Nodes
+- **Dependencies**: Depend on exploitation nodes they verify
+- **Role**: `qa` or `verifier`
+- **Spawning**: QA agents verify specific implementation nodes
+- **Output**: Verification results and acceptance recommendations
+
+#### Reflection Nodes
+- **Dependencies**: Depend on exploitation nodes, QA nodes, or metrics collection nodes
+- **Role**: `reflection`
+- **Spawning**: Reflection agents analyze completed cycles
+- **Output**: Lessons learned and process improvements
+
+### DAG Node Specification
+
+When adding nodes to a DAG workflow, specify:
+
+```bash
+bin/dag.sh add-node workflow-001 explore-auth-jwt \
+  --role exploration \
+  --depends-on initial-arch \
+  --assignment-id AUTH-001 \
+  --branch explore/jwt \
+  --owned exploration/jwt/ \
+  --description "Explore JWT authentication approach"
+```
+
+Node attributes:
+
+- `node-id`: Unique identifier within the workflow
+- `--role`: Agent role (exploration, exploitation, reflection, architecture, qa)
+- `--depends-on`: Comma-separated list of prerequisite node IDs
+- `--assignment-id`: Assignment metadata identifier
+- `--branch`: Git branch for this node's work
+- `--owned`: File paths owned by this node's agent
+- `--description`: Human-readable node purpose
+
+### Dependency Examples
+
+Typical dependency patterns:
+
+```bash
+# Architecture provides constraints early
+bin/dag.sh add-node workflow-001 auth-architecture \
+  --role architecture \
+  --depends-on "" \
+  --assignment-id ARCH-001
+
+# Multiple parallel exploration nodes
+bin/dag.sh add-node workflow-001 explore-oauth \
+  --role exploration \
+  --depends-on auth-architecture \
+  --assignment-id AUTH-001
+
+bin/dag.sh add-node workflow-001 explore-jwt \
+  --role exploration \
+  --depends-on auth-architecture \
+  --assignment-id AUTH-002
+
+# Decision depends on exploration completion
+bin/dag.sh add-node workflow-001 auth-decision \
+  --role decision \
+  --depends-on explore-oauth,explore-jwt
+
+# Implementation depends on decision and architecture
+bin/dag.sh add-node workflow-001 implement-auth \
+  --role exploitation \
+  --depends-on auth-decision,auth-architecture \
+  --assignment-id IMPL-001
+
+# QA depends on implementation
+bin/dag.sh add-node workflow-001 verify-auth \
+  --role qa \
+  --depends-on implement-auth \
+  --assignment-id QA-001
+
+# Reflection depends on QA results
+bin/dag.sh add-node workflow-001 reflect-auth \
+  --role reflection \
+  --depends-on verify-auth \
+  --assignment-id REF-001
+```
+
+### Agent Spawning from DAG
+
+The orchestrator spawns agents only for ready nodes:
+
+```bash
+# Check ready nodes
+READY_NODES="$(bin/dag.sh ready workflow-001)"
+
+# For each ready node, create assignment if not exists, then spawn
+for node_id in $READY_NODES; do
+  # Get node details
+  NODE_INFO="$(bin/dag.sh show workflow-001 --node $node_id)"
+  
+  # Extract assignment details from node info
+  ASSIGNMENT_ID="$(echo "$NODE_INFO" | grep assignment-id | cut -d: -f2)"
+  ROLE="$(echo "$NODE_INFO" | grep role | cut -d: -f2)"
+  BRANCH="$(echo "$NODE_INFO" | grep branch | cut -d: -f2)"
+  OWNED="$(echo "$NODE_INFO" | grep owned | cut -d: -f2)"
+  
+  # Create assignment metadata
+  bin/subagent.sh assignment-create "worker-${node_id}" \
+    --assignment-id "$ASSIGNMENT_ID" \
+    --role "$ROLE" \
+    --branch "$BRANCH" \
+    --owned "$OWNED" \
+    --workflow-id workflow-001 \
+    --node-id "$node_id"
+    
+  # Update node status to running
+  bin/dag.sh update-status workflow-001 "$node_id" running
+  
+  # Spawn worker for node
+  # ... [existing worker spawn logic with role-specific instructions]
+done
+```
+
+### Limitations and Manual Operations
+
+DAG workflow control is orchestrator-driven, not automatically spawning. The orchestrator loop performs:
+
+- Manual ready node identification with `bin/dag.sh ready`
+- Explicit agent spawning decisions
+- Manual node status updates based on agent reports
+- Orchestrator-controlled workflow progression
+
+The DAG provides structure and dependency tracking, but the orchestrator remains the active workflow controller. This prevents runaway automatic spawning while preserving orchestrator oversight and intervention capabilities.
+
 ## First Action
 
 When this session starts:
