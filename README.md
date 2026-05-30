@@ -738,13 +738,26 @@ bin/dag.sh ready db-scaling-workflow
 bin/dag.sh ready db-scaling-workflow
 # Returns: explore-sharding,explore-replication,explore-nosql
 
-# Spawn all ready exploration agents
-for node in explore-sharding explore-replication explore-nosql; do
-  bin/subagent.sh assignment-create "worker-${node}" \
-    --assignment-id "$(bin/dag.sh show db-scaling-workflow | grep "$node.*assignment-id" | cut -d: -f2)" \
+# Spawn all ready exploration agents (orchestrator uses workflow definition)
+bin/dag.sh ready db-scaling-workflow | while read node_id; do
+  # Orchestrator looks up node details from the workflow definition it created
+  # or inspects bin/dag.sh show db-scaling-workflow manually
+  case "$node_id" in
+    explore-sharding)
+      ASSIGNMENT_ID="DB-001"; AGENT="worker-explore-sharding" ;;
+    explore-replication)  
+      ASSIGNMENT_ID="DB-002"; AGENT="worker-explore-replication" ;;
+    explore-nosql)
+      ASSIGNMENT_ID="DB-003"; AGENT="worker-explore-nosql" ;;
+    *)
+      continue ;;
+  esac
+  
+  bin/subagent.sh assignment-create "$AGENT" \
+    --assignment-id "$ASSIGNMENT_ID" \
     --role exploration \
     --workflow-id db-scaling-workflow \
-    --node-id "$node"
+    --node-id "$node_id"
 done
 
 # Continue workflow execution cycle...
