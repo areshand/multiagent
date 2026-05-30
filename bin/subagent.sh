@@ -16,7 +16,7 @@ usage() {
 Usage:
   bin/subagent.sh spawn NAME [--instruction TEXT]
   bin/subagent.sh list
-  bin/subagent.sh assignment-create NAME --assignment-id ID --branch BRANCH --owned PATH[,PATH...] [--status STATUS] [--start-commit COMMIT]
+  bin/subagent.sh assignment-create NAME --assignment-id ID --branch BRANCH --owned PATH[,PATH...] [--status STATUS] [--start-commit COMMIT] [--role exploitation|exploration|reflection|architecture|qa|verifier] [--decision-id DECISION_ID] [--plan-id PLAN_ID]
   bin/subagent.sh assignment-show NAME
   bin/subagent.sh assignment-status NAME STATUS
   bin/subagent.sh assignment-check NAME
@@ -266,7 +266,7 @@ assignment_create() {
   validate_name "$name"
   shift
 
-  local assignment_id="" branch="" owned_csv="" status="assigned" start_commit=""
+  local assignment_id="" branch="" owned_csv="" status="assigned" start_commit="" role="exploitation" decision_id="" plan_id=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --assignment-id)
@@ -289,6 +289,18 @@ assignment_create() {
         start_commit="${2:-}"
         shift 2
         ;;
+      --role)
+        role="${2:-}"
+        shift 2
+        ;;
+      --decision-id)
+        decision_id="${2:-}"
+        shift 2
+        ;;
+      --plan-id)
+        plan_id="${2:-}"
+        shift 2
+        ;;
       *)
         die "unknown assignment-create argument: $1"
         ;;
@@ -298,6 +310,13 @@ assignment_create() {
   [[ -n "$assignment_id" ]] || die "assignment-create requires --assignment-id ID"
   [[ -n "$branch" ]] || die "assignment-create requires --branch BRANCH"
   [[ -n "$owned_csv" ]] || die "assignment-create requires --owned PATH[,PATH...]"
+  case "$role" in
+    exploitation|exploration|reflection|architecture|qa|verifier)
+      ;;
+    *)
+      die "invalid role '$role' (expected exploitation|exploration|reflection|architecture|qa|verifier)"
+      ;;
+  esac
   if [[ -z "$start_commit" ]]; then
     start_commit="$(git -C "$ROOT" rev-parse HEAD)"
   else
@@ -330,6 +349,9 @@ root=$ROOT
 worker_cli=$WORKER_CLI
 subagent_cli=$SUBAGENT_CLI
 verifier_cli=$VERIFIER_CLI
+role=$role
+decision_id=$decision_id
+plan_id=$plan_id
 EOF
   set_assignment_status "$name" "$status"
   printf 'assignment created\t%s\t%s\t%s\n' "$name" "$assignment_id" "$branch"
@@ -480,6 +502,9 @@ completed_step=$step
 blocker=$blocker
 idempotency=$idempotency
 status=$status
+role=$(read_assignment_value "$name" role || printf 'exploitation')
+decision_id=$(read_assignment_value "$name" decision_id || true)
+plan_id=$(read_assignment_value "$name" plan_id || true)
 updated_at=$(timestamp)
 EOF
   set_assignment_status "$name" "$status"
