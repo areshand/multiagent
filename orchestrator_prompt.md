@@ -767,10 +767,10 @@ DAG nodes integrate with organizational learning roles:
 - **Spawning**: Multiple exploration nodes can run in parallel for different approaches
 - **Output**: Evidence and findings for decision alternatives
 
-#### Decision Nodes  
+#### Decision Processing
 - **Dependencies**: Depend on completion of exploration nodes
-- **Role**: Special orchestrator-handled nodes for decision resolution
-- **Spawning**: Orchestrator processes decision nodes directly, no agent spawned
+- **Role**: Orchestrator-handled decision resolution (not a DAG node role)
+- **Spawning**: Orchestrator processes decisions directly using existing decision.sh commands
 - **Output**: Selected plan ID and decision record
 
 #### Architecture Nodes
@@ -803,23 +803,23 @@ When adding nodes to a DAG workflow, specify:
 
 ```bash
 bin/dag.sh add-node workflow-001 explore-auth-jwt \
+  --agent worker-explore-jwt \
   --role exploration \
   --depends-on initial-arch \
   --assignment-id AUTH-001 \
   --branch explore/jwt \
-  --owned exploration/jwt/ \
-  --description "Explore JWT authentication approach"
+  --owned exploration/jwt/
 ```
 
 Node attributes:
 
 - `node-id`: Unique identifier within the workflow
-- `--role`: Agent role (exploration, exploitation, reflection, architecture, qa)
+- `--agent`: Agent name for this node
+- `--role`: Agent role (exploration, exploitation, reflection, architecture, qa, verifier)
 - `--depends-on`: Comma-separated list of prerequisite node IDs
 - `--assignment-id`: Assignment metadata identifier
 - `--branch`: Git branch for this node's work
 - `--owned`: File paths owned by this node's agent
-- `--description`: Human-readable node purpose
 
 ### Dependency Examples
 
@@ -828,43 +828,56 @@ Typical dependency patterns:
 ```bash
 # Architecture provides constraints early
 bin/dag.sh add-node workflow-001 auth-architecture \
+  --agent worker-arch \
   --role architecture \
   --depends-on "" \
-  --assignment-id ARCH-001
+  --assignment-id ARCH-001 \
+  --branch main \
+  --owned architecture/auth/
 
 # Multiple parallel exploration nodes
 bin/dag.sh add-node workflow-001 explore-oauth \
+  --agent worker-explore-oauth \
   --role exploration \
   --depends-on auth-architecture \
-  --assignment-id AUTH-001
+  --assignment-id AUTH-001 \
+  --branch explore/oauth \
+  --owned exploration/oauth/
 
 bin/dag.sh add-node workflow-001 explore-jwt \
+  --agent worker-explore-jwt \
   --role exploration \
   --depends-on auth-architecture \
-  --assignment-id AUTH-002
+  --assignment-id AUTH-002 \
+  --branch explore/jwt \
+  --owned exploration/jwt/
 
-# Decision depends on exploration completion
-bin/dag.sh add-node workflow-001 auth-decision \
-  --role decision \
-  --depends-on explore-oauth,explore-jwt
-
-# Implementation depends on decision and architecture
+# Implementation depends on architecture (orchestrator handles decision separately)
 bin/dag.sh add-node workflow-001 implement-auth \
+  --agent worker-implement-auth \
   --role exploitation \
-  --depends-on auth-decision,auth-architecture \
-  --assignment-id IMPL-001
+  --depends-on explore-oauth,explore-jwt,auth-architecture \
+  --assignment-id IMPL-001 \
+  --branch implement/auth \
+  --owned src/auth/,tests/auth/
 
 # QA depends on implementation
 bin/dag.sh add-node workflow-001 verify-auth \
+  --agent worker-verify-auth \
   --role qa \
   --depends-on implement-auth \
-  --assignment-id QA-001
+  --assignment-id QA-001 \
+  --branch implement/auth \
+  --owned tests/integration/auth/
 
 # Reflection depends on QA results
 bin/dag.sh add-node workflow-001 reflect-auth \
+  --agent worker-reflect-auth \
   --role reflection \
   --depends-on verify-auth \
-  --assignment-id REF-001
+  --assignment-id REF-001 \
+  --branch main \
+  --owned docs/reflection/auth-decision.md
 ```
 
 ### Agent Spawning from DAG
@@ -877,17 +890,18 @@ READY_NODES="$(bin/dag.sh ready workflow-001)"
 
 # For each ready node, create assignment if not exists, then spawn
 for node_id in $READY_NODES; do
-  # Get node details
-  NODE_INFO="$(bin/dag.sh show workflow-001 --node $node_id)"
+  # Get node details from workflow definition
+  NODE_INFO="$(bin/dag.sh show workflow-001)"
   
-  # Extract assignment details from node info
-  ASSIGNMENT_ID="$(echo "$NODE_INFO" | grep assignment-id | cut -d: -f2)"
-  ROLE="$(echo "$NODE_INFO" | grep role | cut -d: -f2)"
-  BRANCH="$(echo "$NODE_INFO" | grep branch | cut -d: -f2)"
-  OWNED="$(echo "$NODE_INFO" | grep owned | cut -d: -f2)"
+  # Extract assignment details from node info (orchestrator tracks this)
+  ASSIGNMENT_ID="$(echo "$NODE_INFO" | grep "$node_id.*assignment-id" | cut -d: -f2)"
+  ROLE="$(echo "$NODE_INFO" | grep "$node_id.*role" | cut -d: -f2)"
+  BRANCH="$(echo "$NODE_INFO" | grep "$node_id.*branch" | cut -d: -f2)"
+  OWNED="$(echo "$NODE_INFO" | grep "$node_id.*owned" | cut -d: -f2)"
+  AGENT="$(echo "$NODE_INFO" | grep "$node_id.*agent" | cut -d: -f2)"
   
   # Create assignment metadata
-  bin/subagent.sh assignment-create "worker-${node_id}" \
+  bin/subagent.sh assignment-create "$AGENT" \
     --assignment-id "$ASSIGNMENT_ID" \
     --role "$ROLE" \
     --branch "$BRANCH" \
@@ -896,7 +910,7 @@ for node_id in $READY_NODES; do
     --node-id "$node_id"
     
   # Update node status to running
-  bin/dag.sh update-status workflow-001 "$node_id" running
+  bin/dag.sh status workflow-001 "$node_id" running
   
   # Spawn worker for node
   # ... [existing worker spawn logic with role-specific instructions]
