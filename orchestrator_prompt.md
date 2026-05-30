@@ -885,22 +885,13 @@ bin/dag.sh add-node workflow-001 reflect-auth \
 The orchestrator spawns agents only for ready nodes:
 
 ```bash
-# Check ready nodes
-READY_NODES="$(bin/dag.sh ready workflow-001)"
-
-# For each ready node, create assignment if not exists, then spawn
-for node_id in $READY_NODES; do
-  # Get node details from workflow definition
-  NODE_INFO="$(bin/dag.sh show workflow-001)"
+# Check ready nodes (emits node IDs, one per line)
+bin/dag.sh ready workflow-001 | while read node_id; do
+  # Orchestrator uses the workflow node definition it generated
+  # or inspects bin/dag.sh show workflow-001 manually to determine:
+  # ASSIGNMENT_ID, ROLE, BRANCH, OWNED, AGENT for this node_id
   
-  # Extract assignment details from node info (orchestrator tracks this)
-  ASSIGNMENT_ID="$(echo "$NODE_INFO" | grep "$node_id.*assignment-id" | cut -d: -f2)"
-  ROLE="$(echo "$NODE_INFO" | grep "$node_id.*role" | cut -d: -f2)"
-  BRANCH="$(echo "$NODE_INFO" | grep "$node_id.*branch" | cut -d: -f2)"
-  OWNED="$(echo "$NODE_INFO" | grep "$node_id.*owned" | cut -d: -f2)"
-  AGENT="$(echo "$NODE_INFO" | grep "$node_id.*agent" | cut -d: -f2)"
-  
-  # Create assignment metadata
+  # Create assignment metadata using values from workflow definition
   bin/subagent.sh assignment-create "$AGENT" \
     --assignment-id "$ASSIGNMENT_ID" \
     --role "$ROLE" \
