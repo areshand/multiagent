@@ -586,6 +586,7 @@ bin/subagent.sh assignment-create reflection-01-api \
   --role reflection \
   --decision-id DEC-001 \
   --plan-id PLN-001 \
+  --branch main \
   --owned docs/reflection/
 
 bin/subagent.sh spawn reflection-01-api \
@@ -666,6 +667,7 @@ bin/subagent.sh assignment-create worker-03-explore-auth \
   --role exploration \
   --decision-id DEC-002 \
   --plan-id none \
+  --branch explore/auth-approach \
   --owned exploration/auth/
 ```
 

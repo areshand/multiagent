@@ -468,7 +468,7 @@ bin/subagent.sh assignment-create worker-03-oauth-impl \
   --assignment-id AUTH-003 \
   --role exploitation \
   --decision-id DEC-001 \
-  --plan-id PLN-002 \
+  --plan-id PLN-001 \
   --branch implement/oauth \
   --owned src/auth/
 
@@ -477,7 +477,7 @@ bin/subagent.sh assignment-create worker-04-jwt-fallback \
   --assignment-id AUTH-004 \
   --role exploitation \
   --decision-id DEC-001 \
-  --plan-id PLN-002-fallback \
+  --plan-id PLN-002 \
   --branch fallback/jwt \
   --owned src/jwt/ \
   --status contingency
@@ -499,7 +499,7 @@ bin/subagent.sh assignment-status worker-04-jwt-fallback running
 
 ### Role-Specific Agent Instructions
 
-The orchestrator automatically includes role-specific guidance when spawning agents:
+The orchestrator should include role-specific guidance when spawning agents:
 
 - **Exploration agents**: Encouraged to disagree, document evidence, explore assigned approach independently
 - **Exploitation workers**: Focus on chosen plan, report blockers rather than abandoning approach  
