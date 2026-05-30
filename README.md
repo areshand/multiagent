@@ -442,19 +442,19 @@ bin/decision.sh commit DEC-003 \
 # 5. Implementation with focused exploitation
 bin/subagent.sh assignment-create worker-04-implement-sharding \
   --assignment-id DB-004 --role exploitation --decision-id DEC-003 \
-  --plan-id PLN-003 --branch implement/db-sharding \
+  --plan-id PLN-001 --branch implement/db-sharding \
   --owned src/database/,migrations/,config/sharding.yaml
 
 # 6. QA verification against exploration predictions
 bin/subagent.sh assignment-create qa-01-sharding-tests \
   --assignment-id QA-002 --role qa --decision-id DEC-003 \
-  --plan-id PLN-003 --branch implement/db-sharding \
+  --plan-id PLN-001 --branch implement/db-sharding \
   --owned tests/performance/sharding/
 
 # 7. Retrospective reflection on decision quality
 bin/subagent.sh assignment-create reflection-01-db-scaling \
   --assignment-id REF-002 --role reflection --decision-id DEC-003 \
-  --plan-id PLN-003 --branch main \
+  --plan-id PLN-001 --branch main \
   --owned docs/reflection/db-scaling-decision.md
 ```
 
