@@ -74,6 +74,17 @@ validate_status() {
   esac
 }
 
+validate_role() {
+  local role="$1"
+  case "$role" in
+    exploitation|exploration|reflection|architecture|qa|verifier)
+      ;;
+    *)
+      die "invalid role: $role (expected exploitation|exploration|reflection|architecture|qa|verifier)"
+      ;;
+  esac
+}
+
 reject_newline() {
   local label="$1"
   local value="$2"
@@ -337,6 +348,7 @@ add_node() {
   [[ -n "$branch" ]] || die "add-node requires --branch"
   [[ -n "$owned_paths" ]] || die "add-node requires --owned"
 
+  validate_role "$role"
   validate_status "$status"
   reject_newline "--agent" "$agent"
   reject_newline "--assignment-id" "$assignment_id"
@@ -454,11 +466,12 @@ list_ready_nodes() {
   nodes_f="$(nodes_file "$workflow_id")"
   edges_f="$(edges_file "$workflow_id")"
 
-  printf 'READY_NODES\n'
-
-  # For each node with status pending, check if all dependencies are done
+  # For each node, check if it's ready (either explicitly marked ready or pending with satisfied dependencies)
   while IFS=$'\t' read -r node_id agent assignment_id role branch owned_paths status decision_id plan_id added_at; do
-    if [[ "$status" == "pending" ]]; then
+    if [[ "$status" == "ready" ]]; then
+      # Node is explicitly marked ready
+      printf '%s\n' "$node_id"
+    elif [[ "$status" == "pending" ]]; then
       # Get dependencies for this node using inline awk instead of function call
       local deps_output
       deps_output=$(awk -F'\t' -v node_id="$node_id" 'NR > 1 && $2 == node_id { print $1 }' "$edges_f" | sort | uniq)
