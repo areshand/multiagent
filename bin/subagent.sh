@@ -16,7 +16,7 @@ usage() {
 Usage:
   bin/subagent.sh spawn NAME [--instruction TEXT]
   bin/subagent.sh list
-  bin/subagent.sh assignment-create NAME --assignment-id ID --branch BRANCH --owned PATH[,PATH...] [--status STATUS] [--start-commit COMMIT] [--role exploitation|exploration|reflection|architecture|qa|verifier] [--decision-id DECISION_ID] [--plan-id PLAN_ID]
+  bin/subagent.sh assignment-create NAME --assignment-id ID --branch BRANCH --owned PATH[,PATH...] [--status STATUS] [--start-commit COMMIT] [--role exploitation|exploration|reflection|architecture|qa|verifier] [--decision-id DECISION_ID] [--plan-id PLAN_ID] [--workflow-id WORKFLOW_ID] [--node-id NODE_ID] [--depends-on NODE[,NODE...]]
   bin/subagent.sh assignment-show NAME
   bin/subagent.sh assignment-status NAME STATUS
   bin/subagent.sh assignment-check NAME
@@ -266,7 +266,7 @@ assignment_create() {
   validate_name "$name"
   shift
 
-  local assignment_id="" branch="" owned_csv="" status="assigned" start_commit="" role="exploitation" decision_id="" plan_id=""
+  local assignment_id="" branch="" owned_csv="" status="assigned" start_commit="" role="exploitation" decision_id="" plan_id="" workflow_id="" node_id="" depends_on=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --assignment-id)
@@ -299,6 +299,18 @@ assignment_create() {
         ;;
       --plan-id)
         plan_id="${2:-}"
+        shift 2
+        ;;
+      --workflow-id)
+        workflow_id="${2:-}"
+        shift 2
+        ;;
+      --node-id)
+        node_id="${2:-}"
+        shift 2
+        ;;
+      --depends-on)
+        depends_on="${2:-}"
         shift 2
         ;;
       *)
@@ -352,6 +364,9 @@ verifier_cli=$VERIFIER_CLI
 role=$role
 decision_id=$decision_id
 plan_id=$plan_id
+workflow_id=$workflow_id
+node_id=$node_id
+depends_on=$depends_on
 EOF
   set_assignment_status "$name" "$status"
   printf 'assignment created\t%s\t%s\t%s\n' "$name" "$assignment_id" "$branch"
@@ -505,6 +520,9 @@ status=$status
 role=$(read_assignment_value "$name" role || printf 'exploitation')
 decision_id=$(read_assignment_value "$name" decision_id || true)
 plan_id=$(read_assignment_value "$name" plan_id || true)
+workflow_id=$(read_assignment_value "$name" workflow_id || true)
+node_id=$(read_assignment_value "$name" node_id || true)
+depends_on=$(read_assignment_value "$name" depends_on || true)
 updated_at=$(timestamp)
 EOF
   set_assignment_status "$name" "$status"
