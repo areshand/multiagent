@@ -95,8 +95,10 @@ print_row() {
   local role="$7"
   local decision_id="$8"
   local plan_id="$9"
+  local workflow_id="${10}"
+  local node_id="${11}"
 
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$type" "$name" "$status" "$window" "$progress" "$state" "$role" "$decision_id" "$plan_id"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$type" "$name" "$status" "$window" "$progress" "$state" "$role" "$decision_id" "$plan_id" "$workflow_id" "$node_id"
 }
 
 main() {
@@ -106,9 +108,9 @@ main() {
   local windows
   windows="$(list_window_names)"
 
-  printf 'TYPE\tNAME\tSTATUS\tWINDOW\tLAST_PROGRESS\tSTATE_DIR\tROLE\tDECISION_ID\tPLAN_ID\n'
+  printf 'TYPE\tNAME\tSTATUS\tWINDOW\tLAST_PROGRESS\tSTATE_DIR\tROLE\tDECISION_ID\tPLAN_ID\tWORKFLOW_ID\tNODE_ID\n'
 
-  local name status progress state role decision_id plan_id
+  local name status progress state role decision_id plan_id workflow_id node_id
   while IFS= read -r name; do
     [[ -n "$name" ]] || continue
     [[ "$name" != "orchestrator" ]] || continue
@@ -123,8 +125,10 @@ main() {
     role="$(read_assignment_value "$name" role 2>/dev/null || printf '%s' '-')"
     decision_id="$(read_assignment_value "$name" decision_id 2>/dev/null || printf '%s' '-')"
     plan_id="$(read_assignment_value "$name" plan_id 2>/dev/null || printf '%s' '-')"
+    workflow_id="$(read_assignment_value "$name" workflow_id 2>/dev/null || printf '%s' '-')"
+    node_id="$(read_assignment_value "$name" node_id 2>/dev/null || printf '%s' '-')"
 
-    print_row "worker" "$name" "$status" "open" "$progress" "-" "$role" "$decision_id" "$plan_id"
+    print_row "worker" "$name" "$status" "open" "$progress" "-" "$role" "$decision_id" "$plan_id" "$workflow_id" "$node_id"
   done <<<"$windows"
 
   local base="$STATE_DIR/subagents"
@@ -150,8 +154,10 @@ main() {
     role="$(read_assignment_value "$name" role 2>/dev/null || printf '%s' '-')"
     decision_id="$(read_assignment_value "$name" decision_id 2>/dev/null || printf '%s' '-')"
     plan_id="$(read_assignment_value "$name" plan_id 2>/dev/null || printf '%s' '-')"
+    workflow_id="$(read_assignment_value "$name" workflow_id 2>/dev/null || printf '%s' '-')"
+    node_id="$(read_assignment_value "$name" node_id 2>/dev/null || printf '%s' '-')"
 
-    print_row "subagent" "$name" "$status" "$window" "$progress" "$state" "$role" "$decision_id" "$plan_id"
+    print_row "subagent" "$name" "$status" "$window" "$progress" "$state" "$role" "$decision_id" "$plan_id" "$workflow_id" "$node_id"
   done
 }
 
