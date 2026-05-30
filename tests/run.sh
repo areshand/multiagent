@@ -558,4 +558,201 @@ restore_all_output="$("$ROOT/bin/subagent.sh" restore-all)"
 [[ "$restore_all_output" == *$'skipped subagent-watch\tskip-finalized'* ]]
 [[ "$restore_all_output" == *"restore-all complete: restored=0"* ]]
 
-echo "tests passed"
+# Test organizational learning functionality
+
+# Test decision.sh basic functionality
+DECISION_STATE_DIR="$TMPDIR/decision-state"
+MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" init DEC-001 --title "Test Decision" --owner "test-user"
+assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/decision.env" "decision_id=DEC-001"
+assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/decision.env" "title=Test Decision"
+assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/decision.env" "owner=test-user"
+assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/decision.env" "status=open"
+
+# Test decision.sh add-alternative
+MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" add-alternative DEC-001 \
+  --plan-id PLAN-A --summary "First approach" --proposed-by agent-1 \
+  --branch worker/plan-a --assignment-name worker-implementation \
+  --expected-outcome "Fast delivery" --risk "Technical debt"
+
+assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/alternatives.tsv" "PLAN-A"
+assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/alternatives.tsv" "First approach"
+assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/alternatives.tsv" "agent-1"
+
+# Test decision.sh add-assumption
+MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" add-assumption DEC-001 \
+  --assumption-id ASSUME-1 --statement "API will be stable" \
+  --confidence "high" --validation-method "integration tests" \
+  --expected-signal "no breaking changes"
+
+assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/assumptions.tsv" "ASSUME-1"
+assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/assumptions.tsv" "API will be stable"
+
+# Test decision.sh commit
+MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" commit DEC-001 \
+  --selected-plan PLAN-A --reason "Best balance of speed and quality" \
+  --rollback-policy "Manual rollback" --reflection-due "2026-06-01"
+
+assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/decision.env" "status=committed"
+assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/outcome.env" "selected_plan=PLAN-A"
+assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/outcome.env" "reason=Best balance of speed and quality"
+
+# Test decision.sh record-metric
+MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" record-metric DEC-001 \
+  --name "delivery-time" --expected "2 weeks" --actual "3 weeks"
+
+assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/metrics.tsv" "delivery-time"
+assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/metrics.tsv" "2 weeks"
+assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/metrics.tsv" "3 weeks"
+
+# Test decision.sh reflect
+MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" reflect DEC-001 \
+  --recommendation "adjust" --reason "Delivery was slower than expected" \
+  --follow-up-assignment "optimization-task"
+
+assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/decision.env" "status=reflected"
+assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/outcome.env" "recommendation=adjust"
+assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/outcome.env" "reflection_reason=Delivery was slower than expected"
+
+# Test decision.sh show and list
+show_output="$(MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" show DEC-001)"
+[[ "$show_output" == *"Decision: DEC-001"* ]]
+[[ "$show_output" == *"title=Test Decision"* ]]
+
+list_output="$(MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" list)"
+[[ "$list_output" == *$'DEC-001\treflected\tTest Decision\ttest-user'* ]]
+
+# Test decision.sh error conditions
+if MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" init DEC-001 --title "Duplicate" >"$TMPDIR/duplicate.out" 2>&1; then
+  echo "expected duplicate decision to fail" >&2
+  cat "$TMPDIR/duplicate.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/duplicate.out" "decision already exists: DEC-001"
+
+# Test invalid decision ID
+if MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" init "DEC/INVALID" --title "Bad ID" >"$TMPDIR/invalid-id.out" 2>&1; then
+  echo "expected invalid decision ID to fail" >&2
+  cat "$TMPDIR/invalid-id.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/invalid-id.out" "invalid decision ID: DEC/INVALID"
+
+# Test invalid recommendation
+if MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" reflect DEC-001 --recommendation "invalid" --reason "test" >"$TMPDIR/invalid-rec.out" 2>&1; then
+  echo "expected invalid recommendation to fail" >&2
+  cat "$TMPDIR/invalid-rec.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/invalid-rec.out" "invalid recommendation: invalid"
+
+# Test newline rejection
+if MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" init DEC-NEWLINE --title "$(printf 'Title\nwith\nnewlines')" >"$TMPDIR/newline.out" 2>&1; then
+  echo "expected newline in title to fail" >&2
+  cat "$TMPDIR/newline.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/newline.out" "--title may not contain newlines"
+
+# Test duplicate plan ID with a new decision
+MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" init DEC-002 --title "Test Duplicates"
+MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" add-alternative DEC-002 --plan-id PLAN-B --summary "First plan" --proposed-by agent-1
+if MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" add-alternative DEC-002 --plan-id PLAN-B --summary "Duplicate" --proposed-by agent-2 >"$TMPDIR/duplicate-plan.out" 2>&1; then
+  echo "expected duplicate plan ID to fail" >&2
+  cat "$TMPDIR/duplicate-plan.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/duplicate-plan.out" "plan ID already exists: PLAN-B"
+
+# Test assignment-create with organizational metadata
+ORG_ASSIGN_REPO="$TMPDIR/org-assignment-repo"
+ORG_ASSIGN_STATE="$TMPDIR/org-assignment-state"
+mkdir -p "$ORG_ASSIGN_REPO" "$ORG_ASSIGN_STATE"
+(
+  cd "$ORG_ASSIGN_REPO"
+  git init -q
+  git config user.email "test@example.com"
+  git config user.name "Test User"
+  printf 'hello\n' >README.md
+  git add README.md
+  git commit -q -m "initial"
+  git switch -q -c worker/org-task
+)
+
+org_assignment_create_output="$(MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ORG_ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create worker-org --assignment-id org-001 --branch worker/org-task --owned README.md --role qa --decision-id DEC-001 --plan-id PLAN-A)"
+[[ "$org_assignment_create_output" == $'assignment created\tworker-org\torg-001\tworker/org-task' ]]
+assert_file_contains "$ORG_ASSIGN_STATE/assignments/worker-org/assignment.env" "assignment_id=org-001"
+assert_file_contains "$ORG_ASSIGN_STATE/assignments/worker-org/assignment.env" "role=qa"
+assert_file_contains "$ORG_ASSIGN_STATE/assignments/worker-org/assignment.env" "decision_id=DEC-001"
+assert_file_contains "$ORG_ASSIGN_STATE/assignments/worker-org/assignment.env" "plan_id=PLAN-A"
+
+# Test invalid role rejection
+if MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ORG_ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create worker-bad --assignment-id bad-001 --branch worker/org-task --owned README.md --role invalid-role >"$TMPDIR/invalid-role.out" 2>&1; then
+  echo "expected invalid role to fail" >&2
+  cat "$TMPDIR/invalid-role.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/invalid-role.out" "invalid role 'invalid-role'"
+
+# Test checkpoint-update includes organizational metadata
+checkpoint_org_output="$(MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ORG_ASSIGN_STATE" "$ROOT/bin/subagent.sh" checkpoint-update worker-org --step "implemented org metadata" --status running)"
+[[ "$checkpoint_org_output" == $'checkpoint updated\tworker-org\trunning' ]]
+checkpoint_show_org_output="$(MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ORG_ASSIGN_STATE" "$ROOT/bin/subagent.sh" checkpoint-show worker-org)"
+[[ "$checkpoint_show_org_output" == *"role=qa"* ]]
+[[ "$checkpoint_show_org_output" == *"decision_id=DEC-001"* ]]
+[[ "$checkpoint_show_org_output" == *"plan_id=PLAN-A"* ]]
+
+# Test status.sh includes organizational metadata columns
+# Create a persisted subagent with organizational metadata that won't trigger polling
+mkdir -p "$ORG_ASSIGN_STATE/subagents/subagent-org-test"
+printf 'running\n' >"$ORG_ASSIGN_STATE/subagents/subagent-org-test/status"
+printf 'Testing organizational metadata in subagents\n' >"$ORG_ASSIGN_STATE/subagents/subagent-org-test/current.txt"
+
+# Create assignment metadata for the subagent
+ORG_SUBAGENT_ASSIGN_OUTPUT="$(MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ORG_ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create subagent-org-test --assignment-id org-sub-001 --branch worker/org-task --owned README.md --role verifier --decision-id DEC-002 --plan-id PLAN-B)"
+
+status_org_output="$(cd "$ROOT" && MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ORG_ASSIGN_STATE" bin/status.sh)"
+[[ "$status_org_output" == *$'TYPE\tNAME\tSTATUS\tWINDOW\tLAST_PROGRESS\tSTATE_DIR\tROLE\tDECISION_ID\tPLAN_ID'* ]]
+[[ "$status_org_output" == *$'subagent\tsubagent-org-test\trunning\tclosed\tTesting organizational metadata in subagents\t'"$ORG_ASSIGN_STATE/subagents/subagent-org-test"$'\tverifier\tDEC-002\tPLAN-B'* ]]
+
+# Test that subagents without metadata show "-" for organizational fields
+mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-no-meta"
+printf 'running\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-no-meta/status"
+printf 'Subagent without org metadata\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-no-meta/current.txt"
+printf 'subagent-no-meta\n' >>"$MOCK_TMUX_WINDOWS"
+printf 'Subagent without org metadata progress\n' >"$MOCK_TMUX_CAPTURES/subagent-no-meta.txt"
+status_no_meta_output="$("$ROOT/bin/status.sh")"
+[[ "$status_no_meta_output" == *$'subagent\tsubagent-no-meta\trunning\topen\tSubagent without org metadata\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-no-meta"$'\t-\t-\t-'* ]]
+
+# Test documentation consistency - no unsupported plan.sh or decision.sh resolve commands
+if grep -Fq "bin/plan.sh" "$ROOT/README.md"; then
+  echo "README.md should not reference unsupported bin/plan.sh" >&2
+  exit 1
+fi
+if grep -Fq "decision.sh resolve" "$ROOT/README.md"; then
+  echo "README.md should not reference unsupported decision.sh resolve command" >&2
+  exit 1
+fi
+if grep -Fq "bin/plan.sh" "$ROOT/orchestrator_prompt.md"; then
+  echo "orchestrator_prompt.md should not reference unsupported bin/plan.sh" >&2
+  exit 1
+fi
+if grep -Fq "decision.sh resolve" "$ROOT/orchestrator_prompt.md"; then
+  echo "orchestrator_prompt.md should not reference unsupported decision.sh resolve command" >&2
+  exit 1
+fi
+
+# Verify that decision command examples in README.md use only supported commands
+decision_commands_readme="$(grep "bin/decision.sh" "$ROOT/README.md" || true)"
+[[ "$decision_commands_readme" == *"bin/decision.sh init"* ]]
+[[ "$decision_commands_readme" == *"bin/decision.sh add-alternative"* ]]
+[[ "$decision_commands_readme" == *"bin/decision.sh commit"* ]]
+[[ "$decision_commands_readme" == *"bin/decision.sh list"* ]]
+[[ "$decision_commands_readme" == *"bin/decision.sh show"* ]]
+
+# Verify that decision command examples in orchestrator_prompt.md use only supported commands
+decision_commands_prompt="$(grep "bin/decision.sh" "$ROOT/orchestrator_prompt.md" || true)"
+[[ "$decision_commands_prompt" == *"bin/decision.sh init"* ]]
+[[ "$decision_commands_prompt" == *"bin/decision.sh add-alternative"* ]]
+[[ "$decision_commands_prompt" == *"bin/decision.sh commit"* ]]
+
+echo "organizational learning tests passed"
