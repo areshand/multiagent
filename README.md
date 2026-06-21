@@ -9,6 +9,7 @@ This project launches a tmux session with one `orchestrator` window. The orchest
 - **Flexible Configuration**: Environment-based setup for different project contexts
 - **State Persistence**: Durable subagent state management with transcript logging
 - **Assignment Checks**: Repo-local metadata and post-work acceptance checks for branch and file ownership
+- **Parallel DAG Discipline**: Ready workers with disjoint ownership fan out in parallel and consolidate later
 
 ## Launch
 
@@ -113,6 +114,41 @@ Verifiers are reviewers, not implementers. They should not receive duplicate
 writable ownership over worker-owned files, should not edit or commit code, and
 should not coordinate directly with workers. This preserves orchestrator
 authority over verdicts and prevents worker/verifier ownership conflicts.
+
+## Evaluation Framework
+
+The repo includes one adapter-based evaluation framework for running task sets
+against multiagent worker instruction profiles and generating machine-readable
+scores plus Markdown reports:
+
+```bash
+python3 -m evaluation.cli --list
+python3 -m evaluation.cli --adapter ponytail --selftest
+python3 -m evaluation.cli --adapter ponytail --reference-report --run-root /tmp/multiagent-eval
+python3 -m evaluation.cli --adapter ponytail --agent-cli codex --arms baseline,ponytail-full --runs 1 --workers 1
+python3 -m evaluation.cli --adapter orchestration --reference-report --run-root /tmp/multiagent-eval
+python3 -m evaluation.cli --adapter orchestration --agent-cli codex --runs 1 --workers 1
+```
+
+The `ponytail` adapter covers path traversal, per-key rate limiting, SQL
+injection, HMAC token verification, malformed CSV handling, and caching. The
+`orchestration` adapter covers planning behavior: worker coverage, true
+dependency edges, first-wave fan-out, disjoint owned paths, and final
+consolidation, including max/average concurrent agent count and repo-native
+first-wave assignment/spawn commands. Its high-concurrency stress case,
+`large-update-300`, expects 300 independent update workers in the first wave,
+then 20 chunk validation workers, then final consolidation. The live-run default
+compares `baseline`, a plain Codex planning-mode style prompt, against
+`orchestrator`, the current `orchestrator_prompt.md`. Live runs preserve
+workspaces under
+`evaluation/runs/<adapter>/<stamp>/` with `results.json` and `report.md`, so
+metrics can be rescored offline. See `evaluation/README.md` for the framework
+details. Task definitions live under `evaluation/tasks`.
+
+The worker prompt includes Ponytail implementation discipline by default:
+prefer existing code, standard-library/native features, and the smallest
+correct change while preserving safety, validation, accessibility, and explicit
+scope.
 
 ## Repo Write Guardrails
 

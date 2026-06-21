@@ -279,12 +279,89 @@ assert_file_contains "$ROOT/orchestrator_prompt.md" 'MULTIAGENT_VERIFIER_MAX_ITE
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'verifier suggests no follow-up'
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'WORKER_CLI="${WORKER_CLI:-claude}"'
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'SUBAGENT_CLI="$VERIFIER_CLI" bin/subagent.sh spawn'
+assert_file_contains "$ROOT/orchestrator_prompt.md" "Default to broad safe fan-out"
+assert_file_contains "$ROOT/orchestrator_prompt.md" "If one subtree is blocked, keep spawning every other ready subtree"
+assert_file_contains "$ROOT/orchestrator_prompt.md" "Exploration is parallel work"
+assert_file_contains "$ROOT/orchestrator_prompt.md" "Balance exploration and exploitation deliberately"
+assert_file_contains "$ROOT/orchestrator_prompt.md" "Ponytail implementation discipline"
+assert_file_contains "$ROOT/orchestrator_prompt.md" "Run a Ponytail over-engineering pass"
 assert_file_contains "$ROOT/README.md" "Launches are clean by default"
 assert_file_contains "$ROOT/README.md" "./launch.sh --resume"
 assert_file_contains "$ROOT/README.md" "Verifier Workflow"
 assert_file_contains "$ROOT/README.md" "MULTIAGENT_VERIFIER_MAX_ITERATIONS=3"
 assert_file_contains "$ROOT/README.md" 'WORKER_CLI`: worker CLI for manual worker windows, default `claude`'
 assert_file_contains "$ROOT/README.md" 'VERIFIER_CLI`: verifier CLI, default `codex`'
+assert_file_contains "$ROOT/README.md" "Evaluation Framework"
+assert_file_contains "$ROOT/README.md" "Parallel DAG Discipline"
+assert_file_contains "$ROOT/README.md" 'orchestration` adapter covers planning behavior'
+assert_file_contains "$ROOT/README.md" "evaluation/tasks"
+assert_file_contains "$ROOT/evaluation/README.md" "large-update-300"
+assert_file_contains "$ROOT/evaluation/README.md" "Low-signal orchestration cases"
+python3 -m evaluation.cli --list >"$TMPDIR/evaluation-list.out"
+assert_file_contains "$TMPDIR/evaluation-list.out" "ponytail"
+assert_file_contains "$TMPDIR/evaluation-list.out" "orchestration"
+python3 -c "from evaluation.core import system_for_arm; print(system_for_arm('baseline'))" >"$TMPDIR/evaluation-baseline-arm.out"
+assert_file_contains "$TMPDIR/evaluation-baseline-arm.out" "Required Worker First Instruction"
+assert_file_contains "$TMPDIR/evaluation-baseline-arm.out" "Stay in your assigned files only."
+assert_file_contains "$TMPDIR/evaluation-baseline-arm.out" "Ponytail implementation discipline"
+python3 - <<'PY' >"$TMPDIR/orchestration-arms.out"
+from evaluation.adapters import load_adapter
+from evaluation.core import arm_choices, default_arms, system_for_adapter_arm
+
+adapter = load_adapter("orchestration")
+print(default_arms(adapter))
+print(",".join(arm_choices(adapter)))
+print(system_for_adapter_arm(adapter, "baseline").splitlines()[0])
+print(system_for_adapter_arm(adapter, "orchestrator").splitlines()[0])
+PY
+assert_file_contains "$TMPDIR/orchestration-arms.out" "baseline,orchestrator"
+assert_file_contains "$TMPDIR/orchestration-arms.out" "You are Codex in planning mode."
+assert_file_contains "$TMPDIR/orchestration-arms.out" "Commander Prompt: Multi-Agent Orchestrator"
+python3 -m evaluation.cli --adapter ponytail --selftest >"$TMPDIR/ponytail-selftest.out"
+assert_file_contains "$TMPDIR/ponytail-selftest.out" "selftest[ponytail]: all scorers valid"
+python3 -m evaluation.cli --adapter ponytail --task safe-path --reference-report --run-root "$TMPDIR/eval-runs" >"$TMPDIR/ponytail-reference-report.out"
+assert_file_contains "$TMPDIR/ponytail-reference-report.out" "wrote $TMPDIR/eval-runs/ponytail/"
+reference_results="$(find "$TMPDIR/eval-runs/ponytail" -name results.json -print -quit)"
+reference_report="$(find "$TMPDIR/eval-runs/ponytail" -name report.md -print -quit)"
+[[ -n "$reference_results" && -n "$reference_report" ]]
+assert_file_contains "$reference_results" '"adapter": "ponytail"'
+assert_file_contains "$reference_results" '"arm": "reference-good"'
+assert_file_contains "$reference_report" "Evaluation Report: ponytail"
+EVAL_DIFF_REPO="$TMPDIR/evaluation-committed-diff"
+mkdir -p "$EVAL_DIFF_REPO"
+python3 - "$EVAL_DIFF_REPO" <<'PY'
+import sys
+import subprocess
+from pathlib import Path
+from evaluation.core import git_snapshot, git_diff_stats
+
+workdir = Path(sys.argv[1])
+(workdir / "demo.py").write_text("def demo():\n    raise NotImplementedError\n", encoding="utf-8")
+git_snapshot(workdir)
+(workdir / "demo.py").write_text("def demo():\n    return 1\n", encoding="utf-8")
+subprocess.run(["git", "add", "demo.py"], cwd=workdir, check=True)
+subprocess.run(["git", "commit", "-q", "-m", "implement demo"], cwd=workdir, check=True)
+stats = git_diff_stats(workdir)
+assert stats["src_loc"] == 1, stats
+assert stats["src_files"] == 1, stats
+PY
+python3 -m evaluation.cli --adapter orchestration --selftest >"$TMPDIR/orchestration-selftest.out"
+assert_file_contains "$TMPDIR/orchestration-selftest.out" "selftest[orchestration]: all scorers valid"
+python3 -m evaluation.cli --adapter orchestration --task large-update-300 --reference-report --run-root "$TMPDIR/eval-runs" >"$TMPDIR/orchestration-reference-report.out"
+assert_file_contains "$TMPDIR/orchestration-reference-report.out" "wrote $TMPDIR/eval-runs/orchestration/"
+orchestration_results="$(find "$TMPDIR/eval-runs/orchestration" -name results.json -print -quit)"
+orchestration_report="$(find "$TMPDIR/eval-runs/orchestration" -name report.md -print -quit)"
+[[ -n "$orchestration_results" && -n "$orchestration_report" ]]
+assert_file_contains "$orchestration_results" '"adapter": "orchestration"'
+assert_file_contains "$orchestration_results" '"task": "large-update-300"'
+assert_file_contains "$orchestration_results" '"nodes": 321'
+assert_file_contains "$orchestration_results" '"fanout": 300'
+assert_file_contains "$orchestration_results" '"max_concurrent_agents": 300'
+assert_file_contains "$orchestration_results" '"avg_concurrent_agents": 160'
+assert_file_contains "$orchestration_results" '"concurrency_ratio": 0.938'
+assert_file_contains "$orchestration_results" '"repo_spawn_commands": 1'
+assert_file_contains "$orchestration_report" "Evaluation Report: orchestration"
+assert_file_contains "$orchestration_report" "Max Agents"
 
 policy_check_inside="$("$ROOT/bin/write-policy.sh" check "$ROOT/README.md")"
 [[ "$policy_check_inside" == $'allowed\t'"$ROOT/README.md" ]]
@@ -333,6 +410,7 @@ mkdir -p "$ASSIGN_REPO/src" "$ASSIGN_REPO/docs" "$ASSIGN_STATE"
   git init -q
   git config user.email "test@example.com"
   git config user.name "Test User"
+  git config commit.gpgsign false
   printf 'hello\n' >README.md
   printf 'code\n' >src/app.txt
   git add README.md src/app.txt
@@ -675,6 +753,7 @@ mkdir -p "$ORG_ASSIGN_REPO" "$ORG_ASSIGN_STATE"
   git init -q
   git config user.email "test@example.com"
   git config user.name "Test User"
+  git config commit.gpgsign false
   printf 'hello\n' >README.md
   git add README.md
   git commit -q -m "initial"
@@ -945,6 +1024,7 @@ mkdir -p "$DAG_ASSIGN_REPO" "$DAG_ASSIGN_STATE"
   git init -q
   git config user.email "test@example.com"
   git config user.name "Test User"
+  git config commit.gpgsign false
   printf 'hello\n' >README.md
   git add README.md
   git commit -q -m "initial"
