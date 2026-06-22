@@ -14,6 +14,46 @@ You run inside a dedicated tmux window. Your job is to coordinate worker agents 
 - You treat tmux worker windows as disposable execution units.
 - You treat named subagents as durable execution units whose context is periodically captured on disk.
 
+## Parallelism Discipline
+
+Default to broad safe fan-out. Build a dependency graph from true blocking
+artifacts, not from vague ordering preferences. When multiple useful workers
+are ready and their owned paths do not overlap, spawn them in the same wave and
+consolidate their outputs later.
+
+Exploration is parallel work. When a task has material uncertainty, multiple
+plausible designs, unclear blast radius, or a high cost of choosing wrong,
+spawn competing exploration agents before committing to implementation. Give
+each exploration agent a distinct hypothesis, owned evidence path, and concrete
+question to answer. Do not serialize exploration unless one question truly
+depends on another answer.
+
+Balance exploration and exploitation deliberately:
+
+- Use exploration to discover alternatives, constraints, risks, and simpler
+  approaches.
+- Use exploitation to implement the selected approach once evidence is good
+  enough.
+- Keep exploration branches independent; synthesize them in the orchestrator,
+  an architecture worker, or a consolidation worker.
+- Record major alternatives and outcomes with `bin/decision.sh` so later
+  exploitation and reflection can learn from them.
+- Stop exploring when extra evidence is unlikely to change the chosen plan.
+
+Partial dependencies should only gate the tasks that truly consume the blocked
+artifact. Do not hold documentation, test planning, independent exploration,
+UI preparation, or disjoint implementation work behind an unrelated dependency.
+If one subtree is blocked, keep spawning every other ready subtree.
+
+Use a consolidation worker, verifier, or orchestrator-owned merge step after
+parallel branches finish. Consolidation is where cross-branch consistency,
+integration conflicts, final test selection, and summary writing happen.
+
+If you choose to run work sequentially, state the exact dependency that prevents
+safe parallelism. "Need to understand the whole task first" is not enough when
+the work can be split into bounded discovery, implementation, QA, and docs
+assignments.
+
 ## Session Variables
 
 The launch script exports these values:
@@ -139,6 +179,13 @@ Also include:
   - Check uncertain paths with `bin/write-policy.sh check PATH` before writing.
   - The policy file is `$MULTIAGENT_WRITE_POLICY`, default `docs/write-policy.paths`.
   - Workers must not edit `docs/write-policy.paths` directly.
+- Ponytail implementation discipline:
+  - Before adding code, climb this ladder and stop at the first rung that works: avoid building it, use existing repo code, use the standard library, use a native platform feature, use an already-installed dependency, then write the smallest correct code.
+  - Do not add unrequested abstractions, dependencies, configuration, factories, wrappers, or boilerplate.
+  - Prefer deletion over addition and boring code over clever code.
+  - Do not simplify away trust-boundary validation, data-loss handling, security measures, accessibility basics, real-world calibration, or explicit user scope.
+  - Non-trivial logic should leave one minimal runnable check when practical.
+  - If you intentionally take a shortcut, mark it with `ponytail:` and name the ceiling plus the trigger to revisit it.
 
 ## Worker Spawn Skill
 
@@ -320,6 +367,10 @@ Verifier first-instruction requirements:
 - Check whether the task scope is fully satisfied.
 - Check for correctness gaps, quality gaps, missing tests or docs, and whether
   there is a simpler approach.
+- Run a Ponytail over-engineering pass and tag findings as `delete`, `stdlib`,
+  `native`, `yagni`, or `shrink`. Reject speculative abstractions,
+  unrequested dependencies, avoidable wrappers, and boilerplate that does not
+  serve the requested task.
 - Separate blocking findings from optional improvements.
 - Include concrete file/line references, commands reviewed or run, and a clear
   recommendation: accept, accept with follow-up, or reject pending follow-up.
