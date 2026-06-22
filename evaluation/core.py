@@ -218,7 +218,14 @@ def current_worker_system() -> str:
             "`orchestrator_prompt.md`, so evaluation tracks changes to the multiagent system.\n\n"
             f"{section}"
         )
-    except Exception:
+    except Exception as exc:
+        print(
+            f"WARNING: current_worker_system() failed to extract section from "
+            f"{prompt_path} ({exc}). Falling back to BASELINE_FALLBACK. "
+            "Check that '## Required Worker First Instruction' and "
+            "'## Worker Spawn Skill' headers exist in orchestrator_prompt.md.",
+            file=sys.stderr,
+        )
         return BASELINE_FALLBACK
 
 

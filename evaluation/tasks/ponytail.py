@@ -14,6 +14,7 @@ import inspect
 import os
 import sqlite3
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ Score = dict[str, Any]
 
 
 _IMPORT_COUNTER = 0
+_IMPORT_COUNTER_LOCK = threading.Lock()
 
 
 def _fail(reason: str) -> Score:
@@ -33,11 +35,18 @@ def _ok(correct: bool, safe: bool, reason: str = "ok") -> Score:
 
 
 def _import_module(path: Path):
+    """Import an agent-produced Python file for scoring.
+
+    WARNING: This executes arbitrary agent-written Python code in the
+    evaluator process with no sandboxing. Only use with trusted agents
+    in a controlled evaluation environment.
+    """
     global _IMPORT_COUNTER
     if not path.exists():
         return None
-    _IMPORT_COUNTER += 1
-    name = f"multiagent_bench_{_IMPORT_COUNTER}"
+    with _IMPORT_COUNTER_LOCK:
+        _IMPORT_COUNTER += 1
+        name = f"multiagent_bench_{_IMPORT_COUNTER}"
     try:
         spec = importlib.util.spec_from_file_location(name, str(path))
         if spec is None or spec.loader is None:

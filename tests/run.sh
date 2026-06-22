@@ -357,7 +357,7 @@ assert_file_contains "$orchestration_results" '"task": "large-update-300"'
 assert_file_contains "$orchestration_results" '"nodes": 321'
 assert_file_contains "$orchestration_results" '"fanout": 300'
 assert_file_contains "$orchestration_results" '"max_concurrent_agents": 300'
-assert_file_contains "$orchestration_results" '"avg_concurrent_agents": 160'
+assert_file_contains "$orchestration_results" '"avg_concurrent_agents": 160'  # mean(300 update workers, 20 validation workers) = 160
 assert_file_contains "$orchestration_results" '"concurrency_ratio": 0.938'
 assert_file_contains "$orchestration_results" '"repo_spawn_commands": 1'
 assert_file_contains "$orchestration_report" "Evaluation Report: orchestration"

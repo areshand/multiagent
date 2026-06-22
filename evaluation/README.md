@@ -101,6 +101,20 @@ baseline and orchestrator prompts are intentionally omitted. The remaining
 orchestration task exercises broad first-wave fan-out, validation layering, and
 consolidation at a size where sequential planning is visible.
 
+## Security Model
+
+The `ponytail` adapter scores agent output by importing and executing the
+agent-produced Python file directly in the evaluator process
+(`importlib.util.exec_module`). **This is a trust boundary**: only run
+evaluations against agents you control in isolated environments. Do not
+point this framework at untrusted or externally-sourced agents without
+sandboxing the execution environment (e.g. a container or VM).
+
+The Claude CLI arm passes `--disallowedTools Bash` to the agent during
+the run, but this restriction applies only to the agent during task
+execution — the scorer itself runs agent code in-process without
+additional isolation.
+
 ## Adding Adapters
 
 Add a module under `evaluation/adapters/` that exposes an `ADAPTER` object with:
