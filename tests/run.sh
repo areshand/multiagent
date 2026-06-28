@@ -281,10 +281,14 @@ assert_file_contains "$ROOT/orchestrator_prompt.md" 'WORKER_CLI="${WORKER_CLI:-c
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'SUBAGENT_CLI="$VERIFIER_CLI" bin/subagent.sh spawn'
 assert_file_contains "$ROOT/orchestrator_prompt.md" '## Harness Boundary'
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'bin/subagent.sh health-check NAME'
+assert_file_contains "$ROOT/orchestrator_prompt.md" 'not a programmatic harness'
+assert_file_contains "$ROOT/orchestrator_prompt.md" 'advisory classifier'
 assert_file_contains "$ROOT/README.md" "Launches are clean by default"
 assert_file_contains "$ROOT/README.md" "./launch.sh --resume"
 assert_file_contains "$ROOT/README.md" "Verifier Workflow"
-assert_file_contains "$ROOT/README.md" "Harness Loop and Agent Health"
+assert_file_contains "$ROOT/README.md" "Supervisory Agent Health"
+assert_file_contains "$ROOT/README.md" "not a programmatic harness"
+assert_file_contains "$ROOT/README.md" "advisory supervisory signals"
 assert_file_contains "$ROOT/README.md" "MULTIAGENT_VERIFIER_MAX_ITERATIONS=3"
 assert_file_contains "$ROOT/README.md" 'WORKER_CLI`: worker CLI for manual worker windows, default `claude`'
 assert_file_contains "$ROOT/README.md" 'VERIFIER_CLI`: verifier CLI, default `codex`'
