@@ -93,6 +93,35 @@ read_status_file() {
   fi
 }
 
+health_value() {
+  local name="$1"
+  local key="$2"
+  "$ROOT/bin/subagent.sh" health-check "$name" 2>/dev/null | awk -F'\t' -v key="$key" '
+    $1 == key {
+      if (key == "health") {
+        print $3
+      } else {
+        print $2
+      }
+      found=1
+      exit
+    }
+    END { exit found ? 0 : 1 }
+  '
+}
+
+health_value_or_dash() {
+  local name="$1"
+  local key="$2"
+  local value
+  value="$(health_value "$name" "$key" 2>/dev/null || true)"
+  if [[ -n "$value" ]]; then
+    printf '%s' "$value"
+  else
+    printf '%s' '-'
+  fi
+}
+
 list_window_names() {
   tmux list-windows -t "$SESSION" -F '#W'
 }
@@ -109,8 +138,11 @@ print_row() {
   local plan_id="$9"
   local workflow_id="${10}"
   local node_id="${11}"
+  local health="${12}"
+  local action="${13}"
+  local reason="${14}"
 
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$type" "$name" "$status" "$window" "$progress" "$state" "$role" "$decision_id" "$plan_id" "$workflow_id" "$node_id"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$type" "$name" "$status" "$window" "$progress" "$state" "$role" "$decision_id" "$plan_id" "$workflow_id" "$node_id" "$health" "$action" "$reason"
 }
 
 main() {
@@ -120,9 +152,9 @@ main() {
   local windows
   windows="$(list_window_names)"
 
-  printf 'TYPE\tNAME\tSTATUS\tWINDOW\tLAST_PROGRESS\tSTATE_DIR\tROLE\tDECISION_ID\tPLAN_ID\tWORKFLOW_ID\tNODE_ID\n'
+  printf 'TYPE\tNAME\tSTATUS\tWINDOW\tLAST_PROGRESS\tSTATE_DIR\tROLE\tDECISION_ID\tPLAN_ID\tWORKFLOW_ID\tNODE_ID\tHEALTH\tACTION\tREASON\n'
 
-  local name status progress state role decision_id plan_id workflow_id node_id
+  local name status progress state role decision_id plan_id workflow_id node_id health action reason
   while IFS= read -r name; do
     [[ -n "$name" ]] || continue
     [[ "$name" != "orchestrator" ]] || continue
@@ -139,8 +171,11 @@ main() {
     plan_id="$(read_assignment_value_or_dash "$name" plan_id)"
     workflow_id="$(read_assignment_value_or_dash "$name" workflow_id)"
     node_id="$(read_assignment_value_or_dash "$name" node_id)"
+    health="$(health_value_or_dash "$name" health)"
+    action="$(health_value_or_dash "$name" action)"
+    reason="$(health_value_or_dash "$name" reason)"
 
-    print_row "worker" "$name" "$status" "open" "$progress" "-" "$role" "$decision_id" "$plan_id" "$workflow_id" "$node_id"
+    print_row "worker" "$name" "$status" "open" "$progress" "-" "$role" "$decision_id" "$plan_id" "$workflow_id" "$node_id" "$health" "$action" "$reason"
   done <<<"$windows"
 
   local base="$STATE_DIR/subagents"
@@ -168,8 +203,11 @@ main() {
     plan_id="$(read_assignment_value_or_dash "$name" plan_id)"
     workflow_id="$(read_assignment_value_or_dash "$name" workflow_id)"
     node_id="$(read_assignment_value_or_dash "$name" node_id)"
+    health="$(health_value_or_dash "$name" health)"
+    action="$(health_value_or_dash "$name" action)"
+    reason="$(health_value_or_dash "$name" reason)"
 
-    print_row "subagent" "$name" "$status" "$window" "$progress" "$state" "$role" "$decision_id" "$plan_id" "$workflow_id" "$node_id"
+    print_row "subagent" "$name" "$status" "$window" "$progress" "$state" "$role" "$decision_id" "$plan_id" "$workflow_id" "$node_id" "$health" "$action" "$reason"
   done
 }
 

@@ -25,6 +25,7 @@ Usage:
   bin/subagent.sh worktree-create NAME [--branch BRANCH] [--path PATH]
   bin/subagent.sh worktree-show NAME
   bin/subagent.sh worktree-remove NAME [--force]
+  bin/subagent.sh health-check NAME
   bin/subagent.sh poll NAME
   bin/subagent.sh inspect NAME [--lines N]
   bin/subagent.sh recover-plan
@@ -398,13 +399,25 @@ assignment_status() {
 }
 
 assignment_changed_files() {
-  local start_commit="$1"
+  local workdir="$1"
+  local start_commit="$2"
   {
-    git -C "$ROOT" diff --name-only "$start_commit"..HEAD
-    git -C "$ROOT" diff --name-only
-    git -C "$ROOT" diff --name-only --cached
-    git -C "$ROOT" ls-files --others --exclude-standard
+    git -C "$workdir" diff --name-only "$start_commit"..HEAD
+    git -C "$workdir" diff --name-only
+    git -C "$workdir" diff --name-only --cached
+    git -C "$workdir" ls-files --others --exclude-standard
   } | sed '/^$/d' | sort -u
+}
+
+assignment_workdir() {
+  local name="$1"
+  local worktree_path
+  worktree_path="$(read_assignment_value "$name" worktree_path || true)"
+  if [[ -n "$worktree_path" && ( -d "$worktree_path/.git" || -f "$worktree_path/.git" ) ]]; then
+    printf '%s\n' "$worktree_path"
+  else
+    printf '%s\n' "$ROOT"
+  fi
 }
 
 assignment_check() {
@@ -413,13 +426,15 @@ assignment_check() {
   validate_name "$name"
   [[ -f "$(assignment_meta_file "$name")" ]] || die "no assignment for agent: $name"
 
-  local expected_branch start_commit current_branch owned_file failed=0 changed
+  local expected_branch start_commit current_branch owned_file workdir failed=0 changed
   expected_branch="$(read_assignment_value "$name" branch)"
   start_commit="$(read_assignment_value "$name" start_commit)"
   owned_file="$(assignment_owned_file "$name")"
-  current_branch="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)"
+  workdir="$(assignment_workdir "$name")"
+  current_branch="$(git -C "$workdir" rev-parse --abbrev-ref HEAD)"
 
   printf 'assignment\t%s\t%s\n' "$name" "$(read_assignment_value "$name" assignment_id)"
+  printf 'workdir\t%s\n' "$workdir"
   printf 'branch\t%s\t%s\n' "$expected_branch" "$current_branch"
   if [[ "$current_branch" != "$expected_branch" ]]; then
     printf 'reject\tbranch-mismatch\texpected=%s\tactual=%s\n' "$expected_branch" "$current_branch"
@@ -436,7 +451,7 @@ assignment_check() {
       printf 'reject\toutside-owned-path\t%s\n' "$changed"
       failed=1
     fi
-  done < <(assignment_changed_files "$start_commit")
+  done < <(assignment_changed_files "$workdir" "$start_commit")
 
   if [[ "$any" -eq 0 ]]; then
     printf 'ok\tno-changes\n'
@@ -629,6 +644,80 @@ window_exists() {
   local name="$1"
   command -v tmux >/dev/null 2>&1 || return 1
   tmux list-windows -t "$SESSION" -F '#W' 2>/dev/null | grep -Fx -- "$name" >/dev/null 2>&1
+}
+
+capture_agent_for_health() {
+  local name="$1"
+  if window_exists "$name"; then
+    tmux capture-pane -t "$SESSION:$name" -p -S -300 2>/dev/null || true
+  elif [[ -f "$(subagent_dir "$name")/current.txt" ]]; then
+    cat "$(subagent_dir "$name")/current.txt"
+  else
+    true
+  fi
+}
+
+classify_health_capture() {
+  local name="$1"
+  local capture="$2"
+  if grep -Eiq '(rm[[:space:]]+-rf[[:space:]]+/|git[[:space:]]+push|gh[[:space:]]+pr[[:space:]]+create|submit PR|open PR|send external|exfiltrat|secret|credential|write outside|outside assigned|outside-owned-path|delete production|production database)' <<<"$capture"; then
+    printf 'unsafe\n'
+  elif grep -Eiq '\b(blocked|need input|waiting for|cannot proceed)\b' <<<"$capture"; then
+    printf 'blocked\n'
+  elif grep -Eiq '\b(done|complete|completed|final status|finished)\b' <<<"$capture"; then
+    printf 'done\n'
+  elif grep -Eiq '(not authenticated|authentication required|login required|setup required|trust this folder|do you trust)' <<<"$capture"; then
+    printf 'blocked\n'
+  elif window_exists "$name"; then
+    printf 'working\n'
+  elif [[ -n "$capture" ]]; then
+    printf 'stale\n'
+  else
+    printf 'unknown\n'
+  fi
+}
+
+health_action_for_status() {
+  local status="$1"
+  case "$status" in
+    working) printf 'continue\n' ;;
+    done) printf 'verify\n' ;;
+    blocked) printf 'resolve-blocker\n' ;;
+    misaligned|unsafe) printf 'kill-or-reassign\n' ;;
+    stale|unknown) printf 'inspect\n' ;;
+    *) printf 'inspect\n' ;;
+  esac
+}
+
+health_check() {
+  local name="${1:-}"
+  [[ -n "$name" ]] || die "health-check requires NAME"
+  validate_name "$name"
+
+  local capture status reason action check_output
+  capture="$(capture_agent_for_health "$name")"
+  status="$(classify_health_capture "$name" "$capture")"
+  reason="capture-status-$status"
+
+  if [[ -f "$(assignment_meta_file "$name")" ]]; then
+    if ! check_output="$(assignment_check "$name" 2>&1)"; then
+      if [[ "$status" != "unsafe" ]]; then
+        status="misaligned"
+        reason="$(awk -F'\t' '/^reject\t/ { print $2; exit }' <<<"$check_output")"
+        [[ -n "$reason" ]] || reason="assignment-check-failed"
+      fi
+    elif [[ "$status" == "working" ]]; then
+      reason="assignment-check-accepted"
+    fi
+  elif [[ "$status" == "working" || "$status" == "done" ]]; then
+    status="unknown"
+    reason="missing-assignment-metadata"
+  fi
+
+  action="$(health_action_for_status "$status")"
+  printf 'health\t%s\t%s\n' "$name" "$status"
+  printf 'action\t%s\n' "$action"
+  printf 'reason\t%s\n' "$reason"
 }
 
 readiness_state() {
@@ -1117,6 +1206,10 @@ case "$cmd" in
   assignment-check)
     shift
     assignment_check "$@"
+    ;;
+  health-check)
+    shift
+    health_check "$@"
     ;;
   checkpoint-update)
     shift

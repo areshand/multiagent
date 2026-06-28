@@ -160,6 +160,42 @@ visibility. Codex is still launched with
 enforcing the boundary. The orchestrator and worker instructions require agents
 to check and follow the policy before writes.
 
+## Harness Loop and Agent Health
+
+The orchestrator is the supervisory harness loop for this repo. It does not
+implement assigned task work directly. It observes worker/subagent state,
+decides the next lifecycle action, runs repo-local checks, records state, and
+continues, verifies, finalizes, reassigns, or kills agents.
+
+Use the health check before trusting a worker's current direction:
+
+```bash
+bin/subagent.sh health-check worker-01-docs
+```
+
+The command returns tab-separated rows:
+
+```text
+health  worker-01-docs  working
+action  continue
+reason  assignment-check-accepted
+```
+
+Health states are:
+
+- `working`: agent appears to be progressing inside its assignment.
+- `done`: agent reports completion; run acceptance checks before finalizing.
+- `blocked`: agent needs orchestrator or user input.
+- `misaligned`: branch, ownership, or assignment checks failed.
+- `unsafe`: output suggests forbidden side effects such as pushing, opening PRs,
+  secret handling, destructive commands, or writing outside scope.
+- `stale` or `unknown`: inspect before sending more input.
+
+`bin/status.sh` includes the health state, recommended action, and reason for
+each visible worker or named subagent. Killing a worker is a normal harness
+action when it is stuck, duplicated, unsafe, misaligned, completed and captured,
+or no longer useful.
+
 ## Assignment Metadata and Acceptance
 
 Use repo-local assignment records for every worker or named subagent before

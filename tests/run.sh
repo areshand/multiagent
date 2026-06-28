@@ -279,9 +279,12 @@ assert_file_contains "$ROOT/orchestrator_prompt.md" 'MULTIAGENT_VERIFIER_MAX_ITE
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'verifier suggests no follow-up'
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'WORKER_CLI="${WORKER_CLI:-claude}"'
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'SUBAGENT_CLI="$VERIFIER_CLI" bin/subagent.sh spawn'
+assert_file_contains "$ROOT/orchestrator_prompt.md" '## Harness Boundary'
+assert_file_contains "$ROOT/orchestrator_prompt.md" 'bin/subagent.sh health-check NAME'
 assert_file_contains "$ROOT/README.md" "Launches are clean by default"
 assert_file_contains "$ROOT/README.md" "./launch.sh --resume"
 assert_file_contains "$ROOT/README.md" "Verifier Workflow"
+assert_file_contains "$ROOT/README.md" "Harness Loop and Agent Health"
 assert_file_contains "$ROOT/README.md" "MULTIAGENT_VERIFIER_MAX_ITERATIONS=3"
 assert_file_contains "$ROOT/README.md" 'WORKER_CLI`: worker CLI for manual worker windows, default `claude`'
 assert_file_contains "$ROOT/README.md" 'VERIFIER_CLI`: verifier CLI, default `codex`'
@@ -333,6 +336,7 @@ mkdir -p "$ASSIGN_REPO/src" "$ASSIGN_REPO/docs" "$ASSIGN_STATE"
   git init -q
   git config user.email "test@example.com"
   git config user.name "Test User"
+  git config commit.gpgsign false
   printf 'hello\n' >README.md
   printf 'code\n' >src/app.txt
   git add README.md src/app.txt
@@ -381,6 +385,10 @@ if MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bi
   exit 1
 fi
 assert_file_contains "$TMPDIR/assignment-branch.out" $'reject\tbranch-mismatch\texpected=expected/branch\tactual=worker/docs'
+branch_health="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" health-check worker-branch)"
+[[ "$branch_health" == *$'health\tworker-branch\tmisaligned'* ]]
+[[ "$branch_health" == *$'action\tkill-or-reassign'* ]]
+[[ "$branch_health" == *$'reason\tbranch-mismatch'* ]]
 
 worktree_assignment_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create worker-wt --assignment-id wt-001 --branch worker/wt --owned README.md)"
 [[ "$worktree_assignment_output" == $'assignment created\tworker-wt\twt-001\tworker/wt' ]]
@@ -392,6 +400,12 @@ assert_file_contains "$ASSIGN_STATE/worktrees/worker-wt.env" "path=$ASSIGN_STATE
 [[ -f "$ASSIGN_STATE/worktrees/worker-wt/README.md" ]]
 worktree_show_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" worktree-show worker-wt)"
 [[ "$worktree_show_output" == *"branch=worker/wt"* ]]
+printf 'worktree change\n' >>"$ASSIGN_STATE/worktrees/worker-wt/README.md"
+worktree_check_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-check worker-wt)"
+[[ "$worktree_check_output" == *$'workdir\t'"$ASSIGN_STATE/worktrees/worker-wt"* ]]
+[[ "$worktree_check_output" == *$'branch\tworker/wt\tworker/wt'* ]]
+[[ "$worktree_check_output" == *$'ok\tREADME.md'* ]]
+git -C "$ASSIGN_STATE/worktrees/worker-wt" checkout -- README.md
 worktree_remove_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" worktree-remove worker-wt)"
 [[ "$worktree_remove_output" == *$'worktree removed\tworker-wt\t'"$ASSIGN_STATE/worktrees/worker-wt" ]]
 [[ ! -e "$ASSIGN_STATE/worktrees/worker-wt.env" ]]
@@ -470,13 +484,23 @@ assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/transcript.
 
 printf 'worker-01-docs\n' >>"$MOCK_TMUX_WINDOWS"
 status_output="$("$ROOT/bin/status.sh")"
+[[ "$status_output" == *$'TYPE\tNAME\tSTATUS\tWINDOW\tLAST_PROGRESS\tSTATE_DIR\tROLE\tDECISION_ID\tPLAN_ID\tWORKFLOW_ID\tNODE_ID\tHEALTH\tACTION\tREASON'* ]]
 [[ "$status_output" == *$'worker\tworker-01-docs\tbusy\topen\tWorker progress: editing README\t-'* ]]
+[[ "$status_output" == *$'worker\tworker-01-docs\tbusy\topen\tWorker progress: editing README\t-\t-\t-\t-\t-\t-\tunknown\tinspect\tmissing-assignment-metadata'* ]]
 [[ "$status_output" == *$'subagent\tsubagent-watch\trunning\topen\tProgress update: still running\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-watch"* ]]
 if grep -Fq $'\torchestrator\t' <<<"$status_output"; then
   echo "expected status output to exclude orchestrator" >&2
   echo "$status_output" >&2
   exit 1
 fi
+
+unsafe_assignment_output="$("$ROOT/bin/subagent.sh" assignment-create worker-unsafe --assignment-id unsafe-001 --branch "$current_branch" --owned README.md)"
+[[ "$unsafe_assignment_output" == $'assignment created\tworker-unsafe\tunsafe-001\t'"$current_branch" ]]
+printf 'worker-unsafe\n' >>"$MOCK_TMUX_WINDOWS"
+printf 'I am going to git push and open PR now\n' >"$MOCK_TMUX_CAPTURES/worker-unsafe.txt"
+unsafe_health="$("$ROOT/bin/subagent.sh" health-check worker-unsafe)"
+[[ "$unsafe_health" == *$'health\tworker-unsafe\tunsafe'* ]]
+[[ "$unsafe_health" == *$'action\tkill-or-reassign'* ]]
 
 printf 'Final status: completed\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"
 finalize_output="$("$ROOT/bin/subagent.sh" finalize subagent-watch)"
@@ -675,6 +699,7 @@ mkdir -p "$ORG_ASSIGN_REPO" "$ORG_ASSIGN_STATE"
   git init -q
   git config user.email "test@example.com"
   git config user.name "Test User"
+  git config commit.gpgsign false
   printf 'hello\n' >README.md
   git add README.md
   git commit -q -m "initial"
@@ -945,6 +970,7 @@ mkdir -p "$DAG_ASSIGN_REPO" "$DAG_ASSIGN_STATE"
   git init -q
   git config user.email "test@example.com"
   git config user.name "Test User"
+  git config commit.gpgsign false
   printf 'hello\n' >README.md
   git add README.md
   git commit -q -m "initial"
