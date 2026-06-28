@@ -160,6 +160,16 @@ visibility. Codex is still launched with
 enforcing the boundary. The orchestrator and worker instructions require agents
 to check and follow the policy before writes.
 
+## Harness Dispatch Prototype
+
+`bin/harness.sh` is an alternate design surface for routing orchestrator actions
+through an explicit evaluate-then-dispatch step. It accepts small `key=value`
+action manifests, returns `ALLOW`, `DENY`, `REQUIRE_APPROVAL`, or `TERMINATE`,
+and executes only allowed actions through existing repo helpers.
+
+See `docs/harness-dispatch-design.md` for the action format, policy decisions,
+and migration path from tmux supervision toward a mediated harness loop.
+
 ## Assignment Metadata and Acceptance
 
 Use repo-local assignment records for every worker or named subagent before

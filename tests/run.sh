@@ -285,6 +285,8 @@ assert_file_contains "$ROOT/README.md" "Verifier Workflow"
 assert_file_contains "$ROOT/README.md" "MULTIAGENT_VERIFIER_MAX_ITERATIONS=3"
 assert_file_contains "$ROOT/README.md" 'WORKER_CLI`: worker CLI for manual worker windows, default `claude`'
 assert_file_contains "$ROOT/README.md" 'VERIFIER_CLI`: verifier CLI, default `codex`'
+assert_file_contains "$ROOT/README.md" "Harness Dispatch Prototype"
+assert_file_contains "$ROOT/docs/harness-dispatch-design.md" "agent intent -> action manifest -> policy decision -> executor"
 
 policy_check_inside="$("$ROOT/bin/write-policy.sh" check "$ROOT/README.md")"
 [[ "$policy_check_inside" == $'allowed\t'"$ROOT/README.md" ]]
@@ -325,6 +327,47 @@ forced_broad_output="$("$ROOT/bin/write-policy.sh" approve /tmp --actor orchestr
 assert_file_contains "$MULTIAGENT_WRITE_POLICY" $'\tbroad-force\t'
 assert_file_contains "$MULTIAGENT_WRITE_POLICY" $'\texplicit user decision\t1'
 
+cat >"$TMPDIR/harness-requires-approval.action" <<EOF
+type=approve_write
+path=$TMPDIR/harness-outside
+actor=orchestrator
+assignment_id=harness-001
+reason=user approved harness export
+approved=false
+EOF
+harness_eval="$("$ROOT/bin/harness.sh" evaluate "$TMPDIR/harness-requires-approval.action")"
+[[ "$harness_eval" == *$'decision\tREQUIRE_APPROVAL'* ]]
+if "$ROOT/bin/harness.sh" dispatch "$TMPDIR/harness-requires-approval.action" >"$TMPDIR/harness-requires-approval.out" 2>&1; then
+  echo "expected harness dispatch to stop for unapproved outside write" >&2
+  cat "$TMPDIR/harness-requires-approval.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/harness-requires-approval.out" $'decision\tREQUIRE_APPROVAL'
+
+cat >"$TMPDIR/harness-approved.action" <<EOF
+type=approve_write
+path=$TMPDIR/harness-outside
+actor=orchestrator
+assignment_id=harness-002
+reason=user approved harness export
+approved=true
+EOF
+harness_approved="$("$ROOT/bin/harness.sh" dispatch "$TMPDIR/harness-approved.action")"
+[[ "$harness_approved" == *$'decision\tALLOW'* ]]
+[[ "$harness_approved" == *"approved outside write root: $TMPDIR/harness-outside"* ]]
+assert_file_contains "$MULTIAGENT_WRITE_POLICY" $'\tharness-002\t'
+
+cat >"$TMPDIR/harness-unsupported.action" <<'EOF'
+type=send_instruction
+name=worker-01-docs
+EOF
+if "$ROOT/bin/harness.sh" dispatch "$TMPDIR/harness-unsupported.action" >"$TMPDIR/harness-unsupported.out" 2>&1; then
+  echo "expected harness dispatch to deny unsupported direct instruction" >&2
+  cat "$TMPDIR/harness-unsupported.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/harness-unsupported.out" $'decision\tDENY'
+
 ASSIGN_REPO="$TMPDIR/assignment-repo"
 ASSIGN_STATE="$TMPDIR/assignment-state"
 mkdir -p "$ASSIGN_REPO/src" "$ASSIGN_REPO/docs" "$ASSIGN_STATE"
@@ -333,6 +376,7 @@ mkdir -p "$ASSIGN_REPO/src" "$ASSIGN_REPO/docs" "$ASSIGN_STATE"
   git init -q
   git config user.email "test@example.com"
   git config user.name "Test User"
+  git config commit.gpgsign false
   printf 'hello\n' >README.md
   printf 'code\n' >src/app.txt
   git add README.md src/app.txt
@@ -364,6 +408,14 @@ assignment_check_ok="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASS
 [[ "$assignment_check_ok" == *$'branch\tworker/docs\tworker/docs'* ]]
 [[ "$assignment_check_ok" == *$'ok\tREADME.md'* ]]
 [[ "$assignment_check_ok" == *$'accepted\tworker-docs'* ]]
+
+cat >"$TMPDIR/harness-assignment-check.action" <<'EOF'
+type=assignment_check
+name=worker-docs
+EOF
+harness_assignment_check="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/harness.sh" dispatch "$TMPDIR/harness-assignment-check.action")"
+[[ "$harness_assignment_check" == *$'decision\tALLOW'* ]]
+[[ "$harness_assignment_check" == *$'accepted\tworker-docs'* ]]
 
 printf 'outside\n' >"$ASSIGN_REPO/docs/notes.txt"
 if MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-check worker-docs >"$TMPDIR/assignment-outside.out" 2>&1; then
@@ -675,6 +727,7 @@ mkdir -p "$ORG_ASSIGN_REPO" "$ORG_ASSIGN_STATE"
   git init -q
   git config user.email "test@example.com"
   git config user.name "Test User"
+  git config commit.gpgsign false
   printf 'hello\n' >README.md
   git add README.md
   git commit -q -m "initial"
@@ -945,6 +998,7 @@ mkdir -p "$DAG_ASSIGN_REPO" "$DAG_ASSIGN_STATE"
   git init -q
   git config user.email "test@example.com"
   git config user.name "Test User"
+  git config commit.gpgsign false
   printf 'hello\n' >README.md
   git add README.md
   git commit -q -m "initial"
