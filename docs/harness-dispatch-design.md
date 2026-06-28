@@ -1,22 +1,31 @@
 # Harness Dispatch Design
 
-This is a fresh design direction for making the orchestrator boundary explicit.
+This is a fresh design direction for making the control boundary explicit. The
+important distinction is that the current Codex/Claude orchestrator is still a
+CLI session; the repo cannot directly intercept its reasoning loop. In this
+design, an external harness process owns observation, risk evaluation, and
+dispatch. The CLI orchestrator becomes one observed participant, not the thing
+that proves the loop is being followed.
+
 The core rule is that side effects should flow through a harness action:
 
 ```text
 agent intent -> action manifest -> policy decision -> executor
 ```
 
-The current repo still launches tmux-hosted CLIs with broad local permissions,
-so this design is a prototype control surface rather than a complete sandbox.
-It is meant to make the next boundary visible in code: the orchestrator should
-ask the harness to evaluate and dispatch actions instead of directly spelling
-every lifecycle command inline.
+The current repo still launches tmux-hosted CLIs with broad local permissions.
+This design is therefore a prototype control surface rather than a complete
+sandbox. It is meant to make the next boundary visible in code: a process
+outside the orchestrator CLI can evaluate risk and dispatch lifecycle actions.
 
 ## Components
 
-- **Orchestrator**: owns the loop. It observes state, selects the next action,
-  and records outcomes. It should not implement task work.
+- **External harness**: owns the loop. It observes tmux targets, evaluates
+  risk, chooses whether an agent should continue, and dispatches allowed
+  lifecycle actions.
+- **CLI orchestrator**: a tmux-hosted agent that may plan and coordinate, but
+  is itself observable by the external harness. It should not be treated as
+  proof that policy is being followed.
 - **Action manifest**: a small `key=value` file that describes one requested
   side effect or observation.
 - **Policy evaluator**: returns `ALLOW`, `DENY`, `REQUIRE_APPROVAL`, or
@@ -35,6 +44,16 @@ Examples:
 ```text
 type=assignment_check
 name=worker-01-docs
+```
+
+```text
+type=assess_agent
+name=worker-01-docs
+```
+
+```text
+type=assess_agent
+name=orchestrator
 ```
 
 ```text
@@ -73,6 +92,10 @@ decision is `ALLOW`. Non-allowed decisions return distinct exit codes:
 The prototype starts with conservative rules:
 
 - Assignment checks are allowed because they are acceptance actions.
+- Agent assessment is allowed because it is observation. It can inspect worker
+  panes, persisted subagent state, assignment metadata, and the orchestrator
+  pane. It returns recommendations such as `continue`, `verify`, `block`,
+  `inspect`, `unknown`, or `kill`.
 - Kill and finalize are allowed lifecycle actions because the harness owns
   agent scheduling.
 - Outside write approval requires `approved=true`; without that, dispatch stops
@@ -84,11 +107,12 @@ The prototype starts with conservative rules:
 ## Migration Path
 
 1. Keep existing helpers as executors.
-2. Route orchestrator-owned lifecycle operations through `bin/harness.sh`.
-3. Add action types for health classification, safe instruction delivery, and
-   worker spawning.
-4. Move prompt examples from raw `tmux` commands to action manifests.
-5. Replace bypass-enabled worker sessions with a mediated tool loop when the
+2. Run external assessment with `bin/harness.sh assess NAME` or
+   `type=assess_agent` manifests before trusting worker or orchestrator state.
+3. Route lifecycle operations through `bin/harness.sh`.
+4. Add action types for safe instruction delivery and worker spawning.
+5. Move prompt examples from raw `tmux` commands to action manifests.
+6. Replace bypass-enabled worker sessions with a mediated tool loop when the
    agent can emit actions without direct tool execution.
 
 This design intentionally separates a clear control boundary from sandboxing.

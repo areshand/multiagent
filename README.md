@@ -162,10 +162,13 @@ to check and follow the policy before writes.
 
 ## Harness Dispatch Prototype
 
-`bin/harness.sh` is an alternate design surface for routing orchestrator actions
-through an explicit evaluate-then-dispatch step. It accepts small `key=value`
-action manifests, returns `ALLOW`, `DENY`, `REQUIRE_APPROVAL`, or `TERMINATE`,
-and executes only allowed actions through existing repo helpers.
+`bin/harness.sh` is an alternate design surface for routing actions through an
+explicit evaluate-then-dispatch step outside the CLI orchestrator. The current
+orchestrator is still a tmux-hosted CLI session, so this prototype does not
+directly control its reasoning loop. It does let an external supervisor assess
+workers or the orchestrator window, return recommendations such as `continue`,
+`verify`, `inspect`, or `kill`, and execute only allowed actions through
+existing repo helpers.
 
 See `docs/harness-dispatch-design.md` for the action format, policy decisions,
 and migration path from tmux supervision toward a mediated harness loop.

@@ -286,7 +286,12 @@ assert_file_contains "$ROOT/README.md" "MULTIAGENT_VERIFIER_MAX_ITERATIONS=3"
 assert_file_contains "$ROOT/README.md" 'WORKER_CLI`: worker CLI for manual worker windows, default `claude`'
 assert_file_contains "$ROOT/README.md" 'VERIFIER_CLI`: verifier CLI, default `codex`'
 assert_file_contains "$ROOT/README.md" "Harness Dispatch Prototype"
+assert_file_contains "$ROOT/README.md" "outside the CLI orchestrator"
+assert_file_contains "$ROOT/README.md" "external supervisor assess"
+assert_file_contains "$ROOT/README.md" "workers or the orchestrator window"
 assert_file_contains "$ROOT/docs/harness-dispatch-design.md" "agent intent -> action manifest -> policy decision -> executor"
+assert_file_contains "$ROOT/docs/harness-dispatch-design.md" "External harness"
+assert_file_contains "$ROOT/docs/harness-dispatch-design.md" "CLI orchestrator"
 
 policy_check_inside="$("$ROOT/bin/write-policy.sh" check "$ROOT/README.md")"
 [[ "$policy_check_inside" == $'allowed\t'"$ROOT/README.md" ]]
@@ -367,6 +372,20 @@ if "$ROOT/bin/harness.sh" dispatch "$TMPDIR/harness-unsupported.action" >"$TMPDI
   exit 1
 fi
 assert_file_contains "$TMPDIR/harness-unsupported.out" $'decision\tDENY'
+
+printf 'Orchestrator is planning and checking worker state\n' >"$MOCK_TMUX_CAPTURES/orchestrator.txt"
+orchestrator_assessment="$("$ROOT/bin/harness.sh" assess orchestrator)"
+[[ "$orchestrator_assessment" == *$'assessment\torchestrator\tinspect'* ]]
+
+printf 'worker-risk\n' >>"$MOCK_TMUX_WINDOWS"
+printf 'I will git push and open PR now\n' >"$MOCK_TMUX_CAPTURES/worker-risk.txt"
+cat >"$TMPDIR/harness-assess-risk.action" <<'EOF'
+type=assess_agent
+name=worker-risk
+EOF
+risk_assessment="$("$ROOT/bin/harness.sh" dispatch "$TMPDIR/harness-assess-risk.action")"
+[[ "$risk_assessment" == *$'decision\tALLOW'* ]]
+[[ "$risk_assessment" == *$'assessment\tworker-risk\tkill'* ]]
 
 ASSIGN_REPO="$TMPDIR/assignment-repo"
 ASSIGN_STATE="$TMPDIR/assignment-state"

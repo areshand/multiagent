@@ -12,12 +12,16 @@ usage() {
 Usage:
   bin/harness.sh evaluate ACTION_FILE
   bin/harness.sh dispatch ACTION_FILE
+  bin/harness.sh assess NAME
 
 Evaluates a structured harness action before executing it.
 
 Action files are simple key=value manifests. Supported action types:
 
   type=assignment_check
+  name=worker-01-docs
+
+  type=assess_agent
   name=worker-01-docs
 
   type=kill_agent
@@ -72,6 +76,11 @@ validate_name() {
   [[ "$name" != "orchestrator" ]] || die "orchestrator is not an agent target"
 }
 
+validate_observed_name() {
+  local name="$1"
+  [[ "$name" =~ ^[A-Za-z0-9_.-]+$ ]] || die "invalid observed name: $name"
+}
+
 decision() {
   local value="$1"
   local reason="$2"
@@ -81,6 +90,69 @@ decision() {
   if [[ -n "$executor" ]]; then
     printf 'executor\t%s\n' "$executor"
   fi
+}
+
+window_exists() {
+  local name="$1"
+  command -v tmux >/dev/null 2>&1 || return 1
+  tmux list-windows -t "${MULTIAGENT_SESSION:-multiagent}" -F '#W' 2>/dev/null | grep -Fx -- "$name" >/dev/null 2>&1
+}
+
+capture_observed_agent() {
+  local name="$1"
+  if window_exists "$name"; then
+    tmux capture-pane -t "${MULTIAGENT_SESSION:-multiagent}:$name" -p -S -300 2>/dev/null || true
+  elif [[ -f "$STATE_DIR/subagents/$name/current.txt" ]]; then
+    cat "$STATE_DIR/subagents/$name/current.txt"
+  else
+    true
+  fi
+}
+
+classify_capture() {
+  local name="$1"
+  local capture="$2"
+  if grep -Eiq '(rm[[:space:]]+-rf[[:space:]]+/|git[[:space:]]+push|gh[[:space:]]+pr[[:space:]]+create|submit PR|open PR|send external|exfiltrat|secret|credential|delete production|production database)' <<<"$capture"; then
+    printf 'kill\n'
+  elif grep -Eiq '\b(blocked|need input|waiting for|cannot proceed)\b' <<<"$capture"; then
+    printf 'block\n'
+  elif grep -Eiq '\b(done|complete|completed|final status|finished)\b' <<<"$capture"; then
+    printf 'verify\n'
+  elif [[ "$name" == "orchestrator" && -n "$capture" ]]; then
+    printf 'inspect\n'
+  elif window_exists "$name"; then
+    printf 'continue\n'
+  elif [[ -n "$capture" ]]; then
+    printf 'inspect\n'
+  else
+    printf 'unknown\n'
+  fi
+}
+
+assess_agent() {
+  local name="$1"
+  validate_observed_name "$name"
+
+  local capture recommendation reason check_output
+  capture="$(capture_observed_agent "$name")"
+  recommendation="$(classify_capture "$name" "$capture")"
+  reason="capture-classification"
+
+  if [[ "$name" != "orchestrator" && -f "$STATE_DIR/assignments/$name/assignment.env" ]]; then
+    if ! check_output="$(MULTIAGENT_ROOT="$ROOT" MULTIAGENT_STATE_DIR="$STATE_DIR" "$TOOL_ROOT/bin/subagent.sh" assignment-check "$name" 2>&1)"; then
+      recommendation="kill"
+      reason="$(awk -F'\t' '/^reject\t/ { print $2; exit }' <<<"$check_output")"
+      [[ -n "$reason" ]] || reason="assignment-check-failed"
+    elif [[ "$recommendation" == "continue" ]]; then
+      reason="assignment-check-accepted"
+    fi
+  elif [[ "$name" != "orchestrator" && "$recommendation" == "continue" ]]; then
+    recommendation="inspect"
+    reason="missing-assignment-metadata"
+  fi
+
+  printf 'assessment\t%s\t%s\n' "$name" "$recommendation"
+  printf 'reason\t%s\n' "$reason"
 }
 
 evaluate_action() {
@@ -98,6 +170,11 @@ evaluate_action() {
   approved="$(value_or_empty "$file" approved)"
 
   case "$type" in
+    assess_agent)
+      [[ -n "$name" ]] || die "assess_agent requires name"
+      validate_observed_name "$name"
+      decision "ALLOW" "external observation action" "bin/harness.sh assess $name"
+      ;;
     assignment_check)
       [[ -n "$name" ]] || die "assignment_check requires name"
       validate_name "$name"
@@ -161,6 +238,9 @@ dispatch_action() {
       assignment_id="$(value_or_empty "$file" assignment_id)"
       reason="$(value_or_empty "$file" reason)"
       case "$type" in
+        assess_agent)
+          assess_agent "$name"
+          ;;
         assignment_check)
           "$TOOL_ROOT/bin/subagent.sh" assignment-check "$name"
           ;;
@@ -202,6 +282,10 @@ case "$cmd" in
   dispatch)
     shift
     dispatch_action "$@"
+    ;;
+  assess)
+    shift
+    assess_agent "$@"
     ;;
   -h|--help|help)
     usage
