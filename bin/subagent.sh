@@ -10,6 +10,16 @@ CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 WORKER_CLI="${WORKER_CLI:-claude}"
 SUBAGENT_CLI="${SUBAGENT_CLI:-$WORKER_CLI}"
 VERIFIER_CLI="${VERIFIER_CLI:-codex}"
+if [[ -n "${MULTIAGENT_EXTRA_PATH:-}" ]]; then
+  PATH="$MULTIAGENT_EXTRA_PATH:$PATH"
+  export PATH
+fi
+if [[ "${CODEX_BIN:-codex}" == "codex" && -n "${MULTIAGENT_EXTRA_PATH:-}" && -x "$MULTIAGENT_EXTRA_PATH/codex-bridge" ]]; then
+  CODEX_BIN="$MULTIAGENT_EXTRA_PATH/codex-bridge"
+fi
+if [[ "${CODEX_BIN:-codex}" == "codex" && -n "${MULTIAGENT_STATE_DIR:-}" && -x "$(dirname "$MULTIAGENT_STATE_DIR")/codex-bridge" ]]; then
+  CODEX_BIN="$(dirname "$MULTIAGENT_STATE_DIR")/codex-bridge"
+fi
 
 usage() {
   cat <<'USAGE'
@@ -81,10 +91,24 @@ cli_bin() {
 build_cli_command() {
   local cli="$1"
   local cwd="$2"
+  local prompt_file="${3:-}"
+  local output_file="${4:-}"
   local bin
   bin="$(cli_bin "$cli")"
   case "$cli" in
     codex)
+      if [[ "${MULTIAGENT_CODEX_EXEC:-0}" == "1" ]]; then
+        if [[ -n "$prompt_file" ]]; then
+          if [[ -n "$output_file" ]]; then
+            printf "%q exec --cd %q --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --output-last-message %q - < %q" "$bin" "$cwd" "$output_file" "$prompt_file"
+          else
+            printf "%q exec --cd %q --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox - < %q" "$bin" "$cwd" "$prompt_file"
+          fi
+        else
+          printf "%q exec --cd %q --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox" "$bin" "$cwd"
+        fi
+        return
+      fi
       printf "%q --cd %q --dangerously-bypass-approvals-and-sandbox --no-alt-screen" "$bin" "$cwd"
       ;;
     claude)
@@ -112,6 +136,7 @@ timestamp() {
 validate_name() {
   local name="$1"
   [[ "$name" =~ ^[A-Za-z0-9_.-]+$ ]] || die "invalid subagent name: $name"
+  [[ "$name" != -* ]] || die "invalid subagent name: $name"
   [[ "$name" != "orchestrator" ]] || die "reserved subagent name: $name"
 }
 
@@ -244,7 +269,7 @@ normalize_repo_path() {
   rel="${canonical#"$root"/}"
   rel="${rel#./}"
   rel="${rel%/}"
-  [[ -n "$rel" && "$rel" != "$root" ]] || die "assigned path may not be the whole repo root"
+  [[ -n "$rel" && "$rel" != "." && "$rel" != "$root" ]] || die "assigned path may not be the whole repo root"
   printf '%s\n' "$rel"
 }
 
@@ -635,7 +660,7 @@ readiness_state() {
   local text="$1"
   if grep -Eiq '(not authenticated|authentication required|login required|sign in|setup required|api key required|failed to authenticate|claude login|log in to claude|not logged in|select theme|choose your setup|trust this folder|do you trust|press enter to continue)' <<<"$text"; then
     printf 'blocked\n'
-  elif grep -Eiq '(codex prompt ready|claude prompt ready|prompt ready|restored codex prompt ready|restored claude prompt ready|what can i help|ready for input|type your message|claude code.*ready|bypass permissions mode|dangerously-skip-permissions)' <<<"$text"; then
+  elif grep -Eiq '(codex prompt ready|claude prompt ready|prompt ready|restored codex prompt ready|restored claude prompt ready|what can i help|ready for input|type your message|claude code.*ready|bypass permissions mode|dangerously-skip-permissions|use /skills to list available skills|gpt-[0-9][^[:space:]]*[[:space:]]+default[[:space:]]+.)' <<<"$text"; then
     printf 'ready\n'
   else
     printf 'waiting\n'
@@ -675,7 +700,15 @@ deliver_instruction() {
     set_status "$name" "delivery-blocked"
     die "subagent window is not ready for instruction delivery: $name; see $dir/last-error.txt"
   fi
-  tmux send-keys -t "$SESSION:$name" "$instruction" Enter
+  if [[ "$instruction" == *$'\n'* || "${#instruction}" -gt 800 ]]; then
+    printf '%s\n' "$instruction" >"$dir/instruction.txt"
+    instruction="Read and follow the assignment in $dir/instruction.txt. Proceed now, then report progress and final status in this window."
+  fi
+  tmux send-keys -t "$SESSION:$name" "$instruction"
+  sleep "${MULTIAGENT_DELIVERY_SUBMIT_DELAY:-0.2}"
+  tmux send-keys -t "$SESSION:$name" C-m
+  sleep "${MULTIAGENT_DELIVERY_SECOND_SUBMIT_DELAY:-0.8}"
+  tmux send-keys -t "$SESSION:$name" C-m
   capture_subagent "$name" || true
 }
 
@@ -709,7 +742,7 @@ infer_status() {
 
   if grep -Eiq '\b(blocked|need input|waiting for|cannot proceed)\b' "$current"; then
     printf 'blocked\n'
-  elif grep -Eiq '\b(done|complete|completed|final status|finished)\b' "$current"; then
+  elif grep -Eiq '\b(final status|completed|complete_task|assignment complete|task complete|finished assignment|work completed|done with)\b|Worked for [0-9]' "$current"; then
     printf 'done\n'
   elif window_exists "$name"; then
     printf 'running\n'
@@ -763,14 +796,24 @@ created_at=$(timestamp)
 EOF
   set_status "$name" "starting"
 
-  local command
-  printf -v command "cd %q && export MULTIAGENT_SESSION=%q MULTIAGENT_ROOT=%q MULTIAGENT_STATE_DIR=%q MULTIAGENT_WRITE_POLICY=%q MULTIAGENT_SUBAGENT_NAME=%q WORKER_CLI=%q SUBAGENT_CLI=%q VERIFIER_CLI=%q && %s" \
-    "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$POLICY_FILE" "$name" "$WORKER_CLI" "$cli" "$VERIFIER_CLI" "$(build_cli_command "$cli" "$ROOT")"
+  local command prompt_file output_file
+  prompt_file=""
+  output_file="$dir/last-message.txt"
+  if [[ "${MULTIAGENT_CODEX_EXEC:-0}" == "1" && "$cli" == "codex" && -n "$instruction" ]]; then
+    prompt_file="$dir/instruction.txt"
+    printf '%s\n' "$instruction" >"$prompt_file"
+    {
+      printf '\n----- instruction %s -----\n' "$(timestamp)"
+      printf '%s\n' "$instruction"
+    } >>"$dir/transcript.log"
+  fi
+  printf -v command "cd %q && export MULTIAGENT_SESSION=%q MULTIAGENT_ROOT=%q MULTIAGENT_STATE_DIR=%q MULTIAGENT_WRITE_POLICY=%q MULTIAGENT_SUBAGENT_NAME=%q WORKER_CLI=%q SUBAGENT_CLI=%q VERIFIER_CLI=%q CODEX_BIN=%q CLAUDE_BIN=%q MULTIAGENT_CODEX_EXEC=%q PATH=%q && %s; rc=\$?; printf '\\nfinal status: codex exec exited rc=%%s\\n' \$rc; sleep infinity" \
+    "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$POLICY_FILE" "$name" "$WORKER_CLI" "$cli" "$VERIFIER_CLI" "$CODEX_BIN" "$CLAUDE_BIN" "${MULTIAGENT_CODEX_EXEC:-0}" "$PATH" "$(build_cli_command "$cli" "$ROOT" "$prompt_file" "$output_file")"
   tmux new-window -d -t "$SESSION" -n "$name" "$command"
   set_status "$name" "running"
 
   capture_subagent "$name" || true
-  if [[ -n "$instruction" ]]; then
+  if [[ -n "$instruction" && ! ( "${MULTIAGENT_CODEX_EXEC:-0}" == "1" && "$cli" == "codex" ) ]]; then
     deliver_instruction "$name" "$instruction"
   fi
 
@@ -1018,11 +1061,20 @@ restore_subagent() {
   } >>"$dir/transcript.log"
   set_status "$name" "restoring"
 
-  printf -v command "cd %q && export MULTIAGENT_SESSION=%q MULTIAGENT_ROOT=%q MULTIAGENT_STATE_DIR=%q MULTIAGENT_WRITE_POLICY=%q MULTIAGENT_SUBAGENT_NAME=%q MULTIAGENT_SUBAGENT_RESTORED=1 WORKER_CLI=%q SUBAGENT_CLI=%q VERIFIER_CLI=%q && %s" \
-    "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$POLICY_FILE" "$name" "$WORKER_CLI" "$cli" "$VERIFIER_CLI" "$(build_cli_command "$cli" "$ROOT")"
+  local prompt_file output_file
+  prompt_file=""
+  output_file="$dir/last-message.txt"
+  if [[ "${MULTIAGENT_CODEX_EXEC:-0}" == "1" && "$cli" == "codex" ]]; then
+    prompt_file="$dir/restore-instruction.txt"
+    printf '%s\n' "$instruction" >"$prompt_file"
+  fi
+  printf -v command "cd %q && export MULTIAGENT_SESSION=%q MULTIAGENT_ROOT=%q MULTIAGENT_STATE_DIR=%q MULTIAGENT_WRITE_POLICY=%q MULTIAGENT_SUBAGENT_NAME=%q MULTIAGENT_SUBAGENT_RESTORED=1 WORKER_CLI=%q SUBAGENT_CLI=%q VERIFIER_CLI=%q CODEX_BIN=%q CLAUDE_BIN=%q MULTIAGENT_CODEX_EXEC=%q PATH=%q && %s; rc=\$?; printf '\\nfinal status: codex exec exited rc=%%s\\n' \$rc; sleep infinity" \
+    "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$POLICY_FILE" "$name" "$WORKER_CLI" "$cli" "$VERIFIER_CLI" "$CODEX_BIN" "$CLAUDE_BIN" "${MULTIAGENT_CODEX_EXEC:-0}" "$PATH" "$(build_cli_command "$cli" "$ROOT" "$prompt_file" "$output_file")"
   tmux new-window -d -t "$SESSION" -n "$name" "$command"
   set_status "$name" "running"
-  deliver_instruction "$name" "$instruction"
+  if ! [[ "${MULTIAGENT_CODEX_EXEC:-0}" == "1" && "$cli" == "codex" ]]; then
+    deliver_instruction "$name" "$instruction"
+  fi
 
   printf 'restored %s\n' "$name"
 }

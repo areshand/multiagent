@@ -4,6 +4,8 @@ set -euo pipefail
 SESSION="${MULTIAGENT_SESSION:-multiagent}"
 ROOT="${MULTIAGENT_ROOT:-$(pwd)}"
 STATE_DIR="${MULTIAGENT_STATE_DIR:-$ROOT/.multiagent}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+SUBAGENT_SH="$SCRIPT_DIR/subagent.sh"
 
 die() {
   echo "status: $*" >&2
@@ -61,7 +63,7 @@ classify_capture() {
 
   if grep -Eiq '\b(blocked|need input|waiting for|cannot proceed)\b' <<<"$capture"; then
     printf 'blocked\n'
-  elif grep -Eiq '\b(done|complete|completed|final status|finished)\b' <<<"$capture"; then
+  elif grep -Eiq '\b(final status|completed|complete_task|assignment complete|task complete|finished assignment|work completed|done with)\b|Worked for [0-9]' <<<"$capture"; then
     printf 'done\n'
   elif grep -Eiq '(│|>) *$|codex.*[?]' <<<"$capture"; then
     printf 'idle\n'
@@ -154,7 +156,7 @@ main() {
 
     if grep -Fx -- "$name" <<<"$windows" >/dev/null 2>&1; then
       window="open"
-      "$ROOT/bin/subagent.sh" poll "$name" >/dev/null || true
+      MULTIAGENT_ROOT="$ROOT" MULTIAGENT_STATE_DIR="$STATE_DIR" "$SUBAGENT_SH" poll "$name" >/dev/null || true
     else
       window="closed"
     fi

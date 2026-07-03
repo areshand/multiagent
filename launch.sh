@@ -115,6 +115,14 @@ build_cli_command() {
   bin="$(cli_bin "$cli")"
   case "$cli" in
     codex)
+      if [[ "${MULTIAGENT_CODEX_EXEC:-0}" == "1" ]]; then
+        if [[ -n "$prompt_file" ]]; then
+          printf "%q exec --cd %q --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --output-last-message %q - < %q; rc=\$?; printf '\\n[multiagent codex exec exited rc=%%s]\\n' \$rc; sleep infinity" "$bin" "$cwd" "$STATE_DIR/orchestrator-last-message.txt" "$prompt_file"
+        else
+          printf "%q exec --cd %q --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox; rc=\$?; printf '\\n[multiagent codex exec exited rc=%%s]\\n' \$rc; sleep infinity" "$bin" "$cwd"
+        fi
+        return
+      fi
       if [[ -n "$prompt_file" ]]; then
         printf "%q --cd %q --dangerously-bypass-approvals-and-sandbox --no-alt-screen \"\$(cat %q)\"" "$bin" "$cwd" "$prompt_file"
       else
@@ -169,6 +177,11 @@ export ORCHESTRATOR_CLI
 export WORKER_CLI
 export SUBAGENT_CLI
 export VERIFIER_CLI
+export CODEX_BIN
+export CLAUDE_BIN
+export MULTIAGENT_CODEX_EXEC="${MULTIAGENT_CODEX_EXEC:-0}"
+export MULTIAGENT_EXTRA_PATH="${MULTIAGENT_EXTRA_PATH:-}"
+export PATH
 
 mkdir -p "$STATE_DIR/subagents" "$STATE_DIR/assignments" "$STATE_DIR/worktrees"
 "$SCRIPT_DIR/bin/write-policy.sh" init
@@ -178,26 +191,33 @@ else
   RESUME_LABEL="clean"
 fi
 
-ORCHESTRATOR_BOOTSTRAP="$(
-  cat <<EOF
-cd '$ROOT'
-export MULTIAGENT_SESSION='$SESSION'
-export MULTIAGENT_ROOT='$ROOT'
-export MULTIAGENT_RESUME='$RESUME'
-export MULTIAGENT_PROMPT='$PROMPT_FILE'
-export MULTIAGENT_STATE_DIR='$STATE_DIR'
-export MULTIAGENT_WRITE_POLICY='$POLICY_FILE'
-export MULTIAGENT_VERIFIER_MAX_ITERATIONS='$VERIFIER_MAX_ITERATIONS'
-export ORCHESTRATOR_CLI='$ORCHESTRATOR_CLI'
-export WORKER_CLI='$WORKER_CLI'
-export SUBAGENT_CLI='$SUBAGENT_CLI'
-export VERIFIER_CLI='$VERIFIER_CLI'
-printf 'Multiagent launch mode: MULTIAGENT_RESUME=%s (%s)\n' '$RESUME' '$RESUME_LABEL'
-$(build_cli_command "$ORCHESTRATOR_CLI" "$ROOT" "$PROMPT_FILE")
-EOF
-)"
+ORCHESTRATOR_BOOTSTRAP_SCRIPT="$STATE_DIR/orchestrator-bootstrap.sh"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'cd %q\n' "$ROOT"
+  printf 'export MULTIAGENT_SESSION=%q\n' "$SESSION"
+  printf 'export MULTIAGENT_ROOT=%q\n' "$ROOT"
+  printf 'export MULTIAGENT_RESUME=%q\n' "$RESUME"
+  printf 'export MULTIAGENT_PROMPT=%q\n' "$PROMPT_FILE"
+  printf 'export MULTIAGENT_STATE_DIR=%q\n' "$STATE_DIR"
+  printf 'export MULTIAGENT_WRITE_POLICY=%q\n' "$POLICY_FILE"
+  printf 'export MULTIAGENT_VERIFIER_MAX_ITERATIONS=%q\n' "$VERIFIER_MAX_ITERATIONS"
+  printf 'export ORCHESTRATOR_CLI=%q\n' "$ORCHESTRATOR_CLI"
+  printf 'export WORKER_CLI=%q\n' "$WORKER_CLI"
+  printf 'export SUBAGENT_CLI=%q\n' "$SUBAGENT_CLI"
+  printf 'export VERIFIER_CLI=%q\n' "$VERIFIER_CLI"
+  printf 'export CODEX_BIN=%q\n' "$CODEX_BIN"
+  printf 'export CLAUDE_BIN=%q\n' "$CLAUDE_BIN"
+  printf 'export MULTIAGENT_CODEX_EXEC=%q\n' "$MULTIAGENT_CODEX_EXEC"
+  printf 'export MULTIAGENT_EXTRA_PATH=%q\n' "$MULTIAGENT_EXTRA_PATH"
+  printf 'export PATH=%q\n' "$PATH"
+  printf 'printf %q %q %q\n' 'Multiagent launch mode: MULTIAGENT_RESUME=%s (%s)\n' "$RESUME" "$RESUME_LABEL"
+  build_cli_command "$ORCHESTRATOR_CLI" "$ROOT" "$PROMPT_FILE"
+  printf '\n'
+} > "$ORCHESTRATOR_BOOTSTRAP_SCRIPT"
+chmod 700 "$ORCHESTRATOR_BOOTSTRAP_SCRIPT"
 
-tmux new-session -d -s "$SESSION" -n orchestrator "$ORCHESTRATOR_BOOTSTRAP"
+tmux new-session -d -s "$SESSION" -n orchestrator "bash $(printf '%q' "$ORCHESTRATOR_BOOTSTRAP_SCRIPT")"
 tmux select-window -t "$SESSION:orchestrator"
 
 echo "Started tmux session: $SESSION"
