@@ -79,6 +79,7 @@ role or workflow is needed:
 - `prompts/roles/validation-coordinator.md`
 - `prompts/roles/organizational-learning.md`
 - `prompts/playbooks/agent-spawning.md`
+- `prompts/playbooks/orchestration-routing.md`
 - `prompts/playbooks/dag.md`
 - `prompts/playbooks/recovery.md`
 - `prompts/playbooks/write-policy.md`
@@ -93,6 +94,11 @@ setup, CLI-specific spawn commands, long-running subagent operations,
 worker/verifier iteration loop, and progress/status fallback procedure. The
 orchestrator prompt should load it only when it is about to spawn, monitor,
 replace, verify, or finalize agents.
+
+`prompts/playbooks/orchestration-routing.md` contains the detailed role-routing
+workflow for contract scouts, scope guards, validation coordinators, worker
+first instructions, verifiers, status checks, and safety rules. The core
+orchestrator prompt keeps only the decision rules for when to use those roles.
 
 ## Contract Scout Workflow
 
