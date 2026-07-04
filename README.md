@@ -66,6 +66,22 @@ prompt is still loaded from this launcher's directory, so cross-repo launches do
 not need an `orchestrator_prompt.md` in the target repo. Set
 `MULTIAGENT_PROMPT=/path/to/prompt.md` to override that default.
 
+## Prompt Modules
+
+The core `orchestrator_prompt.md` is a dispatcher prompt. Detailed role and
+workflow instructions live in prompt modules and should be loaded only when that
+role or workflow is needed:
+
+- `prompts/worker.md`
+- `prompts/verifier.md`
+- `prompts/roles/organizational-learning.md`
+- `prompts/playbooks/dag.md`
+- `prompts/playbooks/recovery.md`
+- `prompts/playbooks/write-policy.md`
+
+Resolve module paths relative to `MULTIAGENT_PROMPT`, not the target repo root,
+so cross-repo launches still use the launcher repo's prompt modules.
+
 ## Verifier Workflow
 
 After a worker reports completion, the orchestrator may spawn one read-only

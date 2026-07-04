@@ -215,18 +215,21 @@ assert_file_contains "$TMPDIR/launch.out" "Worker CLI: claude"
 assert_file_contains "$TMPDIR/launch.out" "Subagent CLI: claude"
 assert_file_contains "$TMPDIR/launch.out" "Verifier CLI: codex"
 assert_file_contains "$TMPDIR/launch.out" "Default write root: $LAUNCH_TARGET"
-assert_file_contains "$MOCK_TMUX_LOG" "--cd $LAUNCH_TARGET"
-assert_file_contains "$MOCK_TMUX_LOG" "export MULTIAGENT_RESUME='0'"
-assert_file_contains "$MOCK_TMUX_LOG" "export MULTIAGENT_VERIFIER_MAX_ITERATIONS='3'"
-assert_file_contains "$MOCK_TMUX_LOG" "export WORKER_CLI='claude'"
-assert_file_contains "$MOCK_TMUX_LOG" "export SUBAGENT_CLI='claude'"
-assert_file_contains "$MOCK_TMUX_LOG" "export VERIFIER_CLI='codex'"
-assert_file_contains "$MOCK_TMUX_LOG" "Multiagent launch mode: MULTIAGENT_RESUME=%s (%s)"
-assert_file_contains "$MOCK_TMUX_LOG" "$(printf '%q' "$ROOT/orchestrator_prompt.md")"
-if grep -Fq "$LAUNCH_TARGET/orchestrator_prompt.md" "$MOCK_TMUX_LOG" "$TMPDIR/launch.out"; then
+LAUNCH_BOOTSTRAP="$LAUNCH_STATE/orchestrator-bootstrap.sh"
+assert_file_contains "$MOCK_TMUX_LOG" "$(printf '%q' "$LAUNCH_BOOTSTRAP")"
+assert_file_contains "$LAUNCH_BOOTSTRAP" "--cd $LAUNCH_TARGET"
+assert_file_contains "$LAUNCH_BOOTSTRAP" "export MULTIAGENT_RESUME=0"
+assert_file_contains "$LAUNCH_BOOTSTRAP" "export MULTIAGENT_VERIFIER_MAX_ITERATIONS=3"
+assert_file_contains "$LAUNCH_BOOTSTRAP" "export WORKER_CLI=claude"
+assert_file_contains "$LAUNCH_BOOTSTRAP" "export SUBAGENT_CLI=claude"
+assert_file_contains "$LAUNCH_BOOTSTRAP" "export VERIFIER_CLI=codex"
+assert_file_contains "$LAUNCH_BOOTSTRAP" "Multiagent\\ launch\\ mode:"
+assert_file_contains "$LAUNCH_BOOTSTRAP" "$(printf '%q' "$ROOT/orchestrator_prompt.md")"
+if grep -Fq "$LAUNCH_TARGET/orchestrator_prompt.md" "$MOCK_TMUX_LOG" "$TMPDIR/launch.out" "$LAUNCH_BOOTSTRAP"; then
   echo "expected launch to use script-dir orchestrator prompt, not target-root prompt" >&2
   cat "$MOCK_TMUX_LOG" >&2
   cat "$TMPDIR/launch.out" >&2
+  cat "$LAUNCH_BOOTSTRAP" >&2
   exit 1
 fi
 
@@ -243,9 +246,11 @@ assert_file_contains "$TMPDIR/launch-resume.out" "Resume mode: 1"
 assert_file_contains "$TMPDIR/launch-resume.out" "Verifier max iterations: 5"
 assert_file_contains "$TMPDIR/launch-resume.out" "Worker CLI: claude"
 assert_file_contains "$TMPDIR/launch-resume.out" "Verifier CLI: codex"
-assert_file_contains "$MOCK_TMUX_LOG" "export MULTIAGENT_RESUME='1'"
-assert_file_contains "$MOCK_TMUX_LOG" "export MULTIAGENT_VERIFIER_MAX_ITERATIONS='5'"
-assert_file_contains "$MOCK_TMUX_LOG" "'resume'"
+LAUNCH_RESUME_BOOTSTRAP="$TMPDIR/launch-resume-state/orchestrator-bootstrap.sh"
+assert_file_contains "$MOCK_TMUX_LOG" "$(printf '%q' "$LAUNCH_RESUME_BOOTSTRAP")"
+assert_file_contains "$LAUNCH_RESUME_BOOTSTRAP" "export MULTIAGENT_RESUME=1"
+assert_file_contains "$LAUNCH_RESUME_BOOTSTRAP" "export MULTIAGENT_VERIFIER_MAX_ITERATIONS=5"
+assert_file_contains "$LAUNCH_RESUME_BOOTSTRAP" "resume"
 
 if MOCK_TMUX_HAS_SESSION=0 \
   MULTIAGENT_SESSION="launch-invalid-verifier-cap" \
@@ -270,7 +275,7 @@ MOCK_TMUX_HAS_SESSION=0 \
   MULTIAGENT_STATE_DIR="$TMPDIR/launch-explicit-state" \
   MULTIAGENT_WRITE_POLICY="$TMPDIR/launch-explicit-policy/write-policy.paths" \
   "$ROOT/launch.sh" --session launch-explicit-prompt --root "$LAUNCH_TARGET" --no-attach >"$TMPDIR/launch-explicit.out"
-assert_file_contains "$MOCK_TMUX_LOG" "$(printf '%q' "$EXPLICIT_PROMPT")"
+assert_file_contains "$TMPDIR/launch-explicit-state/orchestrator-bootstrap.sh" "$(printf '%q' "$EXPLICIT_PROMPT")"
 
 assert_file_contains "$ROOT/orchestrator_prompt.md" "Do not inspect recovery state"
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'When `MULTIAGENT_RESUME=1`'
@@ -288,8 +293,17 @@ assert_file_contains "$ROOT/orchestrator_prompt.md" "Run a Ponytail over-enginee
 assert_file_contains "$ROOT/orchestrator_prompt.md" "Intent And Contract Discipline"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "verifier contract ledger"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "Synthesize hidden-test-style probes"
+assert_file_contains "$ROOT/orchestrator_prompt.md" "Prompt Modules"
+assert_file_contains "$ROOT/prompts/worker.md" "Worker Role Prompt"
+assert_file_contains "$ROOT/prompts/worker.md" "Ponytail Implementation Discipline"
+assert_file_contains "$ROOT/prompts/verifier.md" "Verifier Role Prompt"
+assert_file_contains "$ROOT/prompts/verifier.md" "Hidden-Test-Style Probes"
+assert_file_contains "$ROOT/prompts/playbooks/dag.md" "DAG Workflow Playbook"
+assert_file_contains "$ROOT/prompts/playbooks/recovery.md" "Recovery Playbook"
+assert_file_contains "$ROOT/prompts/playbooks/write-policy.md" "Write Policy Playbook"
 assert_file_contains "$ROOT/README.md" "Launches are clean by default"
 assert_file_contains "$ROOT/README.md" "./launch.sh --resume"
+assert_file_contains "$ROOT/README.md" "Prompt Modules"
 assert_file_contains "$ROOT/README.md" "Verifier Workflow"
 assert_file_contains "$ROOT/README.md" "MULTIAGENT_VERIFIER_MAX_ITERATIONS=3"
 assert_file_contains "$ROOT/README.md" "compact contract ledger"
@@ -309,6 +323,8 @@ python3 -c "from evaluation.core import system_for_arm; print(system_for_arm('ba
 assert_file_contains "$TMPDIR/evaluation-baseline-arm.out" "Required Worker First Instruction"
 assert_file_contains "$TMPDIR/evaluation-baseline-arm.out" "Stay in your assigned files only."
 assert_file_contains "$TMPDIR/evaluation-baseline-arm.out" "Ponytail implementation discipline"
+assert_file_contains "$TMPDIR/evaluation-baseline-arm.out" "Worker Role Prompt"
+assert_file_contains "$TMPDIR/evaluation-baseline-arm.out" "Ponytail Implementation Discipline"
 python3 - <<'PY' >"$TMPDIR/orchestration-arms.out"
 from evaluation.adapters import load_adapter
 from evaluation.core import arm_choices, default_arms, system_for_adapter_arm
@@ -626,7 +642,8 @@ assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-restore/restore_e
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-restore/restore_events.log" "cli=claude"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-restore/transcript.log" "You are a restored long-running subagent."
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-restore/transcript.log" "Previous progress: halfway through recovery work"
-assert_file_contains "$MOCK_TMUX_LOG" "send-key test-session:subagent-restore You are a restored long-running subagent."
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-restore/instruction.txt" "You are a restored long-running subagent."
+assert_file_contains "$MOCK_TMUX_LOG" "send-key test-session:subagent-restore Read and follow the assignment in $MULTIAGENT_STATE_DIR/subagents/subagent-restore/instruction.txt"
 claude_restore_line="$(grep -F "new-window -d test-session subagent-restore " "$MOCK_TMUX_LOG")"
 [[ "$claude_restore_line" == *"--dangerously-skip-permissions"* ]]
 if [[ "$claude_restore_line" == *"--cd"* || "$claude_restore_line" == *"--no-alt-screen"* ]]; then
@@ -835,8 +852,8 @@ decision_commands_readme="$(grep "bin/decision.sh" "$ROOT/README.md" || true)"
 [[ "$decision_commands_readme" == *"bin/decision.sh list"* ]]
 [[ "$decision_commands_readme" == *"bin/decision.sh show"* ]]
 
-# Verify that decision command examples in orchestrator_prompt.md use only supported commands
-decision_commands_prompt="$(grep "bin/decision.sh" "$ROOT/orchestrator_prompt.md" || true)"
+# Verify that decision command examples in the organizational-learning module use only supported commands
+decision_commands_prompt="$(grep "bin/decision.sh" "$ROOT/prompts/roles/organizational-learning.md" || true)"
 [[ "$decision_commands_prompt" == *"bin/decision.sh init"* ]]
 [[ "$decision_commands_prompt" == *"bin/decision.sh add-alternative"* ]]
 [[ "$decision_commands_prompt" == *"bin/decision.sh commit"* ]]

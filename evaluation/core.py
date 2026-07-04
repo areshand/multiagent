@@ -207,15 +207,18 @@ def git_diff_stats(workdir: Path) -> dict[str, int]:
 
 def current_worker_system() -> str:
     prompt_path = ROOT / "orchestrator_prompt.md"
+    worker_prompt_path = ROOT / "prompts" / "worker.md"
     try:
         text = prompt_path.read_text(encoding="utf-8")
         start = text.index("## Required Worker First Instruction")
         end = text.index("## Worker Spawn Skill", start)
         section = text[start:end].strip()
+        if worker_prompt_path.exists():
+            section = section + "\n\n" + worker_prompt_path.read_text(encoding="utf-8").strip()
         return (
             "You are a worker agent launched by the multiagent orchestrator.\n\n"
             "Use the current repository worker rules below. They are extracted from "
-            "`orchestrator_prompt.md`, so evaluation tracks changes to the multiagent system.\n\n"
+            "`orchestrator_prompt.md` and `prompts/worker.md`, so evaluation tracks changes to the multiagent system.\n\n"
             f"{section}"
         )
     except Exception as exc:
