@@ -29,6 +29,11 @@ Also include:
   command argv, serialized output, error text, or ordered list, treat that
   exact shape as part of the contract. Preserve order and punctuation unless
   source evidence proves the excerpt is non-normative.
+- Treat symbols referenced by issue text, tests, or official/hidden-test
+  excerpts as compatibility contracts even when they are package-private or
+  unexported. Do not change a referenced helper's name, arity, parameter order,
+  return shape, or package placement unless you have updated all reachable
+  callers and have source evidence that hidden tests do not import or call it.
 
 ## Repo Write Policy
 
@@ -63,6 +68,11 @@ If exact hidden/official tests are unavailable but their excerpts show concrete
 expected outputs, write a temporary source-level probe that asserts the same
 literal shape. Do not replace an exact-order contract with a weaker semantic
 smoke check.
+
+For compiled languages, run or attempt a package compile check that includes
+test files for every touched package. If that check times out or cannot run,
+inspect test-referenced helper signatures manually and report the timeout as
+unresolved risk, not as validation success.
 
 If you intentionally take a shortcut, mark it with `ponytail:` and name the
 ceiling plus the trigger to revisit it.

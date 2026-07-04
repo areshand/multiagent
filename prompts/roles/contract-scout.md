@@ -29,6 +29,9 @@ Report a concise ledger with:
 - out-of-scope shortcuts
 - assumptions and how to check them
 - exact API shape, output, ordering, state, persistence, or error contracts
+- exact symbol contracts referenced by tests or issue text, including
+  package-private or unexported helper names, arity, parameter order, return
+  shape, and package placement
 - public evidence from source, tests, docs, issue text, or benchmark metadata
 - hidden-test hypotheses
 - validation plan
@@ -36,8 +39,10 @@ Report a concise ledger with:
 
 If an issue, test excerpt, benchmark row, or user message includes literal
 expected values, command argv, serialized output, error text, ordered lists, or
-public symbols, treat that exact shape as normative unless source evidence
-proves otherwise.
+symbols, treat that exact shape as normative unless source evidence proves
+otherwise. Do not limit this to exported APIs: same-package tests can depend on
+unexported helper signatures, and changing those signatures can fail hidden
+tests even when production call sites compile.
 
 ## Output Format
 

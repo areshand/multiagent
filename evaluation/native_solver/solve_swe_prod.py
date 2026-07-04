@@ -182,6 +182,16 @@ Worker quality bar:
   If the exact official test is unavailable locally, create a temporary
   source-level probe that asserts the same literal shape; do not substitute a
   weaker semantic smoke check.
+- Treat every symbol referenced by issue text, visible tests, official expected
+  tests, or official test excerpts as a compatibility contract, including
+  package-private or unexported helpers in same-package tests. Do not change a
+  referenced helper's name, arity, parameter order, return shape, or package
+  placement unless you have source evidence that all expected tests and callers
+  use the new shape. Hidden tests may compile package-private helpers directly.
+- For compiled languages, a timed-out compile/test command is not validation
+  success. If a package compile check cannot complete, explicitly inspect
+  test-referenced helper signatures and record the timeout as unresolved risk
+  unless a narrower compile check or source-level compatibility proof covers it.
 - The worker must trace helper APIs called by the feature path. If the issue
   mentions missing keys, fallback lookup, arrays/lists of keys, falsy inputs,
   expired records, or alternative sources, inspect the relevant database/cache
@@ -1280,6 +1290,7 @@ def contract_ledger_text(issue: str, metadata: dict[str, object] | None = None) 
             "",
             "Completion rules:",
             "- Do not remove, rename, or omit a required public symbol while fixing another issue.",
+            "- Preserve names, arity, parameter order, return shape, and package placement for any symbol referenced by visible tests or official excerpts, including package-private helpers.",
             "- Do not accept visible-test success if it contradicts this ledger.",
             "- Literal expected values, command argv, serialized outputs, error text, and ordered lists in official excerpts are normative; workers and verifiers must probe that exact shape when exact tests are unavailable.",
             "- Status validation must include `official-expected-tests:` when expected tests are listed.",
