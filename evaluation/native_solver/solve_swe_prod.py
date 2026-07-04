@@ -5169,15 +5169,23 @@ def run_validation_coverage_probe(workdir: Path, issue: str, diff: str, blockers
     passed = True
     for command in commands:
         label = " ".join(command)
-        result = run(command, cwd=workdir, timeout=env_positive_int("EVAL_VALIDATION_PROBE_TIMEOUT", 300))
-        output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
-        teardown_success = result.returncode != 0 and qutebrowser_x11_teardown_after_success(label, output)
-        if result.returncode != 0 and not teardown_success:
+        try:
+            result = run(command, cwd=workdir, timeout=env_positive_int("EVAL_VALIDATION_PROBE_TIMEOUT", 300))
+            returncode = result.returncode
+            output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
+        except subprocess.TimeoutExpired as exc:
+            returncode = 124
+            stdout = exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+            stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+            output = (stdout + "\n" + stderr).strip()
+            output = (output + "\n" if output else "") + f"adapter validation probe timed out after {exc.timeout} seconds"
+        teardown_success = returncode != 0 and qutebrowser_x11_teardown_after_success(label, output)
+        if returncode != 0 and not teardown_success:
             passed = False
         sections.append(
             "\nCommand: "
             + label
-            + f"\nReturn code: {result.returncode}\nOutput tail:\n"
+            + f"\nReturn code: {returncode}\nOutput tail:\n"
             + output[-6000:]
         )
         if teardown_success:

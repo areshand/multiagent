@@ -436,6 +436,29 @@ ansible_probe = " ".join(ansible_commands[0])
 assert "_x005F_x005F_" in ansible_probe, ansible_probe
 assert "multi string trailing crlf" in ansible_probe, ansible_probe
 assert "many string trailing crlf" in ansible_probe, ansible_probe
+
+with tempfile.TemporaryDirectory() as td:
+    old_probe_commands = solve_swe_prod.coverage_probe_commands
+    old_timeout = os.environ.get("EVAL_VALIDATION_PROBE_TIMEOUT")
+    try:
+        solve_swe_prod.RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
+        solve_swe_prod.coverage_probe_commands = lambda *_args: [["bash", "-lc", "sleep 2"]]
+        os.environ["EVAL_VALIDATION_PROBE_TIMEOUT"] = "1"
+        timeout_report, timeout_passed = solve_swe_prod.run_validation_coverage_probe(
+            Path(td),
+            "Timeout probe regression",
+            "diff --git a/main.go b/main.go\n",
+            ["force timeout"],
+        )
+        assert not timeout_passed, timeout_report
+        assert "adapter validation probe timed out after" in timeout_report, timeout_report
+        assert solve_swe_prod.HELPER_PROBE_PATH.read_text(encoding="utf-8") == timeout_report
+    finally:
+        solve_swe_prod.coverage_probe_commands = old_probe_commands
+        if old_timeout is None:
+            os.environ.pop("EVAL_VALIDATION_PROBE_TIMEOUT", None)
+        else:
+            os.environ["EVAL_VALIDATION_PROBE_TIMEOUT"] = old_timeout
 PY
 python3 -m evaluation.cli --list >"$TMPDIR/evaluation-list.out"
 assert_file_contains "$TMPDIR/evaluation-list.out" "ponytail"
