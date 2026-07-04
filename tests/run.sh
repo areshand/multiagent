@@ -379,6 +379,17 @@ with tempfile.TemporaryDirectory() as td:
     assert set(restored) == {"requirements.txt", "package-lock.json"}, restored
     changed = subprocess.check_output(["git", "diff", "--name-only"], cwd=repo, text=True).splitlines()
     assert changed == ["source.py"], changed
+
+assert not solve_swe_prod.needs_flipt_database_credentials_recovery(
+    "Flipt configuration loading should return Result with warnings; ui.enabled is deprecated.",
+    ["Go source changed, but status.json does not record a Go package validation command"],
+    "diff --git a/internal/config/database.go b/internal/config/database.go\n",
+)
+assert solve_swe_prod.needs_flipt_database_credentials_recovery(
+    "Flipt should support separate database credential keys.",
+    ["missing database.protocol error"],
+    "diff --git a/internal/config/database.go b/internal/config/database.go\n",
+)
 PY
 python3 -m evaluation.cli --list >"$TMPDIR/evaluation-list.out"
 assert_file_contains "$TMPDIR/evaluation-list.out" "ponytail"

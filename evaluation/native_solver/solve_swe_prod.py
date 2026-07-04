@@ -5199,6 +5199,28 @@ def send_orchestrator_scope_warning(session: str, blockers: list[str], source_hi
     send_tmux_literal(session, message)
 
 
+def needs_flipt_database_credentials_recovery(issue: str, blockers: list[str], diff: str) -> bool:
+    text = f"{issue.lower()}\n{' '.join(blockers).lower()}\n{diff.lower()}"
+    if "flipt" not in text:
+        return False
+    return any(
+        marker in text
+        for marker in (
+            "database credential",
+            "database credentials",
+            "key/value database",
+            "db.protocol",
+            "database.protocol",
+            "databaseconfig.password",
+            "config/testdata/config/database.yml",
+            "testparse",
+            "testopen",
+            "testmigratorrun",
+            "newmigrator",
+        )
+    )
+
+
 def spawn_adapter_helper_worker(
     repo_root: Path,
     workdir: Path,
@@ -5236,20 +5258,7 @@ def spawn_adapter_helper_worker(
         marker in f"{issue.lower()}\n{' '.join(blockers).lower()}\n{diff.lower()}"
         for marker in linux_metadata_markers
     )
-    flipt_db_credentials_markers = (
-        "flipt",
-        "database credential",
-        "db.protocol",
-        "database.protocol",
-        "config/testdata/config/database.yml",
-    )
-    needs_flipt_db_credentials_source = (
-        "flipt" in f"{issue.lower()}\n{' '.join(blockers).lower()}\n{diff.lower()}"
-        and any(
-            marker in f"{issue.lower()}\n{' '.join(blockers).lower()}\n{diff.lower()}"
-            for marker in flipt_db_credentials_markers
-        )
-    )
+    needs_flipt_db_credentials_source = needs_flipt_database_credentials_recovery(issue, blockers, diff)
     qutebrowser_version_markers = (
         "qutebrowser version",
         "versionchange",
