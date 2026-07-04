@@ -44,6 +44,11 @@ Also include:
   listed test as stale, fixture-mismatched, or incompatible to justify
   completion; either make it pass, prove the official harness excludes it, or
   report blocked.
+- If an official expected test, patch, or excerpt references missing fixture
+  assets under paths such as `testdata/`, `fixtures/`, `golden/`, or snapshots,
+  add the minimal required assets instead of dismissing the test as fixture
+  mismatched. These benchmark-required assets are allowed even when ordinary
+  test rewrites are out of scope.
 
 ## Repo Write Policy
 

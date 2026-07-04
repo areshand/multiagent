@@ -52,6 +52,12 @@ listed test stale or optional merely because local checkout evidence appears
 inconsistent; the implementation route must either make that selected test pass
 or prove the official harness does not run it.
 
+When official tests, patches, or excerpts reference fixture assets, identify
+those files explicitly. Missing benchmark-required assets under paths such as
+`testdata/`, `fixtures/`, `golden/`, or snapshot directories are implementation
+inputs, not optional test edits, when the official harness expects the submitted
+patch to provide them.
+
 For UI/component tasks, explicitly distinguish additive public-surface work
 from behavior rewrites. If the request is about storybook coverage, export
 surface, examples, or exposing a named component/story, preserve existing

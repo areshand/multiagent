@@ -69,6 +69,11 @@ completion that calls one of those tests stale, fixture-mismatched, incompatible
 with the checkout, or otherwise failing unless the verifier can prove the
 official harness excludes that test.
 
+If an official expected test, patch, or excerpt references missing fixture
+assets under `testdata/`, `fixtures/`, `golden/`, or snapshot paths, reject a
+source-only completion that omits those assets. Benchmark-required fixtures are
+part of the submitted patch contract, not optional test maintenance.
+
 For UI/component work, classify the task before accepting the diff. Additive
 public-surface tasks such as story/export/example/symbol exposure should not
 rewrite existing focus, input, paste, keyboard, accessibility, or form
