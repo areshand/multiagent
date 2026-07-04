@@ -78,6 +78,8 @@ role or workflow is needed:
 - `prompts/roles/scope-guard.md`
 - `prompts/roles/validation-coordinator.md`
 - `prompts/roles/organizational-learning.md`
+- `prompts/playbooks/intent-contract.md`
+- `prompts/playbooks/parallel-execution.md`
 - `prompts/playbooks/agent-spawning.md`
 - `prompts/playbooks/orchestration-routing.md`
 - `prompts/playbooks/dag.md`
@@ -94,6 +96,14 @@ setup, CLI-specific spawn commands, long-running subagent operations,
 worker/verifier iteration loop, and progress/status fallback procedure. The
 orchestrator prompt should load it only when it is about to spawn, monitor,
 replace, verify, or finalize agents.
+
+`prompts/playbooks/intent-contract.md` contains the detailed user-intent,
+contract-ledger, hidden-test, and proxy/scaffold mismatch discipline. The core
+orchestrator prompt keeps only the trigger rule and delegates detailed contract
+extraction to the contract scout when risk is material.
+
+`prompts/playbooks/parallel-execution.md` contains the fan-out, dependency, and
+exploration/exploitation policy for running independent work in parallel.
 
 `prompts/playbooks/orchestration-routing.md` contains the detailed role-routing
 workflow for contract scouts, scope guards, validation coordinators, worker

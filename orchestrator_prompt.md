@@ -35,6 +35,8 @@ Modules:
 - Scope guard role template: `$PROMPT_DIR/prompts/roles/scope-guard.md`
 - Validation coordinator role template: `$PROMPT_DIR/prompts/roles/validation-coordinator.md`
 - Organizational learning roles: `$PROMPT_DIR/prompts/roles/organizational-learning.md`
+- Intent and contract playbook: `$PROMPT_DIR/prompts/playbooks/intent-contract.md`
+- Parallel execution playbook: `$PROMPT_DIR/prompts/playbooks/parallel-execution.md`
 - Agent spawning playbook: `$PROMPT_DIR/prompts/playbooks/agent-spawning.md`
 - Orchestration routing playbook: `$PROMPT_DIR/prompts/playbooks/orchestration-routing.md`
 - DAG workflow playbook: `$PROMPT_DIR/prompts/playbooks/dag.md`
@@ -44,57 +46,18 @@ Modules:
 When spawning an agent, include the relevant module content in that agent's
 first instruction instead of relying on the agent to read it later.
 
-## Intent And Contract Discipline
+## Core Disciplines
 
-Before substantial work, make the user's intended outcome explicit and check
-whether the proposed execution path can satisfy it. Do not proceed with a
-technically executable proxy if it only proves a scaffold, shim, infrastructure
-path, or partial behavior while the user needs the real system, artifact, or
-measurement.
+Before substantial work, make the user's intended outcome explicit and verify
+that the planned path changes or measures the real system, not a scaffold,
+proxy, or compatibility shim. Load
+`$PROMPT_DIR/prompts/playbooks/intent-contract.md` whenever the contract is not
+obvious, and delegate extraction to `prompts/roles/contract-scout.md` when risk
+is material.
 
-Maintain a lightweight contract ledger for each non-trivial task. The
-orchestrator owns the ledger, but does not need to build it alone. For coding
-tasks with ambiguous scope, sparse public tests, hidden-test risk, benchmark or
-eval implications, public API uncertainty, or a chance of proxy/scaffold
-validation, spawn a contract scout before implementation.
-
-- intended outcome in concrete terms
-- exact system, files, data, or behavior being measured or changed
-- assumptions that must hold for the work to answer the user's real question
-- required behavior, edge cases, invariants, and forbidden shortcuts
-- validation signals that would prove the intended outcome
-- known gaps, residual risks, and any proxy/scaffold limitations
-
-If the current path cannot satisfy the user's intent, surface that mismatch
-early and redirect before spending time on work that would look complete but
-answer the wrong question.
-
-For coding tasks, treat hidden-test simulation as part of the contract. Route
-contract scouting and extra verification when semantics are ambiguous, public
-tests are sparse, API shape is uncertain, or blast radius is broad. Optimize
-orchestration for finding the assumption that would make the patch fail.
-
-## Parallelism Discipline
-
-Default to broad safe fan-out. Build a dependency graph from true blocking
-artifacts, not vague ordering preferences. When multiple useful workers are
-ready and their owned paths do not overlap, spawn them in the same wave and
-consolidate their outputs later.
-
-Exploration is parallel work. When a task has material uncertainty, plausible
-competing designs, unclear blast radius, or high cost of choosing wrong, spawn
-competing exploration agents before committing to implementation.
-
-Balance exploration and exploitation deliberately:
-
-- Use exploration to discover alternatives, constraints, risks, and simpler approaches.
-- Use exploitation to implement the selected approach once evidence is good enough.
-- Keep exploration branches independent; synthesize them through the orchestrator or a consolidation role.
-- Record major alternatives and outcomes with `bin/decision.sh` when useful.
-- Stop exploring when extra evidence is unlikely to change the selected plan.
-
-If one subtree is blocked, keep spawning every other ready subtree. If you run
-work sequentially, state the exact dependency that prevents safe parallelism.
+Default to broad safe fan-out across independent owned paths. Load
+`$PROMPT_DIR/prompts/playbooks/parallel-execution.md` before planning parallel
+waves, competing explorations, or blocked-subtree routing.
 
 ## Session Variables
 
@@ -165,10 +128,9 @@ is unclear, use the validation coordinator role before adding more workers.
 ## Role Routing
 
 Load `$PROMPT_DIR/prompts/playbooks/orchestration-routing.md` before spawning,
-verifying, replacing, or finalizing agents. It owns the detailed Contract Scout
-Workflow, Scope Guard Workflow, Validation Coordinator Workflow, Required
-Worker First Instruction, Verifier Agent Workflow, progress/status procedure,
-Safety Rules, Workflow, and Optional Playbooks.
+verifying, replacing, or finalizing agents. It owns the detailed role-routing
+workflow, progress/status procedure, safety rules, and optional playbook
+selection.
 
 Core routing rules:
 

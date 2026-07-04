@@ -4,6 +4,11 @@ Use this playbook when the orchestrator must decide which specialist role or
 workflow to run next. Keep the core orchestrator prompt focused on intent,
 ownership, and decisions; load these details only when routing work.
 
+Before implementation, load `prompts/playbooks/intent-contract.md` if the
+contract is ambiguous or proxy/scaffold risk is present. Before planning
+multi-worker waves or competing explorations, load
+`prompts/playbooks/parallel-execution.md`.
+
 ## Contract Scout Workflow
 
 When task risk justifies separating contract extraction from coding, load
@@ -102,6 +107,8 @@ and use its progress/status procedure.
 ## Optional Playbooks
 
 - For exploration/exploitation/reflection and role-specific guidance, load `prompts/roles/organizational-learning.md`.
+- For intent checks, contract ledgers, and proxy/scaffold mismatch prevention, load `prompts/playbooks/intent-contract.md`.
+- For parallel fan-out, blocked-subtree routing, and exploration/exploitation balance, load `prompts/playbooks/parallel-execution.md`.
 - For worker, subagent, verifier, status, or checkpoint mechanics, load `prompts/playbooks/agent-spawning.md`.
 - For pre-implementation contract extraction, load `prompts/roles/contract-scout.md`.
 - For post-diff scope and blast-radius audits, load `prompts/roles/scope-guard.md`.
