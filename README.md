@@ -75,11 +75,21 @@ and reports findings back to the orchestrator only.
 
 The verifier checks:
 
+- the intended outcome and task contract, reconstructed independently from the
+  worker summary
 - correctness gaps
 - quality gaps
 - missing tests or docs
 - whether the task scope is fully satisfied
+- hidden-test-style edge cases such as boundaries, malformed inputs, no-op
+  cases, ignored/excluded inputs, compatibility, API shape, and exact return
+  semantics
+- material worker assumptions that need source, test, or docs evidence
 - whether there is a simpler approach
+
+Each verifier should report a compact contract ledger: intended outcome,
+changed behavior, public evidence, inferred hidden contracts, assumptions,
+probes run, residual risk, and recommendation.
 
 The orchestrator reviews the verifier's findings and gives the verdict. Only
 accepted follow-ups are passed back to the original worker. The worker then

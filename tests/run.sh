@@ -285,10 +285,15 @@ assert_file_contains "$ROOT/orchestrator_prompt.md" "Exploration is parallel wor
 assert_file_contains "$ROOT/orchestrator_prompt.md" "Balance exploration and exploitation deliberately"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "Ponytail implementation discipline"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "Run a Ponytail over-engineering pass"
+assert_file_contains "$ROOT/orchestrator_prompt.md" "Intent And Contract Discipline"
+assert_file_contains "$ROOT/orchestrator_prompt.md" "verifier contract ledger"
+assert_file_contains "$ROOT/orchestrator_prompt.md" "Synthesize hidden-test-style probes"
 assert_file_contains "$ROOT/README.md" "Launches are clean by default"
 assert_file_contains "$ROOT/README.md" "./launch.sh --resume"
 assert_file_contains "$ROOT/README.md" "Verifier Workflow"
 assert_file_contains "$ROOT/README.md" "MULTIAGENT_VERIFIER_MAX_ITERATIONS=3"
+assert_file_contains "$ROOT/README.md" "compact contract ledger"
+assert_file_contains "$ROOT/README.md" "hidden-test-style edge cases"
 assert_file_contains "$ROOT/README.md" 'WORKER_CLI`: worker CLI for manual worker windows, default `claude`'
 assert_file_contains "$ROOT/README.md" 'VERIFIER_CLI`: verifier CLI, default `codex`'
 assert_file_contains "$ROOT/README.md" "Evaluation Framework"
