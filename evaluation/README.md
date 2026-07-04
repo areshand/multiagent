@@ -101,6 +101,18 @@ baseline and orchestrator prompts are intentionally omitted. The remaining
 orchestration task exercises broad first-wave fan-out, validation layering, and
 consolidation at a size where sequential planning is visible.
 
+## SWE Bench Pro Native Solver Tuning
+
+`evaluation/native_solver/solve_swe_prod.py` runs the production multiagent
+workflow inside the task container, then may run adapter-selected public probes
+before returning a diff to the official verifier. Those probes catch weak
+completion markers, but they are not a replacement for official scoring and can
+be expensive under amd64 emulation.
+
+Set `EVAL_VALIDATION_PROBE_TIMEOUT` to cap each adapter-selected probe command.
+The default is `300` seconds. Lower it for high-parallelism or Rosetta runs when
+the official verifier remains the authoritative scorer.
+
 ## Security Model
 
 The `ponytail` adapter scores agent output by importing and executing the

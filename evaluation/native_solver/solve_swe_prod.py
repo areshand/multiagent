@@ -37,6 +37,17 @@ STABLE_APPLY_PATCH = Path("/usr/local/bin/apply_patch")
 ACTIVE_START_HEAD: str | None = None
 
 
+def env_positive_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
 AUTONOMOUS_APPENDIX = """\
 
 ## SWE Bench Pro Autonomous Evaluation Mode
@@ -4903,7 +4914,7 @@ def run_validation_coverage_probe(workdir: Path, issue: str, diff: str, blockers
     passed = True
     for command in commands:
         label = " ".join(command)
-        result = run(command, cwd=workdir, timeout=900)
+        result = run(command, cwd=workdir, timeout=env_positive_int("EVAL_VALIDATION_PROBE_TIMEOUT", 300))
         output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
         teardown_success = result.returncode != 0 and qutebrowser_x11_teardown_after_success(label, output)
         if result.returncode != 0 and not teardown_success:
