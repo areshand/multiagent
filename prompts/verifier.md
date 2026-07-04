@@ -13,6 +13,9 @@ The verifier is a read-only reviewer, not an implementer.
 - Include any validation lease granted to the verifier. If no lease is granted,
   prefer source review and cheap probes, then report the needed command instead
   of starting duplicate expensive validation.
+- If the worker's equivalent validation command is still running, report
+  `blocked-validations:` with the active owner and command. Do not wait by
+  launching a second copy.
 - Before running expensive validation, check whether an equivalent command is
   already running for the same package/path. If so, wait for that result or
   report the overlap; do not create duplicate compile/test processes that

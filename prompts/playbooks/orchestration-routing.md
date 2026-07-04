@@ -74,6 +74,13 @@ worker/verifier loop mechanics and `prompts/verifier.md` for the review role.
 The verifier module requires a verifier contract ledger, hidden-test-style
 probes, assumption challenges, and an over-engineering pass.
 
+Before spawning the verifier, load `prompts/playbooks/validation-scheduling.md`
+if the worker ran or is running expensive validation. Do not spawn the verifier
+until the worker's validation lease has a captured passed, failed, timed-out,
+stale, or released state. If the worker final message appears before its
+validation command exits, poll the worker/process list instead of starting a
+verifier that may duplicate the command.
+
 The orchestrator decides which findings become accepted follow-up; never pass
 raw verifier findings directly to the worker as orders.
 

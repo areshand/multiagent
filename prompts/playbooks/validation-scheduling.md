@@ -24,6 +24,10 @@ not silently take a second lease for the same package/path.
 
 - If a package/path has a running lease, poll that owner before starting another
   equivalent command.
+- Do not spawn a verifier for a worker while that worker still owns a running
+  validation lease. First capture/poll the worker until the leased command
+  reaches passed, failed, timed-out, stale, or released. Then pass the captured
+  result to the verifier.
 - If the owner is stale, capture the pane and process list, then explicitly
   kill/finalize or release the lease before replacement work starts.
 - If two independent validators can run safely, record why they are disjoint:
@@ -34,6 +38,9 @@ not silently take a second lease for the same package/path.
   process list, owned paths, and intended commands.
 - Prefer one validation owner for each package/path. Other agents should inspect
   that result rather than rerunning the same expensive command.
+- A verifier should normally receive read-only review ownership, not a
+  validation lease, when the worker has already run or is still running the
+  selected package command.
 
 ## Worker And Verifier Instructions
 
@@ -43,10 +50,16 @@ When assigning a worker or verifier that may validate, include:
 - commands it may run without asking
 - commands it must not duplicate
 - how to report timeout/failure without launching a replacement command
+- if the verifier must inspect a worker-run command, the worker pane/log excerpt
+  and whether the lease is already released
 
 If no validation lease is granted, the agent may do read-only test discovery and
 cheap source-level probes, but it must ask/report before starting a long
 compile/test command for a package already owned by another live agent.
+
+If a verifier sees an equivalent validation command still running, its correct
+output is an orchestration finding: `blocked-validations:` plus the active owner
+and command. It should not wait by launching a second copy.
 
 ## Output Shape
 

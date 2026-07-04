@@ -172,6 +172,10 @@ spawn a bounded follow-up worker. Use
 `prompts/playbooks/validation-scheduling.md` when a worker or verifier needs
 explicit ownership of a long compile/test command.
 
+Do not spawn a verifier while a worker still owns a running validation lease for
+the same package/path. Poll the worker and capture the command result first;
+then pass that result into the verifier instruction.
+
 ## Verifier Workflow
 
 After a worker reports completion, the orchestrator may spawn one read-only

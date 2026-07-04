@@ -173,6 +173,11 @@ Benchmark spawning path:
   or explicitly release the existing lease before running an equivalent command.
   When overlap is unclear, spawn a read-only validation coordinator before
   launching more workers.
+- Do not spawn a verifier while a worker still owns a running validation lease.
+  If a worker final message appears before its `go test`, `npm test`, `pytest`,
+  or equivalent selected command exits, poll the worker/process list until the
+  command result is captured, then pass that result to the verifier. A verifier
+  without an explicit released validation lease must not rerun the same command.
 - If worker/verifier spawning fails, record the exact blocker in
   `/tmp/multiagent-prod-swe/status.json` only after retrying once with a fresh,
   differently named bounded worker or verifier. Do not abandon a task with an
@@ -799,6 +804,10 @@ Verifier quality bar:
   finding that stale overlapping workers must be killed first. If no verifier
   validation lease was granted, report the exact command needed instead of
   starting a duplicate expensive command.
+- If the worker's selected package command is still running, the verifier must
+  report `blocked-validations:` with the active worker/command and stop. The
+  orchestrator should poll the worker result and respawn or continue verification
+  only after the lease is released.
 - It must reject source patches that make visible same-package tests fail to
   compile because an exported type, constructor, method, or helper was removed
   or renamed. Test files are outside the submitted patch, but their compile
