@@ -163,6 +163,12 @@ Benchmark spawning path:
   deliberately before starting another. Do not leave duplicate workers running
   the same package validation; concurrent Go/npm/yarn/pytest jobs can contend
   for caches, consume memory, and turn a solvable task into an infra failure.
+- Maintain a validation lease table for expensive commands. For each package,
+  test file, component suite, or build target, keep one owner, command, state,
+  and resource-risk note. A follow-up worker or verifier must inherit, wait for,
+  or explicitly release the existing lease before running an equivalent command.
+  When overlap is unclear, spawn a read-only validation coordinator before
+  launching more workers.
 - If worker/verifier spawning fails, record the exact blocker in
   `/tmp/multiagent-prod-swe/status.json` only after retrying once with a fresh,
   differently named bounded worker or verifier. Do not abandon a task with an
@@ -364,7 +370,10 @@ Worker quality bar:
 - The worker must not launch duplicate expensive compile/test commands for the
   same package. If an identical package validation is already running in another
   live worker/verifier, wait for that result or report the overlap to the
-  orchestrator. One active validator per package/path is the default.
+  orchestrator. One active validator per package/path is the default. If the
+  first instruction did not grant a validation lease for that package/path, use
+  source inspection and cheap probes until the orchestrator assigns or releases
+  the lease.
 - If a source-only patch makes existing same-package tests fail to compile,
   the patch is not acceptable merely because tests are outside the editable
   scope. Preserve source-level compatibility for test-facing package APIs when
@@ -766,7 +775,9 @@ Verifier quality bar:
   validation is already running in another live worker/verifier. It should not
   spawn duplicate Go/npm/yarn/pytest jobs against the same package; wait for the
   active command, use its result if captured, or reject with an orchestration
-  finding that stale overlapping workers must be killed first.
+  finding that stale overlapping workers must be killed first. If no verifier
+  validation lease was granted, report the exact command needed instead of
+  starting a duplicate expensive command.
 - It must reject source patches that make visible same-package tests fail to
   compile because an exported type, constructor, method, or helper was removed
   or renamed. Test files are outside the submitted patch, but their compile
@@ -877,7 +888,10 @@ Required orchestration loop:
    and verifiers. Kill or finalize stale duplicate windows first, especially
    when they are running the same package validation command. Never leave two
    live agents compiling/testing the same package unless the user explicitly
-   requested that stress test.
+   requested that stress test. Maintain a validation lease table with
+   package/path, command, owner, state, and resource-risk; a replacement agent
+   may run an equivalent command only after the old lease is passed to it or
+   explicitly released.
 6. Before writing completed status, perform a final helper-scope audit against
    the issue text and current `git diff`. If the issue mentions keys, fallback,
    missing data, cache/database behavior, expired records, expiry, or TTL, and

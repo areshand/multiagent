@@ -80,6 +80,7 @@ role or workflow is needed:
 - `prompts/roles/organizational-learning.md`
 - `prompts/playbooks/intent-contract.md`
 - `prompts/playbooks/parallel-execution.md`
+- `prompts/playbooks/validation-scheduling.md`
 - `prompts/playbooks/agent-spawning.md`
 - `prompts/playbooks/orchestration-routing.md`
 - `prompts/playbooks/dag.md`
@@ -154,8 +155,9 @@ follow-up worker assignments.
 
 When several live agents touch the same package/path or expensive validation is
 already running, the orchestrator can spawn a read-only validation coordinator.
-This role maps active workers, verifiers, owned paths, and running test commands
-so the orchestrator can keep one active validator per package/path.
+This role maps active workers, verifiers, owned paths, running test commands,
+and validation leases so the orchestrator can keep one active validator per
+package/path.
 
 Use the verifier CLI:
 
@@ -164,9 +166,11 @@ SUBAGENT_CLI="${VERIFIER_CLI:-codex}" bin/subagent.sh spawn validation-coordinat
 ```
 
 The coordinator does not edit files or make the final correctness decision. It
-reports overlaps, stale panes, the single-owner validation plan, and whether the
-orchestrator should wait, poll, kill/finalize, spawn a verifier, or spawn a
-bounded follow-up worker.
+reports overlaps, stale panes, the validation lease table, released leases, and
+whether the orchestrator should wait, poll, kill/finalize, spawn a verifier, or
+spawn a bounded follow-up worker. Use
+`prompts/playbooks/validation-scheduling.md` when a worker or verifier needs
+explicit ownership of a long compile/test command.
 
 ## Verifier Workflow
 

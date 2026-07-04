@@ -37,6 +37,7 @@ Modules:
 - Organizational learning roles: `$PROMPT_DIR/prompts/roles/organizational-learning.md`
 - Intent and contract playbook: `$PROMPT_DIR/prompts/playbooks/intent-contract.md`
 - Parallel execution playbook: `$PROMPT_DIR/prompts/playbooks/parallel-execution.md`
+- Validation scheduling playbook: `$PROMPT_DIR/prompts/playbooks/validation-scheduling.md`
 - Agent spawning playbook: `$PROMPT_DIR/prompts/playbooks/agent-spawning.md`
 - Orchestration routing playbook: `$PROMPT_DIR/prompts/playbooks/orchestration-routing.md`
 - DAG workflow playbook: `$PROMPT_DIR/prompts/playbooks/dag.md`
@@ -141,6 +142,8 @@ Core routing rules:
   rewrites.
 - Use `prompts/roles/validation-coordinator.md` before adding duplicate
   expensive validators or replacement workers in a package with live agents.
+  Load `prompts/playbooks/validation-scheduling.md` and keep one validation
+  lease owner per package/path.
 - Before spawning workers, include `prompts/playbooks/agent-spawning.md` and
   `prompts/worker.md` in the first instruction.
 - Before spawning verifiers, include `prompts/playbooks/agent-spawning.md`,

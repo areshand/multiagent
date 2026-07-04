@@ -7,7 +7,9 @@ ownership, and decisions; load these details only when routing work.
 Before implementation, load `prompts/playbooks/intent-contract.md` if the
 contract is ambiguous or proxy/scaffold risk is present. Before planning
 multi-worker waves or competing explorations, load
-`prompts/playbooks/parallel-execution.md`.
+`prompts/playbooks/parallel-execution.md`. Before launching expensive compile
+or test commands in live packages, load
+`prompts/playbooks/validation-scheduling.md`.
 
 ## Contract Scout Workflow
 
@@ -43,16 +45,18 @@ Paste accepted `blocking-scope-findings`, `must-preserve`, and
 
 Use a validation coordinator when multiple live agents touch the same package,
 compile/test commands are expensive, or a replacement worker might duplicate a
-running validator. Load `prompts/roles/validation-coordinator.md` and include
-the active agent table, owned paths, process list, recent pane output, and
+running validator. Load `prompts/playbooks/validation-scheduling.md` and
+`prompts/roles/validation-coordinator.md`, then include the active agent table,
+owned paths, process list, recent pane output, current validation leases, and
 intended validation commands.
 
 ```bash
 SUBAGENT_CLI="$VERIFIER_CLI" bin/subagent.sh spawn validation-coordinator-01-task --instruction "FIRST_INSTRUCTION_TEXT"
 ```
 
-Use the coordinator's report to decide whether to wait, poll, kill/finalize
-stale panes, or route a bounded follow-up worker.
+Use the coordinator's lease report to decide whether to wait, poll,
+kill/finalize stale panes, release a validation lease, or route a bounded
+follow-up worker.
 
 ## Required Worker First Instruction
 
@@ -100,7 +104,7 @@ and use its progress/status procedure.
 1. Plan: understand intent, run a contract scout when risk justifies it, update the contract ledger, split work, assign owner/branch/scope.
 2. Spawn: create assignment metadata, load the right prompt module, start the agent, send the assignment.
 3. Monitor: use `bin/status.sh`, inspect busy/blocked/done states, update checkpoints.
-4. Coordinate: resolve blockers, prevent ownership conflicts, run scope guard when diff shape is risky, route verification, spawn independent follow-ups.
+4. Coordinate: resolve blockers, prevent ownership conflicts, maintain validation leases, run scope guard when diff shape is risky, route verification, spawn independent follow-ups.
 5. Accept: run `assignment-check`, review verifier findings, decide accepted follow-up, finalize agents.
 6. Report: summarize status, branches, commits, blockers, state paths, validation, and residual risk.
 
@@ -109,6 +113,7 @@ and use its progress/status procedure.
 - For exploration/exploitation/reflection and role-specific guidance, load `prompts/roles/organizational-learning.md`.
 - For intent checks, contract ledgers, and proxy/scaffold mismatch prevention, load `prompts/playbooks/intent-contract.md`.
 - For parallel fan-out, blocked-subtree routing, and exploration/exploitation balance, load `prompts/playbooks/parallel-execution.md`.
+- For expensive compile/test ownership and duplicate-validator prevention, load `prompts/playbooks/validation-scheduling.md`.
 - For worker, subagent, verifier, status, or checkpoint mechanics, load `prompts/playbooks/agent-spawning.md`.
 - For pre-implementation contract extraction, load `prompts/roles/contract-scout.md`.
 - For post-diff scope and blast-radius audits, load `prompts/roles/scope-guard.md`.

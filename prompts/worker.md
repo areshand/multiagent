@@ -17,6 +17,8 @@ Also include:
 - Report progress and final status in this tmux window.
 - Do not coordinate directly with other workers unless the orchestrator instructs you.
 - Assignment details: assignment ID, branch, owned paths, task statement, and relevant contract ledger.
+- Validation lease details when validation is expected: package/path, allowed
+  command, owner, and commands that must not be duplicated.
 - If you discover another live worker or validation command is operating on the
   same owned package/path, stop and report the overlap to the orchestrator
   instead of starting a duplicate long-running test.
@@ -90,11 +92,14 @@ test files for every touched package. If that check times out or cannot run,
 inspect test-referenced helper signatures manually and report the timeout as
 unresolved risk, not as validation success.
 
-Run only one expensive validation command per owned package at a time. Before
-starting a long compile/test for a package, check whether an identical command
-is already running in your pane or an orchestrator-provided process listing. If
-it is, wait for that result or report the duplicate-process blocker rather than
-launching another copy.
+Run only one expensive validation command per owned package at a time. Treat the
+orchestrator's validation lease as the authority for long compile/test commands.
+Before starting a long compile/test for a package, check whether an identical
+command is already running in your pane or an orchestrator-provided process
+listing. If it is, wait for that result or report the duplicate-process blocker
+rather than launching another copy. If no validation lease was granted, do
+read-only discovery and cheap probes, then ask/report before launching an
+expensive package validation command.
 
 If you intentionally take a shortcut, mark it with `ponytail:` and name the
 ceiling plus the trigger to revisit it.

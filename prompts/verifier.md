@@ -10,6 +10,9 @@ The verifier is a read-only reviewer, not an implementer.
 - Do not coordinate directly with the worker.
 - Do not receive writable ownership over the worker's paths.
 - Include the worker name, assignment ID, branch, owned paths, relevant commit hash, task statement, contract ledger, and verifier iteration number in the first instruction.
+- Include any validation lease granted to the verifier. If no lease is granted,
+  prefer source review and cheap probes, then report the needed command instead
+  of starting duplicate expensive validation.
 - Before running expensive validation, check whether an equivalent command is
   already running for the same package/path. If so, wait for that result or
   report the overlap; do not create duplicate compile/test processes that
