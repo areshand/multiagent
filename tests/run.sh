@@ -392,6 +392,32 @@ assert solve_swe_prod.needs_flipt_database_credentials_recovery(
     ["missing database.protocol error"],
     "diff --git a/internal/config/database.go b/internal/config/database.go\n",
 )
+metadata = {
+    "swe_bench_pro": {
+        "instance_id": "instance_flipt",
+        "fail_to_pass": ["TestLoad", "TestJSONSchema"],
+        "pass_to_pass": [],
+        "selected_test_files_to_run": ["internal/config/config_test.go"],
+    }
+}
+row56_status = {
+    "status": "completed",
+    "validation": (
+        "official-expected-tests: FAIL_TO_PASS source-inspected TestJSONSchema passed locally; "
+        "TestLoad source-inspected and visible failure is old-return-shape mismatch while official contract requires Result. "
+        "official-test-source-inspected: internal/config/config_test.go"
+    ),
+}
+blockers = solve_swe_prod.official_expected_test_blockers(metadata, row56_status)
+assert any("stale, failing" in blocker and "TestLoad" in blocker for blocker in blockers), blockers
+absent_patch_status = {
+    "status": "completed",
+    "validation": (
+        "official-expected-tests: FAIL_TO_PASS source-inspected because the official test patch is not present locally; "
+        "official-test-source-inspected: internal/config/config_test.go public function Load and Result symbols preserved"
+    ),
+}
+assert not solve_swe_prod.official_expected_test_blockers(metadata, absent_patch_status), solve_swe_prod.official_expected_test_blockers(metadata, absent_patch_status)
 PY
 python3 -m evaluation.cli --list >"$TMPDIR/evaluation-list.out"
 assert_file_contains "$TMPDIR/evaluation-list.out" "ponytail"

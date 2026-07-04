@@ -60,6 +60,12 @@ a temporary probe or source-level comparison before accepting. Reject patches
 that only pass weaker semantic probes when the excerpt requires exact ordering,
 punctuation, argument placement, or output shape.
 
+If a benchmark prompt lists official expected tests, treat every listed
+`FAIL_TO_PASS` and `PASS_TO_PASS` test as normative acceptance evidence. Reject
+completion that calls one of those tests stale, fixture-mismatched, incompatible
+with the checkout, or otherwise failing unless the verifier can prove the
+official harness excludes that test.
+
 For UI/component work, classify the task before accepting the diff. Additive
 public-surface tasks such as story/export/example/symbol exposure should not
 rewrite existing focus, input, paste, keyboard, accessibility, or form

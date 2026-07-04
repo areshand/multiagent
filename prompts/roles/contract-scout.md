@@ -46,6 +46,12 @@ otherwise. Do not limit this to exported APIs: same-package tests can depend on
 unexported helper signatures, and changing those signatures can fail hidden
 tests even when production call sites compile.
 
+For benchmark rows with listed expected tests, classify every listed
+`FAIL_TO_PASS` and `PASS_TO_PASS` test as normative validation. Do not mark a
+listed test stale or optional merely because local checkout evidence appears
+inconsistent; the implementation route must either make that selected test pass
+or prove the official harness does not run it.
+
 For UI/component tasks, explicitly distinguish additive public-surface work
 from behavior rewrites. If the request is about storybook coverage, export
 surface, examples, or exposing a named component/story, preserve existing

@@ -37,6 +37,11 @@ Also include:
   unexported. Do not change a referenced helper's name, arity, parameter order,
   return shape, or package placement unless you have updated all reachable
   callers and have source evidence that hidden tests do not import or call it.
+- If a benchmark or task prompt lists official expected tests, treat every
+  listed `FAIL_TO_PASS` and `PASS_TO_PASS` test as normative. Do not report a
+  listed test as stale, fixture-mismatched, or incompatible to justify
+  completion; either make it pass, prove the official harness excludes it, or
+  report blocked.
 
 ## Repo Write Policy
 

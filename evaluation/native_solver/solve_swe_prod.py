@@ -81,6 +81,10 @@ Hard requirements:
    in adjacent cases inside the same file.
    If the task says a class/function/type "must be exposed as" a specific name,
    implement that exact public symbol in source before trusting visible tests.
+   If the adapter lists official `FAIL_TO_PASS` or `PASS_TO_PASS` tests, treat
+   those test names as normative. Do not call one stale, fixture-mismatched, or
+   incompatible to justify completion; either make the selected test pass, prove
+   the official harness does not run it, or write blocked status.
 8. When finished, write JSON to `/tmp/multiagent-prod-swe/status.json`:
    `{"status":"completed","summary":"...","validation":"...","risk":"..."}`
    If blocked, write `{"status":"blocked","reason":"..."}`.
@@ -1398,6 +1402,9 @@ Required PASS_TO_PASS tests:
 Completion contract:
 - Run the whole relevant selected file/package when practical, not just one
   guessed test name.
+- Treat every listed `FAIL_TO_PASS` and `PASS_TO_PASS` test as normative.
+  A visible expected-test failure, fixture mismatch, checkout mismatch, or
+  "stale test" claim is a blocker, not a source-inspection justification.
 - If an expected test cannot be run locally because the official test patch is
   not present in the solve container, inspect the named file/package and record
   an explicit source-level justification.
@@ -1425,6 +1432,13 @@ def official_expected_test_blockers(metadata: dict[str, object], current_status:
         return []
     status_text = json.dumps(current_status, sort_keys=True).lower()
     blockers: list[str] = []
+    expected_failure_claims = expected_test_failure_claims(contract, status_text)
+    if expected_failure_claims:
+        blockers.append(
+            "final status validation describes official expected tests as stale, failing, fixture-mismatched, or checkout-mismatched; "
+            "FAIL_TO_PASS/PASS_TO_PASS tests are normative unless the official harness excludes them: "
+            + ", ".join(expected_failure_claims[:8])
+        )
     if "official-expected-tests:" not in status_text:
         blockers.append(
             f"final status validation omitted `official-expected-tests:` for the {expected_count} official expected tests; "
@@ -1454,6 +1468,40 @@ def official_expected_test_blockers(metadata: dict[str, object], current_status:
             "is not acceptable source-level evidence for completion"
         )
     return blockers
+
+
+def expected_test_failure_claims(contract: dict[str, object], status_text: str) -> list[str]:
+    expected_tests = list(contract.get("fail_to_pass") or []) + list(contract.get("pass_to_pass") or [])
+    if not expected_tests:
+        return []
+    text_lower = status_text.lower()
+    failure_markers = (
+        "stale",
+        "visible failure",
+        "visible test failure",
+        "fails",
+        "failed",
+        "failing",
+        "failure",
+        "not passing",
+        "did not pass",
+        "checkout mismatch",
+        "old-return-shape",
+        "old return shape",
+        "fixture mismatch",
+        "missing fixture",
+    )
+    claims: list[str] = []
+    for test in expected_tests:
+        needle = str(test).lower()
+        if not needle:
+            continue
+        for match in re.finditer(re.escape(needle), text_lower):
+            window = text_lower[max(0, match.start() - 180) : match.end() + 360]
+            if any(marker in window for marker in failure_markers):
+                claims.append(str(test))
+                break
+    return claims
 
 
 def _expected_tests_passed_in_text(expected_tests: list[str], text: str) -> bool:
