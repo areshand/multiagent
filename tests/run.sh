@@ -431,6 +431,7 @@ assert len(ansible_commands) == 1, ansible_commands
 ansible_probe = " ".join(ansible_commands[0])
 assert "_x005F_x005F_" in ansible_probe, ansible_probe
 assert "multi string trailing crlf" in ansible_probe, ansible_probe
+assert "many string trailing crlf" in ansible_probe, ansible_probe
 PY
 python3 -m evaluation.cli --list >"$TMPDIR/evaluation-list.out"
 assert_file_contains "$TMPDIR/evaluation-list.out" "ponytail"

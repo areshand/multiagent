@@ -4232,6 +4232,20 @@ cases = [
     ("escaped literal", xml("_x005F_x005F_"), b"_x005F_"),
     ("standalone uppercase underscore", xml("_x005F_"), b"_x005F_"),
     ("multi string trailing crlf", xml("first_x000D__x000A_", " _x000D__x000A_"), b"first\r\n \r\n"),
+    (
+        "many string trailing crlf",
+        xml(
+            "fake : The term 'fake' is not recognized_x000D__x000A_",
+            "At line:1 char:1_x000D__x000A_",
+            "+ fake cmdlet_x000D__x000A_",
+            "    + FullyQualifiedErrorId : CommandNotFoundException_x000D__x000A_",
+            " _x000D__x000A_",
+        ),
+        b"fake : The term 'fake' is not recognized\r\n"
+        b"At line:1 char:1\r\n"
+        b"+ fake cmdlet\r\n"
+        b"    + FullyQualifiedErrorId : CommandNotFoundException\r\n \r\n",
+    ),
 ]
 for name, data, expected in cases:
     actual = _parse_clixml(data)
