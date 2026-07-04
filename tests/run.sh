@@ -418,6 +418,15 @@ absent_patch_status = {
     ),
 }
 assert not solve_swe_prod.official_expected_test_blockers(metadata, absent_patch_status), solve_swe_prod.official_expected_test_blockers(metadata, absent_patch_status)
+ansible_commands = solve_swe_prod.coverage_probe_commands(
+    Path("/tmp"),
+    "PowerShell CLIXML should decode escaped strings.",
+    "diff --git a/lib/ansible/plugins/shell/powershell.py b/lib/ansible/plugins/shell/powershell.py\n+def _parse_clixml(data):\n+    pass\n",
+)
+assert len(ansible_commands) == 1, ansible_commands
+ansible_probe = " ".join(ansible_commands[0])
+assert "_x005F_x005F_" in ansible_probe, ansible_probe
+assert "multi string trailing crlf" in ansible_probe, ansible_probe
 PY
 python3 -m evaluation.cli --list >"$TMPDIR/evaluation-list.out"
 assert_file_contains "$TMPDIR/evaluation-list.out" "ponytail"

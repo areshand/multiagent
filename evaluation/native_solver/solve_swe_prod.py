@@ -4214,10 +4214,51 @@ def qutebrowser_x11_teardown_after_success(label: str, output: str) -> bool:
     )
 
 
+def ansible_powershell_clixml_probe_command() -> list[str]:
+    probe = r'''
+from ansible.plugins.shell.powershell import _parse_clixml
+
+def xml(*parts):
+    body = ''.join('<S S="Error">%s</S>' % part for part in parts)
+    return ('#< CLIXML\r\n<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">%s</Objs>' % body).encode()
+
+cases = [
+    ("smile", xml("_x263A_"), "☺".encode()),
+    ("single crlf", xml("_x000D__x000A_"), b"\r\n"),
+    ("lower underscore", xml("_x005f_"), b"_"),
+    ("emoji", xml("_xD83D__xDE00_"), "😀".encode()),
+    ("invalid", xml("_x005G_"), b"_x005G_"),
+    ("escaped underscore newline", xml("_x005F__x000A_"), b"_\n"),
+    ("escaped literal", xml("_x005F_x005F_"), b"_x005F_"),
+    ("standalone uppercase underscore", xml("_x005F_"), b"_x005F_"),
+    ("multi string trailing crlf", xml("first_x000D__x000A_", " _x000D__x000A_"), b"first\r\n \r\n"),
+]
+for name, data, expected in cases:
+    actual = _parse_clixml(data)
+    assert actual == expected, (name, actual, expected)
+actual = _parse_clixml(xml("_xD800_"))
+assert actual == "\ud800".encode("utf-8", "surrogatepass"), actual
+info_xml = b'#< CLIXML\r\n<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><S S="Info">hi info</S><S S="Error">_xD83d__xde00_</S></Objs>'
+assert _parse_clixml(info_xml, stream="Info") == b"hi info"
+assert _parse_clixml(info_xml) == "😀".encode()
+print("ansible powershell clixml official-style probe ok")
+'''
+    return [
+        "bash",
+        "-lc",
+        "python -m pytest -q test/units/plugins/shell/test_powershell.py && python - <<'PY'\n" + probe + "PY",
+    ]
+
+
 def coverage_probe_commands(workdir: Path, issue: str, diff: str) -> list[list[str]]:
     issue_and_diff = f"{issue.lower()}\n{diff.lower()}"
     diff_lower = diff.lower()
     commands: list[list[str]] = []
+    if "lib/ansible/plugins/shell/powershell.py" in diff_lower and (
+        "_parse_clixml" in diff_lower or "clixml" in issue_and_diff or "_x" in issue_and_diff
+    ):
+        commands.append(ansible_powershell_clixml_probe_command())
+        return commands
     if (
         "config/config.go" in diff_lower
         and "storage/db/db.go" in diff_lower
