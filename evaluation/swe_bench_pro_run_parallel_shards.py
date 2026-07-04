@@ -94,6 +94,10 @@ def build_worker_command(args: argparse.Namespace, *, offset: int, count: int, w
         "--swe-bench-pro-repo-path",
         str(args.swe_bench_pro_repo_path),
     ]
+    if args.memory_limit:
+        cmd.extend(["--memory-limit", args.memory_limit])
+    if args.cpu_limit:
+        cmd.extend(["--cpu-limit", args.cpu_limit])
     if args.evalscope_path:
         cmd.extend(["--evalscope-path", str(args.evalscope_path)])
     if args.agent_framework == "multiagent-native" and args.native_solver_command:
@@ -146,6 +150,8 @@ def main() -> int:
     parser.add_argument("--agent-model-name", default="gpt-5")
     parser.add_argument("--max-steps", type=int, default=250)
     parser.add_argument("--agent-timeout", type=float, default=3600.0)
+    parser.add_argument("--memory-limit", default="")
+    parser.add_argument("--cpu-limit", default="")
     parser.add_argument("--on-demand-min-free-gb", type=float, default=50.0)
     parser.add_argument("--native-solver-command", default=DEFAULT_NATIVE_SOLVER_COMMAND)
     parser.add_argument("--native-solver-setup-command", default="")

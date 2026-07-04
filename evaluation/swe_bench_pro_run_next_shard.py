@@ -148,6 +148,10 @@ def build_scaffold_command(args: argparse.Namespace, *, offset: int, count: int)
         "--api-url",
         api_url,
     ]
+    if args.memory_limit:
+        cmd.extend(["--memory-limit", args.memory_limit])
+    if args.cpu_limit:
+        cmd.extend(["--cpu-limit", args.cpu_limit])
     if args.agent_framework == "multiagent-native" and args.native_solver_command:
         cmd.extend(["--native-solver-command", args.native_solver_command])
     if args.native_solver_setup_command:
@@ -230,6 +234,8 @@ def main() -> int:
     parser.add_argument("--swe-bench-pro-repo-path", type=Path, default=Path("/private/tmp/SWE-bench_Pro-os-complete"))
     parser.add_argument("--max-steps", type=int, default=250)
     parser.add_argument("--agent-timeout", type=float, default=3600.0)
+    parser.add_argument("--memory-limit", default="")
+    parser.add_argument("--cpu-limit", default="")
     parser.add_argument("--responses-keepalive", action="store_true")
     parser.add_argument("--responses-keepalive-interval", type=float, default=10.0)
     parser.add_argument("--on-demand-min-free-gb", type=float, default=50.0)

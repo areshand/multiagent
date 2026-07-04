@@ -363,10 +363,12 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 root = Path(sys.argv[1])
 sys.path.insert(0, str(root))
 from evaluation.native_solver import solve_swe_prod
+from evaluation import swe_bench_pro_run_parallel_shards
 
 with tempfile.TemporaryDirectory() as td:
     repo = Path(td)
@@ -459,6 +461,72 @@ with tempfile.TemporaryDirectory() as td:
             os.environ.pop("EVAL_VALIDATION_PROBE_TIMEOUT", None)
         else:
             os.environ["EVAL_VALIDATION_PROBE_TIMEOUT"] = old_timeout
+
+with tempfile.TemporaryDirectory() as td:
+    aggregate_json = Path(td) / "aggregate.json"
+    aggregate_json.write_text("{}", encoding="utf-8")
+    dry_run = subprocess.check_output(
+        [
+            sys.executable,
+            "-m",
+            "evaluation.swe_bench_pro_run_next_shard",
+            "--aggregate-json",
+            str(aggregate_json),
+            "--no-refresh-before",
+            "--no-refresh-after",
+            "--skip-scaffold-audit",
+            "--sample-offset",
+            "58",
+            "--sample-count",
+            "1",
+            "--memory-limit",
+            "16g",
+            "--cpu-limit",
+            "2",
+            "--dry-run",
+        ],
+        cwd=root,
+        text=True,
+    )
+    assert "--memory-limit 16g" in dry_run, dry_run
+    assert "--cpu-limit 2" in dry_run, dry_run
+
+parallel_cmd = swe_bench_pro_run_parallel_shards.build_worker_command(
+    SimpleNamespace(
+        proxy_port_base=9300,
+        report_prefix_template="prefix-w{worker}-offset{offset}-count{count}",
+        shard_size=1,
+        agent_framework="multiagent-native",
+        agent_model_name="gpt-5.5",
+        max_steps=250,
+        agent_timeout=3600,
+        on_demand_min_free_gb=20,
+        swe_bench_pro_repo_path=Path("/tmp/swe"),
+        memory_limit="16g",
+        cpu_limit="2",
+        evalscope_path=None,
+        native_solver_command="/tmp/evalscope-native-multiagent-solver.sh",
+        native_solver_setup_command="",
+        bake_native_solver=True,
+        native_solver_source=root,
+        native_codex_auth_json="",
+        native_codex_auth_container_home="/root/.codex-multiagent-prod",
+        persistent_cache=False,
+        persistent_cache_root=Path("/tmp/cache"),
+        persistent_cache_mode="rw",
+        workers=1,
+        responses_keepalive=False,
+        no_start_proxy=False,
+        ignore_errors=False,
+        proxy_timeout=1800,
+        proxy_ready_timeout=30,
+    ),
+    offset=58,
+    count=1,
+    worker_index=0,
+)
+assert "--memory-limit" in parallel_cmd and "16g" in parallel_cmd, parallel_cmd
+assert "--cpu-limit" in parallel_cmd and "2" in parallel_cmd, parallel_cmd
 PY
 python3 -m evaluation.cli --list >"$TMPDIR/evaluation-list.out"
 assert_file_contains "$TMPDIR/evaluation-list.out" "ponytail"
