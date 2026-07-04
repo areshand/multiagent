@@ -392,6 +392,16 @@ with tempfile.TemporaryDirectory() as td:
     changed = subprocess.check_output(["git", "diff", "--name-only"], cwd=repo, text=True).splitlines()
     assert changed == ["source.py"], changed
 
+    (repo / ".gomodcache" / "example.com" / "dep").mkdir(parents=True)
+    (repo / ".gomodcache" / "example.com" / "dep" / "dep.go").write_text("package dep\n")
+    (repo / "new_source.py").write_text("value = 1\n")
+    intent = solve_swe_prod.mark_untracked_source_intent_to_add(repo)
+    assert "new_source.py" in intent, intent
+    assert ".gomodcache/example.com/dep/dep.go" not in intent, intent
+    removed = solve_swe_prod.cleanup_patch(repo, start)
+    assert not (repo / ".gomodcache").exists(), "tool cache directory should be removed"
+    assert removed == [], removed
+
 assert not solve_swe_prod.needs_flipt_database_credentials_recovery(
     "Flipt configuration loading should return Result with warnings; ui.enabled is deprecated.",
     ["Go source changed, but status.json does not record a Go package validation command"],

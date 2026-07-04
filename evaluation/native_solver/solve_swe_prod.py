@@ -2013,6 +2013,8 @@ def is_disallowed_patch_path(path: str) -> bool:
         name in {"dump.rdb", "appendonly.aof", "appendonly.aof.manifest"}
         or lowered.startswith("appendonlydir/")
         or "/appendonlydir/" in lowered
+        or lowered.startswith((".cache/", ".gocache/", ".gomodcache/", ".npm/", ".pnpm-store/", ".yarn/cache/"))
+        or any(marker in lowered for marker in ("/.cache/", "/.gocache/", "/.gomodcache/", "/.npm/", "/.pnpm-store/", "/.yarn/cache/"))
         or lowered.startswith(("test/", "tests/"))
         or any(marker in lowered for marker in (".test.", ".spec.", "_test.", "/test/", "/tests/", "__tests__"))
         or "/node_modules/" in lowered
@@ -2150,6 +2152,18 @@ def cleanup_patch(cwd: Path, start_head: str) -> list[str]:
                 log(f"could not remove untracked disallowed path {path}: {exc}")
         elif full_path.is_file():
             intent_to_add.append(path)
+    for cache_root in (".cache", ".gocache", ".gomodcache", ".npm", ".pnpm-store"):
+        full_path = cwd / cache_root
+        if not full_path.exists():
+            continue
+        try:
+            if full_path.is_dir():
+                shutil.rmtree(full_path)
+            else:
+                full_path.unlink(missing_ok=True)
+            removed_untracked.append(cache_root)
+        except OSError as exc:
+            log(f"could not remove untracked tool cache root {cache_root}: {exc}")
     if intent_to_add:
         mark_untracked_source_intent_to_add(cwd)
     if removed_untracked:
