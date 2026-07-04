@@ -281,18 +281,13 @@ assert_file_contains "$ROOT/orchestrator_prompt.md" "Do not inspect recovery sta
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'When `MULTIAGENT_RESUME=1`'
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'Only in that mode'
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'MULTIAGENT_VERIFIER_MAX_ITERATIONS'
-assert_file_contains "$ROOT/orchestrator_prompt.md" 'verifier suggests no follow-up'
-assert_file_contains "$ROOT/orchestrator_prompt.md" 'WORKER_CLI="${WORKER_CLI:-claude}"'
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'SUBAGENT_CLI="$VERIFIER_CLI" bin/subagent.sh spawn'
 assert_file_contains "$ROOT/orchestrator_prompt.md" "Default to broad safe fan-out"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "If one subtree is blocked, keep spawning every other ready subtree"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "Exploration is parallel work"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "Balance exploration and exploitation deliberately"
-assert_file_contains "$ROOT/orchestrator_prompt.md" "Ponytail implementation discipline"
-assert_file_contains "$ROOT/orchestrator_prompt.md" "Run a Ponytail over-engineering pass"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "Intent And Contract Discipline"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "verifier contract ledger"
-assert_file_contains "$ROOT/orchestrator_prompt.md" "Synthesize hidden-test-style probes"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "Contract Scout Workflow"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "contract-scout.md"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "Scope Guard Workflow"
@@ -301,6 +296,7 @@ assert_file_contains "$ROOT/orchestrator_prompt.md" "Validation Coordinator Work
 assert_file_contains "$ROOT/orchestrator_prompt.md" "validation-coordinator.md"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "proxy/scaffold"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "Prompt Modules"
+assert_file_contains "$ROOT/orchestrator_prompt.md" "agent-spawning.md"
 assert_file_contains "$ROOT/prompts/worker.md" "Worker Role Prompt"
 assert_file_contains "$ROOT/prompts/worker.md" "Ponytail Implementation Discipline"
 assert_file_contains "$ROOT/prompts/worker.md" "return shape, or package placement"
@@ -321,6 +317,12 @@ assert_file_contains "$ROOT/prompts/roles/scope-guard.md" "blocking-scope-findin
 assert_file_contains "$ROOT/prompts/roles/validation-coordinator.md" "Validation Coordinator Role Prompt"
 assert_file_contains "$ROOT/prompts/roles/validation-coordinator.md" "duplicate package validation"
 assert_file_contains "$ROOT/prompts/roles/validation-coordinator.md" "one active validator per package/path"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Agent Spawning Playbook"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Ponytail implementation discipline"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Run a Ponytail over-engineering pass"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Synthesize hidden-test-style probes"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" 'verifier suggests no follow-up'
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" 'WORKER_CLI="${WORKER_CLI:-claude}"'
 assert_file_contains "$ROOT/prompts/playbooks/dag.md" "DAG Workflow Playbook"
 assert_file_contains "$ROOT/prompts/playbooks/recovery.md" "Recovery Playbook"
 assert_file_contains "$ROOT/prompts/playbooks/write-policy.md" "Write Policy Playbook"

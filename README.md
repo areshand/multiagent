@@ -78,12 +78,21 @@ role or workflow is needed:
 - `prompts/roles/scope-guard.md`
 - `prompts/roles/validation-coordinator.md`
 - `prompts/roles/organizational-learning.md`
+- `prompts/playbooks/agent-spawning.md`
 - `prompts/playbooks/dag.md`
 - `prompts/playbooks/recovery.md`
 - `prompts/playbooks/write-policy.md`
 
 Resolve module paths relative to `MULTIAGENT_PROMPT`, not the target repo root,
 so cross-repo launches still use the launcher repo's prompt modules.
+
+## Agent Spawning Playbook
+
+`prompts/playbooks/agent-spawning.md` contains the detailed worker worktree
+setup, CLI-specific spawn commands, long-running subagent operations,
+worker/verifier iteration loop, and progress/status fallback procedure. The
+orchestrator prompt should load it only when it is about to spawn, monitor,
+replace, verify, or finalize agents.
 
 ## Contract Scout Workflow
 
