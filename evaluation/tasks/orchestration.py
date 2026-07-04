@@ -263,16 +263,31 @@ def _waves(nodes: dict[str, dict[str, Any]]) -> dict[str, int]:
 
 
 def _has_owned_overlap(nodes: dict[str, dict[str, Any]]) -> bool:
-    seen: dict[str, str] = {}
+    """Return True if any two different nodes claim overlapping paths.
+
+    Overlap includes both exact matches and prefix containment (e.g. ``a/b``
+    and ``a/b/c`` are considered overlapping because one is a subdirectory of
+    the other).
+    """
+    # Build a list of (normalized_path, node_id) pairs first, then check
+    # pairwise for exact match or prefix containment.
+    owned: list[tuple[str, str]] = []
     for node_id, node in nodes.items():
         for path in _string_list(node.get("owned_paths") or node.get("owned")):
             normalized = path.rstrip("/")
             if not normalized:
                 continue
-            owner = seen.get(normalized)
-            if owner and owner != node_id:
+            owned.append((normalized, node_id))
+
+    for i, (path_a, owner_a) in enumerate(owned):
+        for path_b, owner_b in owned[i + 1 :]:
+            if owner_a == owner_b:
+                continue
+            # Exact match or prefix containment
+            if path_a == path_b:
                 return True
-            seen[normalized] = node_id
+            if path_b.startswith(path_a + "/") or path_a.startswith(path_b + "/"):
+                return True
     return False
 
 
