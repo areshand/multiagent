@@ -347,6 +347,39 @@ assert_file_contains "$ROOT/evaluation/README.md" "EVAL_VALIDATION_PROBE_TIMEOUT
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "component-interaction-tests-passed"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "additive UI/component public-surface task"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "One active validator per package/path"
+python3 - "$ROOT" <<'PY'
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root))
+from evaluation.native_solver import solve_swe_prod
+
+with tempfile.TemporaryDirectory() as td:
+    repo = Path(td)
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "commit.gpgsign", "false"], cwd=repo, check=True)
+    (repo / "requirements.txt").write_text("PyYAML==5.4.1\n")
+    (repo / "package-lock.json").write_text('{"lockfileVersion": 1}\n')
+    (repo / "source.py").write_text("old = True\n")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True)
+    start = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+
+    (repo / "requirements.txt").write_text("PyYAML>=6.0,<7\n")
+    (repo / "package-lock.json").write_text('{"lockfileVersion": 3}\n')
+    (repo / "source.py").write_text("old = False\n")
+    restored = solve_swe_prod.cleanup_initial_environment_diff(repo, start)
+
+    assert set(restored) == {"requirements.txt", "package-lock.json"}, restored
+    changed = subprocess.check_output(["git", "diff", "--name-only"], cwd=repo, text=True).splitlines()
+    assert changed == ["source.py"], changed
+PY
 python3 -m evaluation.cli --list >"$TMPDIR/evaluation-list.out"
 assert_file_contains "$TMPDIR/evaluation-list.out" "ponytail"
 assert_file_contains "$TMPDIR/evaluation-list.out" "orchestration"
@@ -556,6 +589,14 @@ if [[ "$watch_spawn_line" == *"--cd"* || "$watch_spawn_line" == *"--no-alt-scree
   exit 1
 fi
 assert_file_contains "$MOCK_TMUX_LOG" "send-key test-session:subagent-watch Watch builds"
+
+printf 'Claude prompt ready\n' >"$MOCK_TMUX_CAPTURES/subagent-file.txt"
+INSTRUCTION_FILE="$TMPDIR/subagent-instruction.txt"
+printf 'Watch from file\nwith exact text\n' >"$INSTRUCTION_FILE"
+"$ROOT/bin/subagent.sh" spawn subagent-file --instruction-file "$INSTRUCTION_FILE"
+assert_file_contains "$MOCK_TMUX_WINDOWS" "subagent-file"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-file/instruction.txt" "Watch from file"
+assert_file_contains "$MOCK_TMUX_LOG" "send-key test-session:subagent-file Read and follow the assignment in $MULTIAGENT_STATE_DIR/subagents/subagent-file/instruction.txt"
 
 printf 'Codex prompt ready\n' >"$MOCK_TMUX_CAPTURES/verifier-01-docs.txt"
 SUBAGENT_CLI="$VERIFIER_CLI" "$ROOT/bin/subagent.sh" spawn verifier-01-docs --instruction "Review worker-01-docs"

@@ -1990,6 +1990,61 @@ def is_disallowed_patch_path(path: str) -> bool:
     )
 
 
+def is_dependency_manifest_path(path: str) -> bool:
+    name = Path(path).name
+    lowered = path.lower()
+    return (
+        name
+        in {
+            "package.json",
+            "package-lock.json",
+            "npm-shrinkwrap.json",
+            "pnpm-lock.yaml",
+            "yarn.lock",
+            "requirements.txt",
+            "requirements-dev.txt",
+            "pyproject.toml",
+            "poetry.lock",
+            "pipfile",
+            "pipfile.lock",
+            "go.mod",
+            "go.sum",
+            "go.work",
+            "go.work.sum",
+            "cargo.toml",
+            "cargo.lock",
+        }
+        or lowered.endswith(("/requirements.txt", "/requirements-dev.txt"))
+        or "/requirements/" in lowered
+    )
+
+
+def cleanup_initial_environment_diff(cwd: Path, start_head: str) -> list[str]:
+    """Remove dependency/install churn that exists before workers start.
+
+    EvalScope auto-install and image setup can mutate tracked manifests before
+    the production orchestrator has done any task work. If left in place, those
+    files pollute ownership detection and can become the only final diff. This
+    cleanup runs only at solver startup, before any worker can make a legitimate
+    source edit.
+    """
+
+    result = run(["git", "diff", "--name-only", "HEAD", "--"], cwd=cwd, timeout=30)
+    changed = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    restore = [
+        path
+        for path in changed
+        if is_disallowed_patch_path(path) or is_dependency_manifest_path(path) or is_gitlink_path(cwd, path)
+    ]
+    if restore:
+        result = run(["git", "restore", "--source", start_head, "--staged", "--worktree", "--", *restore], cwd=cwd, timeout=120)
+        if result.returncode != 0:
+            tail = ((result.stderr or "") + "\n" + (result.stdout or "")).strip()[-4000:]
+            raise RuntimeError(f"failed to restore pre-worker environment diffs from task HEAD: {tail}")
+        log(f"restored pre-worker environment diffs before orchestration: {restore}")
+    return restore
+
+
 def is_gitlink_path(cwd: Path, path: str) -> bool:
     result = run(["git", "ls-files", "-s", "--", path], cwd=cwd, timeout=30)
     return any(line.startswith("160000 ") for line in result.stdout.splitlines())
@@ -5519,6 +5574,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
 
     start_head = git_head(workdir)
     ACTIVE_START_HEAD = start_head
+    cleanup_initial_environment_diff(workdir, start_head)
     RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
     write_codex_bridge(real_codex, os.environ.get("EVAL_NATIVE_SOLVER_MODEL", "gpt-5"), auth_mode)
     write_apply_patch_helper()

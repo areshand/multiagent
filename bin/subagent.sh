@@ -24,7 +24,7 @@ fi
 usage() {
   cat <<'USAGE'
 Usage:
-  bin/subagent.sh spawn NAME [--instruction TEXT]
+  bin/subagent.sh spawn NAME [--instruction TEXT | --instruction-file PATH]
   bin/subagent.sh list
   bin/subagent.sh assignment-create NAME --assignment-id ID --branch BRANCH --owned PATH[,PATH...] [--status STATUS] [--start-commit COMMIT] [--role exploitation|exploration|reflection|architecture|qa|verifier] [--decision-id DECISION_ID] [--plan-id PLAN_ID] [--workflow-id WORKFLOW_ID] [--node-id NODE_ID] [--depends-on NODE[,NODE...]]
   bin/subagent.sh assignment-show NAME
@@ -757,11 +757,15 @@ spawn_subagent() {
   validate_name "$name"
   shift
 
-  local instruction=""
+  local instruction="" instruction_file=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --instruction)
         instruction="${2:-}"
+        shift 2
+        ;;
+      --instruction-file)
+        instruction_file="${2:-}"
         shift 2
         ;;
       -h|--help)
@@ -773,6 +777,13 @@ spawn_subagent() {
         ;;
     esac
   done
+  if [[ -n "$instruction" && -n "$instruction_file" ]]; then
+    die "spawn accepts only one of --instruction or --instruction-file"
+  fi
+  if [[ -n "$instruction_file" ]]; then
+    [[ -f "$instruction_file" ]] || die "instruction file not found: $instruction_file"
+    instruction="$(cat "$instruction_file")"
+  fi
 
   require_cmd tmux
   local cli bin
