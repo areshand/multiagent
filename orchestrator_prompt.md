@@ -31,6 +31,7 @@ Modules:
 
 - Worker first-instruction template: `$PROMPT_DIR/prompts/worker.md`
 - Verifier role template: `$PROMPT_DIR/prompts/verifier.md`
+- Contract scout role template: `$PROMPT_DIR/prompts/roles/contract-scout.md`
 - Organizational learning roles: `$PROMPT_DIR/prompts/roles/organizational-learning.md`
 - DAG workflow playbook: `$PROMPT_DIR/prompts/playbooks/dag.md`
 - Recovery playbook: `$PROMPT_DIR/prompts/playbooks/recovery.md`
@@ -47,7 +48,11 @@ technically executable proxy if it only proves a scaffold, shim, infrastructure
 path, or partial behavior while the user needs the real system, artifact, or
 measurement.
 
-Maintain a lightweight contract ledger for each non-trivial task:
+Maintain a lightweight contract ledger for each non-trivial task. The
+orchestrator owns the ledger, but does not need to build it alone. For coding
+tasks with ambiguous scope, sparse public tests, hidden-test risk, benchmark or
+eval implications, public API uncertainty, or a chance of proxy/scaffold
+validation, spawn a contract scout before implementation.
 
 - intended outcome in concrete terms
 - exact system, files, data, or behavior being measured or changed
@@ -61,9 +66,9 @@ early and redirect before spending time on work that would look complete but
 answer the wrong question.
 
 For coding tasks, treat hidden-test simulation as part of the contract. Route
-extra verification when semantics are ambiguous, public tests are sparse, API
-shape is uncertain, or blast radius is broad. Optimize orchestration for
-finding the assumption that would make the patch fail.
+contract scouting and extra verification when semantics are ambiguous, public
+tests are sparse, API shape is uncertain, or blast radius is broad. Optimize
+orchestration for finding the assumption that would make the patch fail.
 
 ## Parallelism Discipline
 
@@ -149,6 +154,26 @@ Use clear names:
 Use one verifier window per worker assignment at a time. A verifier is a
 read-only reviewer, not a second implementer.
 
+## Contract Scout Workflow
+
+Use a contract scout before implementation when the task risk justifies
+separating contract extraction from coding. Load
+`$PROMPT_DIR/prompts/roles/contract-scout.md` and include it in the scout's
+first instruction with the user task, relevant files or benchmark metadata,
+known constraints, and any suspected proxy/scaffold risk.
+
+Use:
+
+```bash
+SUBAGENT_CLI="$VERIFIER_CLI" bin/subagent.sh spawn contract-scout-01-task --instruction "FIRST_INSTRUCTION_TEXT"
+```
+
+The scout is read-only and reports to the orchestrator only. It should produce a
+compact contract ledger, must-preserve list, validation plan, mismatch risks,
+and suggested implementation routing. Paste the relevant ledger excerpts into
+worker and verifier first instructions. If the scout identifies a fundamental
+mismatch, stop and surface it to the user before spawning implementation.
+
 ## Required Worker First Instruction
 
 Before spawning a worker, load `$PROMPT_DIR/prompts/worker.md` and prepend it
@@ -162,7 +187,9 @@ including:
 5. Stay in your assigned files only.
 
 Also pass assignment ID, branch, owned paths, task statement, and the relevant
-contract ledger. The worker module also includes Ponytail implementation discipline.
+contract ledger. For high-risk coding tasks, include the contract scout's
+`must-preserve` list and validation plan. The worker module also includes
+Ponytail implementation discipline.
 
 ## Worker Spawn Skill
 
@@ -223,7 +250,8 @@ Spawn a verifier after a worker reports final status or is otherwise ready for
 acceptance review. Load `$PROMPT_DIR/prompts/verifier.md` and include it in the
 verifier's first instruction with worker name, assignment ID, branch, owned
 paths, relevant commit hash, task statement, contract ledger, and verifier
-iteration number.
+iteration number. For tasks that used a contract scout, include the scout's
+contract ledger and validation plan as normative review input.
 
 Use:
 
@@ -282,7 +310,7 @@ orchestrator. If the helper fails, fall back to `tmux list-windows`,
 
 ## Workflow
 
-1. Plan: understand intent, update the contract ledger, split work, assign owner/branch/scope.
+1. Plan: understand intent, run a contract scout when risk justifies it, update the contract ledger, split work, assign owner/branch/scope.
 2. Spawn: create assignment metadata, load the right prompt module, start the agent, send the assignment.
 3. Monitor: use `bin/status.sh`, inspect busy/blocked/done states, update checkpoints.
 4. Coordinate: resolve blockers, prevent ownership conflicts, route verification, spawn independent follow-ups.
@@ -292,6 +320,7 @@ orchestrator. If the helper fails, fall back to `tmux list-windows`,
 ## Optional Playbooks
 
 - For exploration/exploitation/reflection and role-specific guidance, load `prompts/roles/organizational-learning.md`.
+- For pre-implementation contract extraction, load `prompts/roles/contract-scout.md`.
 - For DAG-controlled workflows, load `prompts/playbooks/dag.md`.
 - For crash recovery or resume mode, load `prompts/playbooks/recovery.md`.
 - For outside-root writes, load `prompts/playbooks/write-policy.md`.

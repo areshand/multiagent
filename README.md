@@ -74,6 +74,7 @@ role or workflow is needed:
 
 - `prompts/worker.md`
 - `prompts/verifier.md`
+- `prompts/roles/contract-scout.md`
 - `prompts/roles/organizational-learning.md`
 - `prompts/playbooks/dag.md`
 - `prompts/playbooks/recovery.md`
@@ -81,6 +82,28 @@ role or workflow is needed:
 
 Resolve module paths relative to `MULTIAGENT_PROMPT`, not the target repo root,
 so cross-repo launches still use the launcher repo's prompt modules.
+
+## Contract Scout Workflow
+
+For coding tasks with ambiguous scope, sparse public tests, hidden-test risk,
+benchmark/eval implications, public API uncertainty, or proxy/scaffold risk,
+the orchestrator should spawn a read-only contract scout before implementation.
+The scout extracts the user's real intent, target system or artifact, exact
+API/output/order/state contracts, hidden-test hypotheses, validation plan, and
+any mismatch that would make a technically executable path answer the wrong
+question.
+
+Use the same subagent helper with the verifier CLI:
+
+```bash
+SUBAGENT_CLI="${VERIFIER_CLI:-codex}" bin/subagent.sh spawn contract-scout-01-docs --instruction "Review only; extract the contract ledger."
+```
+
+The scout does not edit files or coordinate with workers. The orchestrator
+pastes the scout's `must-preserve` requirements and validation plan into worker
+and verifier first instructions. If the scout finds that the current path only
+validates a scaffold, shim, infrastructure path, or proxy behavior, the
+orchestrator surfaces that mismatch before spawning implementation.
 
 ## Verifier Workflow
 
@@ -106,6 +129,11 @@ The verifier checks:
 Each verifier should report a compact contract ledger: intended outcome,
 changed behavior, public evidence, inferred hidden contracts, assumptions,
 probes run, residual risk, and recommendation.
+
+When a contract scout ran before implementation, its ledger and validation plan
+are normative input to the verifier. The verifier still reconstructs the task
+contract independently, then checks the worker diff against both the
+reconstructed contract and the scout's must-preserve requirements.
 
 The orchestrator reviews the verifier's findings and gives the verdict. Only
 accepted follow-ups are passed back to the original worker. The worker then
