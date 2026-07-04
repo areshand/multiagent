@@ -33,6 +33,7 @@ Modules:
 - Verifier role template: `$PROMPT_DIR/prompts/verifier.md`
 - Contract scout role template: `$PROMPT_DIR/prompts/roles/contract-scout.md`
 - Scope guard role template: `$PROMPT_DIR/prompts/roles/scope-guard.md`
+- Validation coordinator role template: `$PROMPT_DIR/prompts/roles/validation-coordinator.md`
 - Organizational learning roles: `$PROMPT_DIR/prompts/roles/organizational-learning.md`
 - DAG workflow playbook: `$PROMPT_DIR/prompts/playbooks/dag.md`
 - Recovery playbook: `$PROMPT_DIR/prompts/playbooks/recovery.md`
@@ -155,25 +156,22 @@ Use clear names:
 Use one verifier window per worker assignment at a time. A verifier is a
 read-only reviewer, not a second implementer.
 
+Before spawning a replacement worker for the same owned files, poll the existing
+worker and either finalize/kill it or explicitly wait. If validation ownership
+is unclear, use the validation coordinator role before adding more workers.
+
 ## Contract Scout Workflow
 
-Use a contract scout before implementation when the task risk justifies
-separating contract extraction from coding. Load
-`$PROMPT_DIR/prompts/roles/contract-scout.md` and include it in the scout's
-first instruction with the user task, relevant files or benchmark metadata,
-known constraints, and any suspected proxy/scaffold risk.
+When task risk justifies separating contract extraction from coding, load
+`$PROMPT_DIR/prompts/roles/contract-scout.md` and spawn a read-only scout with
+the task, relevant files or benchmark metadata, known constraints, and any
+proxy/scaffold risk.
 
-Use:
+`SUBAGENT_CLI="$VERIFIER_CLI" bin/subagent.sh spawn contract-scout-01-task --instruction "FIRST_INSTRUCTION_TEXT"`
 
-```bash
-SUBAGENT_CLI="$VERIFIER_CLI" bin/subagent.sh spawn contract-scout-01-task --instruction "FIRST_INSTRUCTION_TEXT"
-```
-
-The scout is read-only and reports to the orchestrator only. It should produce a
-compact contract ledger, must-preserve list, validation plan, mismatch risks,
-and suggested implementation routing. Paste the relevant ledger excerpts into
-worker and verifier first instructions. If the scout identifies a fundamental
-mismatch, stop and surface it to the user before spawning implementation.
+Paste the scout's compact contract ledger, must-preserve list, validation plan,
+and mismatch risks into worker and verifier first instructions. If the scout
+finds a fundamental mismatch, surface it before spawning implementation.
 
 ## Scope Guard Workflow
 
@@ -185,27 +183,31 @@ and current diff summary.
 
 Prefer this role when the task is additive but the diff rewrites behavior, when
 UI/component interaction code changes, when helper-layer ownership is unclear,
-when generated/test-only files appear, or when a verifier previously missed a
-scope mismatch. The guard is read-only and reports to the orchestrator only.
+or when generated/test-only files appear.
 Paste accepted `blocking-scope-findings`, `must-preserve`, and
 `validation-gaps` into the next verifier or follow-up worker instruction.
+
+## Validation Coordinator Workflow
+
+Use a validation coordinator when multiple live agents touch the same package,
+compile/test commands are expensive, or a replacement worker might duplicate a
+running validator. Load
+`$PROMPT_DIR/prompts/roles/validation-coordinator.md` and include the active
+agent table, owned paths, process list, recent pane output, and intended
+validation commands.
+
+`SUBAGENT_CLI="$VERIFIER_CLI" bin/subagent.sh spawn validation-coordinator-01-task --instruction "FIRST_INSTRUCTION_TEXT"`
+
+Use the coordinator's report to decide whether to wait, poll, kill/finalize
+stale panes, or route a bounded follow-up worker.
 
 ## Required Worker First Instruction
 
 Before spawning a worker, load `$PROMPT_DIR/prompts/worker.md` and prepend it
-to the task-specific assignment. The worker module contains the shared rules,
-including:
-
-1. Work on your own branch.
-2. Commit early, commit often.
-3. Do not submit PRs, push to remote, or send external messages.
-4. If blocked, stop and state what you need.
-5. Stay in your assigned files only.
-
-Also pass assignment ID, branch, owned paths, task statement, and the relevant
-contract ledger. For high-risk coding tasks, include the contract scout's
-`must-preserve` list and validation plan. The worker module also includes
-Ponytail implementation discipline.
+to the task-specific assignment. Also pass assignment ID, branch, owned paths,
+task statement, and the relevant contract ledger. For high-risk coding tasks,
+include the contract scout's `must-preserve` list and validation plan. The
+worker module contains shared worker rules and Ponytail implementation discipline.
 
 ## Worker Spawn Skill
 
@@ -269,11 +271,7 @@ paths, relevant commit hash, task statement, contract ledger, and verifier
 iteration number. For tasks that used a contract scout, include the scout's
 contract ledger and validation plan as normative review input.
 
-Use:
-
-```bash
-SUBAGENT_CLI="$VERIFIER_CLI" bin/subagent.sh spawn verifier-01-task --instruction "FIRST_INSTRUCTION_TEXT"
-```
+`SUBAGENT_CLI="$VERIFIER_CLI" bin/subagent.sh spawn verifier-01-task --instruction "FIRST_INSTRUCTION_TEXT"`
 
 Run `bin/subagent.sh assignment-check WORKER_NAME` before relying on verifier
 results. Resolve branch or file ownership rejection before verification.
@@ -338,6 +336,7 @@ orchestrator. If the helper fails, fall back to `tmux list-windows`,
 - For exploration/exploitation/reflection and role-specific guidance, load `prompts/roles/organizational-learning.md`.
 - For pre-implementation contract extraction, load `prompts/roles/contract-scout.md`.
 - For post-diff scope and blast-radius audits, load `prompts/roles/scope-guard.md`.
+- For overlapping expensive validation, load `prompts/roles/validation-coordinator.md`.
 - For DAG-controlled workflows, load `prompts/playbooks/dag.md`.
 - For crash recovery or resume mode, load `prompts/playbooks/recovery.md`.
 - For outside-root writes, load `prompts/playbooks/write-policy.md`.

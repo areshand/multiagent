@@ -10,6 +10,10 @@ The verifier is a read-only reviewer, not an implementer.
 - Do not coordinate directly with the worker.
 - Do not receive writable ownership over the worker's paths.
 - Include the worker name, assignment ID, branch, owned paths, relevant commit hash, task statement, contract ledger, and verifier iteration number in the first instruction.
+- Before running expensive validation, check whether an equivalent command is
+  already running for the same package/path. If so, wait for that result or
+  report the overlap; do not create duplicate compile/test processes that
+  contend for caches or resources.
 
 ## Contract-Led Verification
 
@@ -69,6 +73,10 @@ helper signature after only static source inspection. Run or attempt a package
 compile check that includes test files, or explicitly compare the old and new
 signature against every reachable call site and the official excerpt. A timed
 out compile/test command is unresolved risk, not acceptance evidence.
+If compile/test validation is already running in another live worker/verifier
+for the same package, do not start a duplicate command. Inspect the running
+command, wait for its result, or reject with a clear orchestration finding that
+the package has overlapping validators.
 
 ## Review Scope
 

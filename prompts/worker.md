@@ -17,6 +17,9 @@ Also include:
 - Report progress and final status in this tmux window.
 - Do not coordinate directly with other workers unless the orchestrator instructs you.
 - Assignment details: assignment ID, branch, owned paths, task statement, and relevant contract ledger.
+- If you discover another live worker or validation command is operating on the
+  same owned package/path, stop and report the overlap to the orchestrator
+  instead of starting a duplicate long-running test.
 
 ## Intent And Contract
 
@@ -81,6 +84,12 @@ For compiled languages, run or attempt a package compile check that includes
 test files for every touched package. If that check times out or cannot run,
 inspect test-referenced helper signatures manually and report the timeout as
 unresolved risk, not as validation success.
+
+Run only one expensive validation command per owned package at a time. Before
+starting a long compile/test for a package, check whether an identical command
+is already running in your pane or an orchestrator-provided process listing. If
+it is, wait for that result or report the duplicate-process blocker rather than
+launching another copy.
 
 If you intentionally take a shortcut, mark it with `ponytail:` and name the
 ceiling plus the trigger to revisit it.

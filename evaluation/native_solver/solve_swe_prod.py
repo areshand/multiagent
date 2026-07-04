@@ -128,6 +128,9 @@ Benchmark spawning path:
   quoted heredoc, then pass the exact text to `bin/subagent.sh spawn`. A spawn
   command that lets the shell expand identifiers has changed the task and must
   be retried with literal instruction text.
+- Benchmark containers can be minimal. Prefer `rg` when present, but if `rg` is
+  not installed use `grep`, `find`, or language-native search instead of failing
+  the task.
 - If the issue has unclear ownership, multiple plausible fixes, or needs
   behavior inference from tests, first spawn a short read-only scout worker
   named `scout-01-...`. The scout must not edit files; it should identify the
@@ -150,6 +153,12 @@ Benchmark spawning path:
   Codex. Every implementation follow-up must use `assignment-create` plus
   `bin/subagent.sh spawn` with a fresh bounded worker name such as
   `worker-02-followup`.
+- Before spawning a replacement worker over the same source files or package,
+  poll and inspect any existing worker/verifier for those paths. If it is still
+  running an expensive compile/test command, wait for it or kill/finalize it
+  deliberately before starting another. Do not leave duplicate workers running
+  the same package validation; concurrent Go/npm/yarn/pytest jobs can contend
+  for caches, consume memory, and turn a solvable task into an infra failure.
 - If worker/verifier spawning fails, record the exact blocker in
   `/tmp/multiagent-prod-swe/status.json` only after retrying once with a fresh,
   differently named bounded worker or verifier. Do not abandon a task with an
@@ -348,6 +357,10 @@ Worker quality bar:
   a Node/TS task should prefer the nearby Jest/Mocha test file or workspace test
   script; a Go task should prefer the owning package with `go test`; a Python
   task should prefer the nearby pytest module or test class.
+- The worker must not launch duplicate expensive compile/test commands for the
+  same package. If an identical package validation is already running in another
+  live worker/verifier, wait for that result or report the overlap to the
+  orchestrator. One active validator per package/path is the default.
 - If a source-only patch makes existing same-package tests fail to compile,
   the patch is not acceptable merely because tests are outside the editable
   scope. Preserve source-level compatibility for test-facing package APIs when
@@ -745,6 +758,11 @@ Verifier quality bar:
   available, or no check due to a service that could be locally started, the
   verifier must run the stronger relevant check itself or reject with exact
   follow-up instructions.
+- Before running expensive validation, it must inspect whether the same package
+  validation is already running in another live worker/verifier. It should not
+  spawn duplicate Go/npm/yarn/pytest jobs against the same package; wait for the
+  active command, use its result if captured, or reject with an orchestration
+  finding that stale overlapping workers must be killed first.
 - It must reject source patches that make visible same-package tests fail to
   compile because an exported type, constructor, method, or helper was removed
   or renamed. Test files are outside the submitted patch, but their compile
@@ -851,6 +869,11 @@ Required orchestration loop:
    bounded worker follow-up using the verifier's exact findings, then run a
    second verifier pass. Do not mark completed immediately after a verifier
    rejection.
+   Before spawning a follow-up over the same owned paths, poll existing workers
+   and verifiers. Kill or finalize stale duplicate windows first, especially
+   when they are running the same package validation command. Never leave two
+   live agents compiling/testing the same package unless the user explicitly
+   requested that stress test.
 6. Before writing completed status, perform a final helper-scope audit against
    the issue text and current `git diff`. If the issue mentions keys, fallback,
    missing data, cache/database behavior, expired records, expiry, or TTL, and
@@ -953,6 +976,9 @@ As orchestrator:
    behavior rewrite. For additive story/export/example/exposure tasks, route the
    worker toward the smallest additive source change and preserve existing
    interaction behavior.
+   Before spawning any replacement worker over the same owned paths, poll the
+   current worker and kill/finalize stale duplicate workers or validators. Do
+   not leave concurrent agents running the same package compile/test command.
 7. Before writing completed status, spawn and inspect one read-only verifier.
 8. Before writing completed status, run the helper-scope audit from the
    benchmark instructions. For key/fallback/expired/cache/database issues,

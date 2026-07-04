@@ -76,6 +76,7 @@ role or workflow is needed:
 - `prompts/verifier.md`
 - `prompts/roles/contract-scout.md`
 - `prompts/roles/scope-guard.md`
+- `prompts/roles/validation-coordinator.md`
 - `prompts/roles/organizational-learning.md`
 - `prompts/playbooks/dag.md`
 - `prompts/playbooks/recovery.md`
@@ -123,6 +124,24 @@ SUBAGENT_CLI="${VERIFIER_CLI:-codex}" bin/subagent.sh spawn scope-guard-01-docs 
 The guard reports `blocking-scope-findings`, `must-preserve`, validation gaps,
 and routing. The orchestrator decides which findings become verifier input or
 follow-up worker assignments.
+
+## Validation Coordinator Workflow
+
+When several live agents touch the same package/path or expensive validation is
+already running, the orchestrator can spawn a read-only validation coordinator.
+This role maps active workers, verifiers, owned paths, and running test commands
+so the orchestrator can keep one active validator per package/path.
+
+Use the verifier CLI:
+
+```bash
+SUBAGENT_CLI="${VERIFIER_CLI:-codex}" bin/subagent.sh spawn validation-coordinator-01-docs --instruction "Review only; map active validators and recommend routing."
+```
+
+The coordinator does not edit files or make the final correctness decision. It
+reports overlaps, stale panes, the single-owner validation plan, and whether the
+orchestrator should wait, poll, kill/finalize, spawn a verifier, or spawn a
+bounded follow-up worker.
 
 ## Verifier Workflow
 
