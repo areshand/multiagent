@@ -41,9 +41,17 @@ Prioritize:
 - persistence and state transitions
 - concurrency and idempotency cases
 - exact error, return-value, and output semantics
+- literal expected command argv, serialized output, error text, and ordered
+  collection semantics from any issue or test excerpt
 
 Challenge material worker assumptions explicitly. For each assumption, validate
 it from source/tests/docs, cover it with a probe, or mark it as residual risk.
+
+If an exact hidden or official test is unavailable but the prompt includes a
+test excerpt with a concrete expected value, reproduce that exact assertion with
+a temporary probe or source-level comparison before accepting. Reject patches
+that only pass weaker semantic probes when the excerpt requires exact ordering,
+punctuation, argument placement, or output shape.
 
 ## Review Scope
 

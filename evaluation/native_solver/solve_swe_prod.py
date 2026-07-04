@@ -164,6 +164,13 @@ Worker quality bar:
   the issue. Broad rewrites and speculative cleanups usually fail hidden tests.
 - The worker must inspect existing tests or call sites that encode the expected
   behavior, even if it cannot run the full suite.
+- If the issue, contract ledger, or official test excerpt shows a literal
+  expected value, command argv, serialized output, error text, or ordered list,
+  the worker must treat that exact shape as normative. Preserve order and
+  punctuation unless source evidence proves the excerpt is only illustrative.
+  If the exact official test is unavailable locally, create a temporary
+  source-level probe that asserts the same literal shape; do not substitute a
+  weaker semantic smoke check.
 - The worker must trace helper APIs called by the feature path. If the issue
   mentions missing keys, fallback lookup, arrays/lists of keys, falsy inputs,
   expired records, or alternative sources, inspect the relevant database/cache
@@ -721,6 +728,12 @@ Verifier quality bar:
 - It must compare the patch against neighboring call sites and tests for
   semantic completeness, not just syntax. Reject broad patches that satisfy one
   path while obviously missing adjacent cases in the same file/package.
+- If the issue or official test excerpt includes a concrete expected command
+  argv, serialized output, error string, return value, or ordered collection,
+  the verifier must reproduce that exact assertion with a temporary probe or
+  source-level comparison before accepting. Reject patches that only prove a
+  weaker semantic property when the hidden/official excerpt requires exact
+  ordering, punctuation, argument placement, or output shape.
 - It must build its own issue-requirement checklist from the prompt and map the
   current diff plus validation to each item. Reject if any requirement is merely
   assumed covered.
@@ -1257,6 +1270,7 @@ def contract_ledger_text(issue: str, metadata: dict[str, object] | None = None) 
             "Completion rules:",
             "- Do not remove, rename, or omit a required public symbol while fixing another issue.",
             "- Do not accept visible-test success if it contradicts this ledger.",
+            "- Literal expected values, command argv, serialized outputs, error text, and ordered lists in official excerpts are normative; workers and verifiers must probe that exact shape when exact tests are unavailable.",
             "- Status validation must include `official-expected-tests:` when expected tests are listed.",
             "- If exact expected tests cannot be run, status validation must include `official-test-source-inspected:` with the inspected files and source symbols inferred from the excerpts above.",
             "- Verifier reports must explicitly say whether every listed invariant is preserved.",

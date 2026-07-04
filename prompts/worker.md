@@ -25,6 +25,10 @@ Also include:
 - List the assumptions your solution depends on and how you checked them.
 - Identify edge cases, invariants, compatibility constraints, and forbidden shortcuts.
 - If your path only validates a proxy, scaffold, or partial behavior, stop and report the mismatch.
+- When the task or provided test excerpt includes a literal expected value,
+  command argv, serialized output, error text, or ordered list, treat that
+  exact shape as part of the contract. Preserve order and punctuation unless
+  source evidence proves the excerpt is non-normative.
 
 ## Repo Write Policy
 
@@ -54,6 +58,11 @@ clever code.
 Do not simplify away trust-boundary validation, data-loss handling, security
 measures, accessibility basics, real-world calibration, or explicit user scope.
 Non-trivial logic should leave one minimal runnable check when practical.
+
+If exact hidden/official tests are unavailable but their excerpts show concrete
+expected outputs, write a temporary source-level probe that asserts the same
+literal shape. Do not replace an exact-order contract with a weaker semantic
+smoke check.
 
 If you intentionally take a shortcut, mark it with `ponytail:` and name the
 ceiling plus the trigger to revisit it.
