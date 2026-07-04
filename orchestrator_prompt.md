@@ -32,6 +32,7 @@ Modules:
 - Worker first-instruction template: `$PROMPT_DIR/prompts/worker.md`
 - Verifier role template: `$PROMPT_DIR/prompts/verifier.md`
 - Contract scout role template: `$PROMPT_DIR/prompts/roles/contract-scout.md`
+- Scope guard role template: `$PROMPT_DIR/prompts/roles/scope-guard.md`
 - Organizational learning roles: `$PROMPT_DIR/prompts/roles/organizational-learning.md`
 - DAG workflow playbook: `$PROMPT_DIR/prompts/playbooks/dag.md`
 - Recovery playbook: `$PROMPT_DIR/prompts/playbooks/recovery.md`
@@ -174,6 +175,21 @@ and suggested implementation routing. Paste the relevant ledger excerpts into
 worker and verifier first instructions. If the scout identifies a fundamental
 mismatch, stop and surface it to the user before spawning implementation.
 
+## Scope Guard Workflow
+
+Use a scope guard after a worker produces a diff when the patch might satisfy a
+visible path while overreaching or missing the real contract. Load
+`$PROMPT_DIR/prompts/roles/scope-guard.md` and include it with the task
+statement, contract ledger, worker summary, changed files, validation claims,
+and current diff summary.
+
+Prefer this role when the task is additive but the diff rewrites behavior, when
+UI/component interaction code changes, when helper-layer ownership is unclear,
+when generated/test-only files appear, or when a verifier previously missed a
+scope mismatch. The guard is read-only and reports to the orchestrator only.
+Paste accepted `blocking-scope-findings`, `must-preserve`, and
+`validation-gaps` into the next verifier or follow-up worker instruction.
+
 ## Required Worker First Instruction
 
 Before spawning a worker, load `$PROMPT_DIR/prompts/worker.md` and prepend it
@@ -313,7 +329,7 @@ orchestrator. If the helper fails, fall back to `tmux list-windows`,
 1. Plan: understand intent, run a contract scout when risk justifies it, update the contract ledger, split work, assign owner/branch/scope.
 2. Spawn: create assignment metadata, load the right prompt module, start the agent, send the assignment.
 3. Monitor: use `bin/status.sh`, inspect busy/blocked/done states, update checkpoints.
-4. Coordinate: resolve blockers, prevent ownership conflicts, route verification, spawn independent follow-ups.
+4. Coordinate: resolve blockers, prevent ownership conflicts, run scope guard when diff shape is risky, route verification, spawn independent follow-ups.
 5. Accept: run `assignment-check`, review verifier findings, decide accepted follow-up, finalize agents.
 6. Report: summarize status, branches, commits, blockers, state paths, validation, and residual risk.
 
@@ -321,6 +337,7 @@ orchestrator. If the helper fails, fall back to `tmux list-windows`,
 
 - For exploration/exploitation/reflection and role-specific guidance, load `prompts/roles/organizational-learning.md`.
 - For pre-implementation contract extraction, load `prompts/roles/contract-scout.md`.
+- For post-diff scope and blast-radius audits, load `prompts/roles/scope-guard.md`.
 - For DAG-controlled workflows, load `prompts/playbooks/dag.md`.
 - For crash recovery or resume mode, load `prompts/playbooks/recovery.md`.
 - For outside-root writes, load `prompts/playbooks/write-policy.md`.

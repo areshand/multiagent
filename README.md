@@ -75,6 +75,7 @@ role or workflow is needed:
 - `prompts/worker.md`
 - `prompts/verifier.md`
 - `prompts/roles/contract-scout.md`
+- `prompts/roles/scope-guard.md`
 - `prompts/roles/organizational-learning.md`
 - `prompts/playbooks/dag.md`
 - `prompts/playbooks/recovery.md`
@@ -104,6 +105,24 @@ pastes the scout's `must-preserve` requirements and validation plan into worker
 and verifier first instructions. If the scout finds that the current path only
 validates a scaffold, shim, infrastructure path, or proxy behavior, the
 orchestrator surfaces that mismatch before spawning implementation.
+
+## Scope Guard Workflow
+
+After a worker produces a diff, the orchestrator can spawn a read-only scope
+guard when the patch shape itself is risky. This is useful for additive tasks
+that unexpectedly rewrite behavior, UI/component changes that may break
+existing interaction contracts, generated/test-only changes, unclear
+helper-layer ownership, or past verifier misses in the same area.
+
+Use the verifier CLI:
+
+```bash
+SUBAGENT_CLI="${VERIFIER_CLI:-codex}" bin/subagent.sh spawn scope-guard-01-docs --instruction "Review only; audit diff scope against the contract ledger."
+```
+
+The guard reports `blocking-scope-findings`, `must-preserve`, validation gaps,
+and routing. The orchestrator decides which findings become verifier input or
+follow-up worker assignments.
 
 ## Verifier Workflow
 

@@ -56,6 +56,14 @@ a temporary probe or source-level comparison before accepting. Reject patches
 that only pass weaker semantic probes when the excerpt requires exact ordering,
 punctuation, argument placement, or output shape.
 
+For UI/component work, classify the task before accepting the diff. Additive
+public-surface tasks such as story/export/example/symbol exposure should not
+rewrite existing focus, input, paste, keyboard, accessibility, or form
+integration behavior unless the issue explicitly requires it. If those behavior
+paths changed, run or require the full nearby component interaction test
+file/package. A failure in that file is blocking even if a new story, example,
+or single expected test passes.
+
 For compiled languages, do not accept a patch that changes a test-referenced
 helper signature after only static source inspection. Run or attempt a package
 compile check that includes test files, or explicitly compare the old and new

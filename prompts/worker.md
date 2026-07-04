@@ -69,6 +69,14 @@ expected outputs, write a temporary source-level probe that asserts the same
 literal shape. Do not replace an exact-order contract with a weaker semantic
 smoke check.
 
+For UI/component tasks, classify the request before editing. If the issue asks
+for additive public surface such as a story, export, example, or named symbol,
+prefer adding that surface while preserving the existing component
+implementation. Do not rewrite focus, input, paste, keyboard, accessibility, or
+form integration behavior unless the issue explicitly requires it. If you touch
+those interaction paths, run or attempt the full nearby component interaction
+test file/package and treat any failure there as a blocker.
+
 For compiled languages, run or attempt a package compile check that includes
 test files for every touched package. If that check times out or cannot run,
 inspect test-referenced helper signatures manually and report the timeout as

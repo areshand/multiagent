@@ -173,6 +173,14 @@ Worker quality bar:
   first visible symptom.
 - The worker must prefer the smallest source-only patch that directly addresses
   the issue. Broad rewrites and speculative cleanups usually fail hidden tests.
+- For UI/component tasks, classify the issue before editing. If it asks for an
+  additive public surface such as Storybook coverage, a story named `Basic`, an
+  export, example, or component exposure, preserve the existing component
+  implementation and add the smallest public surface. Do not rewrite focus,
+  input, paste, keyboard, accessibility, or form integration behavior unless the
+  issue explicitly requires behavior changes. If those interaction paths are
+  touched, run or attempt the full nearby component interaction test file, not
+  only a new story or smoke case.
 - The worker must inspect existing tests or call sites that encode the expected
   behavior, even if it cannot run the full suite.
 - If the issue, contract ledger, or official test excerpt shows a literal
@@ -749,6 +757,11 @@ Verifier quality bar:
 - It must compare the patch against neighboring call sites and tests for
   semantic completeness, not just syntax. Reject broad patches that satisfy one
   path while obviously missing adjacent cases in the same file/package.
+- It must classify UI/component tasks as additive public-surface work versus
+  behavior rewrites. For story/export/example/component-exposure tasks, reject a
+  broad rewrite of existing input, focus, paste, keyboard, accessibility, or
+  form integration behavior unless the issue explicitly requires that rewrite
+  and the full nearby component interaction test file/package passes.
 - If the issue or official test excerpt includes a concrete expected command
   argv, serialized output, error string, return value, or ordered collection,
   the verifier must reproduce that exact assertion with a temporary probe or
@@ -936,6 +949,10 @@ As orchestrator:
    TTL and the repository has database/cache adapters, include those helper
    paths in a bounded worker or spawn a separate helper-layer worker up front.
    Do not defer this until after a feature-only patch is otherwise complete.
+   Also decide whether a UI/component task is additive public-surface work or a
+   behavior rewrite. For additive story/export/example/exposure tasks, route the
+   worker toward the smallest additive source change and preserve existing
+   interaction behavior.
 7. Before writing completed status, spawn and inspect one read-only verifier.
 8. Before writing completed status, run the helper-scope audit from the
    benchmark instructions. For key/fallback/expired/cache/database issues,
@@ -2263,6 +2280,49 @@ def implementation_scope_blockers(
         and path not in go_metadata_changed_paths
         and path not in generated_mock_changed_paths
     ]
+    ui_component_source_changed = any(
+        path.endswith((".tsx", ".jsx", ".ts", ".js"))
+        and any(segment in path.lower() for segment in ("/components/", "/component/", "/containers/", "/views/"))
+        for path in source_changed_paths
+    )
+    ui_additive_surface_issue = any(
+        marker in issue_lower
+        for marker in (
+            "storybook",
+            " story",
+            "stories",
+            "export",
+            "expose",
+            "exposed",
+            "public surface",
+            "example",
+        )
+    )
+    ui_interaction_failure_evidence = (
+        ui_component_source_changed
+        and any(marker in status_text for marker in ("test.tsx", "test.jsx", "testing-library", "jest"))
+        and any(marker in status_text for marker in ("failed", "failing", "expected", "received", "not.to", "tohavefocus"))
+        and not any(marker in status_text for marker in ("component-interaction-tests-passed:", "all component interaction tests passed"))
+    )
+    if ui_interaction_failure_evidence:
+        blockers.append(
+            "[OFFICIAL-HARD] UI/component source changed and validation reports nearby component interaction test failures; "
+            "do not accept a story/export/component-surface patch while focus, input, paste, keyboard, accessibility, or form behavior tests fail"
+        )
+    if ui_component_source_changed and ui_additive_surface_issue and not any(
+        marker in status_text
+        for marker in (
+            "component-interaction-tests-passed:",
+            "full nearby component interaction test",
+            "full component interaction test",
+            "full test file",
+            "official-test-source-inspected:",
+        )
+    ):
+        blockers.append(
+            "[OFFICIAL-HARD] additive UI/component public-surface task changed existing component source, but status does not show the full nearby interaction test file passed or was source-inspected; "
+            "prefer the smallest additive story/export/source-surface patch and preserve existing interaction behavior"
+        )
     for symbol in required_public_symbols(issue, metadata):
         if symbol.lower() not in evidence:
             blockers.append(

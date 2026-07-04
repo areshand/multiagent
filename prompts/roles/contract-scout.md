@@ -32,6 +32,8 @@ Report a concise ledger with:
 - exact symbol contracts referenced by tests or issue text, including
   package-private or unexported helper names, arity, parameter order, return
   shape, and package placement
+- task-shape classification: additive exposure, behavioral fix, refactor,
+  migration, infra-only, or measurement/eval
 - public evidence from source, tests, docs, issue text, or benchmark metadata
 - hidden-test hypotheses
 - validation plan
@@ -43,6 +45,13 @@ symbols, treat that exact shape as normative unless source evidence proves
 otherwise. Do not limit this to exported APIs: same-package tests can depend on
 unexported helper signatures, and changing those signatures can fail hidden
 tests even when production call sites compile.
+
+For UI/component tasks, explicitly distinguish additive public-surface work
+from behavior rewrites. If the request is about storybook coverage, export
+surface, examples, or exposing a named component/story, preserve existing
+focus, input, paste, keyboard, accessibility, and form integration behavior
+unless the issue explicitly asks to change it. Name the full nearby interaction
+test file/package that must pass if those behaviors are touched.
 
 ## Output Format
 
