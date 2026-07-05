@@ -5843,6 +5843,29 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     coverage_followup_limit = int(os.environ.get("EVAL_COVERAGE_FOLLOWUP_LIMIT", "3"))
     early_scope_followup_limit = int(os.environ.get("EVAL_EARLY_SCOPE_FOLLOWUP_LIMIT", "3"))
     adapter_helper_worker_limit = int(os.environ.get("EVAL_ADAPTER_HELPER_WORKER_LIMIT", "1"))
+    adapter_helper_mode = os.environ.get("EVAL_ADAPTER_HELPER_MODE", "advisory").strip().lower()
+    adapter_helper_source_edit_opt_in = os.environ.get("EVAL_ADAPTER_HELPER_ALLOW_SOURCE_EDITS", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    adapter_helper_repair_enabled = adapter_helper_mode in {"repair", "source-edit", "source_edits"} or adapter_helper_source_edit_opt_in
+    adapter_helper_advisory_logs: set[str] = set()
+
+    def adapter_helper_repair_allowed(context: str) -> bool:
+        if adapter_helper_repair_enabled:
+            return True
+        if context not in adapter_helper_advisory_logs:
+            adapter_helper_advisory_logs.add(context)
+            log(
+                "adapter helper advisory mode: not spawning source-editing helper for "
+                f"{context}; set EVAL_ADAPTER_HELPER_MODE=repair only for explicit adapter-repair experiments"
+            )
+        return False
+
+    if not adapter_helper_repair_enabled and adapter_helper_mode not in {"", "advisory", "observe", "read-only", "readonly"}:
+        log(f"unknown EVAL_ADAPTER_HELPER_MODE={adapter_helper_mode!r}; using advisory mode")
     early_adapter_helper_spawn_enabled = os.environ.get("EVAL_ADAPTER_HELPER_EARLY_SPAWN", "0").strip().lower() in {
         "1",
         "true",
@@ -5929,6 +5952,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         if (
                             not has_live_agent_process()
                             and adapter_helper_workers_spawned < adapter_helper_worker_limit
+                            and adapter_helper_repair_allowed("weak completion")
                         ):
                             adapter_helper_workers_spawned += 1
                             try:
@@ -5963,6 +5987,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                             orchestrator_exited_without_status(text)
                             and not has_live_agent_process()
                             and adapter_helper_workers_spawned < adapter_helper_worker_limit
+                            and adapter_helper_repair_allowed("rejected completion")
                         ):
                             adapter_helper_workers_spawned += 1
                             try:
@@ -6043,6 +6068,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                                 early_adapter_helper_spawn_enabled
                                 and not has_live_agent_process()
                                 and adapter_helper_workers_spawned < adapter_helper_worker_limit
+                                and adapter_helper_repair_allowed("early scope warning")
                             ):
                                 adapter_helper_workers_spawned += 1
                                 try:
@@ -6101,6 +6127,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                                 orchestrator_exited_without_status(text)
                                 and not has_live_agent_process()
                                 and adapter_helper_workers_spawned < adapter_helper_worker_limit
+                                and adapter_helper_repair_allowed("rejected recovered completion")
                             ):
                                 adapter_helper_workers_spawned += 1
                                 try:
@@ -6213,6 +6240,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         tmux_has_session(session)
                         and not has_live_agent_process()
                         and adapter_helper_workers_spawned < adapter_helper_worker_limit
+                        and adapter_helper_repair_allowed("final verifier/probe mismatch")
                     ):
                         adapter_helper_workers_spawned += 1
                         try:
@@ -6290,44 +6318,48 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         scope_blockers = blockers
                         coverage_blockers = []
                     if blockers:
-                        if tmux_has_session(session) and adapter_helper_workers_spawned < adapter_helper_worker_limit:
-                            probe_report = ""
-                            probe_passed = False
-                            if coverage_probe_commands(workdir, issue, diff):
-                                probe_report, probe_passed = run_validation_coverage_probe(
-                                    workdir,
-                                    issue,
-                                    diff,
-                                    blockers,
+                        probe_report = ""
+                        probe_passed = False
+                        if coverage_probe_commands(workdir, issue, diff):
+                            probe_report, probe_passed = run_validation_coverage_probe(
+                                workdir,
+                                issue,
+                                diff,
+                                blockers,
+                            )
+                        if probe_passed:
+                            coverage_probe_satisfied = True
+                            latest_diff = git_diff(workdir)
+                            scope_blockers = implementation_scope_blockers(issue, latest_diff, {}, task_metadata)
+                            blockers = blockers_after_passing_public_probe(scope_blockers)
+                            if not blockers and latest_diff.strip():
+                                STATUS_PATH.write_text(
+                                    json.dumps(
+                                        {
+                                            "status": "completed",
+                                            "summary": "orchestrator exited after adapter public validation; preserving current source diff",
+                                            "validation": recovered_validation_text(
+                                                task_metadata,
+                                                text,
+                                                f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
+                                            ),
+                                            "risk": "completion marker recovered by benchmark wrapper after orchestrator exit",
+                                        }
+                                    ),
+                                    encoding="utf-8",
                                 )
-                            if probe_passed:
-                                coverage_probe_satisfied = True
-                                latest_diff = git_diff(workdir)
-                                scope_blockers = implementation_scope_blockers(issue, latest_diff, {}, task_metadata)
-                                blockers = blockers_after_passing_public_probe(scope_blockers)
-                                if not blockers and latest_diff.strip():
-                                    STATUS_PATH.write_text(
-                                        json.dumps(
-                                            {
-                                                "status": "completed",
-                                                "summary": "orchestrator exited after adapter helper validation; preserving current source diff",
-                                                "validation": recovered_validation_text(
-                                                    task_metadata,
-                                                    text,
-                                                    f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
-                                                ),
-                                                "risk": "completion marker recovered by benchmark wrapper after orchestrator exit",
-                                            }
-                                        ),
-                                        encoding="utf-8",
-                                    )
-                                    log("completion marker recovered after adapter public probe passed following orchestrator exit")
-                                    outcome = "recovered"
-                                    break
-                                log(
-                                    "adapter public probe passed after orchestrator exit, but implementation blockers remain: "
-                                    + "; ".join(blockers)
-                                )
+                                log("completion marker recovered after adapter public probe passed following orchestrator exit")
+                                outcome = "recovered"
+                                break
+                            log(
+                                "adapter public probe passed after orchestrator exit, but implementation blockers remain: "
+                                + "; ".join(blockers)
+                            )
+                        if (
+                            tmux_has_session(session)
+                            and adapter_helper_workers_spawned < adapter_helper_worker_limit
+                            and adapter_helper_repair_allowed("orchestrator exit coverage blockers")
+                        ):
                             adapter_helper_workers_spawned += 1
                             try:
                                 helper_worker = spawn_adapter_helper_worker(

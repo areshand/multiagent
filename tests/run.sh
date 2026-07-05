@@ -375,6 +375,10 @@ assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "validat
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "Do not spawn a verifier while a worker still owns"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "fixture/testdata files are the exception"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "internal/ext/testdata/export_sorted.yml"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_ADAPTER_HELPER_MODE"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "adapter helper advisory mode: not spawning source-editing helper"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" 'adapter_helper_repair_allowed("final verifier/probe mismatch")'
+assert_file_contains "$ROOT/evaluation/README.md" "adapter helper defaults to advisory mode"
 python3 - "$ROOT" <<'PY'
 import os
 import subprocess

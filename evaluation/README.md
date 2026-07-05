@@ -113,6 +113,13 @@ Set `EVAL_VALIDATION_PROBE_TIMEOUT` to cap each adapter-selected probe command.
 The default is `300` seconds. Lower it for high-parallelism or Rosetta runs when
 the official verifier remains the authoritative scorer.
 
+The adapter helper defaults to advisory mode. It may run read-only public probes
+and send follow-up messages to the orchestrator, but it will not spawn
+`worker-adapter-helper-*` source editors that mutate `/app` outside the
+production orchestrator loop. Set `EVAL_ADAPTER_HELPER_MODE=repair` only for
+explicit adapter-repair experiments, not production-capability score
+comparisons.
+
 ## Security Model
 
 The `ponytail` adapter scores agent output by importing and executing the
