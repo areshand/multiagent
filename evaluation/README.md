@@ -109,6 +109,11 @@ before returning a diff to the official verifier. Those probes catch weak
 completion markers, but they are not a replacement for official scoring and can
 be expensive under amd64 emulation.
 
+The production SWE adapter is split so the entrypoint stays focused on
+orchestration state: reusable source/diff guardrails live in
+`evaluation/native_solver/swe_prod_guardrails.py`, while the benchmark bootstrap
+instructions live under `evaluation/native_solver/templates/`.
+
 Set `EVAL_VALIDATION_PROBE_TIMEOUT` to cap each adapter-selected probe command.
 The default is `300` seconds. Lower it for high-parallelism or Rosetta runs when
 the official verifier remains the authoritative scorer.
