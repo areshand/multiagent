@@ -18,11 +18,10 @@ Hard requirements:
 5. Do not ask the user for clarification. Make a reasonable assumption and
    record it in the final status if needed.
 6. Do not modify tests, lockfiles, generated assets, bundled public assets, or
-   unrelated config unless the issue explicitly requires it. Benchmark-required
-   fixture/testdata files are the exception: if official expected tests or the
-   official test patch reference missing files under paths such as `testdata/`,
-   `fixtures/`, `golden/`, or snapshot directories, add the minimal required
-   fixture assets so the normative tests can run. In web repos, paths such as
+   unrelated config unless the issue explicitly requires it. Fixture/testdata
+   files are the exception only when legitimate product paths, visible tests, or
+   source-derived validation require files under paths such as `testdata/`,
+   `fixtures/`, `golden/`, or snapshot directories. In web repos, paths such as
    `public/assets/`, `public/build/`, `public/dist/`, bundled `*.bundle.*`, and
    minified `*.min.*` outputs are generated artifacts, not acceptable source
    fixes.
@@ -34,10 +33,11 @@ Hard requirements:
    in adjacent cases inside the same file.
    If the task says a class/function/type "must be exposed as" a specific name,
    implement that exact public symbol in source before trusting visible tests.
-   If the adapter lists official `FAIL_TO_PASS` or `PASS_TO_PASS` tests, treat
-   those test names as normative. Do not call one stale, fixture-mismatched, or
-   incompatible to justify completion; either make the selected test pass, prove
-   the official harness does not run it, or write blocked status.
+   Do not rely on leaked evaluator tests, hidden test names, official expected
+   rows, or benchmark-only metadata as implementation guidance. Infer unstated
+   contracts from legitimate task/source/product evidence: issue text, visible
+   tests, docs, source callers, public APIs, data schemas, fixtures, and runtime
+   behavior.
 8. When finished, write JSON to `/tmp/multiagent-prod-swe/status.json`:
    `{"status":"completed","summary":"...","validation":"...","risk":"..."}`
    If blocked, write `{"status":"blocked","reason":"..."}`.
@@ -160,19 +160,15 @@ Worker quality bar:
   only a new story or smoke case.
 - The worker must inspect existing tests or call sites that encode the expected
   behavior, even if it cannot run the full suite.
-- If the issue, contract ledger, or official test excerpt shows a literal
+- If the issue, contract ledger, visible tests, docs, or source evidence shows a literal
   expected value, command argv, serialized output, error text, or ordered list,
   the worker must treat that exact shape as normative. Preserve order and
   punctuation unless source evidence proves the excerpt is only illustrative.
-  If the exact official test is unavailable locally, create a temporary
-  source-level probe that asserts the same literal shape; do not substitute a
-  weaker semantic smoke check.
-- Treat every symbol referenced by issue text, visible tests, official expected
-  tests, or official test excerpts as a compatibility contract, including
+- Treat every symbol referenced by issue text, visible tests, docs, source
+  callers, public APIs, schemas, or runtime boundaries as a compatibility contract, including
   package-private or unexported helpers in same-package tests. Do not change a
   referenced helper's name, arity, parameter order, return shape, or package
-  placement unless you have source evidence that all expected tests and callers
-  use the new shape. Hidden tests may compile package-private helpers directly.
+  placement unless you have source evidence that compatibility is preserved.
 - For compiled languages, a timed-out compile/test command is not validation
   success. If a package compile check cannot complete, explicitly inspect
   test-referenced helper signatures and record the timeout as unresolved risk
@@ -325,11 +321,9 @@ Worker quality bar:
   a Node/TS task should prefer the nearby Jest/Mocha test file or workspace test
   script; a Go task should prefer the owning package with `go test`; a Python
   task should prefer the nearby pytest module or test class.
-- If an official expected test or patch excerpt reads fixture/testdata files
-  that are absent from the checkout, add the minimal required fixture files
-  rather than reporting the test as stale or fixture-mismatched. Fixture assets
-  under paths such as `testdata/`, `fixtures/`, `golden/`, or snapshots are
-  allowed when they are required for normative benchmark tests to execute.
+- If legitimate product paths, visible tests, or source-derived validation read
+  fixture/testdata files that are absent from the checkout, add the minimal
+  required fixture files rather than reporting the path as fixture-mismatched.
 - The worker must not launch duplicate expensive compile/test commands for the
   same package. If an identical package validation is already running in another
   live worker/verifier, wait for that result or report the overlap to the
@@ -774,7 +768,7 @@ Verifier quality bar:
   broad rewrite of existing input, focus, paste, keyboard, accessibility, or
   form integration behavior unless the issue explicitly requires that rewrite
   and the full nearby component interaction test file/package passes.
-- If the issue or official test excerpt includes a concrete expected command
+- If the issue, visible tests, docs, or source evidence includes a concrete expected command
   argv, serialized output, error string, return value, or ordered collection,
   the verifier must reproduce that exact assertion with a temporary probe or
   source-level comparison before accepting. Reject patches that only prove a
@@ -928,4 +922,3 @@ performed.
 The benchmark will score only `git diff --binary` from `/app`.
 
 ## SWE Issue Text For Worker Assignments
-

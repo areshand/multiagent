@@ -92,8 +92,9 @@ orchestrator accepts no follow-up, or the accepted follow-up count reaches
 you would otherwise accept, explicitly accept with residual risk, reject, or ask
 the user.
 
-The verifier module requires a verifier contract ledger, Synthesize hidden-test-style probes,
-assumption challenges, and the instruction to Run a Ponytail over-engineering pass.
+The verifier module requires a verifier contract ledger, source-derived
+hidden-contract probes, assumption challenges, and the instruction to Run a
+Ponytail over-engineering pass.
 The orchestrator decides which findings become accepted follow-up; never pass
 raw verifier findings directly to the worker as orders.
 

@@ -32,6 +32,7 @@ Modules:
 - Worker first-instruction template: `$PROMPT_DIR/prompts/worker.md`
 - Verifier role template: `$PROMPT_DIR/prompts/verifier.md`
 - Contract scout role template: `$PROMPT_DIR/prompts/roles/contract-scout.md`
+- Acceptance scout role template: `$PROMPT_DIR/prompts/roles/acceptance-scout.md`
 - Scope guard role template: `$PROMPT_DIR/prompts/roles/scope-guard.md`
 - Validation coordinator role template: `$PROMPT_DIR/prompts/roles/validation-coordinator.md`
 - Organizational learning roles: `$PROMPT_DIR/prompts/roles/organizational-learning.md`
@@ -135,8 +136,13 @@ selection.
 
 Core routing rules:
 
-- Use `prompts/roles/contract-scout.md` before implementation when contract,
-  hidden-test, benchmark/eval, public API, or proxy/scaffold risk is material.
+- Use `prompts/roles/contract-scout.md` before implementation when user intent,
+  proxy/scaffold, target-system, or broad contract risk is material.
+- Use `prompts/roles/acceptance-scout.md` before implementation when a patch
+  could pass visible checks while missing source-derived hidden contracts,
+  public API shape, edge cases, data shape, runtime behavior, or compatibility
+  expectations. Do not use leaked evaluator tests or hidden row metadata as
+  implementation guidance.
 - Use `prompts/roles/scope-guard.md` after a risky diff, especially additive UI
   surface work, helper-layer changes, generated/test-only changes, or broad
   rewrites.

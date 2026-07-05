@@ -299,21 +299,26 @@ assert_file_contains "$ROOT/prompts/worker.md" "return shape, or package placeme
 assert_file_contains "$ROOT/prompts/worker.md" "additive public surface"
 assert_file_contains "$ROOT/prompts/worker.md" "one expensive validation command"
 assert_file_contains "$ROOT/prompts/worker.md" "validation lease"
-assert_file_contains "$ROOT/prompts/worker.md" "benchmark-required assets"
+assert_file_contains "$ROOT/prompts/worker.md" "legitimate product or visible-test paths"
 assert_file_contains "$ROOT/prompts/verifier.md" "Verifier Role Prompt"
-assert_file_contains "$ROOT/prompts/verifier.md" "Hidden-Test-Style Probes"
-assert_file_contains "$ROOT/prompts/verifier.md" "not acceptance evidence"
+assert_file_contains "$ROOT/prompts/verifier.md" "Hidden Contract Verification"
+assert_file_contains "$ROOT/prompts/verifier.md" "unresolved risk"
 assert_file_contains "$ROOT/prompts/verifier.md" "component interaction test"
 assert_file_contains "$ROOT/prompts/verifier.md" "overlapping validators"
 assert_file_contains "$ROOT/prompts/verifier.md" "validation lease"
 assert_file_contains "$ROOT/prompts/verifier.md" "blocked-validations:"
-assert_file_contains "$ROOT/prompts/verifier.md" "Benchmark-required fixtures"
+assert_file_contains "$ROOT/prompts/verifier.md" "Do not rely on leaked evaluator tests"
+assert_file_contains "$ROOT/prompts/verifier.md" "source-derived equivalence classes"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "Contract Scout Role Prompt"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "must-preserve"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "mismatch-risk"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "unexported helper signatures"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "task-shape classification"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "fixture assets"
+assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "Acceptance Scout Role Prompt"
+assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "hidden-contract-ledger"
+assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "Do not rely on leaked evaluator tests"
+assert_file_contains "$ROOT/orchestrator_prompt.md" "acceptance-scout.md"
 assert_file_contains "$ROOT/prompts/roles/scope-guard.md" "Scope Guard Role Prompt"
 assert_file_contains "$ROOT/prompts/roles/scope-guard.md" "blocking-scope-findings"
 assert_file_contains "$ROOT/prompts/roles/validation-coordinator.md" "Validation Coordinator Role Prompt"
@@ -332,8 +337,8 @@ assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "next-va
 assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "Do not spawn a verifier"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Agent Spawning Playbook"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Ponytail implementation discipline"
-assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Run a Ponytail over-engineering pass"
-assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Synthesize hidden-test-style probes"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Ponytail over-engineering pass"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "hidden-contract probes"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" 'verifier suggests no follow-up'
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" 'WORKER_CLI="${WORKER_CLI:-claude}"'
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "Orchestration Routing Playbook"
@@ -352,13 +357,15 @@ assert_file_contains "$ROOT/README.md" "./launch.sh --resume"
 assert_file_contains "$ROOT/README.md" "Prompt Modules"
 assert_file_contains "$ROOT/README.md" "validation lease table"
 assert_file_contains "$ROOT/README.md" "Contract Scout Workflow"
+assert_file_contains "$ROOT/README.md" "acceptance-scout.md"
 assert_file_contains "$ROOT/README.md" "Scope Guard Workflow"
 assert_file_contains "$ROOT/README.md" "Validation Coordinator Workflow"
 assert_file_contains "$ROOT/README.md" "proxy behavior"
 assert_file_contains "$ROOT/README.md" "Verifier Workflow"
 assert_file_contains "$ROOT/README.md" "MULTIAGENT_VERIFIER_MAX_ITERATIONS=3"
 assert_file_contains "$ROOT/README.md" "compact contract ledger"
-assert_file_contains "$ROOT/README.md" "hidden-test-style edge cases"
+assert_file_contains "$ROOT/README.md" "hidden-contract edge cases"
+assert_file_contains "$ROOT/README.md" "hidden-contract-ledger"
 assert_file_contains "$ROOT/README.md" 'WORKER_CLI`: worker CLI for manual worker windows, default `claude`'
 assert_file_contains "$ROOT/README.md" 'VERIFIER_CLI`: verifier CLI, default `codex`'
 assert_file_contains "$ROOT/README.md" "Evaluation Framework"
@@ -373,7 +380,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "ad
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "One active validator per package/path"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "validation lease table"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Do not spawn a verifier while a worker still owns"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "fixture/testdata files are the exception"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Fixture/testdata"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "internal/ext/testdata/export_sorted.yml"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_ADAPTER_HELPER_MODE"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "adapter helper advisory mode: not spawning source-editing helper"
@@ -450,6 +457,8 @@ row56_status = {
         "official-test-source-inspected: internal/config/config_test.go"
     ),
 }
+assert not solve_swe_prod.official_expected_test_blockers(metadata, row56_status), "expected-test guidance should be off by default"
+os.environ["EVAL_ALLOW_EXPECTED_TEST_GUIDANCE"] = "1"
 blockers = solve_swe_prod.official_expected_test_blockers(metadata, row56_status)
 assert any("stale, failing" in blocker and "TestLoad" in blocker for blocker in blockers), blockers
 absent_patch_status = {
@@ -460,6 +469,7 @@ absent_patch_status = {
     ),
 }
 assert not solve_swe_prod.official_expected_test_blockers(metadata, absent_patch_status), solve_swe_prod.official_expected_test_blockers(metadata, absent_patch_status)
+os.environ.pop("EVAL_ALLOW_EXPECTED_TEST_GUIDANCE", None)
 ansible_commands = solve_swe_prod.coverage_probe_commands(
     Path("/tmp"),
     "PowerShell CLIXML should decode escaped strings.",

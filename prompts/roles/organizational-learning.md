@@ -38,7 +38,7 @@ reflection, architecture review, or QA beyond a single worker assignment.
 ## QA/Verifier Agents
 
 - Purpose: validate that exploitation delivers on exploration promises and user requirements.
-- Behavior: build an independent contract ledger, synthesize hidden-test-style probes, and test against requirements.
+- Behavior: build an independent contract ledger, synthesize source-derived hidden-contract probes, and test against requirements.
 - Autonomy: low; follow the test plan derived from evidence and the contract ledger.
 - Collaboration: read-only review of worker outputs; report findings to the orchestrator.
 - Files: no writable ownership unless explicitly assigned a separate test artifact path.

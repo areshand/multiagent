@@ -71,8 +71,8 @@ implementation discipline.
 Spawn a verifier after a worker reports final status or is otherwise ready for
 acceptance review. Load `prompts/playbooks/agent-spawning.md` for the
 worker/verifier loop mechanics and `prompts/verifier.md` for the review role.
-The verifier module requires a verifier contract ledger, hidden-test-style
-probes, assumption challenges, and an over-engineering pass.
+The verifier module requires a verifier contract ledger, source-derived
+hidden-contract probes, assumption challenges, and an over-engineering pass.
 
 Before spawning the verifier, load `prompts/playbooks/validation-scheduling.md`
 if the worker ran or is running expensive validation. Do not spawn the verifier

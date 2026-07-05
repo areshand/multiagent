@@ -34,21 +34,18 @@ Also include:
   command argv, serialized output, error text, or ordered list, treat that
   exact shape as part of the contract. Preserve order and punctuation unless
   source evidence proves the excerpt is non-normative.
-- Treat symbols referenced by issue text, tests, or official/hidden-test
-  excerpts as compatibility contracts even when they are package-private or
-  unexported. Do not change a referenced helper's name, arity, parameter order,
-  return shape, or package placement unless you have updated all reachable
-  callers and have source evidence that hidden tests do not import or call it.
-- If a benchmark or task prompt lists official expected tests, treat every
-  listed `FAIL_TO_PASS` and `PASS_TO_PASS` test as normative. Do not report a
-  listed test as stale, fixture-mismatched, or incompatible to justify
-  completion; either make it pass, prove the official harness excludes it, or
-  report blocked.
-- If an official expected test, patch, or excerpt references missing fixture
-  assets under paths such as `testdata/`, `fixtures/`, `golden/`, or snapshots,
-  add the minimal required assets instead of dismissing the test as fixture
-  mismatched. These benchmark-required assets are allowed even when ordinary
-  test rewrites are out of scope.
+- Treat symbols referenced by issue text, visible tests, docs, source callers,
+  public APIs, schemas, or runtime boundaries as compatibility contracts even
+  when they are package-private or unexported. Do not change a referenced
+  helper's name, arity, parameter order, return shape, or package placement
+  unless you have updated all reachable callers and have source evidence that
+  compatibility is preserved.
+- Do not rely on leaked evaluator tests, hidden test names, official expected
+  rows, or benchmark-only metadata as implementation guidance. Infer unstated
+  contracts from legitimate task/source/product evidence.
+- If legitimate product or visible-test paths reference missing fixture assets
+  under paths such as `testdata/`, `fixtures/`, `golden/`, or snapshots, add the
+  minimal required assets instead of dismissing the path as fixture-mismatched.
 
 ## Repo Write Policy
 
@@ -79,10 +76,9 @@ Do not simplify away trust-boundary validation, data-loss handling, security
 measures, accessibility basics, real-world calibration, or explicit user scope.
 Non-trivial logic should leave one minimal runnable check when practical.
 
-If exact hidden/official tests are unavailable but their excerpts show concrete
-expected outputs, write a temporary source-level probe that asserts the same
-literal shape. Do not replace an exact-order contract with a weaker semantic
-smoke check.
+If visible task evidence shows concrete expected outputs, write a temporary
+source-level probe that asserts the same literal shape. Do not replace an
+exact-order contract with a weaker semantic smoke check.
 
 For UI/component tasks, classify the request before editing. If the issue asks
 for additive public surface such as a story, export, example, or named symbol,

@@ -75,6 +75,7 @@ role or workflow is needed:
 - `prompts/worker.md`
 - `prompts/verifier.md`
 - `prompts/roles/contract-scout.md`
+- `prompts/roles/acceptance-scout.md`
 - `prompts/roles/scope-guard.md`
 - `prompts/roles/validation-coordinator.md`
 - `prompts/roles/organizational-learning.md`
@@ -99,7 +100,7 @@ orchestrator prompt should load it only when it is about to spawn, monitor,
 replace, verify, or finalize agents.
 
 `prompts/playbooks/intent-contract.md` contains the detailed user-intent,
-contract-ledger, hidden-test, and proxy/scaffold mismatch discipline. The core
+contract-ledger, hidden-contract, and proxy/scaffold mismatch discipline. The core
 orchestrator prompt keeps only the trigger rule and delegates detailed contract
 extraction to the contract scout when risk is material.
 
@@ -113,13 +114,20 @@ orchestrator prompt keeps only the decision rules for when to use those roles.
 
 ## Contract Scout Workflow
 
-For coding tasks with ambiguous scope, sparse public tests, hidden-test risk,
-benchmark/eval implications, public API uncertainty, or proxy/scaffold risk,
+For coding tasks with ambiguous scope, sparse public tests, hidden-contract
+risk, benchmark/eval implications, public API uncertainty, or proxy/scaffold risk,
 the orchestrator should spawn a read-only contract scout before implementation.
 The scout extracts the user's real intent, target system or artifact, exact
-API/output/order/state contracts, hidden-test hypotheses, validation plan, and
+API/output/order/state contracts, hidden-contract hypotheses, validation plan, and
 any mismatch that would make a technically executable path answer the wrong
 question.
+
+Use `prompts/roles/acceptance-scout.md` before implementation when a patch could
+pass visible checks while missing source-derived edge cases, data shape,
+runtime behavior, public API shape, or compatibility expectations. The
+acceptance scout produces a `hidden-contract-ledger` and must infer contracts
+from legitimate task/source/product evidence, not leaked evaluator tests,
+official expected rows, hidden row names, or benchmark-only metadata.
 
 Use the same subagent helper with the verifier CLI:
 
@@ -191,7 +199,7 @@ The verifier checks:
 - quality gaps
 - missing tests or docs
 - whether the task scope is fully satisfied
-- hidden-test-style edge cases such as boundaries, malformed inputs, no-op
+- hidden-contract edge cases such as boundaries, malformed inputs, no-op
   cases, ignored/excluded inputs, compatibility, API shape, and exact return
   semantics
 - material worker assumptions that need source, test, or docs evidence

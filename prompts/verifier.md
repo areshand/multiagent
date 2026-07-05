@@ -32,15 +32,16 @@ Report a compact verifier contract ledger:
 - intended outcome
 - changed behavior
 - public evidence
-- inferred hidden contracts
+- inferred hidden contracts with source evidence
 - assumptions
 - probes run
 - untested risk
 - final recommendation
 
-## Hidden-Test-Style Probes
+## Hidden Contract Verification
 
-Before recommending acceptance, synthesize probes that resemble hidden tests.
+Before recommending acceptance, synthesize probes for hidden or unstated
+contracts that are inferable from legitimate task/source/product evidence.
 Prioritize:
 
 - boundary cases
@@ -52,30 +53,34 @@ Prioritize:
 - concurrency and idempotency cases
 - exact error, return-value, and output semantics
 - literal expected command argv, serialized output, error text, and ordered
-  collection semantics from any issue or test excerpt
+  collection semantics from issue text, visible tests, docs, source, or public
+  API behavior
 - names, arity, parameter order, return shape, and package placement for any
-  symbol referenced by issue text, visible tests, or official/hidden-test
-  excerpts, including package-private or unexported helpers
+  symbol referenced by issue text, visible tests, docs, source callers, public
+  APIs, schemas, or runtime boundaries, including package-private or unexported
+  helpers
+- source-derived equivalence classes from data tables, parsers, serializers,
+  adapters, public callers, persistence formats, schemas, and neighboring tests
 
 Challenge material worker assumptions explicitly. For each assumption, validate
 it from source/tests/docs, cover it with a probe, or mark it as residual risk.
 
-If an exact hidden or official test is unavailable but the prompt includes a
-test excerpt with a concrete expected value, reproduce that exact assertion with
-a temporary probe or source-level comparison before accepting. Reject patches
-that only pass weaker semantic probes when the excerpt requires exact ordering,
-punctuation, argument placement, or output shape.
+Do not rely on leaked evaluator tests, hidden test names, official expected
+rows, or benchmark-only metadata as implementation guidance. The verifier may
+use benchmark scores or hidden-test failures as post-hoc diagnostics, but
+acceptance during solving must be based on user intent, issue text, visible
+tests, docs, source compatibility behavior, public APIs, data schemas, and
+runtime behavior.
 
-If a benchmark prompt lists official expected tests, treat every listed
-`FAIL_TO_PASS` and `PASS_TO_PASS` test as normative acceptance evidence. Reject
-completion that calls one of those tests stale, fixture-mismatched, incompatible
-with the checkout, or otherwise failing unless the verifier can prove the
-official harness excludes that test.
+If visible task evidence includes a concrete expected value, reproduce that
+exact assertion with a temporary probe or source-level comparison before
+accepting. Reject patches that only pass weaker semantic probes when legitimate
+evidence requires exact ordering, punctuation, argument placement, or output
+shape.
 
-If an official expected test, patch, or excerpt references missing fixture
-assets under `testdata/`, `fixtures/`, `golden/`, or snapshot paths, reject a
-source-only completion that omits those assets. Benchmark-required fixtures are
-part of the submitted patch contract, not optional test maintenance.
+If legitimate product paths or visible tests reference missing fixture assets
+under `testdata/`, `fixtures/`, `golden/`, or snapshot paths, reject a
+source-only completion that omits those assets.
 
 For UI/component work, classify the task before accepting the diff. Additive
 public-surface tasks such as story/export/example/symbol exposure should not
@@ -85,11 +90,12 @@ paths changed, run or require the full nearby component interaction test
 file/package. A failure in that file is blocking even if a new story, example,
 or single expected test passes.
 
-For compiled languages, do not accept a patch that changes a test-referenced
-helper signature after only static source inspection. Run or attempt a package
-compile check that includes test files, or explicitly compare the old and new
-signature against every reachable call site and the official excerpt. A timed
-out compile/test command is unresolved risk, not acceptance evidence.
+For compiled languages, do not accept a patch that changes a test-referenced or
+caller-referenced helper signature after only static source inspection. Run or
+attempt a package compile check that includes test files, or explicitly compare
+the old and new signature against every reachable call site and visible
+compatibility evidence. A timed out compile/test command is unresolved risk, not
+acceptance evidence.
 If compile/test validation is already running in another live worker/verifier
 for the same package, do not start a duplicate command. Inspect the running
 command, wait for its result, or reject with a clear orchestration finding that
