@@ -1192,6 +1192,49 @@ def captured_text() -> str:
     return "\n".join(chunks).lower()
 
 
+def emit_failure_diagnostics(session: str, *, limit: int = 24000) -> None:
+    """Print compact runtime diagnostics before the sandbox is deleted."""
+    sections: list[str] = ["failure diagnostics:"]
+    if STATUS_PATH.exists():
+        try:
+            sections.append("status.json:\n" + STATUS_PATH.read_text(encoding="utf-8", errors="replace")[-4000:])
+        except OSError as exc:
+            sections.append(f"status.json: unreadable: {exc}")
+
+    windows = run(["tmux", "list-windows", "-t", session, "-F", "#W"], timeout=10)
+    if windows.returncode == 0 and windows.stdout.strip():
+        sections.append("tmux windows:\n" + windows.stdout.strip())
+
+    captures_dir = RUNTIME_ROOT / "captures"
+    if captures_dir.exists():
+        for path in sorted(captures_dir.glob("*.txt"))[:12]:
+            try:
+                tail = path.read_text(encoding="utf-8", errors="replace")[-3000:]
+            except OSError as exc:
+                tail = f"unreadable: {exc}"
+            sections.append(f"capture {path.name}:\n{tail}")
+
+    subagents_dir = RUNTIME_ROOT / "state" / "subagents"
+    if subagents_dir.exists():
+        for agent_dir in sorted(path for path in subagents_dir.iterdir() if path.is_dir())[:12]:
+            status_file = agent_dir / "status"
+            status_text = ""
+            if status_file.exists():
+                status_text = status_file.read_text(encoding="utf-8", errors="replace").strip()
+            sections.append(f"subagent {agent_dir.name} status: {status_text or 'unknown'}")
+            for name in ("current.txt", "last-message.txt", "last-error.txt"):
+                path = agent_dir / name
+                if not path.exists():
+                    continue
+                try:
+                    sections.append(f"subagent {agent_dir.name} {name}:\n" + path.read_text(encoding="utf-8", errors="replace")[-2500:])
+                except OSError as exc:
+                    sections.append(f"subagent {agent_dir.name} {name}: unreadable: {exc}")
+
+    text = "\n\n".join(sections)
+    log(text[-limit:])
+
+
 def accepted_without_status_marker(text: str, diff_bytes: int) -> bool:
     if not text:
         return False
@@ -2501,6 +2544,8 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     elif outcome == "blocked":
         log("blocked run produced a scoreable source diff; preserving it for the official verifier")
     log(f"final /app diff bytes={len(final_diff.encode('utf-8'))}")
+    if exit_code != 0:
+        emit_failure_diagnostics(session)
     return exit_code
 
 
