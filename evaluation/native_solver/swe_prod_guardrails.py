@@ -293,11 +293,11 @@ def _issue_named_helpers(issue: str) -> list[str]:
         if _looks_like_call_symbol(match) or _looks_like_constant_symbol(match):
             helpers.append(match)
     for match in re.findall(
-        r"\b(?:helper|function|method|interface|class|constant|symbol|api)\s+`?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)`?",
+        r"\b(?:helper|function|method|interface|class|constant|symbol)\s+`?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)`?",
         issue,
         flags=re.IGNORECASE,
     ):
-        if "." in match or _looks_like_public_symbol(match):
+        if "." in match or _looks_like_call_symbol(match) or _looks_like_constant_symbol(match) or match[:1].isupper():
             helpers.append(match)
     for match in re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s*\(", issue):
         if _looks_like_call_symbol(match):

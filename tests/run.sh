@@ -478,7 +478,7 @@ generic_commands = solve_swe_prod.coverage_probe_commands(
 assert generic_commands == [], generic_commands
 
 false_helper_blockers = solve_swe_prod.implementation_scope_blockers(
-    "`Panel` `Submit` flow fails when independent `app` files use a keyboard key command result in the working directory.",
+    "`Panel` `Submit` flow fails when independent `app` files use API scripts and a keyboard key command result in the working directory.",
     "diff --git a/src/controller.js b/src/controller.js\n+db.getObjectField('x', 'y')\n",
     {"status": "completed", "validation": "visible source check passed"},
 )

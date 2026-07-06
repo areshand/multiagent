@@ -2217,7 +2217,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                                 diff,
                                 [
                                     *blockers,
-                                    "The final verifier accepted too early, but the adapter public probe caught a required official public API mismatch. Continue from the current /app diff, add only the missing public contract, and make the adapter probe pass before any completion marker.",
+                                    "The final verifier accepted too early, but the adapter public probe caught a required source-derived public API mismatch. Continue from the current /app diff, add only the missing public contract, and make the adapter probe pass before any completion marker.",
                                 ],
                                 helper_scope_hints(workdir, issue, diff, blockers),
                                 adapter_helper_workers_spawned,
