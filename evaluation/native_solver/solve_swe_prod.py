@@ -1328,11 +1328,7 @@ def validation_coverage_blockers(
             "helper-validation-skip-justified:",
         )
     )
-    qutebrowser_completion_only = (
-        "qutebrowser/completion/" in diff_lower
-        or "qutebrowser/config/configdata.yml" in diff_lower
-    ) and "qutebrowser" in issue_and_diff
-    if uses_data_helper and issue_mentions_data_shape and not ran_or_justified_data_helper and not qutebrowser_completion_only:
+    if uses_data_helper and issue_mentions_data_shape and not ran_or_justified_data_helper:
         blockers.append(
             "patch uses database/cache helper APIs and the task mentions key/fallback/expiry/cache/data behavior, "
             "but validation did not run or justify skipping helper-layer tests"
@@ -1377,26 +1373,9 @@ def validation_coverage_blockers(
 
 
 
-def maybe_start_local_service(command: str) -> str:
-    executable = command.split()[0]
-    if not shutil.which(executable):
-        return f"skip {command}: executable not found"
-    result = run(command.split(), timeout=15)
-    output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
-    return f"{command}: rc={result.returncode}\n{output[-1200:]}"
+def pytest_teardown_after_success(output: str) -> bool:
+    """Treat a post-summary teardown transport error as success from output evidence."""
 
-
-def qutebrowser_x11_teardown_after_success(label: str, output: str) -> bool:
-    """Treat qutebrowser's post-pytest X11 teardown as validation success.
-
-    The qutebrowser test harness can print a complete passing pytest summary and
-    then exit nonzero when the xvfb/X11 connection closes. That should not block
-    an otherwise passing adapter-selected public probe.
-    """
-
-    label_lower = label.lower()
-    if "qutebrowser" not in label_lower and "tests/unit/completion/" not in label_lower:
-        return False
     output_lower = output.lower()
     if "the x11 connection broke" not in output_lower and "fatal io error" not in output_lower:
         return False
@@ -1437,12 +1416,6 @@ def run_validation_coverage_probe(workdir: Path, issue: str, diff: str, blockers
         "Coverage blockers:",
         *[f"- {blocker}" for blocker in blockers],
     ]
-    services: list[str] = []
-    if any(command and "mocha" in " ".join(command) for command in commands):
-        services.append(maybe_start_local_service("redis-server --daemonize yes --protected-mode no --appendonly no"))
-    if services:
-        sections.append("\nService startup attempts:\n" + "\n".join(services))
-
     passed = True
     for command in commands:
         label = " ".join(command)
@@ -1456,7 +1429,7 @@ def run_validation_coverage_probe(workdir: Path, issue: str, diff: str, blockers
             stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
             output = (stdout + "\n" + stderr).strip()
             output = (output + "\n" if output else "") + f"adapter validation probe timed out after {exc.timeout} seconds"
-        teardown_success = returncode != 0 and qutebrowser_x11_teardown_after_success(label, output)
+        teardown_success = returncode != 0 and pytest_teardown_after_success(output)
         if returncode != 0 and not teardown_success:
             passed = False
         sections.append(
@@ -1467,8 +1440,8 @@ def run_validation_coverage_probe(workdir: Path, issue: str, diff: str, blockers
         )
         if teardown_success:
             sections.append(
-                "\nAdapter note: treated nonzero qutebrowser pytest rc as passed because pytest reported all selected "
-                "tests passed before the known X11 teardown error."
+                "\nAdapter note: treated nonzero pytest rc as passed because pytest reported all selected "
+                "tests passed before a teardown transport error."
             )
     if passed:
         sections.append("\nhelper-validation-passed: adapter public helper probe")
@@ -1487,14 +1460,6 @@ def blockers_after_passing_public_probe(blockers: list[str]) -> list[str]:
         if "[official-hard]" in lower:
             remaining.append(blocker)
             continue
-        if (
-            "resend timing is in scope" in lower
-            and "cansendvalidation" in lower
-            and "ttl/interval" in lower
-        ):
-            continue
-        if "official selected-test composition" in lower and "test/database.js" in lower and "test/user/emails.js" in lower:
-            continue
         if "go source changed" in lower and "validation" in lower:
             continue
         remaining.append(blocker)
@@ -1503,14 +1468,7 @@ def blockers_after_passing_public_probe(blockers: list[str]) -> list[str]:
 
 def status_records_selected_validation(current_status: dict[str, object]) -> bool:
     evidence = json.dumps(current_status, sort_keys=True).lower()
-    return (
-        "helper-validation-passed" in evidence
-        and "test/database.js" in evidence
-        and "test/database/keys.js" in evidence
-        and "test/user/emails.js" in evidence
-        and "should contain every translation key contained in its source counterpart" in evidence
-        and "--invert" in evidence
-    )
+    return "helper-validation-passed" in evidence
 
 
 def has_hard_scope_blocker(blockers: list[str]) -> bool:
@@ -1586,25 +1544,14 @@ def send_orchestrator_scope_warning(session: str, blockers: list[str], source_hi
 
 
 def needs_flipt_database_credentials_recovery(issue: str, blockers: list[str], diff: str) -> bool:
-    text = f"{issue.lower()}\n{' '.join(blockers).lower()}\n{diff.lower()}"
-    if "flipt" not in text:
-        return False
-    return any(
-        marker in text
-        for marker in (
-            "database credential",
-            "database credentials",
-            "key/value database",
-            "db.protocol",
-            "database.protocol",
-            "databaseconfig.password",
-            "config/testdata/config/database.yml",
-            "testparse",
-            "testopen",
-            "testmigratorrun",
-            "newmigrator",
-        )
-    )
+    """Deprecated compatibility hook.
+
+    PR4's production eval path must not activate row-specific repair flows from
+    benchmark memory. Keep the symbol for older tests/imports, but never route
+    source edits through a benchmark-row-specific adapter worker.
+    """
+
+    return False
 
 
 def spawn_adapter_helper_worker(
@@ -1614,214 +1561,52 @@ def spawn_adapter_helper_worker(
     issue: str,
     diff: str,
     blockers: list[str],
-    source_hints: list[str],
+    source_owned: list[str],
     index: int,
     probe_report: str = "",
 ) -> str:
-    source_owned = [
-        hint
-        for hint in source_hints
-        if not hint.startswith("test/") and not hint.startswith("tests/") and "test/" not in hint and "tests/" not in hint
-    ]
-    helper_owned = [
-        hint
-        for hint in source_owned
-        if any(marker in hint for marker in ("database", "databases", "cache"))
-    ]
-    needs_resend_source = any(
-        marker in " ".join(blockers).lower()
-        for marker in (
-            "resend",
-            "re-send",
-            "cansendvalidation",
-            "can-send",
-            "stored confirmation expiry",
-            "ttl",
-        )
-    )
-    linux_metadata_markers = ("dmi", "sysfs", "os-release", "/etc/os-release", "/sys/class/dmi", "linux metadata")
-    needs_linux_metadata_source = any(
-        marker in f"{issue.lower()}\n{' '.join(blockers).lower()}\n{diff.lower()}"
-        for marker in linux_metadata_markers
-    )
-    needs_flipt_db_credentials_source = needs_flipt_database_credentials_recovery(issue, blockers, diff)
-    qutebrowser_version_markers = (
-        "qutebrowser version",
-        "versionchange",
-        "version change",
-        "changelog_after_upgrade",
-        "qutebrowser_version_changed",
-        "qt_version_changed",
-        "version_change_filter",
-    )
-    needs_qutebrowser_version_source = any(
-        marker in f"{issue.lower()}\n{' '.join(blockers).lower()}\n{diff.lower()}"
-        for marker in qutebrowser_version_markers
-    )
-    if needs_flipt_db_credentials_source:
-        owned = [
-            "config/config.go",
-            "config/testdata/config/database.yml",
-            "storage/db/db.go",
-            "storage/db/migrator.go",
-            "cmd/flipt/flipt.go",
-            "cmd/flipt/import.go",
-        ]
-    elif needs_qutebrowser_version_source:
-        owned = [
-            hint
-            for hint in source_owned
-            if hint in {
-                "qutebrowser/config/configfiles.py",
-                "qutebrowser/config/configdata.yml",
-                "qutebrowser/app.py",
-            }
-        ] or [
-            "qutebrowser/config/configfiles.py",
-            "qutebrowser/config/configdata.yml",
-            "qutebrowser/app.py",
-        ]
-    elif needs_linux_metadata_source:
-        linux_owned = [
-            hint
-            for hint in source_owned
-            if hint.startswith(("lib/linux", "internal/linux", "pkg/linux", "linux"))
-        ]
-        owned = linux_owned or ["lib/linux", "internal/linux", "pkg/linux"]
-    else:
-        owned = (helper_owned + source_owned) if needs_resend_source and helper_owned else (helper_owned or source_owned)
+    """Spawn an opt-in no-leak adapter helper worker.
+
+    This path is disabled by default and is only for explicit adapter-repair
+    experiments. It must not include project-specific hidden test knowledge or
+    memorized benchmark fixes; workers receive only the issue, current diff,
+    generic blockers, visible contract ledger, and source-derived ownership
+    hints.
+    """
+
+    owned = list(dict.fromkeys(source_owned or helper_scope_hints(workdir, issue, diff, blockers)))
     if not owned:
-        owned = ["src/database", "src/cache", "lib/database", "lib/cache"]
-    owned_csv = ",".join(dict.fromkeys(owned[:8]))
+        owned = [path for path in ("src", "lib", "app", "pkg", "internal") if (workdir / path).exists()]
+    if not owned:
+        owned = ["."]
+    owned_csv = ",".join(owned[:8])
     worker_name = f"worker-adapter-helper-{index:02d}"
     assignment_id = f"SWE-ADAPTER-HELPER-{index:03d}"
     diff_excerpt = diff[-5000:]
-    probe_excerpt = probe_report[-6000:] if probe_report else ""
+    probe_excerpt = probe_report[-4000:] if probe_report else ""
     ledger_excerpt = contract_ledger_excerpt()
-    qutebrowser_version_instruction = ""
-    flipt_db_credentials_instruction = ""
-    if needs_flipt_db_credentials_source:
-        flipt_db_credentials_instruction = (
-            "For this Flipt database-credentials recovery, ignore the JavaScript database helper guidance below and focus only on the Go config/db contract. "
-            "Fix every adapter blocker exactly; do not stop after protocol messages. "
-            "Required source outcomes: `DatabaseConfig.Password` must preserve loaded values but must not marshal through JSON, so use `json:\"-\"`; "
-            "`config/testdata/config/database.yml` must be the full official-style fixture with MySQL key/value credentials, including `db.protocol: mysql`, "
-            "`db.host: localhost`, `db.port: 3306`, `db.name: flipt`, `db.user: flipt`, `db.password: s3cr3t!`, "
-            "`db.migrations.path: /etc/flipt/config/migrations`, `db.max_idle_conn: 2`, and `meta.check_for_updates: true`; "
-            "invalid `db.protocol` from config loading must include the raw invalid value and the accepted set; missing key/value protocol must say `database.protocol cannot be empty`; "
-            "official `TestValidate` expects HTTP + empty `DatabaseConfig{}` to fail with `database.protocol cannot be empty`; it expects `DatabaseSQLite` without Host to fail with `database.host cannot be empty`; and it expects `DatabaseSQLite` with Host but no Name to fail with `database.name cannot be empty`. "
-            "Do not weaken validation to skip `database.name` for SQLite; parsing can still use SQLite Host as the file path, but validation must require Name exactly as the hidden test patch does. "
-            "SQLite key/value parsing must use `Host: \"flipt.db\"` and parse to `flipt.db?_fk=true&cache=shared`; MySQL without a port must default to 3306; Postgres without a port must not force 5432. "
-            "Keep `parse(config.Config, migrate)`, `open(config.Config, migrate)`, string compatibility if needed by visible tests, and `NewMigrator(config.Config, ...)` by value. "
-            "Before final report, inspect the diff with `grep -n 'Password\\|protocol:\\|s3cr3t\\|database.protocol'` and explicitly confirm password JSON redaction plus fixture values. "
-            "Run or attempt `go test ./storage/db` and `go test -v -run '^(TestLoad|TestValidate|TestOpen|TestParse|TestMigratorRun|TestMigratorRun_NoChange)$' ./...`; visible TLS string failures are acceptable only if official field-qualified TLS strings remain in source.\n\n"
-        )
-    if needs_qutebrowser_version_source:
-        qutebrowser_version_instruction = (
-            "For qutebrowser version/changelog-after-upgrade blockers, ignore the JavaScript database guidance below and focus only on the qutebrowser config public API contract. "
-            "In `qutebrowser/config/configfiles.py`, expose `VersionChange` with members `unknown`, `equal`, `patch`, `minor`, `major`, and `downgrade`, plus top-level public functions named exactly "
-            "`qutebrowser_version_changed(old_version, new_version)`, `qt_version_changed(old_version, new_version)`, and `version_change_filter(change, filterstr)`. "
-            "A private `StateConfig._version_change` method or enum method is not enough when those top-level names are absent; hidden tests import the functions from `configfiles`. "
-            "If the only blocker is missing public functions, do not redesign config types, generated docs, or app flow; add the smallest module-level wrappers around the existing version comparison/filter logic, preserve the current diff, and finish quickly. "
-            "Keep `StateConfig` and `qutebrowser/app.py` using the same public contract rather than duplicating private logic. "
-            "The `changelog_after_upgrade` default should be `minor`, with boolean migration preserving old True -> `patch` and False -> `never`. "
-            "For unparsable old qutebrowser versions, log exactly `Unable to parse old version <value>` with no quotes and no word `qutebrowser`. "
-            "Before final report, run `grep -n '^def qutebrowser_version_changed\\|^def qt_version_changed\\|^def version_change_filter' qutebrowser/config/configfiles.py` and a source-level import probe that calls all three functions. "
-            "Run or attempt `python -m pytest -q tests/unit/config/test_configfiles.py`; if exact official tests are absent locally, run a temporary source-level import probe for the three top-level functions and include it in the final report.\n\n"
-        )
-    if needs_flipt_db_credentials_source:
-        instruction = (
-            "You are a bounded source worker launched by the benchmark adapter because the orchestrator left a Flipt official-test contract gap. "
-            "Work in /app only. Do not submit PRs, push, or send external messages. "
-            f"Assignment ID: {assignment_id}. Branch: benchmark. Stay inside these owned source paths: {owned_csv}. "
-            "Do not edit tests, lockfiles, generated assets, bundled assets, or unrelated config.\n\n"
-            "Priority order is strict:\n"
-            "1. Fix every adapter blocking finding listed below.\n"
-            "2. Run the Flipt-focused validation/probe.\n"
-            "3. Only then address secondary probe details. Do not chase unrelated storage/db cleanup while any blocking finding remains.\n\n"
-            f"Durable contract ledger from `{CONTRACT_LEDGER_PATH}`:\n{ledger_excerpt}\n\n"
-            "Blocking findings from the adapter:\n- "
-            + "\n- ".join(blockers)
-            + "\n\n"
-            + flipt_db_credentials_instruction
-            + "Minimum final checklist before you report completion:\n"
-            "- `git diff --name-only` includes `config/testdata/config/database.yml`.\n"
-            "- That fixture contains `protocol: mysql`, `host: localhost`, `port: 3306`, `name: flipt`, `user: flipt`, `password: s3cr3t!`, `path: /etc/flipt/config/migrations`, `max_idle_conn: 2`, and `check_for_updates: true`.\n"
-            "- Unsupported protocol validation includes the raw invalid value and accepted options; a plain `database.protocol must be one of: file, postgres, mysql` is still a blocker.\n"
-            "- `DatabaseConfig{}` under HTTP fails with `database.protocol cannot be empty`.\n"
-            "- No `shouldValidateDatabase`, `hasFields`, `inUse`, or equivalent empty-key/value shortcut can bypass validation when `db.url` is absent.\n"
-            "- `DatabaseSQLite` without Host fails with `database.host cannot be empty`.\n"
-            "- `DatabaseSQLite` with Host but no Name fails with `database.name cannot be empty`.\n"
-            "- MySQL key/value parsing with `User: \"mysql\"` and empty password emits `mysql@tcp(...)`, not `mysql:@tcp(...)`.\n"
-            "- `DatabaseConfig.Password` uses `json:\"-\"` while preserving loaded values.\n"
-            "- `parse(config.Config, migrate)`, `open(config.Config, migrate)`, and `NewMigrator(config.Config, ...)` remain compatible with the official patched call sites.\n\n"
-            "The adapter public validation probe output is diagnostic, not a replacement for the blocking findings above. "
-            "If the probe output discusses a secondary redaction or parse issue, handle it only after the checklist and blockers are satisfied.\n\n"
-            "Current issue text excerpt:\n"
-            + issue[:3500]
-            + ("\n\nAdapter public validation probe output excerpt:\n" + probe_excerpt if probe_excerpt else "")
-            + "\n\nCurrent /app diff excerpt to integrate with, without reverting unrelated feature work:\n"
-            + diff_excerpt
-        )
-    else:
-        instruction = (
-            "You are a bounded source worker launched by the benchmark adapter because the orchestrator left an implementation-scope gap. "
-            "This is still the production multiagent workflow: work in /app only, report progress/final status here, do not submit PRs, push, or send external messages. "
-            f"Assignment ID: {assignment_id}. Branch: benchmark. Stay inside these owned source paths: {owned_csv}. "
-            "Do not edit tests, lockfiles, generated assets, bundled assets, or unrelated config.\n\n"
-            f"Durable contract ledger from `{CONTRACT_LEDGER_PATH}`:\n{ledger_excerpt}\n\n"
-            "You must preserve every ledger item while fixing the blockers below. If a later blocker seems to conflict with the ledger, solve both or report blocked; do not silently drop a required public symbol or expected-test contract.\n\n"
-            "Blocking findings from the adapter:\n- "
-            + "\n- ".join(blockers)
-            + "\n\n"
-            "If any blocking finding says a public symbol/interface must be exposed, that is the top priority: inspect the ledger, add or preserve the exact named symbol in source, and then keep it while fixing other verifier issues. "
-            "Do not shrink the patch by removing ledger-listed public symbols. For Python scheduler/interface tasks, prefer a minimal compatibility class/alias in the implicated source file over broad rewrites.\n\n"
-            + qutebrowser_version_instruction
-            + "Task: inspect the implicated source/helper layer and implement or prove the missing contract required by the issue. "
-        "For JavaScript database abstractions this usually means an API such as mget/getMany/multiGet that accepts an array of string keys, preserves input order, "
-        "returns null for missing keys, returns [] for empty/falsy key arrays, and behaves consistently across adapters/backends. "
-        "When implementing a new JavaScript bulk string-key helper, expose `module.mget`/`db.mget` across adapters and make any `getMany` helper an alias or implementation detail; "
-        "do not leave only `getMany`, and do not remove `mget`/`db.mget` as unused because official tests may assert the named interface. "
-        "A feature-level scan/getObject/getObjects workaround is not enough when the source/tests/call sites expect a bulk string-key helper. "
-        "If the helper already exists, prove it from source and ensure the current feature patch uses the correct helper contract. "
-        "If it is absent, implement the minimal cross-adapter helper in the owned helper source files. "
-        "For Linux metadata blockers, ignore the JavaScript database guidance and focus only on the Linux-domain Go package. "
-        "Hidden tests commonly assert the public issue-noun API exactly: expose `DMIInfoFromFS(fsys fs.FS) (*DMIInfo, error)`, preserve partial DMI data while returning an error for missing or unreadable expected files, expose a concrete comparable `OSRelease` struct, and expose `ParseOSReleaseFromReader(io.Reader) (*OSRelease, error)` that ignores malformed lines while preserving valid NAME/ID fields. "
-        "For the common Linux metadata contract, keep `DMIInfo` to ProductName/ProductSerial/BoardSerial/ChassisAssetTag and read only product_name/product_serial/board_serial/chassis_asset_tag; keep `OSRelease` to PrettyName/Name/VersionID/Version/ID. Also expose `DMIInfoFromSysfs() (*DMIInfo, error)` and `ParseOSRelease() (*OSRelease, error)` as default host readers. In `DMIInfoFromFS`, use `dmifs.Open(name)` plus `io.ReadAll` so permission-denied `Open` errors are preserved; do not use `fs.ReadFile` for this contract. Do not add broad freedesktop fields, extra DMI sysfs files, or alternate default-reader names unless the repo source requires them. "
-        "If the adapter probe reports a Go compile error, fix the public signature that caused the compile error before changing internals. "
-        "For undefined exported names in existing same-package tests, preserve compatibility in source with minimal aliases/wrappers, or undo the rename/removal if the issue does not require the exported API to disappear. "
-        "Do not classify those visible tests as stale just because the issue asks for a rename; if a package compile probe fails on names such as `diode.set`, `message.Data`, or `cookieExpiry`, restore a tiny source compatibility shim while keeping production source on the new API. "
-        "Do not edit tests to match the new source; the benchmark patch must keep source packages compiling against visible tests and official tests. "
-        "For resend/expiry/throttle blockers, inspect the can-send/resend gate in source and change it when necessary; do not accept a patch that only changes status/confirmation helpers while leaving the resend gate behavior unchanged. "
-        "For email validation flows, preserve the legacy near-expiry TTL resend rule: if the remaining validation TTL plus the resend interval is less than the original expiry/max TTL, `canSendValidation` should allow re-send. "
-        "The NodeBB regressions shorten either `confirm:byUid:<uid>` with `db.pexpire(..., 1000)` or `confirm:<code>.expires` with `db.setObjectField(...)` before calling `canSendValidation(uid, email)`, so combine both remaining TTL sources and use the shortest positive TTL for the resend decision. "
-        "Keep the legacy byUid code lookup on `db.get(confirmByUidKey(uid))` or an equivalent single-key read; do not replace that feature path with `db.mget([key])`, even if `db.mget` is also required for database helper tests. "
-        "If `getValidationExpiry` or a new status helper also handles fallback `confirm:<code>` records or stored `expiresAt` metadata, make `canSendValidation` enforce a direct byUid fast path before calling that generalized helper: read the byUid code, confirm the requested email matches the code object, read `db.pttl(confirmByUidKey(uid))`, then apply `ttl + interval < max`. "
-        "Do not leave `canSendValidation` unchanged while replacing `getValidationExpiry` with `getValidationStatus`/`expires` fallback logic; that exact shape has failed the official regression. "
-        "Fallback scans, `confirm:<code>` TTL, or stored `sentAt`/`expiresAt` metadata may recover missing-data status after the byUid key is gone, but they must not lengthen or hide the shortened live byUid TTL used by the resend gate. "
-        "If the confirmation object stores an expiry timestamp field such as `expires` or `expiresAt`, use it only after the live byUid key is missing, or as a fallback for missing legacy state; the public resend gate still needs `ttl + interval < max` to evaluate true after the byUid TTL is shortened. "
-        "Parse stored `expires`/`expiresAt` values as millisecond timestamps with `Number(...)`/`parseInt(...)` before using `Date.now()` arithmetic; NodeBB database helpers often return object fields as numeric strings, and `new Date(\"1712345678901\")` is invalid in Node. "
-        "If a public validation probe failed, that failed command is authoritative: rerun it, inspect the exact failing assertion, and keep changing source until that command passes. "
-        "A verifier statement that a line still exists is not enough; if `canSendValidation` fails after a patch changed pending/fallback semantics, fix the effective control flow so the TTL/interval branch is reachable and returns true.\n\n"
-        "Validation: run or attempt the relevant source/helper test file/package when practical. For Node/Mocha database repos, try starting a local service if needed "
-        "and run the database helper tests, for example `redis-server --daemonize yes --save \"\" --appendonly no --port 6379` then `npx mocha test/database.js`. "
-        "Also run any cheap syntax/lint check for changed helper files. Remove generated runtime artifacts such as dump.rdb, appendonlydir, and coverage output before final status.\n\n"
-        "Before final report, run `git status --short --untracked-files=all` and `git diff --stat` in /app. "
-        "Treat dirty submodules or untracked directories outside `git diff --name-only` as non-blocking environment noise; do not spend the task editing them. "
-        "Your final report is invalid unless /app has an actual uncommitted diff in at least one owned source path, or you give a source-level proof that no edit is needed. "
-        "Do not report a patch from memory; if `git diff --stat` does not show your owned source files, keep working. "
-        "Final report must include changed files and validation commands/results. For helper-layer work include the exact marker "
-        "`bulk-helper-contract-checked:` naming the helper source files/methods inspected or implemented. For resend/expiry work include "
-        "`resend-gate-checked:` naming the can-send/resend helper and the TTL/interval condition inspected or changed.\n\n"
+    instruction = (
+        "You are a bounded source worker launched by an explicit adapter-repair experiment. "
+        "Work in /app only. Do not submit PRs, push, or send external messages. "
+        f"Assignment ID: {assignment_id}. Branch: benchmark. Stay inside these owned source paths: {owned_csv}. "
+        "Do not edit tests, lockfiles, generated assets, bundled assets, or unrelated config unless the visible task/source contract requires fixture assets.\n\n"
+        "No-leak rule: do not rely on hidden tests, official expected rows, previous benchmark failures, or benchmark-only metadata as implementation guidance. "
+        "Use only the issue text, visible source/tests/docs, public APIs, runtime behavior, and the current diff.\n\n"
+        f"Durable contract ledger from `{CONTRACT_LEDGER_PATH}`:\n{ledger_excerpt}\n\n"
+        "Generic blocking findings from the adapter/verifier:\n- "
+        + "\n- ".join(blockers)
+        + "\n\nTask: inspect the implicated source/helper layer and implement or prove the missing source-derived contract. "
+        "If a blocker lacks visible source evidence, report it as unresolved risk instead of coding to it. "
+        "Run or attempt the relevant visible test file/package or a temporary source-level probe derived from visible evidence.\n\n"
         "Current issue text excerpt:\n"
         + issue[:3500]
         + ("\n\nAdapter public validation probe output excerpt:\n" + probe_excerpt if probe_excerpt else "")
         + "\n\nCurrent /app diff excerpt to integrate with, without reverting unrelated feature work:\n"
-            + diff_excerpt
-        )
-    create = run(
+        + diff_excerpt
+    )
+    run(
         [
-            str(repo_root / "bin" / "subagent.sh"),
+            str(repo_root / "bin/subagent.sh"),
             "assignment-create",
             worker_name,
             "--assignment-id",
@@ -1830,26 +1615,21 @@ def spawn_adapter_helper_worker(
             "benchmark",
             "--owned",
             owned_csv,
+            "--role",
+            "worker",
         ],
         cwd=repo_root,
         env=env,
         timeout=60,
+        check=True,
     )
-    spawn = run(
-        [
-            str(repo_root / "bin" / "subagent.sh"),
-            "spawn",
-            worker_name,
-            "--instruction",
-            instruction,
-        ],
+    run(
+        [str(repo_root / "bin/subagent.sh"), "spawn", worker_name, "--instruction", instruction],
         cwd=repo_root,
         env=env,
-        timeout=60,
+        timeout=120,
+        check=True,
     )
-    output = ((create.stdout or "") + (create.stderr or "") + (spawn.stdout or "") + (spawn.stderr or "")).strip()
-    if create.returncode != 0 or spawn.returncode != 0:
-        raise RuntimeError(f"adapter helper worker spawn failed:\n{output[-4000:]}")
     return worker_name
 
 
@@ -2104,7 +1884,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
             if not selected_validation_claim_seen and status_records_selected_validation(current_status):
                 selected_validation_claim_seen = True
                 log(
-                    "status.json claims selected validation, but adapter will rerun its own official-style probe before accepting"
+                    "status.json claims selected validation, but adapter will rerun its generic visible-source probe before accepting"
                 )
             state = str(current_status.get("status", "")).lower()
             if state in {"completed", "complete", "done"}:

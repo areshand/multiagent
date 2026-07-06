@@ -113,6 +113,10 @@ The production SWE adapter is split so the entrypoint stays focused on
 orchestration state: reusable source/diff guardrails live in
 `evaluation/native_solver/swe_prod_guardrails.py`, while the benchmark bootstrap
 instructions live under `evaluation/native_solver/templates/`.
+Those guardrails are intentionally no-leak: they may use visible source, issue
+text, local tests, docs, public APIs, and runtime evidence, but they must not
+encode benchmark-row-specific hidden tests, prior official failures, or exact
+fixture answers as implementation guidance.
 
 Set `EVAL_VALIDATION_PROBE_TIMEOUT` to cap each adapter-selected probe command.
 The default is `300` seconds. Lower it for high-parallelism or Rosetta runs when

@@ -375,16 +375,16 @@ assert_file_contains "$ROOT/README.md" "evaluation/tasks"
 assert_file_contains "$ROOT/evaluation/README.md" "large-update-300"
 assert_file_contains "$ROOT/evaluation/README.md" "Low-signal orchestration cases"
 assert_file_contains "$ROOT/evaluation/README.md" "EVAL_VALIDATION_PROBE_TIMEOUT"
-assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "component-interaction-tests-passed"
-assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "additive UI/component public-surface task"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "Return generic source-derived blockers without benchmark answer leakage"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "hidden-test-shaped commands"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "One active validator per package/path"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "validation lease table"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Do not spawn a verifier while a worker still owns"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Fixture/testdata"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "internal/ext/testdata/export_sorted.yml"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_ADAPTER_HELPER_MODE"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "adapter helper advisory mode: not spawning source-editing helper"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" 'adapter_helper_repair_allowed("final verifier/probe mismatch")'
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Do not rely on leaked evaluator tests"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "must not inject benchmark-row-specific probes"
 assert_file_contains "$ROOT/evaluation/README.md" "adapter helper defaults to advisory mode"
 python3 - "$ROOT" <<'PY'
 import os
@@ -436,11 +436,11 @@ assert not solve_swe_prod.needs_flipt_database_credentials_recovery(
     ["Go source changed, but status.json does not record a Go package validation command"],
     "diff --git a/internal/config/database.go b/internal/config/database.go\n",
 )
-assert solve_swe_prod.needs_flipt_database_credentials_recovery(
+assert not solve_swe_prod.needs_flipt_database_credentials_recovery(
     "Flipt should support separate database credential keys.",
     ["missing database.protocol error"],
     "diff --git a/internal/config/database.go b/internal/config/database.go\n",
-)
+), "row-specific adapter repair should stay disabled in no-leak production eval"
 metadata = {
     "swe_bench_pro": {
         "instance_id": "instance_flipt",
@@ -475,11 +475,7 @@ ansible_commands = solve_swe_prod.coverage_probe_commands(
     "PowerShell CLIXML should decode escaped strings.",
     "diff --git a/lib/ansible/plugins/shell/powershell.py b/lib/ansible/plugins/shell/powershell.py\n+def _parse_clixml(data):\n+    pass\n",
 )
-assert len(ansible_commands) == 1, ansible_commands
-ansible_probe = " ".join(ansible_commands[0])
-assert "_x005F_x005F_" in ansible_probe, ansible_probe
-assert "multi string trailing crlf" in ansible_probe, ansible_probe
-assert "many string trailing crlf" in ansible_probe, ansible_probe
+assert ansible_commands == [], ansible_commands
 
 with tempfile.TemporaryDirectory() as td:
     old_probe_commands = solve_swe_prod.coverage_probe_commands
