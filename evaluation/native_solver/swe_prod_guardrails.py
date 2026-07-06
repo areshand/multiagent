@@ -290,7 +290,7 @@ def _issue_explicitly_allows_tests(issue_lower: str) -> bool:
 def _issue_named_helpers(issue: str) -> list[str]:
     helpers: list[str] = []
     for match in re.findall(r"`([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)`", issue):
-        if "." in match or _looks_like_public_symbol(match):
+        if _looks_like_call_symbol(match) or _looks_like_constant_symbol(match):
             helpers.append(match)
     for match in re.findall(
         r"\b(?:helper|function|method|interface|class|constant|symbol|api)\s+`?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)`?",
@@ -310,14 +310,23 @@ def _looks_like_call_symbol(symbol: str) -> bool:
         return all(_looks_like_public_symbol(part) for part in symbol.split("."))
     if not _looks_like_public_symbol(symbol):
         return False
-    return "_" in symbol or any(ch.islower() for ch in symbol) and any(ch.isupper() for ch in symbol)
+    return "_" in symbol or symbol[:1].islower() and any(ch.isupper() for ch in symbol)
+
+
+def _looks_like_constant_symbol(symbol: str) -> bool:
+    return bool(re.fullmatch(r"[A-Z][A-Z0-9_]{2,}", symbol))
 
 
 def _issue_mentions_data_contract(issue: str) -> bool:
-    return bool(
-        re.search(
-            r"\b(keys?|fallback|missing data|expired|expiry|ttl|cache|database|adapter|redis|mongo|postgres)\b",
-            issue,
-            flags=re.IGNORECASE,
-        )
+    strong_data_terms = re.search(
+        r"\b(missing data|expired|expiry|ttl|cache|database|adapter|redis|mongo|postgres)\b",
+        issue,
+        flags=re.IGNORECASE,
     )
+    data_key_terms = re.search(
+        r"\b(?:keys?|fallback)\b.{0,48}\b(?:database|cache|redis|mongo|postgres|credential|secret|config|env|storage|record|field)\b"
+        r"|\b(?:database|cache|redis|mongo|postgres|credential|secret|config|env|storage|record|field)\b.{0,48}\b(?:keys?|fallback)\b",
+        issue,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    return bool(strong_data_terms or data_key_terms)

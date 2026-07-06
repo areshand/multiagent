@@ -478,7 +478,7 @@ generic_commands = solve_swe_prod.coverage_probe_commands(
 assert generic_commands == [], generic_commands
 
 false_helper_blockers = solve_swe_prod.implementation_scope_blockers(
-    "Panel Submit flow fails when independent app files use a command result in the working directory.",
+    "`Panel` `Submit` flow fails when independent `app` files use a keyboard key command result in the working directory.",
     "diff --git a/src/controller.js b/src/controller.js\n+db.getObjectField('x', 'y')\n",
     {"status": "completed", "validation": "visible source check passed"},
 )
@@ -486,11 +486,12 @@ assert not any("helper/interface" in blocker for blocker in false_helper_blocker
 assert not any("helper-layer validation" in blocker for blocker in false_helper_blockers), false_helper_blockers
 
 real_helper_blockers = solve_swe_prod.implementation_scope_blockers(
-    "The helper `load_config_value` must preserve fallback behavior.",
-    "diff --git a/src/config.js b/src/config.js\n+function loadConfigValue() {}\n",
+    "The helper `load_config_value` must preserve config fallback behavior.",
+    "diff --git a/src/config.js b/src/config.js\n+async function loadConfigValue() { return await db.get('config:key'); }\n",
     {"status": "completed", "validation": "visible source check passed"},
 )
 assert any("load_config_value" in blocker for blocker in real_helper_blockers), real_helper_blockers
+assert any("helper-layer validation" in blocker for blocker in real_helper_blockers), real_helper_blockers
 assert solve_swe_prod.is_disallowed_patch_path("patch.txt")
 assert solve_swe_prod.is_disallowed_patch_path("candidate.patch")
 

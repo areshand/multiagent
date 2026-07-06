@@ -115,6 +115,10 @@ def build_worker_command(args: argparse.Namespace, *, offset: int, count: int, w
                 args.native_codex_auth_container_home,
             ]
         )
+    if getattr(args, "score_failed_native_diff", False):
+        cmd.append("--score-failed-native-diff")
+    if getattr(args, "score_timed_out_native_diff", False):
+        cmd.append("--score-timed-out-native-diff")
     if args.persistent_cache:
         cache_root = args.persistent_cache_root
         if args.persistent_cache_mode == "rw" and args.workers > 1:
@@ -160,11 +164,15 @@ def main() -> int:
     parser.add_argument("--native-solver-source", type=Path, default=DEFAULT_NATIVE_SOLVER_SOURCE)
     parser.add_argument("--native-codex-auth-json", default="")
     parser.add_argument("--native-codex-auth-container-home", default="/root/.codex-multiagent-prod")
+    parser.add_argument("--score-failed-native-diff", action="store_true")
+    parser.add_argument("--score-timed-out-native-diff", action="store_true")
     parser.add_argument("--persistent-cache", action="store_true")
     parser.add_argument("--persistent-cache-root", type=Path, default=Path("/private/tmp/swe-bench-pro-persistent-cache"))
     parser.add_argument("--persistent-cache-mode", default="rw", choices=["rw", "ro"])
     parser.add_argument("--responses-keepalive", action="store_true")
     parser.add_argument("--ignore-errors", action="store_true")
+    parser.add_argument("--no-refresh-before", action="store_true")
+    parser.add_argument("--no-refresh-after", action="store_true")
     parser.add_argument("--proxy-port-base", type=int, default=8765)
     parser.add_argument("--proxy-timeout", type=int, default=1800)
     parser.add_argument("--proxy-ready-timeout", type=float, default=30.0)
@@ -181,10 +189,11 @@ def main() -> int:
     if args.shard_size < 1:
         parser.error("--shard-size must be >= 1")
 
-    refresh_aggregate(args)
-    aggregate = load_json(args.aggregate_json)
     first_offset = args.sample_offset
+    if not args.no_refresh_before:
+        refresh_aggregate(args)
     if first_offset is None:
+        aggregate = load_json(args.aggregate_json)
         suggested = aggregate.get("suggested_next_shard") or {}
         first_offset = int(suggested.get("sample_offset", aggregate.get("first_missing_index", 0)))
 
@@ -204,7 +213,8 @@ def main() -> int:
 
     procs = [subprocess.Popen(command) for command in commands]
     codes = [proc.wait() for proc in procs]
-    refresh_aggregate(args)
+    if not args.no_refresh_after:
+        refresh_aggregate(args)
     if any(code != 0 for code in codes):
         print(f"parallel shard failures: {codes}", file=sys.stderr)
         return 1
