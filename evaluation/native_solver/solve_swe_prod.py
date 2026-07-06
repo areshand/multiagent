@@ -73,14 +73,14 @@ def env_truthy(name: str, default: bool = False) -> bool:
 
 
 def leaked_expected_test_guidance_enabled() -> bool:
-    """Opt-in diagnostic mode for expected-test metadata.
+    """Return whether expected-test metadata may be injected into solver prompts.
 
-    The production solver must not use private evaluator rows as implementation
-    guidance. Keep this off by default; it exists only for explicit diagnostic
-    experiments where benchmark metadata leakage is being studied.
+    This is deliberately hard-disabled for production evals. The solver must
+    infer fixes from the issue text and repository-visible evidence, not from
+    official expected tests, test patches, or row-specific benchmark metadata.
     """
 
-    return env_truthy("EVAL_ALLOW_EXPECTED_TEST_GUIDANCE", False)
+    return False
 
 
 TEMPLATE_DIRS = [
@@ -1776,8 +1776,8 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
             f"instance={contract.get('instance_id')} fail_to_pass={len(contract['fail_to_pass'])} "
             f"pass_to_pass={len(contract['pass_to_pass'])}"
         )
-        if leaked_expected_test_guidance_enabled():
-            log("EVAL_ALLOW_EXPECTED_TEST_GUIDANCE is enabled; expected-test metadata will be injected into solver prompts")
+        if env_truthy("EVAL_ALLOW_EXPECTED_TEST_GUIDANCE", False):
+            log("EVAL_ALLOW_EXPECTED_TEST_GUIDANCE is ignored; production no-leak mode never injects expected-test metadata")
     else:
         log("no official expected-test metadata found in task metadata")
     autonomous_prompt = make_prompt(repo_root, workdir, issue, task_metadata)

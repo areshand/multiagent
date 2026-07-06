@@ -34,6 +34,27 @@ _METADATA_FILE = "/tmp/evalscope-native-multiagent-metadata.json"
 _STDOUT_FILE = "/tmp/evalscope-native-multiagent-stdout.log"
 _STDERR_FILE = "/tmp/evalscope-native-multiagent-stderr.log"
 _DEFAULT_SOLVER_COMMAND = "/tmp/evalscope-native-multiagent-solver.sh"
+_PUBLIC_METADATA_KEYS = {
+    "id",
+    "instance_id",
+    "language",
+    "repo",
+    "sample_id",
+    "task_id",
+}
+_PRIVATE_SOLVER_METADATA_KEYS = {
+    "FAIL_TO_PASS",
+    "PASS_TO_PASS",
+    "base_commit",
+    "fail_to_pass",
+    "interface",
+    "pass_to_pass",
+    "problem_statement",
+    "requirements",
+    "run_script_dir",
+    "selected_test_files_to_run",
+    "test_patch",
+}
 _SOLVER_LAUNCHER = """#!/usr/bin/env bash
 set -euo pipefail
 
@@ -140,7 +161,7 @@ class MultiagentNativeRunner(AgentRunner):
                 "The command must edit the repository in /app; EvalScope will extract git diff afterwards."
             )
 
-        metadata = self._enrich_metadata_with_official_contract(dict(task.metadata or {}), task.instruction)
+        metadata = _public_solver_metadata(dict(task.metadata or {}))
         await self._write_file(env, _PROMPT_FILE, task.instruction)
         await self._write_file(env, _METADATA_FILE, json.dumps(metadata, indent=2, sort_keys=True))
 
@@ -424,6 +445,28 @@ def _parse_test_list(raw: Any) -> list[str]:
     if isinstance(parsed, (list, tuple)):
         return [str(item) for item in parsed]
     return [str(parsed)]
+
+
+def _public_solver_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Return only non-answer metadata that may be visible to the solver.
+
+    SWE Bench Pro rows contain verifier-side fields such as expected test names,
+    selected official test files, and test patches. The production multi-agent
+    solver must infer fixes from the issue and repository state, so those fields
+    are intentionally not written into the task container.
+    """
+
+    public: dict[str, Any] = {
+        key: value
+        for key, value in metadata.items()
+        if key in _PUBLIC_METADATA_KEYS and key not in _PRIVATE_SOLVER_METADATA_KEYS
+    }
+    nested = metadata.get("swe_bench_pro")
+    if isinstance(nested, dict):
+        for key, value in nested.items():
+            if key in _PUBLIC_METADATA_KEYS and key not in public:
+                public[key] = value
+    return public
 
 
 def _normalize_problem_statement(text: str) -> str:

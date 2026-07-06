@@ -188,6 +188,17 @@ assert_file_contains() {
   fi
 }
 
+assert_file_not_contains() {
+  local file="$1"
+  local unexpected="$2"
+  if grep -Fq -- "$unexpected" "$file"; then
+    echo "expected $file not to contain: $unexpected" >&2
+    echo "--- $file ---" >&2
+    cat "$file" >&2
+    exit 1
+  fi
+}
+
 "$ROOT/bin/write-policy.sh" init
 assert_file_contains "$MULTIAGENT_WRITE_POLICY" "Default allowed write root"
 
@@ -386,6 +397,11 @@ assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "adapter
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Do not rely on leaked evaluator tests"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "must not inject benchmark-row-specific probes"
 assert_file_contains "$ROOT/evaluation/README.md" "adapter helper defaults to advisory mode"
+assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "_public_solver_metadata(dict(task.metadata or {}))"
+assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" '"fail_to_pass"'
+assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" '"test_patch"'
+assert_file_not_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "_enrich_metadata_with_official_contract(dict(task.metadata"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_ALLOW_EXPECTED_TEST_GUIDANCE is ignored"
 python3 - "$ROOT" <<'PY'
 import os
 import subprocess
@@ -398,6 +414,43 @@ root = Path(sys.argv[1])
 sys.path.insert(0, str(root))
 from evaluation.native_solver import solve_swe_prod
 from evaluation import swe_bench_pro_run_parallel_shards
+
+evalscope = SimpleNamespace()
+sys.modules.setdefault("evalscope", evalscope)
+sys.modules.setdefault("evalscope.agent", SimpleNamespace())
+sys.modules.setdefault("evalscope.agent.external", SimpleNamespace())
+sys.modules["evalscope.agent.external.runners"] = SimpleNamespace(
+    AgentRunResult=object,
+    AgentRunner=object,
+    BridgeEndpoint=object,
+    ExternalAgentTask=object,
+    RunnerTimeoutError=RuntimeError,
+)
+sys.modules.setdefault("evalscope.api", SimpleNamespace())
+sys.modules["evalscope.api.agent"] = SimpleNamespace(AgentEnvironment=object)
+sys.modules["evalscope.api.registry"] = SimpleNamespace(register_runner=lambda _name: (lambda cls: cls))
+sys.modules.setdefault("evalscope.utils", SimpleNamespace())
+sys.modules["evalscope.utils.logger"] = SimpleNamespace(
+    get_logger=lambda: SimpleNamespace(info=lambda *args, **kwargs: None, warning=lambda *args, **kwargs: None)
+)
+from evaluation import evalscope_multiagent_native_runner
+
+public_metadata = evalscope_multiagent_native_runner._public_solver_metadata(
+    {
+        "sample_id": 7,
+        "repo": "example/repo",
+        "problem_statement": "hidden prompt copy",
+        "FAIL_TO_PASS": ["TestHidden"],
+        "test_patch": "diff --git a/tests/hidden_test.py b/tests/hidden_test.py",
+        "swe_bench_pro": {
+            "instance_id": "instance-7",
+            "fail_to_pass": ["TestNestedHidden"],
+            "selected_test_files_to_run": ["tests/hidden_test.py"],
+            "requirements": "private evaluator contract",
+        },
+    }
+)
+assert public_metadata == {"sample_id": 7, "repo": "example/repo", "instance_id": "instance-7"}, public_metadata
 
 with tempfile.TemporaryDirectory() as td:
     repo = Path(td)
@@ -460,7 +513,7 @@ row56_status = {
 assert not solve_swe_prod.official_expected_test_blockers(metadata, row56_status), "expected-test guidance should be off by default"
 os.environ["EVAL_ALLOW_EXPECTED_TEST_GUIDANCE"] = "1"
 blockers = solve_swe_prod.official_expected_test_blockers(metadata, row56_status)
-assert any("stale, failing" in blocker and "TestConfigLoad" in blocker for blocker in blockers), blockers
+assert blockers == [], "expected-test guidance env var should be ignored in no-leak production mode"
 absent_patch_status = {
     "status": "completed",
     "validation": (
