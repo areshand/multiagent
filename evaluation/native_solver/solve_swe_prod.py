@@ -1380,6 +1380,64 @@ def validation_coverage_blockers(
                 "Go source changed, but validation reported the Go toolchain was unavailable; retry with explicit Go paths before accepting"
             )
 
+    touches_ui_interaction_source = any(
+        line.startswith("diff --git a/")
+        and (
+            any(ext in line for ext in (".tsx ", ".jsx ", ".vue ", ".svelte "))
+            or any(path_marker in line.lower() for path_marker in ("/components/", "/views/", "/rooms/", "keyboard."))
+        )
+        for line in diff.splitlines()
+    )
+    ui_interaction_issue_or_diff = any(
+        marker in issue_and_diff
+        for marker in (
+            "keyboard",
+            "shortcut",
+            "input",
+            "paste",
+            "focus",
+            "autocomplete",
+            "composer",
+            "browser",
+            "accessibility",
+            "keydown",
+            "keyup",
+            "keypress",
+            "interaction",
+        )
+    )
+    ui_static_only_markers = (
+        "no browser interaction tests were run",
+        "no interaction tests were run",
+        "no browser tests were run",
+        "no component interaction tests were run",
+        "residual risk is limited to runtime",
+    )
+    ui_validation_markers = (
+        "browser interaction",
+        "component interaction",
+        "user-event",
+        "fireevent",
+        "@testing-library",
+        "cypress",
+        "playwright",
+        "selenium",
+        "jest",
+        "yarn test",
+        "npm test",
+        "ui-validation-passed:",
+        "ui-validation-skip-justified:",
+    )
+    if touches_ui_interaction_source and ui_interaction_issue_or_diff:
+        if any(marker in status_text for marker in ui_static_only_markers) and "ui-validation-skip-justified:" not in status_text:
+            blockers.append(
+                "UI/keyboard interaction source changed, but final validation explicitly says browser/component interaction tests were not run"
+            )
+        elif "lint:types" in status_text and not any(marker in status_text for marker in ui_validation_markers):
+            blockers.append(
+                "UI/keyboard interaction source changed, but validation only records static type/lint coverage; run or justify a nearby interaction test"
+            )
+
     return blockers
 
 

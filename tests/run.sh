@@ -545,6 +545,30 @@ real_helper_blockers = solve_swe_prod.implementation_scope_blockers(
 )
 assert any("load_config_value" in blocker for blocker in real_helper_blockers), real_helper_blockers
 assert any("helper-layer validation" in blocker for blocker in real_helper_blockers), real_helper_blockers
+
+ui_blockers = solve_swe_prod.validation_coverage_blockers(
+    "Keyboard shortcuts in the message composer should be customizable.",
+    "diff --git a/src/Keyboard.ts b/src/Keyboard.ts\n+export function isKeyboardShortcut() {}\n"
+    "diff --git a/src/components/views/rooms/BasicMessageComposer.tsx b/src/components/views/rooms/BasicMessageComposer.tsx\n+function onKeyDown() {}\n",
+    "",
+    {
+        "status": "completed",
+        "risk": "No browser interaction tests were run; residual risk is limited to runtime shortcut event behavior.",
+        "validation": "yarn lint:types passed",
+    },
+)
+assert any("UI/keyboard interaction source changed" in blocker for blocker in ui_blockers), ui_blockers
+ui_skip_blockers = solve_swe_prod.validation_coverage_blockers(
+    "Keyboard shortcuts in the message composer should be customizable.",
+    "diff --git a/src/Keyboard.ts b/src/Keyboard.ts\n+export function isKeyboardShortcut() {}\n",
+    "",
+    {
+        "status": "completed",
+        "validation": "ui-validation-skip-justified: no component test harness exists; source-level event matcher table inspected",
+    },
+)
+assert not ui_skip_blockers, ui_skip_blockers
+
 assert solve_swe_prod.is_disallowed_patch_path("patch.txt")
 assert solve_swe_prod.is_disallowed_patch_path("candidate.patch")
 
