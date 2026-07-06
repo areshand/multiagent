@@ -167,6 +167,10 @@ def build_scaffold_command(args: argparse.Namespace, *, offset: int, count: int)
                 args.native_codex_auth_container_home,
             ]
         )
+    if args.score_failed_native_diff:
+        cmd.append("--score-failed-native-diff")
+    if args.score_timed_out_native_diff:
+        cmd.append("--score-timed-out-native-diff")
     if args.persistent_cache:
         cmd.extend(
             [
@@ -248,6 +252,8 @@ def main() -> int:
     parser.add_argument("--native-solver-source", type=Path, default=DEFAULT_NATIVE_SOLVER_SOURCE)
     parser.add_argument("--native-codex-auth-json", default="")
     parser.add_argument("--native-codex-auth-container-home", default="/root/.codex-multiagent-prod")
+    parser.add_argument("--score-failed-native-diff", action="store_true")
+    parser.add_argument("--score-timed-out-native-diff", action="store_true")
     parser.add_argument("--persistent-cache", action="store_true")
     parser.add_argument("--persistent-cache-root", type=Path, default=Path("/private/tmp/swe-bench-pro-persistent-cache"))
     parser.add_argument("--persistent-cache-mode", default="rw", choices=["rw", "ro"])
@@ -274,12 +280,17 @@ def main() -> int:
     args = parser.parse_args()
 
     cwd = Path.cwd()
+    explicit_shard = args.sample_offset is not None and args.sample_count is not None
     if not args.no_refresh_before:
         refresh_aggregate(args, cwd=cwd)
-    aggregate = load_json(args.aggregate_json)
-    suggested = aggregate.get("suggested_next_shard") or {}
-    offset = args.sample_offset if args.sample_offset is not None else suggested.get("sample_offset")
-    count = args.sample_count if args.sample_count is not None else suggested.get("sample_count")
+    if explicit_shard:
+        offset = args.sample_offset
+        count = args.sample_count
+    else:
+        aggregate = load_json(args.aggregate_json)
+        suggested = aggregate.get("suggested_next_shard") or {}
+        offset = args.sample_offset if args.sample_offset is not None else suggested.get("sample_offset")
+        count = args.sample_count if args.sample_count is not None else suggested.get("sample_count")
     if offset is None or count is None:
         raise SystemExit("no missing shard found; aggregate appears complete")
     offset = int(offset)

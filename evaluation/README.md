@@ -118,6 +118,25 @@ text, local tests, docs, public APIs, and runtime evidence, but they must not
 encode benchmark-row-specific hidden tests, prior official failures, or exact
 fixture answers as implementation guidance.
 
+No-leak review should scan both prompt templates and baked native solver source
+for project-specific repair recipes before scaling an eval. A result is not a
+clean production-capability measurement if the baked solver contains row names,
+prior hidden-test failures, exact fixture answers, or task-specific API recipes
+that were learned from earlier benchmark attempts rather than derived from the
+current issue and repository.
+
+A one-row production-native smoke on 2026-07-06 verified this path with the
+full SWE-bench Pro OS scaffold, the local EvalScope package path, baked PR
+source, persistent caches, and official verifier evidence. The first attempts
+surfaced infrastructure issues that should be fixed before larger shards:
+wrong EvalScope import path, stale/incomplete OS scaffold path, too-high local
+free-disk floor, symlink-sensitive native template lookup, and false-positive
+no-leak guardrails. After those fixes, the same smoke reached the official
+verifier and scored `1/1`. Use `--score-failed-native-diff` only for diagnostic
+smokes where a rejected native diff should still be sent to the official
+verifier; production score runs should leave it off unless explicitly studying
+gate behavior.
+
 Set `EVAL_VALIDATION_PROBE_TIMEOUT` to cap each adapter-selected probe command.
 The default is `300` seconds. Lower it for high-parallelism or Rosetta runs when
 the official verifier remains the authoritative scorer.

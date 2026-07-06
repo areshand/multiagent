@@ -135,10 +135,7 @@ def implementation_scope_blockers(
                 f"task appears to require public symbol `{symbol}`, but the diff/status does not account for that exact symbol"
             )
 
-    issue_mentions_data_shape = any(
-        marker in issue_lower
-        for marker in ("key", "keys", "fallback", "missing data", "expired", "expiry", "ttl", "cache", "database", "adapter")
-    )
+    issue_mentions_data_shape = _issue_mentions_data_contract(issue)
     diff_uses_data_helper = any(
         marker in diff_lower
         for marker in (" db.", "\tdb.", "await db.", "database/", "databases/", "cache.", "redis", "mongo", "postgres")
@@ -208,11 +205,11 @@ def helper_scope_hints(workdir: Path, issue: str, diff: str, blockers: list[str]
     return hints[:12]
 
 
-def ansible_powershell_clixml_probe_command() -> list[str]:
+def deprecated_noop_probe_command() -> list[str]:
     """Deprecated compatibility hook.
 
     The no-leak adapter must not inject benchmark-row-specific probes. Keep the
-    symbol for older tests/imports, but do not return a privileged command.
+    hook for internal compatibility, but do not return a privileged command.
     """
     return []
 
@@ -295,7 +292,32 @@ def _issue_named_helpers(issue: str) -> list[str]:
     for match in re.findall(r"`([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)`", issue):
         if "." in match or _looks_like_public_symbol(match):
             helpers.append(match)
-    for match in re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", issue):
-        if _looks_like_public_symbol(match):
+    for match in re.findall(
+        r"\b(?:helper|function|method|interface|class|constant|symbol|api)\s+`?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)`?",
+        issue,
+        flags=re.IGNORECASE,
+    ):
+        if "." in match or _looks_like_public_symbol(match):
+            helpers.append(match)
+    for match in re.findall(r"\b([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s*\(", issue):
+        if _looks_like_call_symbol(match):
             helpers.append(match)
     return sorted(dict.fromkeys(helpers))
+
+
+def _looks_like_call_symbol(symbol: str) -> bool:
+    if "." in symbol:
+        return all(_looks_like_public_symbol(part) for part in symbol.split("."))
+    if not _looks_like_public_symbol(symbol):
+        return False
+    return "_" in symbol or any(ch.islower() for ch in symbol) and any(ch.isupper() for ch in symbol)
+
+
+def _issue_mentions_data_contract(issue: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(keys?|fallback|missing data|expired|expiry|ttl|cache|database|adapter|redis|mongo|postgres)\b",
+            issue,
+            flags=re.IGNORECASE,
+        )
+    )

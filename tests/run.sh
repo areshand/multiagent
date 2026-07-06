@@ -431,20 +431,20 @@ with tempfile.TemporaryDirectory() as td:
     assert not (repo / ".gomodcache").exists(), "tool cache directory should be removed"
     assert removed == [], removed
 
-assert not solve_swe_prod.needs_flipt_database_credentials_recovery(
-    "Flipt configuration loading should return Result with warnings; ui.enabled is deprecated.",
+assert not solve_swe_prod.benchmark_specific_recovery_enabled(
+    "Configuration loading should return a structured result with warnings for deprecated options.",
     ["Go source changed, but status.json does not record a Go package validation command"],
     "diff --git a/internal/config/database.go b/internal/config/database.go\n",
 )
-assert not solve_swe_prod.needs_flipt_database_credentials_recovery(
-    "Flipt should support separate database credential keys.",
+assert not solve_swe_prod.benchmark_specific_recovery_enabled(
+    "The service should support separate database credential keys.",
     ["missing database.protocol error"],
     "diff --git a/internal/config/database.go b/internal/config/database.go\n",
 ), "row-specific adapter repair should stay disabled in no-leak production eval"
 metadata = {
     "swe_bench_pro": {
-        "instance_id": "instance_flipt",
-        "fail_to_pass": ["TestLoad", "TestJSONSchema"],
+        "instance_id": "synthetic_instance",
+        "fail_to_pass": ["TestConfigLoad", "TestSchemaValidation"],
         "pass_to_pass": [],
         "selected_test_files_to_run": ["internal/config/config_test.go"],
     }
@@ -452,15 +452,15 @@ metadata = {
 row56_status = {
     "status": "completed",
     "validation": (
-        "official-expected-tests: FAIL_TO_PASS source-inspected TestJSONSchema passed locally; "
-        "TestLoad source-inspected and visible failure is old-return-shape mismatch while official contract requires Result. "
+        "official-expected-tests: FAIL_TO_PASS source-inspected TestSchemaValidation passed locally; "
+        "TestConfigLoad source-inspected and visible failure is old-return-shape mismatch while official contract requires Result. "
         "official-test-source-inspected: internal/config/config_test.go"
     ),
 }
 assert not solve_swe_prod.official_expected_test_blockers(metadata, row56_status), "expected-test guidance should be off by default"
 os.environ["EVAL_ALLOW_EXPECTED_TEST_GUIDANCE"] = "1"
 blockers = solve_swe_prod.official_expected_test_blockers(metadata, row56_status)
-assert any("stale, failing" in blocker and "TestLoad" in blocker for blocker in blockers), blockers
+assert any("stale, failing" in blocker and "TestConfigLoad" in blocker for blocker in blockers), blockers
 absent_patch_status = {
     "status": "completed",
     "validation": (
@@ -470,12 +470,29 @@ absent_patch_status = {
 }
 assert not solve_swe_prod.official_expected_test_blockers(metadata, absent_patch_status), solve_swe_prod.official_expected_test_blockers(metadata, absent_patch_status)
 os.environ.pop("EVAL_ALLOW_EXPECTED_TEST_GUIDANCE", None)
-ansible_commands = solve_swe_prod.coverage_probe_commands(
+generic_commands = solve_swe_prod.coverage_probe_commands(
     Path("/tmp"),
-    "PowerShell CLIXML should decode escaped strings.",
-    "diff --git a/lib/ansible/plugins/shell/powershell.py b/lib/ansible/plugins/shell/powershell.py\n+def _parse_clixml(data):\n+    pass\n",
+    "A text parser should decode escaped strings.",
+    "diff --git a/lib/parsers/text_parser.py b/lib/parsers/text_parser.py\n+def _parse_text(data):\n+    pass\n",
 )
-assert ansible_commands == [], ansible_commands
+assert generic_commands == [], generic_commands
+
+false_helper_blockers = solve_swe_prod.implementation_scope_blockers(
+    "Panel Submit flow fails when independent app files use a command result in the working directory.",
+    "diff --git a/src/controller.js b/src/controller.js\n+db.getObjectField('x', 'y')\n",
+    {"status": "completed", "validation": "visible source check passed"},
+)
+assert not any("helper/interface" in blocker for blocker in false_helper_blockers), false_helper_blockers
+assert not any("helper-layer validation" in blocker for blocker in false_helper_blockers), false_helper_blockers
+
+real_helper_blockers = solve_swe_prod.implementation_scope_blockers(
+    "The helper `load_config_value` must preserve fallback behavior.",
+    "diff --git a/src/config.js b/src/config.js\n+function loadConfigValue() {}\n",
+    {"status": "completed", "validation": "visible source check passed"},
+)
+assert any("load_config_value" in blocker for blocker in real_helper_blockers), real_helper_blockers
+assert solve_swe_prod.is_disallowed_patch_path("patch.txt")
+assert solve_swe_prod.is_disallowed_patch_path("candidate.patch")
 
 with tempfile.TemporaryDirectory() as td:
     old_probe_commands = solve_swe_prod.coverage_probe_commands

@@ -24,7 +24,6 @@ from pathlib import Path
 
 try:
     from .swe_prod_guardrails import (
-        ansible_powershell_clixml_probe_command,
         changed_go_package_args,
         coverage_probe_commands,
         helper_scope_hints,
@@ -33,7 +32,6 @@ try:
     )
 except ImportError:  # pragma: no cover - direct script execution in task containers
     from swe_prod_guardrails import (
-        ansible_powershell_clixml_probe_command,
         changed_go_package_args,
         coverage_probe_commands,
         helper_scope_hints,
@@ -85,11 +83,19 @@ def leaked_expected_test_guidance_enabled() -> bool:
     return env_truthy("EVAL_ALLOW_EXPECTED_TEST_GUIDANCE", False)
 
 
-TEMPLATE_DIR = Path(__file__).with_name("templates")
+TEMPLATE_DIRS = [
+    Path(__file__).resolve().with_name("templates"),
+    Path(__file__).with_name("templates"),
+]
 
 
 def read_template(name: str) -> str:
-    return (TEMPLATE_DIR / name).read_text(encoding="utf-8")
+    for template_dir in TEMPLATE_DIRS:
+        path = template_dir / name
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+    searched = ", ".join(str(template_dir / name) for template_dir in TEMPLATE_DIRS)
+    raise FileNotFoundError(f"missing native solver template {name}; searched: {searched}")
 
 
 AUTONOMOUS_APPENDIX = read_template("swe_autonomous_appendix.md")
@@ -852,13 +858,6 @@ def repo_discovery_snapshot(workdir: Path, issue: str) -> str:
             if len(term) >= 4
         }
         priority_terms = {
-            "linux",
-            "dmi",
-            "sysfs",
-            "system",
-            "metadata",
-            "release",
-            "os-release",
             "auth",
             "user",
             "api",
@@ -868,6 +867,12 @@ def repo_discovery_snapshot(workdir: Path, issue: str) -> str:
             "config",
             "policy",
             "session",
+            "parser",
+            "serializer",
+            "adapter",
+            "client",
+            "model",
+            "metadata",
         }
         candidates: list[tuple[int, str, str]] = []
         for rel in _walk_source_dirs(workdir):
@@ -877,8 +882,6 @@ def repo_discovery_snapshot(workdir: Path, issue: str) -> str:
                 normalized = term.replace("_", "-")
                 if normalized in rel_lower or normalized.replace("-", "") in rel_lower.replace("-", ""):
                     score += 1
-            if rel_lower.endswith("/linux") or rel_lower == "linux" or "/linux/" in rel_lower:
-                score += 3 if any(term in issue_lower for term in ("linux", "dmi", "sysfs", "os-release", "metadata")) else 1
             if score:
                 has_go = any(path.suffix == ".go" for path in (workdir / rel).glob("*.go"))
                 candidates.append((score, rel, "go-files" if has_go else "dir-only"))
@@ -894,52 +897,18 @@ def repo_discovery_snapshot(workdir: Path, issue: str) -> str:
         sections.append(
             "Go placement rule: when the issue asks for new exported structs/functions, choose the package whose import path matches "
             "the domain named in the issue, even if that directory currently has no non-test Go files. Do not default to a generic "
-            "`utils` package when a domain package such as `lib/linux`, `internal/linux`, `pkg/config`, or an API-specific package exists."
+            "`utils` package when a domain-specific package or API package exists."
         )
-        if any(term in issue_lower for term in ("dmi", "sysfs", "os-release", "/etc/os-release", "/sys/class/dmi", "linux metadata")):
-            sections.append(
-                "Go Linux metadata placement rule: DMI, sysfs, and /etc/os-release APIs are Linux-domain APIs. In a Go repo, "
-                "prefer an existing or newly created Linux package path such as `lib/linux`/`internal/linux` over a generic "
-                "`utils` package unless public source clearly shows the project exposes these exact APIs elsewhere. Do not use "
-                "an inventory-specific metadata package for a general Linux utility API unless the issue explicitly says inventory."
-            )
-            sections.append(
-                "Go Linux metadata API rule: for DMI/sysfs readers, prefer an injectable filesystem-oriented helper such as "
-                "`FromFS` plus a default reader over path-only or read-callback-only APIs. For /etc/os-release parsers, prefer "
-                "a reader-oriented parser such as `FromReader`; ignore blank, comment, and malformed lines, split valid lines "
-                "on the first `=`, and trim quotes while preserving successfully parsed fields. Exported names should follow "
-                "the issue nouns (`DMI`, `DMIInfo`, `OSRelease`, `ParseOSRelease`) rather than unrelated project-specific names."
-            )
-            sections.append(
-                "Go Linux metadata fs.FS rule: DMIInfoFromFS must respect custom fs.FS Open behavior, including permission "
-                "errors injected by tests. Use `dmifs.Open(name)` plus `io.ReadAll`; avoid `fs.ReadFile(dmifs, name)` because "
-                "it can bypass an overridden Open when the filesystem also exposes ReadFile."
-            )
-            sections.append(
-                "Go Linux metadata default-reader rule: include default host readers with the public names implied by the issue "
-                "when adding injectable helpers. For this common contract, expose `DMIInfoFromSysfs() (*DMIInfo, error)` for "
-                "/sys/class/dmi/id and `ParseOSRelease() (*OSRelease, error)` for /etc/os-release, in addition to "
-                "`DMIInfoFromFS(fs.FS)` and `ParseOSReleaseFromReader(io.Reader)`."
-            )
-            sections.append(
-                "Go Linux metadata exact-shape rule: prefer the minimal exported struct fields implied by the issue and visible "
-                "source, not every field documented by Linux or freedesktop. For this common contract, DMIInfo should usually "
-                "contain only ProductName, ProductSerial, BoardSerial, and ChassisAssetTag, and OSRelease should usually contain "
-                "only PrettyName, Name, VersionID, Version, and ID. Do not broaden these structs or read unrelated sysfs files "
-                "unless the issue or repository source explicitly names them; hidden tests may exact-compare public structs."
-            )
-            sections.append(
-                "Go public API contract rule: before finalizing a new exported API, infer exact names from the issue nouns, "
-                "nearby package conventions, and visible tests. If multiple obvious names are plausible, add tiny compatibility "
-                "aliases/wrappers instead of betting on one spelling; for Linux metadata this includes variants like "
-                "`DMIInfoFromFS`, `ParseOSReleaseFromReader`, and a concrete exported `OSRelease` type."
-            )
-            sections.append(
-                "Go Linux metadata return-shape rule: metadata reader/parser APIs should return pointers to exported structs "
-                "when callers are likely to compare nil/partial results. DMI sysfs readers should preserve successfully read "
-                "fields while still returning an error for missing or unreadable expected files. Keep OSRelease as a plain "
-                "comparable struct of known fields; do not add map/slice fields unless public source clearly requires them."
-            )
+        sections.append(
+            "Go public API contract rule: before finalizing a new exported API, infer exact names, package placement, return "
+            "shape, and injectable seams from the issue text, visible source callers, docs, and nearby tests. If multiple "
+            "spellings are plausible from visible evidence, prefer tiny compatibility wrappers over a broad rewrite."
+        )
+        sections.append(
+            "Go parser/reader rule: when an issue asks for parsing or filesystem/input readers, derive malformed-input, "
+            "partial-data, and injected-error behavior from visible docs, callers, and existing tests. Keep data structures "
+            "minimal unless public source evidence requires broader fields."
+        )
 
     package_json = workdir / "package.json"
     if package_json.exists():
@@ -1014,7 +983,9 @@ def is_disallowed_patch_path(path: str) -> bool:
     name = Path(path).name
     lowered = path.lower()
     return (
-        name in {"dump.rdb", "appendonly.aof", "appendonly.aof.manifest"}
+        name in {"dump.rdb", "appendonly.aof", "appendonly.aof.manifest", "patch.txt", "patch.diff", "changes.diff"}
+        or name.startswith(("patch-", "patch_"))
+        or lowered.endswith((".patch", ".diff"))
         or lowered.startswith("appendonlydir/")
         or "/appendonlydir/" in lowered
         or lowered.startswith((".cache/", ".gocache/", ".gomodcache/", ".npm/", ".pnpm-store/", ".yarn/cache/"))
@@ -1543,12 +1514,12 @@ def send_orchestrator_scope_warning(session: str, blockers: list[str], source_hi
     send_tmux_literal(session, message)
 
 
-def needs_flipt_database_credentials_recovery(issue: str, blockers: list[str], diff: str) -> bool:
+def benchmark_specific_recovery_enabled(issue: str, blockers: list[str], diff: str) -> bool:
     """Deprecated compatibility hook.
 
     PR4's production eval path must not activate row-specific repair flows from
-    benchmark memory. Keep the symbol for older tests/imports, but never route
-    source edits through a benchmark-row-specific adapter worker.
+    benchmark memory. Never route source edits through a benchmark-row-specific
+    adapter worker.
     """
 
     return False

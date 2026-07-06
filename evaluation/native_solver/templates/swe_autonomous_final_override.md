@@ -51,9 +51,9 @@ As orchestrator:
    write completed status for a feature-only patch while this is unresolved.
    Copy the satisfied audit marker into the status JSON `validation` field.
    For resend/retry/expiry/TTL issues, the status JSON `validation` field must
-   also name the resend gate inspected, for example `canSendValidation`, and
-   must state how the source preserves the legacy resend condition where a
-   shortened remaining validation TTL means enough time has elapsed to re-send.
+   also name the concrete gate or helper inspected and must state how the source
+   preserves the intended timing condition derived from issue text, visible
+   tests, docs, callers, or runtime behavior.
 9. Completion requires both accepted source state in `/app` and
    `/tmp/multiagent-prod-swe/status.json`.
 10. If the task cannot be completed through worker plus verifier orchestration,
