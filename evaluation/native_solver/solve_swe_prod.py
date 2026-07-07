@@ -52,6 +52,27 @@ CODEX_HOME = Path(os.environ.get("CODEX_HOME", "/root/.codex-multiagent-prod"))
 APPLY_PATCH_WRAPPER = RUNTIME_ROOT / "apply_patch"
 STABLE_APPLY_PATCH = Path("/usr/local/bin/apply_patch")
 ACTIVE_START_HEAD: str | None = None
+PUBLIC_SOLVER_METADATA_KEYS = {
+    "id",
+    "instance_id",
+    "language",
+    "repo",
+    "sample_id",
+    "task_id",
+}
+PRIVATE_SOLVER_METADATA_KEYS = {
+    "FAIL_TO_PASS",
+    "PASS_TO_PASS",
+    "base_commit",
+    "fail_to_pass",
+    "interface",
+    "pass_to_pass",
+    "problem_statement",
+    "requirements",
+    "run_script_dir",
+    "selected_test_files_to_run",
+    "test_patch",
+}
 
 
 def env_positive_int(name: str, default: int) -> int:
@@ -123,7 +144,35 @@ def read_task_metadata() -> dict[str, object]:
     except json.JSONDecodeError as exc:
         log(f"ignoring invalid task metadata JSON at {TASK_METADATA_PATH}: {exc}")
         return {}
-    return parsed if isinstance(parsed, dict) else {}
+    if not isinstance(parsed, dict):
+        return {}
+    sanitized = public_solver_metadata(parsed)
+    if sanitized != parsed:
+        log("stripped non-public task metadata before solver prompting")
+    return sanitized
+
+
+def public_solver_metadata(metadata: dict[str, object]) -> dict[str, object]:
+    """Return only metadata that cannot disclose the benchmark answer.
+
+    The EvalScope runner already writes a sanitized metadata file, but the
+    production solver is a trust boundary too. This keeps old task images,
+    manual invocations, or future adapters from injecting expected tests, test
+    patches, official requirements, or row-specific hidden contracts into the
+    multi-agent prompt path.
+    """
+
+    public: dict[str, object] = {
+        key: value
+        for key, value in metadata.items()
+        if key in PUBLIC_SOLVER_METADATA_KEYS and key not in PRIVATE_SOLVER_METADATA_KEYS
+    }
+    nested = metadata.get("swe_bench_pro")
+    if isinstance(nested, dict):
+        for key, value in nested.items():
+            if key in PUBLIC_SOLVER_METADATA_KEYS and key not in public:
+                public[key] = value
+    return public
 
 
 def _list_from_metadata(value: object) -> list[str]:

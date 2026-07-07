@@ -451,6 +451,35 @@ public_metadata = evalscope_multiagent_native_runner._public_solver_metadata(
     }
 )
 assert public_metadata == {"sample_id": 7, "repo": "example/repo", "instance_id": "instance-7"}, public_metadata
+solver_metadata = solve_swe_prod.public_solver_metadata(
+    {
+        "sample_id": 7,
+        "repo": "example/repo",
+        "problem_statement": "hidden prompt copy",
+        "requirements": "private requirements copy",
+        "interface": "private interface copy",
+        "FAIL_TO_PASS": ["TestHidden"],
+        "test_patch": "diff --git a/tests/hidden_test.py b/tests/hidden_test.py",
+        "swe_bench_pro": {
+            "instance_id": "instance-7",
+            "fail_to_pass": ["TestNestedHidden"],
+            "selected_test_files_to_run": ["tests/hidden_test.py"],
+            "requirements": "private evaluator contract",
+        },
+    }
+)
+assert solver_metadata == {"sample_id": 7, "repo": "example/repo", "instance_id": "instance-7"}, solver_metadata
+ledger = solve_swe_prod.contract_ledger_text("visible issue text", solver_metadata)
+for forbidden in (
+    "hidden prompt copy",
+    "private requirements copy",
+    "private interface copy",
+    "TestHidden",
+    "TestNestedHidden",
+    "hidden_test.py",
+    "private evaluator contract",
+):
+    assert forbidden not in ledger, forbidden
 
 with tempfile.TemporaryDirectory() as td:
     repo = Path(td)

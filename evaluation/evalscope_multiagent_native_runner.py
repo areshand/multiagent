@@ -15,7 +15,6 @@ benchmark evidence.
 from __future__ import annotations
 
 import base64
-import ast
 import json
 import os
 import shlex
@@ -126,10 +125,9 @@ class MultiagentNativeRunner(AgentRunner):
         self._codex_auth_container_home = codex_auth_container_home.rstrip("/") or "/root/.codex-multiagent-prod"
         self._score_failed_diff = score_failed_diff
         self._score_timed_out_diff = score_timed_out_diff
-        self._swe_bench_pro_repo_path = Path(swe_bench_pro_repo_path).expanduser() if swe_bench_pro_repo_path else None
-        self._swe_bench_pro_sample_offset = int(swe_bench_pro_sample_offset or 0)
-        self._official_contracts: dict[str, dict[str, Any]] | None = None
-        self._official_contracts_by_index: dict[int, dict[str, Any]] | None = None
+        # Accepted for backwards-compatible EvalScope configs only. Production
+        # no-leak mode must not enrich solver metadata from official datasets.
+        _ = swe_bench_pro_repo_path, swe_bench_pro_sample_offset
 
     async def setup(self, env: AgentEnvironment) -> None:
         await self._write_file(env, _DEFAULT_SOLVER_COMMAND, _SOLVER_LAUNCHER)
@@ -269,114 +267,6 @@ class MultiagentNativeRunner(AgentRunner):
             tail = ((result.stderr or "") + "\n" + (result.stdout or "")).strip()[-1000:]
             raise RuntimeError(f"multiagent-native failed to write {path}: {tail}")
 
-    def _enrich_metadata_with_official_contract(self, metadata: dict[str, Any], instruction: str = "") -> dict[str, Any]:
-        contract = self._contract_for_metadata(metadata, instruction)
-        if not contract:
-            return metadata
-        merged = dict(metadata)
-        nested = dict(merged.get("swe_bench_pro") or {})
-        nested.update(contract)
-        merged["swe_bench_pro"] = nested
-        return merged
-
-    def _contract_for_metadata(self, metadata: dict[str, Any], instruction: str = "") -> dict[str, Any] | None:
-        candidates = [
-            metadata.get("instance_id"),
-            metadata.get("sample_id"),
-            metadata.get("id"),
-            metadata.get("task_id"),
-        ]
-        nested = metadata.get("swe_bench_pro")
-        if isinstance(nested, dict):
-            candidates.extend([nested.get("instance_id"), nested.get("sample_id")])
-        contracts = self._load_official_contracts()
-        sample_id = metadata.get("sample_id")
-        if sample_id is not None:
-            try:
-                official_index = self._swe_bench_pro_sample_offset + int(sample_id)
-            except (TypeError, ValueError):
-                official_index = None
-            if official_index is not None:
-                by_index = self._load_official_contracts_by_index()
-                if official_index in by_index:
-                    return by_index[official_index]
-        for raw in candidates:
-            if raw is None:
-                continue
-            key = str(raw)
-            if key in contracts:
-                return contracts[key]
-            if "-v" in key:
-                base = key.split("-v", 1)[0]
-                if base in contracts:
-                    return contracts[base]
-        normalized_instruction = _normalize_problem_statement(instruction)
-        if normalized_instruction:
-            for contract in contracts.values():
-                problem = str(contract.get("problem_statement") or "")
-                if normalized_instruction == _normalize_problem_statement(problem):
-                    return contract
-            for contract in contracts.values():
-                problem = _normalize_problem_statement(str(contract.get("problem_statement") or ""))
-                if problem and (problem in normalized_instruction or normalized_instruction in problem):
-                    return contract
-        return None
-
-    def _load_official_contracts(self) -> dict[str, dict[str, Any]]:
-        if self._official_contracts is not None:
-            return self._official_contracts
-        contracts: dict[str, dict[str, Any]] = {}
-        contracts_by_index: dict[int, dict[str, Any]] = {}
-        if not self._swe_bench_pro_repo_path:
-            self._official_contracts = contracts
-            self._official_contracts_by_index = contracts_by_index
-            return contracts
-        dataset_path = self._swe_bench_pro_repo_path / "helper_code" / "sweap_eval_full_v2.jsonl"
-        if not dataset_path.exists():
-            logger.warning(f"SWE Bench Pro official JSONL not found for native metadata enrichment: {dataset_path}")
-            self._official_contracts = contracts
-            self._official_contracts_by_index = contracts_by_index
-            return contracts
-        with dataset_path.open(encoding="utf-8") as handle:
-            for official_index, line in enumerate(handle):
-                if not line.strip():
-                    continue
-                row = json.loads(line)
-                instance_id = str(row.get("instance_id") or "")
-                if not instance_id:
-                    continue
-                fail_to_pass = _parse_test_list(row.get("FAIL_TO_PASS") or row.get("fail_to_pass"))
-                pass_to_pass = _parse_test_list(row.get("PASS_TO_PASS") or row.get("pass_to_pass"))
-                selected_files = _parse_test_list(row.get("selected_test_files_to_run"))
-                contract = {
-                    "instance_id": instance_id,
-                    "repo": row.get("repo"),
-                    "base_commit": row.get("base_commit"),
-                    "problem_statement": row.get("problem_statement"),
-                    "requirements": row.get("requirements"),
-                    "interface": row.get("interface"),
-                    "fail_to_pass": fail_to_pass,
-                    "pass_to_pass": pass_to_pass,
-                    "expected_test_count": len(fail_to_pass) + len(pass_to_pass),
-                    "selected_test_files_to_run": selected_files,
-                    "run_script_dir": str(self._swe_bench_pro_repo_path / "run_scripts" / instance_id),
-                }
-                contracts[instance_id] = contract
-                contracts_by_index[official_index] = contract
-                if "-v" in instance_id:
-                    contracts.setdefault(instance_id.split("-v", 1)[0], contract)
-        self._official_contracts = contracts
-        self._official_contracts_by_index = contracts_by_index
-        return contracts
-
-    def _load_official_contracts_by_index(self) -> dict[int, dict[str, Any]]:
-        if self._official_contracts_by_index is not None:
-            return self._official_contracts_by_index
-        self._load_official_contracts()
-        if self._official_contracts_by_index is None:
-            self._official_contracts_by_index = {}
-        return self._official_contracts_by_index
-
     async def _install_codex_auth(self, env: AgentEnvironment) -> None:
         auth_path = Path(self._codex_auth_json).expanduser()
         if not auth_path.exists():
@@ -423,30 +313,6 @@ PY
             logger.warning(f"multiagent-native failed to scrub Codex auth home: {tail}")
 
 
-def _parse_test_list(raw: Any) -> list[str]:
-    if raw is None:
-        return []
-    if isinstance(raw, list):
-        return [str(item) for item in raw]
-    if isinstance(raw, tuple):
-        return [str(item) for item in raw]
-    if not isinstance(raw, str):
-        return [str(raw)]
-    text = raw.strip()
-    if not text:
-        return []
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        try:
-            parsed = ast.literal_eval(text)
-        except (SyntaxError, ValueError):
-            return [text]
-    if isinstance(parsed, (list, tuple)):
-        return [str(item) for item in parsed]
-    return [str(parsed)]
-
-
 def _public_solver_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     """Return only non-answer metadata that may be visible to the solver.
 
@@ -467,7 +333,3 @@ def _public_solver_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
             if key in _PUBLIC_METADATA_KEYS and key not in public:
                 public[key] = value
     return public
-
-
-def _normalize_problem_statement(text: str) -> str:
-    return " ".join(text.strip().split())
