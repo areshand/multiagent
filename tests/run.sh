@@ -629,6 +629,18 @@ ui_skip_blockers = solve_swe_prod.validation_coverage_blockers(
 )
 assert not ui_skip_blockers, ui_skip_blockers
 
+assert solve_swe_prod.visible_validation_passed_in_text(
+    "pytest -q pkg/tests\n================= 5 passed, 54 deselected, 1 warning in 0.03s ==================\n"
+)
+assert solve_swe_prod.visible_validation_passed_in_text(
+    "Validation passed:\n`pytest -q openlibrary/catalog/marc/tests/test_parse.py -k '880' --tb=short`\n"
+    "Result: 5 passed, 54 deselected, 1 warning.\nfinal status: codex exec exited rc=0\n"
+)
+assert not solve_swe_prod.visible_validation_passed_in_text(
+    "================= 1 failed, 4 passed, 54 deselected in 0.06s ==================\n"
+)
+assert not solve_swe_prod.visible_validation_passed_in_text("pytest reported no tests ran")
+
 assert solve_swe_prod.is_disallowed_patch_path("patch.txt")
 assert solve_swe_prod.is_disallowed_patch_path("candidate.patch")
 

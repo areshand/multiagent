@@ -1338,6 +1338,50 @@ def final_verifier_accepted_without_status(text: str, diff_bytes: int) -> bool:
     return accepted
 
 
+def visible_validation_passed_in_text(text: str) -> bool:
+    """Return whether captured agent output contains a passing visible validation.
+
+    This is a generic recovery signal for cases where a bounded worker fixed the
+    source diff and reported a local visible test command, but the orchestrator
+    exited before writing ``status.json``. It must not encode benchmark expected
+    tests or row-specific knowledge.
+    """
+
+    text_lower = text.lower()
+    if not text_lower:
+        return False
+    if any(marker in text_lower for marker in ("no tests ran", "0 tests", "0 passed")):
+        return False
+    summary_matches = list(
+        re.finditer(
+            r"=+\s+(?P<summary>[^=\n]*(?:passed|xfailed|deselected)[^=\n]*)\s+=+",
+            text_lower,
+        )
+    )
+    for match in reversed(summary_matches):
+        summary = match.group("summary")
+        if "passed" in summary and " failed" not in summary and " error" not in summary and " errors" not in summary:
+            return True
+    validation_markers = (
+        "validation passed:",
+        "result:",
+        "tests passed",
+        "go test",
+        "pytest",
+        "npm test",
+        "yarn test",
+    )
+    if not any(marker in text_lower for marker in validation_markers):
+        return False
+    tail = text_lower[-5000:]
+    return (
+        (" passed" in tail or ": passed" in tail)
+        and "failed" not in tail
+        and "error:" not in tail
+        and "traceback" not in tail
+    )
+
+
 def validation_coverage_blockers(
     issue: str,
     diff: str,
@@ -2641,6 +2685,33 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     if restored:
         log(f"restored benchmark-disallowed changes: {restored}")
     final_diff = git_diff(workdir)
+    if exit_code != 0 and final_diff.strip() and not coverage_gate_unresolved:
+        final_status = status()
+        final_state = str(final_status.get("status", "")).lower()
+        final_text = captured_text()
+        if final_state != "blocked" and visible_validation_passed_in_text(final_text):
+            final_blockers = [
+                *implementation_scope_blockers(issue, final_diff, final_status, task_metadata),
+                *validation_coverage_blockers(issue, final_diff, final_text, final_status, task_metadata),
+            ]
+            final_blockers = blockers_after_passing_public_probe(final_blockers)
+            if not final_blockers:
+                STATUS_PATH.write_text(
+                    json.dumps(
+                        {
+                            "status": "completed",
+                            "summary": "source diff and visible validation recovered after missing completion marker",
+                            "validation": "captured worker output contains passing visible validation; status marker recovered by benchmark wrapper",
+                            "risk": "completion marker was recovered by the benchmark wrapper after worker/orchestrator exit",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                log("completion marker recovered at final cleanup from source diff plus passing visible validation")
+                exit_code = 0
+                outcome = "recovered"
+            else:
+                log("final cleanup recovery refused; blockers remain: " + "; ".join(final_blockers))
     if coverage_gate_unresolved:
         log("coverage gate remained unresolved; preserving current source diff for official verifier diagnostics")
     elif outcome == "blocked" and not final_diff.strip():
