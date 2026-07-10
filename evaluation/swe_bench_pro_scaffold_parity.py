@@ -17,6 +17,7 @@ import os
 import shutil
 import subprocess
 import sys
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -730,7 +731,7 @@ def main() -> int:
             run_result = run_evalscope(config, args.evalscope_path, args)
         except Exception as exc:
             status = "failed"
-            run_result = {"error": repr(exc)}
+            run_result = {"error": repr(exc), "traceback": traceback.format_exc()}
     completed_at = dt.datetime.now(dt.UTC)
 
     evalscope_report_path = find_evalscope_report(args.work_dir, args.model_id)
