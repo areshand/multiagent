@@ -73,6 +73,14 @@ side cannot be run, require a source-derived comparison of the corresponding
 fields, helper calls, return shape, and edge cases, and mark unresolved gaps as
 blocking rather than residual.
 
+When the issue uses completeness language such as all, every, complete,
+associated, linked, repeated, alternate, fallback chain, or multi-value, reject
+first-match-only fixes. Build or inspect a source-derived case with at least two
+matching values and verify that every value is represented in the expected
+collection/output shape. If one matched value is also used as a primary value
+for compatibility, it still must not be silently dropped from the complete
+collection unless visible source evidence explicitly requires that exclusion.
+
 Do not rely on leaked evaluator tests, hidden test names, official expected
 rows, or benchmark-only metadata as implementation guidance. The verifier may
 use benchmark scores or hidden-test failures as post-hoc diagnostics, but

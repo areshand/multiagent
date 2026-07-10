@@ -64,6 +64,13 @@ representative probe, fixture, smoke command, or source-level comparison for
 each named path, derived only from issue text, visible tests, docs, source
 callers, schemas, or runtime behavior.
 
+When the task asks for all, every, complete, associated, linked, repeated,
+alternate, fallback-chain, or multi-value behavior, include a completeness
+contract: workers and verifiers must check more than one matching value and must
+show where each value appears in the output. Treat first-match-only behavior as
+a hidden-contract risk unless source evidence proves the collection is meant to
+exclude one of the matches.
+
 For UI/component tasks, explicitly distinguish additive public-surface work
 from behavior rewrites. If the request is about storybook coverage, export
 surface, examples, or exposing a named component/story, preserve existing

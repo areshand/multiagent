@@ -64,3 +64,16 @@ every named format/implementation/parser/serializer path, or a blocking finding
 when a representative fixture, smoke command, probe, or source-level comparison
 is missing. This keeps hidden-contract coverage based on issue text, visible
 tests, docs, source callers, schemas, and runtime behavior only.
+
+Follow-up rerun `swe-bench-pro-prod-pr4-noleak-offset16-count1-r3` also reached
+the official verifier with native solver exit code 0 and solver-visible
+metadata sanitized to `{}`, but still scored `0.0`. The stronger verifier did
+force a source-derived follow-up for XML/Binary parity and caught a visible-test
+regression before finalization. The remaining official failure was still a
+complete-collection miss: linked alternate title values were not all represented
+in `other_titles` when one linked value was used as a primary title-compatible
+value. The verifier/contract prompts now also reject first-match-only fixes for
+tasks asking for all/every/complete/associated/linked/repeated/alternate or
+multi-value behavior, requiring a source-derived probe with at least two
+matching values and evidence that every value appears in the expected output
+shape.

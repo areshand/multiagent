@@ -174,6 +174,12 @@ Verifier quality bar:
   named path before accepting. Source review alone is not acceptance for a named
   path when a nearby fixture, example, smoke command, or lightweight probe can
   exercise it; unresolved parity gaps are blocking.
+- If the issue asks for all, every, complete, associated, linked, repeated,
+  alternate, fallback-chain, or multi-value behavior, verify a source-derived
+  case with at least two matching values. Reject first-match-only fixes and
+  reject patches where one matched value is moved to a primary output but then
+  omitted from the complete collection unless visible source evidence explicitly
+  requires that exclusion.
 - List concrete blocking findings. If you cannot prove the patch is wrong but
   see risk, name the risk separately from blockers.
 
