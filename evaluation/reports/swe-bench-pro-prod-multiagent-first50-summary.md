@@ -45,3 +45,22 @@ multi-agent path because the solver repo is baked into the task image and Codex
 auth is mounted at runtime. Earlier scaffold or single-runner results were
 infrastructure checks, not clean measurements of production multi-agent
 capability.
+
+## 2026-07-10 No-Leak Audit Update
+
+The production native path was audited for benchmark/fix leakage after rerunning
+missing row 16 (`swe-bench-pro-prod-pr4-noleak-offset16-count1-r2`). The live
+task container metadata visible to the solver was sanitized to `{}` and no row
+identity, official expected tests, selected test files, test patch, or private
+requirements were injected into the solver prompt. The row reached the official
+verifier with native solver exit code 0, but scored `0.0`; the score remains
+31/50.
+
+The row 16 failure exposed a general verifier weakness, not a reason to leak
+official expected tests: the verifier accepted a MARC XML/Binary parser parity
+patch while treating one named format path as source-reviewed residual risk.
+Verifier and contract-scout prompts now require source-derived parity checks for
+every named format/implementation/parser/serializer path, or a blocking finding
+when a representative fixture, smoke command, probe, or source-level comparison
+is missing. This keeps hidden-contract coverage based on issue text, visible
+tests, docs, source callers, schemas, and runtime behavior only.

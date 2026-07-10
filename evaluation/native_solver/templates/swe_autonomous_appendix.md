@@ -169,6 +169,11 @@ Verifier quality bar:
   assertion with a temporary probe or source-level comparison before accepting.
 - Trace helper APIs when the issue mentions keys, fallback sources, expired
   records, parsers, serializers, adapters, persistence, or missing data.
+- If the issue names multiple formats, implementations, clients, adapters,
+  parsers, serializers, storage backends, or runtimes, verify parity for each
+  named path before accepting. Source review alone is not acceptance for a named
+  path when a nearby fixture, example, smoke command, or lightweight probe can
+  exercise it; unresolved parity gaps are blocking.
 - List concrete blocking findings. If you cannot prove the patch is wrong but
   see risk, name the risk separately from blockers.
 

@@ -57,6 +57,13 @@ identify those files explicitly. Missing assets under paths such as `testdata/`,
 `fixtures/`, `golden/`, or snapshot directories are implementation inputs, not
 optional test edits, when the source path expects them.
 
+When the task names multiple formats, implementations, clients, adapters,
+parsers, serializers, storage backends, or runtimes, treat parity across every
+named path as part of the contract. The validation plan must include one
+representative probe, fixture, smoke command, or source-level comparison for
+each named path, derived only from issue text, visible tests, docs, source
+callers, schemas, or runtime behavior.
+
 For UI/component tasks, explicitly distinguish additive public-surface work
 from behavior rewrites. If the request is about storybook coverage, export
 surface, examples, or exposing a named component/story, preserve existing

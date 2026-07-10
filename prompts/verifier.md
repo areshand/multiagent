@@ -65,6 +65,14 @@ Prioritize:
 Challenge material worker assumptions explicitly. For each assumption, validate
 it from source/tests/docs, cover it with a probe, or mark it as residual risk.
 
+For tasks that name multiple formats, implementations, clients, adapters,
+parsers, serializers, storage backends, or runtimes, verify parity for each named path.
+Do not accept source review alone for one named path when a nearby
+fixture, example, smoke command, or lightweight probe can exercise it. If one
+side cannot be run, require a source-derived comparison of the corresponding
+fields, helper calls, return shape, and edge cases, and mark unresolved gaps as
+blocking rather than residual.
+
 Do not rely on leaked evaluator tests, hidden test names, official expected
 rows, or benchmark-only metadata as implementation guidance. The verifier may
 use benchmark scores or hidden-test failures as post-hoc diagnostics, but
