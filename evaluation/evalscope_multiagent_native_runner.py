@@ -34,12 +34,7 @@ _STDOUT_FILE = "/tmp/evalscope-native-multiagent-stdout.log"
 _STDERR_FILE = "/tmp/evalscope-native-multiagent-stderr.log"
 _DEFAULT_SOLVER_COMMAND = "/tmp/evalscope-native-multiagent-solver.sh"
 _PUBLIC_METADATA_KEYS = {
-    "id",
-    "instance_id",
     "language",
-    "repo",
-    "sample_id",
-    "task_id",
 }
 _PRIVATE_SOLVER_METADATA_KEYS = {
     "FAIL_TO_PASS",
@@ -159,7 +154,8 @@ class MultiagentNativeRunner(AgentRunner):
                 "The command must edit the repository in /app; EvalScope will extract git diff afterwards."
             )
 
-        metadata = _public_solver_metadata(dict(task.metadata or {}))
+        raw_metadata = dict(task.metadata or {})
+        metadata = _public_solver_metadata(raw_metadata)
         await self._write_file(env, _PROMPT_FILE, task.instruction)
         await self._write_file(env, _METADATA_FILE, json.dumps(metadata, indent=2, sort_keys=True))
 
@@ -186,7 +182,7 @@ class MultiagentNativeRunner(AgentRunner):
         shell_command = (
             f"{command} > {shlex.quote(_STDOUT_FILE)} 2> {shlex.quote(_STDERR_FILE)}"
         )
-        sample_id = metadata.get("sample_id")
+        sample_id = raw_metadata.get("sample_id")
         logger.info(
             f"multiagent-native launching: sample={sample_id} timeout={task.timeout}s "
             f"cwd={self._working_dir} command={command!r}"
@@ -317,9 +313,10 @@ def _public_solver_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     """Return only non-answer metadata that may be visible to the solver.
 
     SWE Bench Pro rows contain verifier-side fields such as expected test names,
-    selected official test files, and test patches. The production multi-agent
-    solver must infer fixes from the issue and repository state, so those fields
-    are intentionally not written into the task container.
+    selected official test files, test patches, and row identifiers. The
+    production multi-agent solver must infer fixes from the issue and repository
+    state, so benchmark identity and answer-shaped fields are intentionally not
+    written into the task container.
     """
 
     public: dict[str, Any] = {

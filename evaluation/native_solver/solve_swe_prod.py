@@ -53,12 +53,7 @@ APPLY_PATCH_WRAPPER = RUNTIME_ROOT / "apply_patch"
 STABLE_APPLY_PATCH = Path("/usr/local/bin/apply_patch")
 ACTIVE_START_HEAD: str | None = None
 PUBLIC_SOLVER_METADATA_KEYS = {
-    "id",
-    "instance_id",
     "language",
-    "repo",
-    "sample_id",
-    "task_id",
 }
 PRIVATE_SOLVER_METADATA_KEYS = {
     "FAIL_TO_PASS",
@@ -158,8 +153,8 @@ def public_solver_metadata(metadata: dict[str, object]) -> dict[str, object]:
     The EvalScope runner already writes a sanitized metadata file, but the
     production solver is a trust boundary too. This keeps old task images,
     manual invocations, or future adapters from injecting expected tests, test
-    patches, official requirements, or row-specific hidden contracts into the
-    multi-agent prompt path.
+    patches, official requirements, row identity, repository identity, or
+    row-specific hidden contracts into the multi-agent prompt path.
     """
 
     public: dict[str, object] = {
@@ -339,9 +334,10 @@ def official_test_patch_excerpt(metadata: dict[str, object] | None, max_chars: i
 
 
 def contract_ledger_text(issue: str, metadata: dict[str, object] | None = None) -> str:
-    contract = official_test_contract(metadata or {})
-    symbols = required_public_symbols(issue, metadata)
-    contract_excerpt = metadata_problem_text(metadata)
+    solver_metadata = public_solver_metadata(metadata or {})
+    contract = official_test_contract(solver_metadata)
+    symbols = required_public_symbols(issue, solver_metadata)
+    contract_excerpt = metadata_problem_text(solver_metadata)
     sections = [
         "# SWE Bench Pro Contract Ledger",
         "",
@@ -411,6 +407,7 @@ def contract_ledger_excerpt(limit: int = 6000) -> str:
 
 
 def official_test_contract_text(metadata: dict[str, object]) -> str:
+    metadata = public_solver_metadata(metadata)
     if not leaked_expected_test_guidance_enabled():
         return ""
     contract = official_test_contract(metadata)
@@ -977,12 +974,13 @@ def repo_discovery_snapshot(workdir: Path, issue: str) -> str:
 def make_prompt(repo_root: Path, workdir: Path, issue: str, metadata: dict[str, object] | None = None) -> Path:
     base_prompt = repo_root / "orchestrator_prompt.md"
     require_path(base_prompt, "production orchestrator prompt")
-    ledger_path = write_contract_ledger(issue, metadata)
+    solver_metadata = public_solver_metadata(metadata or {})
+    ledger_path = write_contract_ledger(issue, solver_metadata)
     prompt = (
         base_prompt.read_text(encoding="utf-8")
         + AUTONOMOUS_APPENDIX
         + issue
-        + official_test_contract_text(metadata or {})
+        + official_test_contract_text(solver_metadata)
         + "\n\n## Durable Contract Ledger\n\n"
         + f"The adapter wrote the durable contract ledger to `{ledger_path}`. "
         + "Every worker and verifier instruction must preserve every invariant in that file. "

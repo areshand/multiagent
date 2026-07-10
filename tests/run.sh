@@ -438,7 +438,10 @@ from evaluation import evalscope_multiagent_native_runner
 public_metadata = evalscope_multiagent_native_runner._public_solver_metadata(
     {
         "sample_id": 7,
+        "id": "row-7",
+        "task_id": "task-7",
         "repo": "example/repo",
+        "language": "python",
         "problem_statement": "hidden prompt copy",
         "FAIL_TO_PASS": ["TestHidden"],
         "test_patch": "diff --git a/tests/hidden_test.py b/tests/hidden_test.py",
@@ -450,11 +453,14 @@ public_metadata = evalscope_multiagent_native_runner._public_solver_metadata(
         },
     }
 )
-assert public_metadata == {"sample_id": 7, "repo": "example/repo", "instance_id": "instance-7"}, public_metadata
+assert public_metadata == {"language": "python"}, public_metadata
 solver_metadata = solve_swe_prod.public_solver_metadata(
     {
         "sample_id": 7,
+        "id": "row-7",
+        "task_id": "task-7",
         "repo": "example/repo",
+        "language": "python",
         "problem_statement": "hidden prompt copy",
         "requirements": "private requirements copy",
         "interface": "private interface copy",
@@ -468,9 +474,34 @@ solver_metadata = solve_swe_prod.public_solver_metadata(
         },
     }
 )
-assert solver_metadata == {"sample_id": 7, "repo": "example/repo", "instance_id": "instance-7"}, solver_metadata
-ledger = solve_swe_prod.contract_ledger_text("visible issue text", solver_metadata)
+assert solver_metadata == {"language": "python"}, solver_metadata
+ledger = solve_swe_prod.contract_ledger_text(
+    "visible issue text",
+    {
+        "sample_id": 7,
+        "id": "row-7",
+        "task_id": "task-7",
+        "repo": "example/repo",
+        "language": "python",
+        "problem_statement": "hidden prompt copy",
+        "requirements": "private requirements copy",
+        "interface": "private interface copy",
+        "FAIL_TO_PASS": ["TestHidden"],
+        "test_patch": "diff --git a/tests/hidden_test.py b/tests/hidden_test.py",
+        "swe_bench_pro": {
+            "instance_id": "instance-7",
+            "fail_to_pass": ["TestNestedHidden"],
+            "selected_test_files_to_run": ["tests/hidden_test.py"],
+            "requirements": "private evaluator contract",
+        },
+    },
+)
 for forbidden in (
+    "sample_id",
+    "row-7",
+    "task-7",
+    "example/repo",
+    "instance-7",
     "hidden prompt copy",
     "private requirements copy",
     "private interface copy",
