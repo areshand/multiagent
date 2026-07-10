@@ -71,6 +71,11 @@ show where each value appears in the output. Treat first-match-only behavior as
 a hidden-contract risk unless source evidence proves the collection is meant to
 exclude one of the matches.
 
+When nearby visible tests or fixtures are expected to fail because the task
+changes their expected output, require a replacement probe that asserts the new
+source-derived output shape for the exact failing field/path. Do not route a
+worker/verifier to accept a known failing relevant test as merely stale.
+
 For UI/component tasks, explicitly distinguish additive public-surface work
 from behavior rewrites. If the request is about storybook coverage, export
 surface, examples, or exposing a named component/story, preserve existing

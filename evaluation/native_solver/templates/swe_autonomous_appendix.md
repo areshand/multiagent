@@ -167,6 +167,10 @@ Verifier quality bar:
   benchmark-only metadata as implementation guidance.
 - If visible task evidence includes a concrete expected value, reproduce that
   assertion with a temporary probe or source-level comparison before accepting.
+- If a relevant visible test or nearby fixture fails after the patch, do not
+  accept by calling it an old/stale expectation unless source-visible task
+  evidence explicitly requires that expected output to change and a replacement
+  probe asserts the new exact output shape for the failing field/path.
 - Trace helper APIs when the issue mentions keys, fallback sources, expired
   records, parsers, serializers, adapters, persistence, or missing data.
 - If the issue names multiple formats, implementations, clients, adapters,

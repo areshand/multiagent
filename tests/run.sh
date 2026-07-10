@@ -398,6 +398,9 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_ap
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Fixture/testdata"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "unresolved parity gaps are blocking"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Reject first-match-only fixes"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "replacement probe asserts the new exact output shape"
+assert_file_contains "$ROOT/prompts/verifier.md" "old/stale expectation"
+assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "known failing relevant test"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_ADAPTER_HELPER_MODE"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "adapter helper advisory mode: not spawning source-editing helper"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Do not rely on leaked evaluator tests"
@@ -407,7 +410,9 @@ assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "_
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" '"fail_to_pass"'
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" '"test_patch"'
 assert_file_not_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "_enrich_metadata_with_official_contract(dict(task.metadata"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_ALLOW_EXPECTED_TEST_GUIDANCE is ignored"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "Never gate production solving on official expected-test metadata"
+assert_file_not_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_ALLOW_EXPECTED_TEST_GUIDANCE"
+assert_file_not_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "official_test_contract_text"
 python3 - "$ROOT" <<'PY'
 import os
 import subprocess
@@ -577,9 +582,8 @@ row56_status = {
     ),
 }
 assert not solve_swe_prod.official_expected_test_blockers(metadata, row56_status), "expected-test guidance should be off by default"
-os.environ["EVAL_ALLOW_EXPECTED_TEST_GUIDANCE"] = "1"
 blockers = solve_swe_prod.official_expected_test_blockers(metadata, row56_status)
-assert blockers == [], "expected-test guidance env var should be ignored in no-leak production mode"
+assert blockers == [], "official expected-test metadata must not gate no-leak production mode"
 absent_patch_status = {
     "status": "completed",
     "validation": (
@@ -588,7 +592,6 @@ absent_patch_status = {
     ),
 }
 assert not solve_swe_prod.official_expected_test_blockers(metadata, absent_patch_status), solve_swe_prod.official_expected_test_blockers(metadata, absent_patch_status)
-os.environ.pop("EVAL_ALLOW_EXPECTED_TEST_GUIDANCE", None)
 generic_commands = solve_swe_prod.coverage_probe_commands(
     Path("/tmp"),
     "A text parser should decode escaped strings.",

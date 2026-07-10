@@ -94,6 +94,12 @@ accepting. Reject patches that only pass weaker semantic probes when legitimate
 evidence requires exact ordering, punctuation, argument placement, or output
 shape.
 
+If a relevant visible test or nearby fixture fails after the patch, do not
+accept by labeling that failure as an old/stale expectation unless source-visible
+task evidence explicitly requires the expectation to change and you have run a
+replacement probe that asserts the new exact output shape. The replacement probe
+must cover the failing field/path, not just a weaker happy-path behavior.
+
 If legitimate product paths or visible tests reference missing fixture assets
 under `testdata/`, `fixtures/`, `golden/`, or snapshot paths, reject a
 source-only completion that omits those assets.

@@ -88,17 +88,6 @@ def env_truthy(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def leaked_expected_test_guidance_enabled() -> bool:
-    """Return whether expected-test metadata may be injected into solver prompts.
-
-    This is deliberately hard-disabled for production evals. The solver must
-    infer fixes from the issue text and repository-visible evidence, not from
-    official expected tests, test patches, or row-specific benchmark metadata.
-    """
-
-    return False
-
-
 TEMPLATE_DIRS = [
     Path(__file__).resolve().with_name("templates"),
     Path(__file__).with_name("templates"),
@@ -227,112 +216,6 @@ def metadata_problem_text(metadata: dict[str, object] | None) -> str:
 
 
 
-def _expected_test_path(test_name: str) -> str | None:
-    if " | " in test_name:
-        candidate = test_name.split(" | ", 1)[0].strip()
-    elif "::" in test_name:
-        candidate = test_name.split("::", 1)[0].strip()
-    else:
-        match = re.search(r"([A-Za-z0-9_./-]+\.(?:py|js|jsx|ts|tsx|go|rb|php|java|rs))", test_name)
-        candidate = match.group(1) if match else ""
-    if not candidate or candidate.startswith(("/", "\\")) or ".." in Path(candidate).parts:
-        return None
-    return candidate
-
-
-def _expected_test_tokens(test_name: str) -> set[str]:
-    tokens: set[str] = set()
-    parts = re.split(r"\s+\|\s+|::|/|\s+", test_name)
-    for part in parts:
-        for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]{3,}", part):
-            lower = token.lower()
-            if lower in {"test", "tests", "should", "with", "when", "from", "return", "returns", "failed"}:
-                continue
-            tokens.add(token)
-            if token.startswith("test_") and len(token) > 5:
-                tokens.add(token[5:])
-    return tokens
-
-
-def official_test_source_excerpts(metadata: dict[str, object] | None, max_chars: int = 14000) -> str:
-    contract = official_test_contract(metadata or {})
-    expected_tests = list(contract["fail_to_pass"]) + list(contract["pass_to_pass"])
-    if not expected_tests:
-        return ""
-
-    tests_by_path: dict[str, list[str]] = {}
-    for path in contract["selected_test_files_to_run"]:
-        if path and not str(path).startswith(("/", "\\")) and ".." not in Path(str(path)).parts:
-            tests_by_path.setdefault(str(path), [])
-    for test in expected_tests:
-        path = _expected_test_path(test)
-        if path:
-            tests_by_path.setdefault(path, []).append(test)
-
-    sections: list[str] = []
-    total_chars = 0
-    for rel_path, tests in sorted(tests_by_path.items()):
-        if total_chars >= max_chars:
-            break
-        path = DEFAULT_WORKDIR / rel_path
-        if not path.exists() or not path.is_file():
-            continue
-        try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            continue
-        tokens: set[str] = set()
-        for test in tests or expected_tests:
-            if _expected_test_path(test) == rel_path or not tests:
-                tokens.update(_expected_test_tokens(test))
-        tokens.update(required_public_symbols("", metadata))
-        hit_lines: set[int] = set()
-        for idx, line in enumerate(lines):
-            if any(token in line for token in tokens):
-                hit_lines.update(range(max(0, idx - 35), min(len(lines), idx + 60)))
-        if not hit_lines:
-            hit_lines.update(range(0, min(len(lines), 160)))
-
-        excerpt_lines: list[str] = []
-        previous = -2
-        for idx in sorted(hit_lines):
-            if idx != previous + 1 and excerpt_lines:
-                excerpt_lines.append("...")
-            excerpt_lines.append(f"{idx + 1:04d}: {lines[idx]}")
-            previous = idx
-            if len(excerpt_lines) >= 240:
-                excerpt_lines.append("... truncated file excerpt ...")
-                break
-        excerpt = "\n".join(excerpt_lines)
-        block = f"### {rel_path}\n\n```text\n{excerpt}\n```\n"
-        remaining = max_chars - total_chars
-        if len(block) > remaining:
-            block = block[:remaining] + "\n... truncated official test excerpts.\n"
-        sections.append(block)
-        total_chars += len(block)
-    return "\n".join(sections)
-
-
-def official_test_patch_excerpt(metadata: dict[str, object] | None, max_chars: int = 18000) -> str:
-    if not metadata:
-        return ""
-    nested = metadata.get("swe_bench_pro")
-    if isinstance(nested, dict):
-        source: dict[str, object] = nested
-    else:
-        source = metadata
-    raw_patch = source.get("test_patch")
-    if raw_patch is None:
-        return ""
-    patch_text = str(raw_patch)
-    if not patch_text.strip():
-        return ""
-    excerpt = patch_text[:max_chars]
-    if len(patch_text) > len(excerpt):
-        excerpt += "\n... truncated official test patch; see task metadata for the full patch."
-    return excerpt
-
-
 def contract_ledger_text(issue: str, metadata: dict[str, object] | None = None) -> str:
     solver_metadata = public_solver_metadata(metadata or {})
     contract = official_test_contract(solver_metadata)
@@ -364,19 +247,6 @@ def contract_ledger_text(issue: str, metadata: dict[str, object] | None = None) 
                 "```",
             ]
         )
-    if leaked_expected_test_guidance_enabled():
-        expected_tests = list(contract["fail_to_pass"]) + list(contract["pass_to_pass"])
-        test_excerpts = official_test_source_excerpts(metadata)
-        test_patch_excerpt = official_test_patch_excerpt(metadata)
-        if expected_tests:
-            sections.append("- Diagnostic expected-test metadata, opt-in only; do not use in production solver runs:")
-            sections.extend(f"  - `{test}`" for test in expected_tests[:120])
-            if len(expected_tests) > 120:
-                sections.append(f"  - ... {len(expected_tests) - 120} more in `{TASK_METADATA_PATH}`")
-        if test_excerpts:
-            sections.extend(["- Diagnostic expected-test source excerpts:", "", test_excerpts])
-        if test_patch_excerpt:
-            sections.extend(["- Diagnostic test patch excerpt:", "", "```diff", test_patch_excerpt, "```"])
     if not symbols:
         sections.append("- No explicit expected tests or public-symbol invariants were provided by the adapter.")
     sections.extend(
@@ -406,259 +276,25 @@ def contract_ledger_excerpt(limit: int = 6000) -> str:
     return CONTRACT_LEDGER_PATH.read_text(encoding="utf-8", errors="replace")[-limit:]
 
 
-def official_test_contract_text(metadata: dict[str, object]) -> str:
-    metadata = public_solver_metadata(metadata)
-    if not leaked_expected_test_guidance_enabled():
-        return ""
-    contract = official_test_contract(metadata)
-    fail_to_pass = list(contract["fail_to_pass"])
-    pass_to_pass = list(contract["pass_to_pass"])
-    selected_files = list(contract["selected_test_files_to_run"])
-    expected_count = int(contract["expected_test_count"])
-    if expected_count == 0:
-        return ""
-
-    def bullet_list(items: list[str], limit: int) -> str:
-        if not items:
-            return "- none\n"
-        shown = items[:limit]
-        text = "".join(f"- {item}\n" for item in shown)
-        if len(items) > limit:
-            text += f"- ... {len(items) - limit} more not shown in prompt; see {TASK_METADATA_PATH}\n"
-        return text
-
-    selected_text = ", ".join(selected_files[:80]) if selected_files else "not provided"
-    if len(selected_files) > 80:
-        selected_text += f", ... {len(selected_files) - 80} more"
-    return f"""
-
-## Official SWE Bench Pro Expected-Test Contract
-
-The adapter provided the public official expected-test lists for this row. The
-official scorer will only mark the patch resolved if every expected
-`FAIL_TO_PASS` and `PASS_TO_PASS` test is emitted as passed by the official
-verifier parser. A local run with zero failures is not enough if these expected
-tests are missing from the emitted results.
-
-Instance: {contract.get("instance_id") or "unknown"}
-Expected test count: {expected_count}
-Selected test files/patterns: {selected_text}
-
-Required FAIL_TO_PASS tests:
-{bullet_list(fail_to_pass, 120)}
-Required PASS_TO_PASS tests:
-{bullet_list(pass_to_pass, 80)}
-Completion contract:
-- Run the whole relevant selected file/package when practical, not just one
-  guessed test name.
-- Treat every listed `FAIL_TO_PASS` and `PASS_TO_PASS` test as normative.
-  A visible expected-test failure, fixture mismatch, checkout mismatch, or
-  "stale test" claim is a blocker, not a source-inspection justification.
-- If an expected test cannot be run locally because the official test patch is
-  not present in the solve container, inspect the named file/package and record
-  an explicit source-level justification.
-- If the official expected test patch or visible test excerpt references
-  missing fixture/testdata assets, add those assets as part of the source patch.
-  Do not call the test fixture-mismatched when the harness expects the patch to
-  provide files under `testdata/`, `fixtures/`, `golden/`, or snapshot
-  directories.
-- The generated contract ledger includes source excerpts from the official
-  selected test files when they are present in `/app`. Use those excerpts to
-  identify exact public functions/classes/constants that hidden/public tests
-  import or access, and preserve those names in source.
-- The final `/tmp/multiagent-prod-swe/status.json` validation field must include
-  `official-expected-tests:` and state how the `FAIL_TO_PASS` tests and relevant
-  `PASS_TO_PASS` coverage were run or justified. Do not write completed status
-  without that marker.
-- If exact expected tests cannot be executed locally, the validation field must
-  also include `official-test-source-inspected:` with the inspected file paths
-  and the source-level API names inferred from the test excerpts. Use the exact
-  form `official-expected-tests: FAIL_TO_PASS source-inspected ...` so the
-  adapter can distinguish an accounted-for absent official test file from a
-  missing validation claim.
-"""
-
-
 def official_expected_test_blockers(metadata: dict[str, object], current_status: dict[str, object]) -> list[str]:
-    if not leaked_expected_test_guidance_enabled():
-        return []
-    contract = official_test_contract(metadata)
-    expected_count = int(contract["expected_test_count"])
-    if expected_count == 0:
-        return []
-    status_text = json.dumps(current_status, sort_keys=True).lower()
-    blockers: list[str] = []
-    expected_failure_claims = expected_test_failure_claims(contract, status_text)
-    if expected_failure_claims:
-        blockers.append(
-            "final status validation describes official expected tests as stale, failing, fixture-mismatched, or checkout-mismatched; "
-            "FAIL_TO_PASS/PASS_TO_PASS tests are normative unless the official harness excludes them: "
-            + ", ".join(expected_failure_claims[:8])
-        )
-    if "official-expected-tests:" not in status_text:
-        blockers.append(
-            f"final status validation omitted `official-expected-tests:` for the {expected_count} official expected tests; "
-            "run or explicitly justify the listed FAIL_TO_PASS/PASS_TO_PASS contract before completion"
-        )
-    if (
-        contract["fail_to_pass"]
-        and "fail_to_pass" not in status_text
-        and not _expected_tests_passed_in_text(list(contract["fail_to_pass"]), status_text)
-        and not _source_inspected_expected_tests_accounted_for(contract, status_text)
-    ):
-        blockers.append(
-            "final status validation did not explicitly account for FAIL_TO_PASS tests from the official expected-test contract"
-        )
-    fatal_validation_markers = (
-        "tests: 0 total",
-        "0 tests total",
-        "test suite failed to run",
-        "failed before executing tests",
-        "compiled against a different node.js version",
-        "node_module_version",
-        "undefined symbol",
-    )
-    if any(marker in status_text for marker in fatal_validation_markers):
-        blockers.append(
-            "official expected-test validation did not execute cleanly; a zero-test runner crash, ABI mismatch, or test-suite import failure "
-            "is not acceptable source-level evidence for completion"
-        )
-    return blockers
+    """Never gate production solving on official expected-test metadata."""
 
-
-def expected_test_failure_claims(contract: dict[str, object], status_text: str) -> list[str]:
-    expected_tests = list(contract.get("fail_to_pass") or []) + list(contract.get("pass_to_pass") or [])
-    if not expected_tests:
-        return []
-    text_lower = status_text.lower()
-    failure_markers = (
-        "stale",
-        "visible failure",
-        "visible test failure",
-        "fails",
-        "failed",
-        "failing",
-        "failure",
-        "not passing",
-        "did not pass",
-        "checkout mismatch",
-        "old-return-shape",
-        "old return shape",
-        "fixture mismatch",
-        "missing fixture",
-    )
-    claims: list[str] = []
-    for test in expected_tests:
-        needle = str(test).lower()
-        if not needle:
-            continue
-        for match in re.finditer(re.escape(needle), text_lower):
-            window = text_lower[max(0, match.start() - 180) : match.end() + 360]
-            if any(marker in window for marker in failure_markers):
-                claims.append(str(test))
-                break
-    return claims
-
-
-def _expected_tests_passed_in_text(expected_tests: list[str], text: str) -> bool:
-    text_lower = text.lower()
-    for test in expected_tests:
-        needle = test.lower()
-        positions = [match.start() for match in re.finditer(re.escape(needle), text_lower)]
-        if not positions:
-            return False
-        if not any(
-            "passed" in text_lower[max(0, position - 120) : position + 300]
-            or "pass " in text_lower[max(0, position - 120) : position + 80]
-            or "emitted ok" in text_lower[max(0, position - 120) : position + 300]
-            or " ok " in text_lower[max(0, position - 120) : position + 300]
-            for position in positions
-        ):
-            return False
-    return True
-
-
-def _source_inspected_expected_tests_accounted_for(contract: dict[str, object], text: str) -> bool:
-    """Accept explicit source-level accounting when official tests are absent.
-
-    SWE Bench Pro solve containers do not always include the official test patch.
-    In that case the production solver can only inspect the named file/package
-    or adapter-provided excerpts, preserve the imported API, and let the official
-    verifier score the final diff. This helper prevents the eval-side gate from
-    turning that valid accounting path into an unscored adapter refusal.
-    """
-
-    text_lower = text.lower()
-    if "official-expected-tests:" not in text_lower or "official-test-source-inspected:" not in text_lower:
-        return False
-    if "fail_to_pass" not in text_lower and "fail-to-pass" not in text_lower:
-        return False
-    unavailable_markers = (
-        "absent",
-        "not present",
-        "missing",
-        "cannot be run",
-        "could not be run",
-        "cannot be executed",
-        "could not be executed",
-        "does not exist",
-        "not found",
-        "official test patch",
-        "source-inspected",
-        "source inspected",
-    )
-    if not any(marker in text_lower for marker in unavailable_markers):
-        return False
-    source_markers = (
-        "api",
-        "symbol",
-        "import",
-        "public",
-        "class",
-        "function",
-        "method",
-        "constant",
-        "interface",
-        "source-level",
-        "source level",
-    )
-    if not any(marker in text_lower for marker in source_markers):
-        return False
-    referenced_tests = list(contract.get("fail_to_pass") or [])
-    selected_files = list(contract.get("selected_test_files_to_run") or [])
-    references = [Path(str(item)).name.lower() for item in [*referenced_tests, *selected_files] if str(item)]
-    if references and any(ref and ref in text_lower for ref in references[:30]):
-        return True
-    return bool(selected_files or referenced_tests)
+    _ = metadata, current_status
+    return []
 
 
 def official_expected_tests_satisfied_by_text(metadata: dict[str, object], text: str) -> bool:
-    contract = official_test_contract(metadata)
-    expected_tests = list(contract["fail_to_pass"]) + list(contract["pass_to_pass"])
-    if not expected_tests:
-        return False
-    text_lower = text.lower()
-    return "official-expected-tests:" in text_lower and _expected_tests_passed_in_text(expected_tests, text_lower)
+    """Production no-leak mode never treats expected-test claims as evidence."""
+
+    _ = metadata, text
+    return False
 
 
 def recovered_validation_text(metadata: dict[str, object], text: str, base: str) -> str:
-    contract = official_test_contract(metadata)
-    expected_tests = list(contract["fail_to_pass"]) + list(contract["pass_to_pass"])
-    if not expected_tests:
-        return base
-    if _source_inspected_expected_tests_accounted_for(contract, text):
-        return (
-            base
-            + "; official-expected-tests: FAIL_TO_PASS/PASS_TO_PASS source-inspected in accepted verifier output"
-            + "; official-test-source-inspected: accepted verifier report accounted for expected test files and public API symbols"
-        )
-    if not official_expected_tests_satisfied_by_text(metadata, text):
-        return base
-    max_items = 40
-    parts = [f"{test} PASSED" for test in expected_tests[:max_items]]
-    if len(expected_tests) > max_items:
-        parts.append(f"... {len(expected_tests) - max_items} more official expected tests passed")
-    return base + "; official-expected-tests: " + "; ".join(parts)
+    """Recover only public validation text; do not append official-test claims."""
+
+    _ = metadata, text
+    return base
 
 
 def run(
@@ -980,7 +616,6 @@ def make_prompt(repo_root: Path, workdir: Path, issue: str, metadata: dict[str, 
         base_prompt.read_text(encoding="utf-8")
         + AUTONOMOUS_APPENDIX
         + issue
-        + official_test_contract_text(solver_metadata)
         + "\n\n## Durable Contract Ledger\n\n"
         + f"The adapter wrote the durable contract ledger to `{ledger_path}`. "
         + "Every worker and verifier instruction must preserve every invariant in that file. "
@@ -1921,12 +1556,10 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     contract = official_test_contract(task_metadata)
     if contract["expected_test_count"]:
         log(
-            "loaded official expected-test metadata for post-hoc diagnostics only: "
+            "stripped official expected-test metadata before solver prompting: "
             f"instance={contract.get('instance_id')} fail_to_pass={len(contract['fail_to_pass'])} "
             f"pass_to_pass={len(contract['pass_to_pass'])}"
         )
-        if env_truthy("EVAL_ALLOW_EXPECTED_TEST_GUIDANCE", False):
-            log("EVAL_ALLOW_EXPECTED_TEST_GUIDANCE is ignored; production no-leak mode never injects expected-test metadata")
     else:
         log("no official expected-test metadata found in task metadata")
     autonomous_prompt = make_prompt(repo_root, workdir, issue, task_metadata)

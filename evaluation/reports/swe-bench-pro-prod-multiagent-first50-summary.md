@@ -77,3 +77,21 @@ tasks asking for all/every/complete/associated/linked/repeated/alternate or
 multi-value behavior, requiring a source-derived probe with at least two
 matching values and evidence that every value appears in the expected output
 shape.
+
+Follow-up rerun `swe-bench-pro-prod-pr4-noleak-offset16-count1-r4` again used
+the production-native multi-agent path with solver-visible metadata sanitized to
+`{}` and reached the official verifier, but still scored `0.0`. The patch had
+real source changes and no benchmark metadata leak. The remaining failure showed
+another general verifier issue: it accepted relevant local test failures as
+old/stale expectations without forcing an exact replacement probe for the new
+source-derived output shape. Verifier, contract-scout, and autonomous SWE
+prompts now treat relevant failing visible tests/fixtures as blockers unless
+source-visible task evidence explicitly requires the expected output to change
+and a replacement probe asserts the new exact failing field/path behavior.
+
+No-leak hardening: the production solver no longer contains the disabled
+official expected-test prompt path. The removed code could previously build
+prompt text or recovered validation from `FAIL_TO_PASS`, selected test files,
+or `test_patch` if re-enabled by a future edit. Production solving now keeps
+official expected-test metadata out of prompt assembly and out of adapter
+completion recovery; expected-test metadata remains verifier-side only.
