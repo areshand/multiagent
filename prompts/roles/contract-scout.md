@@ -49,8 +49,8 @@ compatibility even when production call sites compile.
 
 Do not rely on leaked evaluator tests, hidden test names, official expected
 rows, or benchmark-only metadata as implementation guidance. If such metadata is
-present in an eval harness, treat it as scoring or post-hoc diagnostic context,
-not as a source for worker requirements.
+present in an eval harness, do not pass it into active solving, worker
+requirements, verifier acceptance, or follow-up instructions.
 
 When legitimate product paths or visible tests reference fixture assets,
 identify those files explicitly. Missing assets under paths such as `testdata/`,

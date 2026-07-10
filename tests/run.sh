@@ -417,6 +417,18 @@ assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "Never g
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "orchestrator exited with unverified source diff"
 assert_file_not_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_ALLOW_EXPECTED_TEST_GUIDANCE"
 assert_file_not_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "official_test_contract_text"
+for prompt_path in \
+  "$ROOT/prompts/worker.md" \
+  "$ROOT/prompts/verifier.md" \
+  "$ROOT/prompts/roles/acceptance-scout.md" \
+  "$ROOT/prompts/roles/contract-scout.md" \
+  "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md"
+do
+  assert_file_not_contains "$prompt_path" "FAIL_TO_PASS"
+  assert_file_not_contains "$prompt_path" "PASS_TO_PASS"
+  assert_file_not_contains "$prompt_path" "test_patch"
+  assert_file_not_contains "$prompt_path" "hidden-test failures as post-hoc diagnostics"
+done
 python3 - "$ROOT" <<'PY'
 import os
 import subprocess

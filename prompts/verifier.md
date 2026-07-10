@@ -82,11 +82,11 @@ for compatibility, it still must not be silently dropped from the complete
 collection unless visible source evidence explicitly requires that exclusion.
 
 Do not rely on leaked evaluator tests, hidden test names, official expected
-rows, or benchmark-only metadata as implementation guidance. The verifier may
-use benchmark scores or hidden-test failures as post-hoc diagnostics, but
-acceptance during solving must be based on user intent, issue text, visible
-tests, docs, source compatibility behavior, public APIs, data schemas, and
-runtime behavior.
+rows, or benchmark-only metadata as implementation guidance. During active
+solving, do not use benchmark scores or hidden-test failures as verifier input,
+follow-up instructions, or acceptance evidence. Acceptance must be based on user
+intent, issue text, visible tests, docs, source compatibility behavior, public
+APIs, data schemas, and runtime behavior.
 
 If visible task evidence includes a concrete expected value, reproduce that
 exact assertion with a temporary probe or source-level comparison before

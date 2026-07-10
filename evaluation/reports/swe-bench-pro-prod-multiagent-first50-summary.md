@@ -130,3 +130,20 @@ a source diff exists, and no completion status was written. The wrapper now
 runs the same adapter blocker/probe path for this orphaned-diff state, spawns a
 recovery helper when blockers remain, blocks unsafe diffs, or recovers a
 completion marker only when generic public checks are clean.
+
+Follow-up missing-row rerun
+`swe-bench-pro-prod-pr4-noleak-offset2-count1-r2` completed through the real
+production-native multi-agent path and reached the official verifier with native
+solver exit code 0. The row scored `0.0`, so the first-50 score remains 31/50.
+The run is useful no-leak evidence: the task container's solver-visible
+metadata was `{}`, and direct prompt/ledger inspection found no
+`FAIL_TO_PASS`, `PASS_TO_PASS`, `test_patch`, selected-test, row-identity,
+instance-id, score, or previous-failure strings before solving.
+
+Additional no-leak hardening from this audit: production-facing verifier and
+contract-scout prompts no longer say leaked evaluator facts may be used as
+"post-hoc diagnostics" during active solving. They now explicitly prohibit
+benchmark scores or hidden-test failures from being fed into verifier input,
+follow-up instructions, worker requirements, or acceptance evidence. Tests also
+assert that production-facing prompts do not contain expected-test accounting
+tokens such as `FAIL_TO_PASS`, `PASS_TO_PASS`, or `test_patch`.
