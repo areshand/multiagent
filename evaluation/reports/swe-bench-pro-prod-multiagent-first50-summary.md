@@ -112,3 +112,10 @@ cheap to run. Verifier, contract-scout, and autonomous SWE prompts now require
 the nearest visible fixture/test file or real production entrypoint when
 practical; `git diff --check` plus source review is not acceptance evidence for
 those task classes.
+
+Attempted rerun `swe-bench-pro-prod-pr4-noleak-offset16-count1-r6` was
+interrupted and is not score evidence. The first worker exited without a patch
+after reporting conflicting instructions, and the orchestrator remained idle
+with no status marker or source diff. Follow-up hardening changed the durable
+ledger wording copied into worker prompts from verifier-only "acceptance"
+language to role-neutral invariant language.
