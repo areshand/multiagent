@@ -2095,6 +2095,97 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                     exit_code = 2
                     outcome = "blocked"
                     break
+                if (
+                    not state
+                    and diff_bytes > 0
+                    and not has_live_agent_process()
+                    and orchestrator_exited_without_status(text)
+                ):
+                    diff = git_diff(workdir)
+                    scope_blockers = implementation_scope_blockers(issue, diff, {}, task_metadata)
+                    coverage_blockers = [] if coverage_probe_satisfied else validation_coverage_blockers(issue, diff, text, {}, task_metadata)
+                    blockers = [*scope_blockers, *coverage_blockers]
+                    probe_report = ""
+                    if coverage_probe_commands(workdir, issue, diff):
+                        probe_report, probe_passed = run_validation_coverage_probe(
+                            workdir,
+                            issue,
+                            diff,
+                            blockers or ["orchestrator exited with a source diff but no status marker; adapter ran public validation before recovery"],
+                        )
+                        if probe_passed:
+                            coverage_probe_satisfied = True
+                            blockers = blockers_after_passing_public_probe(scope_blockers)
+                        else:
+                            blockers = [
+                                *scope_blockers,
+                                f"orchestrator exited without status and adapter-selected public validation failed; inspect {HELPER_PROBE_PATH}",
+                            ]
+                    if blockers and adapter_helper_workers_spawned < adapter_helper_worker_limit and adapter_helper_repair_allowed("orchestrator exited with unverified diff"):
+                        adapter_helper_workers_spawned += 1
+                        try:
+                            helper_worker = spawn_adapter_helper_worker(
+                                repo_root,
+                                workdir,
+                                env,
+                                issue,
+                                diff,
+                                [
+                                    *blockers,
+                                    "The orchestrator exited after producing a source diff but without a completion status; continue from the current /app diff and resolve these adapter blockers.",
+                                ],
+                                helper_scope_hints(workdir, issue, diff, blockers),
+                                adapter_helper_workers_spawned,
+                                probe_report,
+                            )
+                            log(f"adapter recovery worker spawned after unverified orchestrator-exit diff: {helper_worker}")
+                            adapter_helper_last_spawn_at = time.monotonic()
+                            adapter_helper_reprobe_done = False
+                            adapter_helper_last_probe_digest = None
+                            coverage_followup_at = time.monotonic()
+                            last_capture = 0.0
+                            time.sleep(5)
+                            continue
+                        except Exception as exc:
+                            log(f"adapter recovery worker spawn failed after unverified orchestrator-exit diff: {exc}")
+                    if blockers:
+                        coverage_gate_unresolved = True
+                        STATUS_PATH.write_text(
+                            json.dumps(
+                                {
+                                    "status": "blocked",
+                                    "reason": "orchestrator exited with unverified source diff",
+                                    "blockers": blockers,
+                                }
+                            ),
+                            encoding="utf-8",
+                        )
+                        log("blocked marker: orchestrator exited with unverified source diff")
+                        exit_code = 2
+                        outcome = "blocked"
+                        break
+                    STATUS_PATH.write_text(
+                        json.dumps(
+                            {
+                                "status": "completed",
+                                "summary": "orchestrator exited with a source diff; adapter recovered missing status marker",
+                                "validation": recovered_validation_text(
+                                    task_metadata,
+                                    text,
+                                    (
+                                        f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})"
+                                        if coverage_probe_satisfied
+                                        else "no adapter-selected public validation command was available; implementation blockers were clean"
+                                    ),
+                                ),
+                                "risk": "completion marker recovered by benchmark wrapper after orchestrator exit without status.json",
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+                    log("completion marker recovered from orchestrator-exit source diff")
+                    outcome = "recovered"
+                    break
                 if not state and coverage_followup_at and (
                     orchestrator_exited_without_status(text)
                     or (diff_bytes > 0 and not has_live_agent_process())

@@ -119,3 +119,14 @@ after reporting conflicting instructions, and the orchestrator remained idle
 with no status marker or source diff. Follow-up hardening changed the durable
 ledger wording copied into worker prompts from verifier-only "acceptance"
 language to role-neutral invariant language.
+
+Attempted missing-row rerun `swe-bench-pro-prod-pr4-noleak-offset2-count1-r1`
+was also interrupted and is not score evidence. The worker produced a non-empty
+NodeBB route diff, but exited without a final message; the orchestrator then
+remained idle with no status marker and no verifier window. This exposed a
+general wrapper recovery gap: the production solver handled orchestrator exits
+after coverage follow-up, but not the earlier state where no live agent remains,
+a source diff exists, and no completion status was written. The wrapper now
+runs the same adapter blocker/probe path for this orphaned-diff state, spawns a
+recovery helper when blockers remain, blocks unsafe diffs, or recovers a
+completion marker only when generic public checks are clean.
