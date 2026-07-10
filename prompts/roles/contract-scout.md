@@ -76,6 +76,11 @@ changes their expected output, require a replacement probe that asserts the new
 source-derived output shape for the exact failing field/path. Do not route a
 worker/verifier to accept a known failing relevant test as merely stale.
 
+For parser, serializer, importer/exporter, fixture-backed transformation, or
+data-shape tasks, route validation through the real production entrypoint and
+nearest visible fixture/test file when practical. Synthetic helper probes are
+only fallback evidence when the real entrypoint is unavailable or too expensive.
+
 For UI/component tasks, explicitly distinguish additive public-surface work
 from behavior rewrites. If the request is about storybook coverage, export
 surface, examples, or exposing a named component/story, preserve existing

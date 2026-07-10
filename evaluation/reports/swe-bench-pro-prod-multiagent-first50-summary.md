@@ -95,3 +95,20 @@ prompt text or recovered validation from `FAIL_TO_PASS`, selected test files,
 or `test_patch` if re-enabled by a future edit. Production solving now keeps
 official expected-test metadata out of prompt assembly and out of adapter
 completion recovery; expected-test metadata remains verifier-side only.
+
+Follow-up rerun `swe-bench-pro-prod-pr4-noleak-offset16-count1-r5` used the
+same production-native no-leak path and solver-visible metadata remained `{}`.
+It still scored `0.0`, but the new verifier rules changed behavior in the
+intended direction: the first verifier rejected the patch after attempting a
+source-derived XML/Binary parity probe, and a follow-up worker added XML-path
+changes. The official result improved one previous fixture failure
+(`880_alternate_script.mrc` passed) but still failed `nybc200247` and
+`880_arabic_french_many_linkages.mrc`.
+
+The general r5 lesson is that source review and synthetic helper probes are too
+weak for parser/serializer/importer/exporter or fixture-backed data-shape
+changes when a real nearby fixture test or production entrypoint is visible and
+cheap to run. Verifier, contract-scout, and autonomous SWE prompts now require
+the nearest visible fixture/test file or real production entrypoint when
+practical; `git diff --check` plus source review is not acceptance evidence for
+those task classes.

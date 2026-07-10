@@ -100,6 +100,13 @@ task evidence explicitly requires the expectation to change and you have run a
 replacement probe that asserts the new exact output shape. The replacement probe
 must cover the failing field/path, not just a weaker happy-path behavior.
 
+For parser, serializer, importer/exporter, fixture-backed transformation, or
+data-shape tasks, prefer the real production entrypoint and the nearest visible
+fixture/test file over synthetic low-level helper probes. If such a nearby
+fixture/test file is present and quick enough to run, source review plus
+`git diff --check` is not acceptance evidence. Run it or reject with the exact
+command that still needs to pass.
+
 If legitimate product paths or visible tests reference missing fixture assets
 under `testdata/`, `fixtures/`, `golden/`, or snapshot paths, reject a
 source-only completion that omits those assets.

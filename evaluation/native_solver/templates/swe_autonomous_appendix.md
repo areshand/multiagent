@@ -171,6 +171,11 @@ Verifier quality bar:
   accept by calling it an old/stale expectation unless source-visible task
   evidence explicitly requires that expected output to change and a replacement
   probe asserts the new exact output shape for the failing field/path.
+- For parser, serializer, importer/exporter, fixture-backed transformation, or
+  data-shape tasks, prefer the real production entrypoint and nearest visible
+  fixture/test file over synthetic low-level helper probes. If a nearby
+  fixture/test file is present and quick enough to run, source review plus
+  `git diff --check` is not acceptance evidence.
 - Trace helper APIs when the issue mentions keys, fallback sources, expired
   records, parsers, serializers, adapters, persistence, or missing data.
 - If the issue names multiple formats, implementations, clients, adapters,
