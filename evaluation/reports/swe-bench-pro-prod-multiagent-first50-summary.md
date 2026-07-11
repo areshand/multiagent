@@ -325,3 +325,22 @@ must now include `final-output-field=...`, `source-count=N`,
 counts equal. Prompts, scout roles, the benchmark appendix, and the wrapper gate
 now all require this stronger final-output evidence without encoding the row's
 fixture names or expected answers.
+
+Follow-up rerun
+`swe-bench-pro-prod-pr4-noleak-offset16-count1-r13-final-output-counts` used the
+final-output cardinality gate. It still scored `0.0`, so row 16 remains missing
+and the first-50 score remains 32/50. The important finding was wrapper-side:
+the gate correctly emitted a follow-up because `multi-value-probe-passed:` was
+missing, but after the orchestrator exited without a valid status the generic
+"orchestrator exited with source diff" recovery path ran before the more
+specific coverage-follow-up recovery path. Because the adapter public helper
+probe had passed, that generic path accepted the source diff and submitted it to
+the official verifier despite the unresolved final-output marker.
+
+The wrapper now always recomputes source-derived validation blockers even after
+an adapter public probe passes, and the generic no-status recovery branch is
+skipped once a coverage follow-up is active. Public helper validation can clear
+only blockers directly covered by the selected repository-visible tests; it
+cannot clear marker-style evidence requirements such as final output
+cardinality. This prevents a weak or missing verifier marker from being
+converted into a clean native completion by recovery logic.

@@ -889,6 +889,13 @@ multi_value_mismatched_count_blockers = solve_swe_prod.validation_coverage_block
     },
 )
 assert any("final product-facing output" in blocker for blocker in multi_value_mismatched_count_blockers), multi_value_mismatched_count_blockers
+assert any(
+    "final product-facing output" in blocker
+    for blocker in solve_swe_prod.blockers_after_passing_public_probe(multi_value_mismatched_count_blockers)
+), "public helper probes must not clear final-output cardinality blockers"
+solver_source_after_recovery_fix = (root / "evaluation/native_solver/solve_swe_prod.py").read_text(encoding="utf-8")
+assert "and not coverage_followup_at" in solver_source_after_recovery_fix, "coverage follow-up recovery must not use generic no-status recovery first"
+assert "coverage_blockers = [] if coverage_probe_satisfied" not in solver_source_after_recovery_fix
 
 ui_blockers = solve_swe_prod.validation_coverage_blockers(
     "Keyboard shortcuts in the message composer should be customizable.",

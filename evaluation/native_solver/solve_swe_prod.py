@@ -1838,7 +1838,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 diff = git_diff(workdir)
                 text = captured_text()
                 scope_blockers = implementation_scope_blockers(issue, diff, current_status, task_metadata)
-                coverage_blockers = [] if coverage_probe_satisfied else validation_coverage_blockers(issue, diff, text, current_status, task_metadata)
+                coverage_blockers = validation_coverage_blockers(issue, diff, text, current_status, task_metadata)
                 blockers = [*scope_blockers, *coverage_blockers]
                 if coverage_probe_satisfied:
                     blockers = blockers_after_passing_public_probe(blockers)
@@ -2050,7 +2050,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 if not state and accepted_without_status_marker(text, diff_bytes):
                     diff = git_diff(workdir)
                     scope_blockers = implementation_scope_blockers(issue, diff, {}, task_metadata)
-                    coverage_blockers = [] if coverage_probe_satisfied else validation_coverage_blockers(issue, diff, text, {}, task_metadata)
+                    coverage_blockers = validation_coverage_blockers(issue, diff, text, {}, task_metadata)
                     blockers = [*scope_blockers, *coverage_blockers]
                     if coverage_probe_satisfied:
                         blockers = blockers_after_passing_public_probe(blockers)
@@ -2274,10 +2274,11 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                     and diff_bytes > 0
                     and not has_live_agent_process()
                     and orchestrator_exited_without_status(text)
+                    and not coverage_followup_at
                 ):
                     diff = git_diff(workdir)
                     scope_blockers = implementation_scope_blockers(issue, diff, {}, task_metadata)
-                    coverage_blockers = [] if coverage_probe_satisfied else validation_coverage_blockers(issue, diff, text, {}, task_metadata)
+                    coverage_blockers = validation_coverage_blockers(issue, diff, text, {}, task_metadata)
                     blockers = [*scope_blockers, *coverage_blockers]
                     probe_report = ""
                     if coverage_probe_commands(workdir, issue, diff):
@@ -2366,7 +2367,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 ):
                     diff = git_diff(workdir)
                     scope_blockers = implementation_scope_blockers(issue, diff, {}, task_metadata)
-                    coverage_blockers = [] if coverage_probe_satisfied else validation_coverage_blockers(issue, diff, text, {}, task_metadata)
+                    coverage_blockers = validation_coverage_blockers(issue, diff, text, {}, task_metadata)
                     blockers = [*scope_blockers, *coverage_blockers]
                     if coverage_probe_satisfied:
                         blockers = blockers_after_passing_public_probe(blockers)
