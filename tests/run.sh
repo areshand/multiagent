@@ -429,6 +429,8 @@ assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "Never g
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "public solver inputs"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "solver metadata is public-only"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "orchestrator exited with unverified source diff"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "changed_python_test_commands"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "changed_go_feature_test_commands"
 assert_file_not_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_ALLOW_EXPECTED_TEST_GUIDANCE"
 assert_file_not_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "official_test_contract_text"
 assert_file_not_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "full official contract"
@@ -687,6 +689,28 @@ generic_commands = solve_swe_prod.coverage_probe_commands(
     "diff --git a/lib/parsers/text_parser.py b/lib/parsers/text_parser.py\n+def _parse_text(data):\n+    pass\n",
 )
 assert generic_commands == [], generic_commands
+with tempfile.TemporaryDirectory() as td:
+    repo = Path(td)
+    (repo / "catalog/marc/tests").mkdir(parents=True)
+    (repo / "catalog/marc/tests/test_parse.py").write_text("def test_parse(): pass\n", encoding="utf-8")
+    python_commands = solve_swe_prod.coverage_probe_commands(
+        repo,
+        "Record parser should preserve alternate linked fields.",
+        "diff --git a/catalog/marc/parse.py b/catalog/marc/parse.py\n+def read_title(rec):\n+    pass\n",
+    )
+    assert ["python", "-m", "pytest", "catalog/marc/tests/test_parse.py", "-q", "--tb=short"] in python_commands, python_commands
+with tempfile.TemporaryDirectory() as td:
+    repo = Path(td)
+    (repo / "components/scanner/pkg").mkdir(parents=True)
+    (repo / "components/scanner/parser/v2").mkdir(parents=True)
+    (repo / "components/scanner/parser/v2/parser_test.go").write_text("package v2\n", encoding="utf-8")
+    go_commands = solve_swe_prod.coverage_probe_commands(
+        repo,
+        "Converter output should keep duplicate vulnerability records in parser fixtures.",
+        "diff --git a/components/scanner/pkg/converter.go b/components/scanner/pkg/converter.go\n+func Convert() {}\n",
+    )
+    assert ["go", "test", "./components/scanner/pkg"] in go_commands, go_commands
+    assert ["go", "test", "./components/scanner/..."] in go_commands, go_commands
 
 false_helper_blockers = solve_swe_prod.implementation_scope_blockers(
     "`Panel` `Submit` flow fails when independent `app` files use API scripts and a keyboard key command result in the working directory.",
@@ -777,7 +801,7 @@ assert solve_swe_prod.visible_validation_passed_in_text(
     "pytest -q pkg/tests\n================= 5 passed, 54 deselected, 1 warning in 0.03s ==================\n"
 )
 assert solve_swe_prod.visible_validation_passed_in_text(
-    "Validation passed:\n`pytest -q openlibrary/catalog/marc/tests/test_parse.py -k '880' --tb=short`\n"
+    "Validation passed:\n`pytest -q catalog/marc/tests/test_parse.py -k 'linked-fields' --tb=short`\n"
     "Result: 5 passed, 54 deselected, 1 warning.\nfinal status: codex exec exited rc=0\n"
 )
 assert not solve_swe_prod.visible_validation_passed_in_text(

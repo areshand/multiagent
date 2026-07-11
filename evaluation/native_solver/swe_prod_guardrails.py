@@ -233,6 +233,49 @@ def coverage_probe_commands(workdir: Path, issue: str, diff: str) -> list[list[s
     go_packages = changed_go_package_args(diff)
     if go_packages:
         commands.append(["go", "test", *go_packages])
+    commands.extend(changed_go_feature_test_commands(workdir, issue, diff))
+    commands.extend(changed_python_test_commands(workdir, diff))
+    return _dedupe_commands(commands)[:4]
+
+
+def changed_go_feature_test_commands(workdir: Path, issue: str, diff: str) -> list[list[str]]:
+    """Return broader visible Go tests for parser/converter/data-shape changes."""
+
+    issue_and_diff = f"{issue.lower()}\n{diff.lower()}"
+    if not any(
+        marker in issue_and_diff
+        for marker in (
+            "parser",
+            "parse",
+            "converter",
+            "convert",
+            "serializer",
+            "deserialize",
+            "fixture",
+            "golden",
+            "output",
+            "json",
+            "yaml",
+            "record",
+            "records",
+            "duplicate",
+            "duplicates",
+        )
+    ):
+        return []
+
+    commands: list[list[str]] = []
+    changed_go_paths = [
+        Path(path)
+        for path in _changed_paths(diff)
+        if path.endswith(".go") and not _is_test_path(path)
+    ]
+    for path in changed_go_paths:
+        roots = _go_feature_roots(path)
+        for root in roots:
+            if _has_go_tests(workdir / root):
+                commands.append(["go", "test", f"./{root.as_posix()}/..."])
+                break
     return commands
 
 
@@ -247,6 +290,86 @@ def changed_go_package_args(diff: str) -> list[str]:
         if package not in packages:
             packages.append(package)
     return packages
+
+
+def changed_python_test_commands(workdir: Path, diff: str) -> list[list[str]]:
+    commands: list[list[str]] = []
+    for raw_path in _changed_paths(diff):
+        path = Path(raw_path)
+        if path.suffix not in {".py", ".pyi", ".pyx"} or _is_test_path(raw_path):
+            continue
+        for test_path in _python_test_candidates(workdir, path):
+            commands.append(["python", "-m", "pytest", test_path.as_posix(), "-q", "--tb=short"])
+            break
+    return commands
+
+
+def _python_test_candidates(workdir: Path, path: Path) -> list[Path]:
+    candidates: list[Path] = []
+    module = path.stem
+    for parent in [path.parent, *path.parents]:
+        if parent == Path("."):
+            break
+        tests_dir = parent / "tests"
+        if _has_python_tests(workdir / tests_dir):
+            specific = tests_dir / f"test_{module}.py"
+            if (workdir / specific).exists():
+                candidates.append(specific)
+            candidates.append(tests_dir)
+        sibling_test = parent / f"test_{module}.py"
+        if (workdir / sibling_test).exists():
+            candidates.append(sibling_test)
+        sibling_alt = parent / f"{module}_test.py"
+        if (workdir / sibling_alt).exists():
+            candidates.append(sibling_alt)
+    return _dedupe_paths(candidates)
+
+
+def _go_feature_roots(path: Path) -> list[Path]:
+    parts = path.parts[:-1]
+    roots: list[Path] = []
+    if len(parts) >= 2:
+        roots.append(Path(*parts[:2]))
+    if len(parts) >= 3:
+        roots.append(Path(*parts[:3]))
+    if parts:
+        roots.append(Path(*parts))
+    return _dedupe_paths([root for root in roots if root != Path(".")])
+
+
+def _has_go_tests(path: Path) -> bool:
+    return path.exists() and any(child.name.endswith("_test.go") for child in path.rglob("*_test.go"))
+
+
+def _has_python_tests(path: Path) -> bool:
+    return path.exists() and any(
+        child.name.startswith("test_") and child.suffix == ".py"
+        for child in path.rglob("test_*.py")
+    )
+
+
+def _dedupe_paths(paths: list[Path]) -> list[Path]:
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for path in paths:
+        key = path.as_posix()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique
+
+
+def _dedupe_commands(commands: list[list[str]]) -> list[list[str]]:
+    seen: set[tuple[str, ...]] = set()
+    unique: list[list[str]] = []
+    for command in commands:
+        key = tuple(command)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(command)
+    return unique
 
 
 def _changed_paths(diff: str) -> list[str]:
