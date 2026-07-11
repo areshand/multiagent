@@ -88,10 +88,12 @@ the affected entrypoint, or `multi-value-probe-skip-justified:` with source
 evidence explaining why no two-value case is possible.
 The probe must validate the final product-facing output field, not only an
 internal helper or decoded intermediate field. In the acceptance text include
-`final-output-field=...`, `source-count=N`, `expected-output-count=N`, and
-`actual-output-count=N`; expected and actual counts must match. If a value is
-promoted into a primary field for compatibility, also prove whether it must
-remain in the complete collection or why source-visible evidence excludes it.
+one singular `final-output-field=...` per affected output collection, with
+`source-count=N`, `expected-output-count=N`, and `actual-output-count=N`;
+expected and actual counts must match for each field. Do not collapse several
+output fields into one aggregate count. If a value is promoted into a primary
+field for compatibility, also prove whether it must remain in the complete
+collection or why source-visible evidence excludes it.
 For SWE adapter runs, require the same command/output transcript in
 `/tmp/multiagent-prod-swe/multi-value-probe.txt`; a bare status sentence is not
 enough.

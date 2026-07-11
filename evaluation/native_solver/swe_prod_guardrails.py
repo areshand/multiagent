@@ -245,9 +245,77 @@ def coverage_probe_commands(workdir: Path, issue: str, diff: str) -> list[list[s
     go_packages = changed_go_package_args(diff)
     if go_packages:
         commands.append(["go", "test", *go_packages])
+    commands.extend(changed_go_related_feature_test_commands(workdir, issue, diff))
     commands.extend(changed_go_feature_test_commands(workdir, issue, diff))
     commands.extend(changed_python_test_commands(workdir, diff))
     return _dedupe_commands(commands)[:4]
+
+
+def changed_go_related_feature_test_commands(workdir: Path, issue: str, diff: str) -> list[list[str]]:
+    """Return same-tree Go tests for related feature packages.
+
+    Service/init files often wire behavior that lives in sibling packages. A
+    changed package can compile while a related feature package no longer does,
+    so derive nearby package roots from visible path and issue tokens instead of
+    relying only on the edited package.
+    """
+
+    changed_go_paths = [
+        Path(path)
+        for path in _changed_paths(diff)
+        if path.endswith(".go") and not _is_test_path(path)
+    ]
+    if not changed_go_paths:
+        return []
+
+    text = f"{issue}\n{diff}".lower()
+    commands: list[list[str]] = []
+    for path in changed_go_paths:
+        tokens = _go_feature_tokens(path, text)
+        if not tokens or len(path.parts) < 2:
+            continue
+        search_root = workdir / path.parts[0]
+        if not search_root.exists():
+            continue
+        for candidate in sorted(search_root.rglob("*")):
+            if not candidate.is_dir() or not _has_go_tests(candidate):
+                continue
+            relative = candidate.relative_to(workdir)
+            relative_text = relative.as_posix().lower()
+            if relative == path.parent:
+                continue
+            if any(token in relative_text for token in tokens):
+                commands.append(["go", "test", f"./{relative.as_posix()}/..."])
+                break
+    return commands
+
+
+def _go_feature_tokens(path: Path, text: str) -> list[str]:
+    raw_tokens: set[str] = set()
+    for part in [*path.parts, path.stem]:
+        for token in re.split(r"[^A-Za-z0-9]+", part):
+            token = token.lower()
+            if len(token) >= 4 and token not in {"service", "server", "client", "common", "internal", "pkg"}:
+                raw_tokens.add(token)
+    for token in re.findall(r"\b[a-z][a-z0-9]{3,}\b", text):
+        if token in raw_tokens:
+            continue
+        if token in {"service", "server", "client", "common", "internal", "package", "packages", "tests"}:
+            continue
+        if token in path.as_posix().lower():
+            raw_tokens.add(token)
+    aliases = {
+        "kubernetes": "kube",
+        "credential": "creds",
+        "credentials": "creds",
+        "authentication": "auth",
+        "authorization": "auth",
+    }
+    expanded = set(raw_tokens)
+    for token in raw_tokens:
+        if token in aliases:
+            expanded.add(aliases[token])
+    return sorted(expanded)
 
 
 def changed_go_feature_test_commands(workdir: Path, issue: str, diff: str) -> list[list[str]]:

@@ -1303,7 +1303,8 @@ def validation_coverage_blockers(
         elif has_multi_value_probe and not multi_value_probe_has_final_output_counts(status_text):
             blockers.append(
                 "`multi-value-probe-passed:` must validate the final product-facing output, not only an internal helper; "
-                "include `final-output-field=...`, `source-count=N`, `expected-output-count=N`, and `actual-output-count=N`, "
+                "include one singular `final-output-field=...` per affected output collection, with `source-count=N`, "
+                "`expected-output-count=N`, and `actual-output-count=N`, "
                 f"with expected and actual counts equal, and write matching command/output evidence to `{MULTI_VALUE_PROBE_PATH}`"
             )
 
@@ -1335,7 +1336,11 @@ def multi_value_probe_evidence(text: str) -> str:
 
 
 def multi_value_probe_counts_match(evidence: str) -> bool:
-    if "final-output-field=" not in evidence:
+    field_match = re.search(r"\bfinal-output-field\s*=\s*([^\s;]+)", evidence)
+    if not field_match:
+        return False
+    field_name = field_match.group(1).rstrip(".,")
+    if re.search(r"[+,/&]|\band\b", field_name):
         return False
     if not re.search(r"\bsource-count\s*=\s*\d+", evidence):
         return False

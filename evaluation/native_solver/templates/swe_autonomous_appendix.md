@@ -219,11 +219,13 @@ Verifier quality bar:
   the affected entrypoint, or `multi-value-probe-skip-justified:` with source
   evidence that no two-value case is possible.
   The probe must validate final product-facing output, not only an internal
-  helper. Include `final-output-field=...`, `source-count=N`,
-  `expected-output-count=N`, and `actual-output-count=N`, with expected and
-  actual counts equal. Also write the rerunnable command/output transcript to
+  helper. Include one singular `final-output-field=...` per affected output
+  collection, with `source-count=N`, `expected-output-count=N`, and
+  `actual-output-count=N`; expected and actual counts must match for each field.
+  Also write the rerunnable command/output transcript to
   `/tmp/multiagent-prod-swe/multi-value-probe.txt`; completion may be rejected
-  if the marker is only self-reported in `status.json`.
+  if the marker is only self-reported in `status.json` or if several output
+  fields are collapsed into one aggregate count.
 - List concrete blocking findings. If you cannot prove the patch is wrong but
   see risk, name the risk separately from blockers.
 

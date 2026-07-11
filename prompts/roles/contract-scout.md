@@ -80,10 +80,11 @@ must require `multi-value-probe-passed:` with a source-derived case containing
 at least two linked values through the affected entrypoint, or
 `multi-value-probe-skip-justified:` with source evidence that no such case is
 possible.
-The validation plan must name the final product-facing output field and require
-cardinality evidence in the final marker: `final-output-field=...`,
-`source-count=N`, `expected-output-count=N`, and `actual-output-count=N`, with
-expected and actual counts equal.
+The validation plan must name each final product-facing output collection and
+require per-field cardinality evidence in the final marker: one singular
+`final-output-field=...` plus `source-count=N`, `expected-output-count=N`, and
+`actual-output-count=N`. Expected and actual counts must match for each field;
+aggregate counts across several output fields are not enough.
 For SWE adapter runs, require the matching command/output transcript at
 `/tmp/multiagent-prod-swe/multi-value-probe.txt`.
 

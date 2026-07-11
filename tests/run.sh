@@ -405,12 +405,14 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_ap
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "final-output-field="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "expected-output-count=N"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "multi-value-probe.txt"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "aggregate count"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "machine-gated evidence markers"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "replacement-probe-passed:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "stale-visible-failure-justified:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "multi-value-probe-passed:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "final-output-field="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "multi-value-probe.txt"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "per affected output collection"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Inline golden expectations"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "nearest visible"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "narrow root-cause"
@@ -422,6 +424,7 @@ assert_file_contains "$ROOT/prompts/verifier.md" "multi-value-probe-passed:"
 assert_file_contains "$ROOT/prompts/verifier.md" "final-output-field="
 assert_file_contains "$ROOT/prompts/verifier.md" "expected-output-count=N"
 assert_file_contains "$ROOT/prompts/verifier.md" "multi-value-probe.txt"
+assert_file_contains "$ROOT/prompts/verifier.md" "aggregate count"
 assert_file_contains "$ROOT/prompts/verifier.md" "visible inline golden expectations"
 assert_file_contains "$ROOT/prompts/verifier.md" "narrow root-cause"
 assert_file_contains "$ROOT/prompts/verifier.md" "compiled the package's test files"
@@ -430,14 +433,17 @@ assert_file_contains "$ROOT/prompts/worker.md" "When you expand a parser/reader 
 assert_file_contains "$ROOT/prompts/worker.md" "multi-value-probe-passed:"
 assert_file_contains "$ROOT/prompts/worker.md" "actual-output-count=N"
 assert_file_contains "$ROOT/prompts/worker.md" "multi-value-probe.txt"
+assert_file_contains "$ROOT/prompts/worker.md" "aggregate count"
 assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "multi-value-probe-passed:"
 assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "source-count=N"
 assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "multi-value-probe.txt"
+assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "aggregate counts"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "known failing relevant test"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "stale-visible-failure-justified:"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "multi-value-probe-passed:"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "final-output-field="
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "multi-value-probe.txt"
+assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "aggregate counts"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "visible tests"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "real production entrypoint"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "overreach boundary"
@@ -824,6 +830,18 @@ with tempfile.TemporaryDirectory() as td:
     )
     assert ["go", "test", "./components/scanner/pkg"] in go_commands, go_commands
     assert ["go", "test", "./components/scanner/..."] in go_commands, go_commands
+with tempfile.TemporaryDirectory() as td:
+    repo = Path(td)
+    (repo / "lib/service").mkdir(parents=True)
+    (repo / "lib/kube/proxy").mkdir(parents=True)
+    (repo / "lib/kube/proxy/forwarder_test.go").write_text("package proxy\n", encoding="utf-8")
+    go_related_commands = solve_swe_prod.coverage_probe_commands(
+        repo,
+        "Kubernetes service startup should initialize credentials used by proxy forwarding.",
+        "diff --git a/lib/service/kubernetes.go b/lib/service/kubernetes.go\n+func initKubernetesService() {}\n",
+    )
+    assert ["go", "test", "./lib/service"] in go_related_commands, go_related_commands
+    assert ["go", "test", "./lib/kube/..."] in go_related_commands, go_related_commands
 
 false_helper_blockers = solve_swe_prod.implementation_scope_blockers(
     "`Panel` `Submit` flow fails when independent `app` files use API scripts and a keyboard key command result in the working directory.",
@@ -976,6 +994,30 @@ try:
             counted_status,
         )
         assert not any("multi-value-probe-passed:" in blocker for blocker in multi_value_counted_probe_blockers), multi_value_counted_probe_blockers
+        composite_status = {
+            "status": "completed",
+            "validation": (
+                "multi-value-probe-passed: final-output-field=parsed.primary+parsed.related_values "
+                "source-count=2 expected-output-count=2 actual-output-count=2."
+            ),
+        }
+        solve_swe_prod.MULTI_VALUE_PROBE_PATH.write_text(
+            "Command: python probe.py\n"
+            "Return code: 0\n"
+            "multi-value-probe-passed: final-output-field=parsed.primary+parsed.related_values "
+            "source-count=2 expected-output-count=2 actual-output-count=2.\n",
+            encoding="utf-8",
+        )
+        multi_value_composite_field_blockers = solve_swe_prod.validation_coverage_blockers(
+            "Record parser should preserve complete alternate linked fields.",
+            "diff --git a/records/decoder/decode.py b/records/decoder/decode.py\n"
+            "+def collect_linked_values(record, link):\n"
+            "+    linked_values = []\n"
+            "+    linked_values.append(link)\n",
+            "",
+            composite_status,
+        )
+        assert any("singular `final-output-field=...`" in blocker for blocker in multi_value_composite_field_blockers), multi_value_composite_field_blockers
 finally:
     solve_swe_prod.MULTI_VALUE_PROBE_PATH = original_multi_value_probe_path
 

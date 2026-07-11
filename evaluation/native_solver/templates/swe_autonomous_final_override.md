@@ -64,9 +64,10 @@ As orchestrator:
    - If parser/reader linked, alternate, repeated, complete, or multi-value
      behavior changed, the status JSON `validation` field must include exact
      `multi-value-probe-passed:` or `multi-value-probe-skip-justified:`. For a
-     passed probe, include `final-output-field=...`, `source-count=N`,
-     `expected-output-count=N`, and `actual-output-count=N`, with expected and
-     actual counts equal, and write the rerunnable command/output transcript to
+     passed probe, include one singular `final-output-field=...` per affected
+     output collection, with `source-count=N`, `expected-output-count=N`, and
+     `actual-output-count=N`; expected and actual counts must match for each
+     field. Write the rerunnable command/output transcript to
      `/tmp/multiagent-prod-swe/multi-value-probe.txt`.
 10. Completion requires both accepted source state in `/app` and
    `/tmp/multiagent-prod-swe/status.json`.

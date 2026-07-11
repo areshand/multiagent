@@ -389,3 +389,53 @@ transcript at `/tmp/multiagent-prod-swe/multi-value-probe.txt` with matching
 or official expected tests into the solver. It only prevents a production
 multi-agent verifier from clearing hidden-contract risk by writing plausible
 but unverified status text.
+
+Follow-up rerun
+`swe-bench-pro-prod-pr4-noleak-offset16-count1-r16-machine-evidence` verified
+the machine-evidence gate in a clean non-diagnostic run. The native solver
+exited `rc=2` after about 493 seconds, so the rejected diff was not submitted
+for official scoring and row 16 remains missing; the first-50 score remains
+32/50.
+
+The r16 root cause is another general verifier precision issue. The worker did
+write a machine-readable multi-value probe transcript, but the transcript
+collapsed several product-facing output fields into one aggregate count. Nearby
+visible tests still failed on specific output fields, so the aggregate count was
+not valid acceptance evidence for the changed parser contract. The general
+hardening is now per-field: `multi-value-probe-passed:` must name one singular
+`final-output-field=...` per affected output collection, with matching
+`source-count=N`, `expected-output-count=N`, and `actual-output-count=N` for
+that field. Aggregate counts across several fields are rejected unless visible
+source evidence proves that aggregate is the actual acceptance surface.
+
+## Parallel failed-row reruns
+
+After Docker Desktop memory was raised, the missing first-50 rows were rerun
+with four concurrent one-row production-native workers. The active queue keeps
+independent failed rows in flight while preserving the same official verifier
+path and 20g task-container memory limit per worker.
+
+`swe-bench-pro-prod-pr4-parallel4-offset2-r1` exited native `rc=2` with no
+official score. The run appears to have tripped a helper/interface-name guard
+before producing a clean patch. The available report did not preserve enough
+source transcript to prove whether that was a true public contract miss or an
+over-strict named-helper guard, so no solver-facing rule was changed from this
+row yet.
+
+`swe-bench-pro-prod-pr4-parallel4-offset8-r1` completed native `rc=0` and
+reached the official verifier, but scored `0.0`. The patch changed a Go service
+initialization path and local validation covered the edited package, while the
+official verifier failed a related feature package under the same top-level
+tree. The general no-leak fix is to broaden Go validation from "changed package
+only" to source-visible related feature package tests: derive nearby package
+subtrees from changed Go paths plus issue/diff vocabulary, then add a bounded
+recursive `go test ./<related-tree>/...` when that subtree has Go tests.
+
+`swe-bench-pro-prod-pr4-parallel4-offset14-r1` completed native `rc=0` and
+reached the official verifier, but scored `0.0`. The official failure was a
+missing module import for the newly centralized keyboard-binding utility. The
+allowed general lesson is not the hidden module name; it is that verifier
+acceptance was too weak for newly introduced public utilities. A source-level
+verifier should require stronger evidence that a reusable public utility has a
+stable import surface, nearby runnable validation if a visible test exists, or
+an explicit source-based justification when no focused test harness is present.

@@ -98,10 +98,11 @@ affected entrypoint. Report it as `multi-value-probe-passed:` with the exact
 command/probe and observed output shape, or `multi-value-probe-skip-justified:`
 with source evidence that no two-value case applies.
 The probe must assert the final product-facing output field, not only an
-internal helper or decoded intermediate field. Include
-`final-output-field=...`, `source-count=N`, `expected-output-count=N`, and
-`actual-output-count=N` in the final validation text, with expected and actual
-counts equal. In SWE adapter runs, write the command/output transcript to
+internal helper or decoded intermediate field. Include one singular
+`final-output-field=...` per affected output collection, with `source-count=N`,
+`expected-output-count=N`, and `actual-output-count=N` in the final validation
+text; expected and actual counts must match for each field. Do not collapse
+several output fields into one aggregate count. In SWE adapter runs, write the command/output transcript to
 `/tmp/multiagent-prod-swe/multi-value-probe.txt` so the adapter does not have to
 trust a self-reported sentence.
 
