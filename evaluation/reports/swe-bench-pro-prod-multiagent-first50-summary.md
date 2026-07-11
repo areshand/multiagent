@@ -306,3 +306,22 @@ least two linked values through the affected entrypoint, or provide
 `multi-value-probe-skip-justified:` with source evidence that no two-value case
 applies. This is intentionally generic and no-leak; it does not mention
 project-specific fixtures or expected answers.
+
+Follow-up rerun
+`swe-bench-pro-prod-pr4-noleak-offset16-count1-r12-multivalue-probe` confirmed
+that the new gate changed solver behavior: the native solver ran the full
+production multi-agent loop for about 824 seconds, exited `rc=0`, and its final
+status included `multi-value-probe-passed:` plus adapter public validation. The
+patch reached the official verifier, but still scored `0.0`, so row 16 remains
+missing and the first-50 score remains 32/50.
+
+The r12 miss showed that a marker saying a multi-value probe passed is not
+strong enough if it only observes internal helper behavior or loosely states
+that alternates appeared somewhere. The official verifier still found too few
+values in final parser output collections. The general no-leak fix is to make
+the probe prove product-facing output cardinality: `multi-value-probe-passed:`
+must now include `final-output-field=...`, `source-count=N`,
+`expected-output-count=N`, and `actual-output-count=N`, with expected and actual
+counts equal. Prompts, scout roles, the benchmark appendix, and the wrapper gate
+now all require this stronger final-output evidence without encoding the row's
+fixture names or expected answers.

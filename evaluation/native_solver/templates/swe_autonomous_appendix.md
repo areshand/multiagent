@@ -218,6 +218,10 @@ Verifier quality bar:
   source-derived probe or command that covered at least two linked values through
   the affected entrypoint, or `multi-value-probe-skip-justified:` with source
   evidence that no two-value case is possible.
+  The probe must validate final product-facing output, not only an internal
+  helper. Include `final-output-field=...`, `source-count=N`,
+  `expected-output-count=N`, and `actual-output-count=N`, with expected and
+  actual counts equal.
 - List concrete blocking findings. If you cannot prove the patch is wrong but
   see risk, name the risk separately from blockers.
 

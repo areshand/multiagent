@@ -129,6 +129,11 @@ probe requiring at least two linked values through the affected entrypoint. The
 handoff should require `multi-value-probe-passed:` with the exact probe/command
 and output shape, or `multi-value-probe-skip-justified:` with source evidence
 that no two-value case applies.
+Require the marker to prove the final product-facing output cardinality:
+`final-output-field=...`, `source-count=N`, `expected-output-count=N`, and
+`actual-output-count=N`, with expected and actual counts equal. Internal helper
+cardinality is not enough unless source evidence proves it is the acceptance
+surface.
 
 ## Output Format
 

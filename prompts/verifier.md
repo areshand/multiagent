@@ -86,6 +86,12 @@ the current fixture suite. Require `multi-value-probe-passed:` with the exact
 source-derived probe or command that covered at least two linked values through
 the affected entrypoint, or `multi-value-probe-skip-justified:` with source
 evidence explaining why no two-value case is possible.
+The probe must validate the final product-facing output field, not only an
+internal helper or decoded intermediate field. In the acceptance text include
+`final-output-field=...`, `source-count=N`, `expected-output-count=N`, and
+`actual-output-count=N`; expected and actual counts must match. If a value is
+promoted into a primary field for compatibility, also prove whether it must
+remain in the complete collection or why source-visible evidence excludes it.
 
 Do not rely on leaked evaluator tests, hidden test names, non-public evaluator
 rows, or benchmark-only metadata as implementation guidance. During active

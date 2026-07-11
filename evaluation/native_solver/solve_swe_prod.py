@@ -1290,24 +1290,43 @@ def validation_coverage_blockers(
             "setdefault(",
         )
     )
-    if parser_multi_value_issue and parser_multi_value_diff and not any(
-        marker in status_text
-        for marker in (
-            "multi-value-probe-passed:",
-            "multi-value-probe-skip-justified:",
-        )
-    ):
-        blockers.append(
-            "parser/reader linked or alternate multi-value behavior changed, but status does not include "
-            "`multi-value-probe-passed:` with a source-derived probe covering at least two linked values "
-            "across the affected entrypoint, or `multi-value-probe-skip-justified:` with source evidence"
-        )
+    if parser_multi_value_issue and parser_multi_value_diff:
+        has_multi_value_probe = "multi-value-probe-passed:" in status_text
+        has_multi_value_skip = "multi-value-probe-skip-justified:" in status_text
+        if not has_multi_value_probe and not has_multi_value_skip:
+            blockers.append(
+                "parser/reader linked or alternate multi-value behavior changed, but status does not include "
+                "`multi-value-probe-passed:` with a source-derived probe covering at least two linked values "
+                "across the affected entrypoint, or `multi-value-probe-skip-justified:` with source evidence"
+            )
+        elif has_multi_value_probe and not multi_value_probe_has_final_output_counts(status_text):
+            blockers.append(
+                "`multi-value-probe-passed:` must validate the final product-facing output, not only an internal helper; "
+                "include `final-output-field=...`, `source-count=N`, `expected-output-count=N`, and `actual-output-count=N`, "
+                "with expected and actual counts equal"
+            )
 
     return blockers
 
 
 
 
+
+
+def multi_value_probe_has_final_output_counts(status_text: str) -> bool:
+    """Return whether a multi-value probe proves final output cardinality."""
+
+    marker_index = status_text.find("multi-value-probe-passed:")
+    if marker_index < 0:
+        return False
+    evidence = status_text[marker_index : marker_index + 1200]
+    if "final-output-field=" not in evidence:
+        return False
+    if not re.search(r"\bsource-count\s*=\s*\d+", evidence):
+        return False
+    expected = re.search(r"\bexpected-output-count\s*=\s*(\d+)", evidence)
+    actual = re.search(r"\bactual-output-count\s*=\s*(\d+)", evidence)
+    return bool(expected and actual and expected.group(1) == actual.group(1))
 
 
 def pytest_teardown_after_success(output: str) -> bool:

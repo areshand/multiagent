@@ -80,6 +80,10 @@ must require `multi-value-probe-passed:` with a source-derived case containing
 at least two linked values through the affected entrypoint, or
 `multi-value-probe-skip-justified:` with source evidence that no such case is
 possible.
+The validation plan must name the final product-facing output field and require
+cardinality evidence in the final marker: `final-output-field=...`,
+`source-count=N`, `expected-output-count=N`, and `actual-output-count=N`, with
+expected and actual counts equal.
 
 When nearby visible tests or fixtures are expected to fail because the task
 changes their expected output, require a replacement probe that asserts the new
