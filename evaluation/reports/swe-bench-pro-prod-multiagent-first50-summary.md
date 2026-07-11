@@ -431,6 +431,13 @@ only" to source-visible related feature package tests: derive nearby package
 subtrees from changed Go paths plus issue/diff vocabulary, then add a bounded
 recursive `go test ./<related-tree>/...` when that subtree has Go tests.
 
+`swe-bench-pro-prod-pr4-parallel4-offset12-r1` exited native `rc=2` after about
+1485 seconds and was not submitted to official scoring. The solver found a
+plausible patch, but its focused package test regexes matched no runnable
+tests, leaving only compile/package-level evidence for a behavioral cache split
+contract. The wrapper correctly treated that as unresolved risk instead of
+turning a weak completion into a benchmark score.
+
 `swe-bench-pro-prod-pr4-parallel4-offset14-r1` completed native `rc=0` and
 reached the official verifier, but scored `0.0`. The official failure was a
 missing module import for the newly centralized keyboard-binding utility. The
@@ -439,3 +446,11 @@ acceptance was too weak for newly introduced public utilities. A source-level
 verifier should require stronger evidence that a reusable public utility has a
 stable import surface, nearby runnable validation if a visible test exists, or
 an explicit source-based justification when no focused test harness is present.
+
+`swe-bench-pro-prod-pr4-parallel4-offset15-r1` exited native `rc=2` after about
+772 seconds and was not submitted to official scoring. The patch intentionally
+changed data-shape behavior while a nearby relevant visible package test still
+failed on the old shape, and the final evidence only had a no-test package
+command plus source explanation. The wrapper rejection is the desired no-leak
+behavior: visible relevant failures require exact replacement probes or updated
+source-derived expectations, not a generic "tests are stale" assertion.
