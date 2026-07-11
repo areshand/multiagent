@@ -208,3 +208,19 @@ solver-visible metadata was `{}`, `/opt/multiagent/tests`,
 README were absent, while the runtime solver and prompts were present. The
 focused run scored `1.0`, confirming the reduced bake surface still supports a
 complete production-native solve.
+
+## 2026-07-11 Row 8 Recovery-Gate Update
+
+Focused rerun `swe-bench-pro-prod-pr4-recovery-offset8-count1-r2` fixed a
+measurement-infra gap for row 8. The previous row-8 slim-bake run produced a
+source diff and worker validation evidence, but the native wrapper exited
+`rc=2`, so EvalScope refused to submit the patch and the run had `score: null`.
+The recovery gate now reads durable subagent last-message files for generic
+visible-validation evidence, so an unrelated noisy tmux/tool-call error cannot
+discard a source diff that the production agents already validated.
+
+The rerun reached the official verifier with native solver exit code 0 and
+official verifier evidence `true`, but scored `0.0`. Therefore row 8 remains in
+the missing list and the first-50 score remains 32/50. The official failure is
+now real solver quality evidence rather than an unscored infrastructure
+failure.

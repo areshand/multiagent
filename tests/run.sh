@@ -773,6 +773,34 @@ assert not solve_swe_prod.visible_validation_passed_in_text(
 )
 assert not solve_swe_prod.visible_validation_passed_in_text("pytest reported no tests ran")
 
+with tempfile.TemporaryDirectory() as td:
+    runtime_root = Path(td)
+    agent_dir = runtime_root / "state" / "subagents" / "worker-04-fix"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "last-message.txt").write_text(
+        "Updated source.\n\nValidation passed:\n`go test ./lib/service ./lib/kube/proxy`\n\nPatch is left uncommitted.\n",
+        encoding="utf-8",
+    )
+    go_diff = "diff --git a/lib/service/kubernetes.go b/lib/service/kubernetes.go\n+func changed() {}\n"
+    noisy_text = "tool router error: failed to parse function arguments\n"
+    assert not solve_swe_prod.visible_validation_passed_in_text(noisy_text), noisy_text
+    validation_evidence = solve_swe_prod.persisted_subagent_visible_validation_evidence(go_diff, runtime_root)
+    assert "go test ./lib/service ./lib/kube/proxy" in validation_evidence, validation_evidence
+    recovered_status = solve_swe_prod.status_with_recovered_validation(
+        {
+            "status": "blocked",
+            "reason": "validation coverage gate remained unresolved after helper probe follow-up",
+        },
+        validation_evidence,
+    )
+    recovered_blockers = solve_swe_prod.validation_coverage_blockers(
+        "Kubernetes exec session recording should initialize async upload state.",
+        go_diff,
+        noisy_text,
+        recovered_status,
+    )
+    assert not any("Go source changed" in blocker for blocker in recovered_blockers), recovered_blockers
+
 assert solve_swe_prod.is_disallowed_patch_path("patch.txt")
 assert solve_swe_prod.is_disallowed_patch_path("candidate.patch")
 
