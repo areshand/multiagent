@@ -47,7 +47,7 @@ otherwise. Do not limit this to exported APIs: same-package tests can depend on
 unexported helper signatures, and changing those signatures can break
 compatibility even when production call sites compile.
 
-Do not rely on leaked evaluator tests, hidden test names, official expected
+Do not rely on leaked evaluator tests, hidden test names, non-public evaluator
 rows, or benchmark-only metadata as implementation guidance. If such metadata is
 present in an eval harness, do not pass it into active solving, worker
 requirements, verifier acceptance, or follow-up instructions.

@@ -81,7 +81,7 @@ collection/output shape. If one matched value is also used as a primary value
 for compatibility, it still must not be silently dropped from the complete
 collection unless visible source evidence explicitly requires that exclusion.
 
-Do not rely on leaked evaluator tests, hidden test names, official expected
+Do not rely on leaked evaluator tests, hidden test names, non-public evaluator
 rows, or benchmark-only metadata as implementation guidance. During active
 solving, do not use benchmark scores or hidden-test failures as verifier input,
 follow-up instructions, or acceptance evidence. Acceptance must be based on user

@@ -691,14 +691,14 @@ generic_commands = solve_swe_prod.coverage_probe_commands(
 assert generic_commands == [], generic_commands
 with tempfile.TemporaryDirectory() as td:
     repo = Path(td)
-    (repo / "catalog/marc/tests").mkdir(parents=True)
-    (repo / "catalog/marc/tests/test_parse.py").write_text("def test_parse(): pass\n", encoding="utf-8")
+    (repo / "records/decoder/tests").mkdir(parents=True)
+    (repo / "records/decoder/tests/test_decode.py").write_text("def test_decode(): pass\n", encoding="utf-8")
     python_commands = solve_swe_prod.coverage_probe_commands(
         repo,
         "Record parser should preserve alternate linked fields.",
-        "diff --git a/catalog/marc/parse.py b/catalog/marc/parse.py\n+def read_title(rec):\n+    pass\n",
+        "diff --git a/records/decoder/decode.py b/records/decoder/decode.py\n+def read_title(rec):\n+    pass\n",
     )
-    assert ["python", "-m", "pytest", "catalog/marc/tests/test_parse.py", "-q", "--tb=short"] in python_commands, python_commands
+    assert ["python", "-m", "pytest", "records/decoder/tests/test_decode.py", "-q", "--tb=short"] in python_commands, python_commands
 with tempfile.TemporaryDirectory() as td:
     repo = Path(td)
     (repo / "components/scanner/pkg").mkdir(parents=True)
@@ -747,6 +747,25 @@ stale_with_probe_blockers = solve_swe_prod.implementation_scope_blockers(
     },
 )
 assert not any("failing evidence" in blocker for blocker in stale_with_probe_blockers), stale_with_probe_blockers
+stale_claim_without_failed_word_blockers = solve_swe_prod.implementation_scope_blockers(
+    "Parser output should preserve alternate linked fields.",
+    "diff --git a/records/decoder/decode.py b/records/decoder/decode.py\n+def decode_record() {}\n",
+    {"status": "completed", "risk": "visible fixture expectations are stale relative to the issue requirement"},
+)
+assert any("visible test/fixture expectation is stale" in blocker for blocker in stale_claim_without_failed_word_blockers), stale_claim_without_failed_word_blockers
+stale_claim_with_probe_markers = solve_swe_prod.implementation_scope_blockers(
+    "Parser output should preserve alternate linked fields.",
+    "diff --git a/records/decoder/decode.py b/records/decoder/decode.py\n+def decode_record() {}\n",
+    {
+        "status": "completed",
+        "risk": (
+            "visible fixture expectations are stale relative to the issue requirement. "
+            "replacement-probe-passed: temporary parser probe covered the exact alternate field path. "
+            "stale-visible-failure-justified: issue-visible source requires alternate fields to remain linked."
+        ),
+    },
+)
+assert not any("visible test/fixture expectation is stale" in blocker for blocker in stale_claim_with_probe_markers), stale_claim_with_probe_markers
 compile_error_blockers = solve_swe_prod.implementation_scope_blockers(
     "Normalize duplicate serialized vulnerability content into one source record.",
     "diff --git a/converter.go b/converter.go\n+func Convert() {}\n",
@@ -801,7 +820,7 @@ assert solve_swe_prod.visible_validation_passed_in_text(
     "pytest -q pkg/tests\n================= 5 passed, 54 deselected, 1 warning in 0.03s ==================\n"
 )
 assert solve_swe_prod.visible_validation_passed_in_text(
-    "Validation passed:\n`pytest -q catalog/marc/tests/test_parse.py -k 'linked-fields' --tb=short`\n"
+    "Validation passed:\n`pytest -q records/decoder/tests/test_decode.py -k 'linked-fields' --tb=short`\n"
     "Result: 5 passed, 54 deselected, 1 warning.\nfinal status: codex exec exited rc=0\n"
 )
 assert not solve_swe_prod.visible_validation_passed_in_text(

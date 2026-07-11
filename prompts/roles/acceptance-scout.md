@@ -30,7 +30,7 @@ patch.
 - Surface any route that only validates a scaffold, shim, generated artifact, or
   weaker proxy instead of the real product behavior.
 
-Do not rely on leaked evaluator tests, hidden test names, official expected
+Do not rely on leaked evaluator tests, hidden test names, non-public evaluator
 rows, or benchmark-only metadata as implementation guidance. Benchmarks measure
 whether the general contract reasoning worked; they are not a source of
 privileged hints.

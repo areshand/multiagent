@@ -40,7 +40,7 @@ Also include:
   helper's name, arity, parameter order, return shape, or package placement
   unless you have updated all reachable callers and have source evidence that
   compatibility is preserved.
-- Do not rely on leaked evaluator tests, hidden test names, official expected
+- Do not rely on leaked evaluator tests, hidden test names, non-public evaluator
   rows, or benchmark-only metadata as implementation guidance. Infer unstated
   contracts from legitimate task/source/product evidence.
 - If legitimate product or visible-test paths reference missing fixture assets

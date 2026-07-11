@@ -127,7 +127,7 @@ pass visible checks while missing source-derived edge cases, data shape,
 runtime behavior, public API shape, or compatibility expectations. The
 acceptance scout produces a `hidden-contract-ledger` and must infer contracts
 from legitimate task/source/product evidence, not leaked evaluator tests,
-official expected rows, hidden row names, or benchmark-only metadata.
+non-public evaluator rows, hidden row names, or benchmark-only metadata.
 
 Use the same subagent helper with the verifier CLI:
 

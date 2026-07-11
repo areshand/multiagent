@@ -31,8 +31,8 @@ Hard requirements:
 7. Run focused validation when practical. If full validation is too expensive,
    run the narrowest targeted check you can identify from nearby tests, package
    scripts, or repository conventions, and record exactly what ran.
-8. Do not rely on leaked evaluator tests, hidden test names, official expected
-   rows, official hidden fixtures, previous benchmark failures, or
+8. Do not rely on leaked evaluator tests, hidden test names, non-public evaluator
+   rows, non-public evaluator fixtures, previous benchmark failures, or
    benchmark-only metadata as implementation guidance. Infer unstated contracts
    from legitimate task/source/product evidence: issue text, visible tests,
    docs, source callers, public APIs, data schemas, fixtures, and runtime
@@ -170,8 +170,8 @@ Verifier quality bar:
 - Classify probes as normative only when derived from issue text, visible tests,
   docs, source compatibility behavior, public APIs, data schemas, or runtime
   behavior. Treat speculative probes as exploratory risk, not acceptance gates.
-- Do not rely on leaked evaluator tests, hidden test names, official expected
-  rows, official hidden fixtures, previous benchmark failures, or
+- Do not rely on leaked evaluator tests, hidden test names, non-public evaluator
+  rows, non-public evaluator fixtures, previous benchmark failures, or
   benchmark-only metadata as implementation guidance.
 - If visible task evidence includes a concrete expected value, reproduce that
   assertion with a temporary probe or source-level comparison before accepting.

@@ -129,6 +129,11 @@ def implementation_scope_blockers(
             "reported validation contains failing evidence; resolve it or include both "
             "`replacement-probe-passed:` and `stale-visible-failure-justified:` markers with visible/source evidence"
         )
+    elif claims_stale_visible_failure(status_text) and not stale_visible_failure_justified(status_text):
+        blockers.append(
+            "reported validation claims a visible test/fixture expectation is stale; resolve it or include both "
+            "`replacement-probe-passed:` and `stale-visible-failure-justified:` markers with visible/source evidence"
+        )
 
     for symbol in required_public_symbols(issue, metadata):
         symbol_lower = symbol.lower()
@@ -170,6 +175,13 @@ def stale_visible_failure_justified(status_text: str) -> bool:
     """Return whether a reported visible-test failure has explicit no-leak replacement evidence."""
     text = status_text.lower()
     return "replacement-probe-passed:" in text and "stale-visible-failure-justified:" in text
+
+
+def claims_stale_visible_failure(status_text: str) -> bool:
+    text = status_text.lower()
+    if "stale" not in text:
+        return False
+    return any(marker in text for marker in ("visible", "test", "fixture", "expectation", "golden"))
 
 
 def helper_scope_hints(workdir: Path, issue: str, diff: str, blockers: list[str]) -> list[str]:
