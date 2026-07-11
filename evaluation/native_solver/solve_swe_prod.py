@@ -1276,12 +1276,15 @@ def validation_coverage_blockers(
     parser_multi_value_diff = any(
         marker in diff_lower
         for marker in (
-            "get_linkages",
-            "linked_fields",
-            "linkages",
-            "alternate_names",
-            "alternate_titles",
-            "other_titles",
+            "linked",
+            "linkage",
+            "alternate",
+            "associated",
+            "related",
+            "multi",
+            "collection",
+            "values",
+            "fields",
             "append(",
             "extend(",
             "setdefault(",

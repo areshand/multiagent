@@ -459,6 +459,7 @@ do
 done
 python3 - "$ROOT" <<'PY'
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -490,6 +491,20 @@ sys.modules["evalscope.utils.logger"] = SimpleNamespace(
     get_logger=lambda: SimpleNamespace(info=lambda *args, **kwargs: None, warning=lambda *args, **kwargs: None)
 )
 from evaluation import evalscope_multiagent_native_runner
+
+solver_source = (root / "evaluation/native_solver/solve_swe_prod.py").read_text(encoding="utf-8")
+multi_value_section = re.search(
+    r"parser_multi_value_diff = any\(\s*marker in diff_lower\s*for marker in \((?P<markers>.*?)\)\s*\)",
+    solver_source,
+    flags=re.S,
+)
+assert multi_value_section, "multi-value guardrail marker list missing"
+quoted_markers = re.findall(r'"([^"]+)"', multi_value_section.group("markers"))
+field_shaped_markers = [
+    marker for marker in quoted_markers
+    if re.fullmatch(r"[a-z]+(?:_[a-z]+)+", marker)
+]
+assert not field_shaped_markers, field_shaped_markers
 
 public_metadata = evalscope_multiagent_native_runner._public_solver_metadata(
     {
@@ -806,9 +821,9 @@ assert any("patch only changes tests" in blocker for blocker in test_only_blocke
 multi_value_blockers = solve_swe_prod.validation_coverage_blockers(
     "Record parser should preserve complete alternate linked fields.",
     "diff --git a/records/decoder/decode.py b/records/decoder/decode.py\n"
-    "+def get_linkages(record, link):\n"
-    "+    alternate_titles = []\n"
-    "+    alternate_titles.append(link)\n",
+    "+def collect_linked_values(record, link):\n"
+    "+    linked_values = []\n"
+    "+    linked_values.append(link)\n",
     "",
     {
         "status": "completed",
@@ -819,16 +834,16 @@ assert any("multi-value-probe-passed:" in blocker for blocker in multi_value_blo
 multi_value_probe_blockers = solve_swe_prod.validation_coverage_blockers(
     "Record parser should preserve complete alternate linked fields.",
     "diff --git a/records/decoder/decode.py b/records/decoder/decode.py\n"
-    "+def get_linkages(record, link):\n"
-    "+    alternate_titles = []\n"
-    "+    alternate_titles.append(link)\n",
+    "+def collect_linked_values(record, link):\n"
+    "+    linked_values = []\n"
+    "+    linked_values.append(link)\n",
     "",
     {
         "status": "completed",
         "validation": (
             "pytest -q records/decoder/tests/test_decode.py passed. "
             "multi-value-probe-passed: temporary decoder probe built one primary record "
-            "with two linked alternate fields and observed both alternates in other_titles."
+            "with two linked alternate fields and observed both alternates in parsed output."
         ),
     },
 )
