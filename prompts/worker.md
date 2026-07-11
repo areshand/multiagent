@@ -85,6 +85,13 @@ If visible task evidence shows concrete expected outputs, write a temporary
 source-level probe that asserts the same literal shape. Do not replace an
 exact-order contract with a weaker semantic smoke check.
 
+When you expand a parser/reader allowlist, dispatch table, accepted token set,
+field list, extension list, or format registry, trace the newly included item
+through the reader functions it now activates and through every concrete
+adapter/container implementation used by the entrypoint. If a reader calls
+methods on its backing record/container, preserve or add those methods for every
+adapter with the same return shape.
+
 For UI/component tasks, classify the request before editing. If the issue asks
 for additive public surface such as a story, export, example, or named symbol,
 prefer adding that surface while preserving the existing component

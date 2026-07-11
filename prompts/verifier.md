@@ -121,6 +121,14 @@ fixture/test file is present and quick enough to run, source review plus
 `git diff --check` is not acceptance evidence. Run it or reject with the exact
 command that still needs to pass.
 
+When a patch expands a parser/reader allowlist, dispatch table, accepted token
+set, field list, extension list, or format registry, treat it as a new execution
+path through existing readers. Trace the newly included item through every reader
+function it can invoke and every concrete adapter/container type used by the
+entrypoint. If those readers call back into the record/container, verify each
+adapter implements the required methods and preserves the same return shape, or
+reject with a source-level adapter-parity finding.
+
 If legitimate product paths or visible tests reference missing fixture assets
 under `testdata/`, `fixtures/`, `golden/`, or snapshot paths, reject a
 source-only completion that omits those assets.

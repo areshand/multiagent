@@ -120,6 +120,11 @@ behavior, route a runtime contract scout or include a runtime-contract ledger in
 the handoff. Do not let the worker/verifier accept a type-only or source-only
 fix for a runtime-enforced contract.
 
+For parser/reader allowlist, dispatch table, token-set, field-list, extension,
+or registry expansions, include an adapter-parity risk. Trace the newly accepted
+item through existing readers and confirm every concrete adapter/container used
+by the entrypoint provides the methods and return shape those readers require.
+
 ## Output Format
 
 Return only:

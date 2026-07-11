@@ -236,3 +236,30 @@ compiled languages, a worker's validation claim is no longer enough when the
 patch touches structs, methods, helper state, or unexported interfaces; the
 verifier must confirm that the relevant package command compiled test files
 after the final diff, or perform a source-level compatibility comparison.
+
+## 2026-07-11 Row 16 Measurement And Adapter-Parity Update
+
+Focused rerun
+`swe-bench-pro-prod-pr4-noleak-offset16-count1-r9-scorefailed` used the current
+PR4 production-native no-leak path with `--score-failed-native-diff` enabled.
+This makes rejected native diffs count as scored failures instead of producing
+`score: null`. In this run the native solver exited `rc=0`, reached the official
+verifier with official verifier evidence `true`, and scored `0.0`; row 16
+therefore remains missing and the first-50 score remains 32/50.
+
+The submitted patch was a small source-only parser field-list expansion. Local
+agent validation passed a focused parser command, but the official verifier
+failed two parser cases. One failure exposed an adapter-interface parity miss:
+the newly retained field could route through reader code that calls back into
+the record/container, but one concrete parser adapter did not provide the same
+callback method. The other failure showed the complete linked-value collection
+contract was still under-satisfied.
+
+The general solver lesson is that parser allowlist, dispatch-table, accepted
+token-set, field-list, extension-list, or format-registry changes are not simple
+one-line inclusions. They create new execution paths through existing readers.
+Workers, contract scouts, and verifiers now require adapter-parity reasoning for
+those changes: trace the newly included item through reader functions, identify
+every concrete adapter/container used by each entrypoint, and verify any
+record/container callback methods exist with matching return shape before
+accepting.

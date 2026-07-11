@@ -98,6 +98,13 @@ data-shape tasks, route validation through the real production entrypoint and
 nearest visible fixture/test file when practical. Synthetic helper probes are
 only fallback evidence when the real entrypoint is unavailable or too expensive.
 
+If the task may require adding a value to a parser/reader allowlist, dispatch
+table, accepted token set, field list, extension list, or format registry,
+include an adapter-parity contract: name the reader functions that the new item
+will activate, the concrete adapters/containers used by each entrypoint, and any
+record/container methods whose names and return shapes must exist across those
+adapters.
+
 For UI/component tasks, explicitly distinguish additive public-surface work
 from behavior rewrites. If the request is about storybook coverage, export
 surface, examples, or exposing a named component/story, preserve existing

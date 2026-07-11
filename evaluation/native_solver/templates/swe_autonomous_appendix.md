@@ -194,6 +194,12 @@ Verifier quality bar:
   fixture/test file over synthetic low-level helper probes. If a nearby
   fixture/test file is present and quick enough to run, source review plus
   `git diff --check` is not acceptance evidence.
+- When expanding a parser/reader allowlist, dispatch table, accepted token set,
+  field list, extension list, or format registry, trace the newly included item
+  through every reader it can activate and every concrete adapter/container used
+  by the entrypoint. If a reader calls methods on its backing record/container,
+  verify every adapter implements the required methods and preserves the same
+  return shape before accepting.
 - Trace helper APIs when the issue mentions keys, fallback sources, expired
   records, parsers, serializers, adapters, persistence, or missing data.
 - If the issue names multiple formats, implementations, clients, adapters,
