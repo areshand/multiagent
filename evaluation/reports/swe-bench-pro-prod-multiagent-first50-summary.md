@@ -5,22 +5,22 @@ Date: 2026-07-03
 Scope: first 50 official-order SWE Bench Pro rows, evaluated with the
 production-container native multi-agent path.
 
-Result: 31/50 rows passed with official verifier evidence.
+Result: 32/50 rows passed with official verifier evidence.
 
 Passing official indices:
 
 ```text
-0, 1, 3, 4, 6, 7, 9, 10, 11, 13, 19, 21, 22, 23, 24, 25, 26, 29, 30,
+0, 1, 3, 4, 5, 6, 7, 9, 10, 11, 13, 19, 21, 22, 23, 24, 25, 26, 29, 30,
 31, 33, 34, 35, 36, 39, 40, 43, 45, 46, 47, 49
 ```
 
 Missing official indices:
 
 ```text
-2, 5, 8, 12, 14, 15, 16, 17, 18, 20, 27, 28, 32, 37, 38, 41, 42, 44, 48
+2, 8, 12, 14, 15, 16, 17, 18, 20, 27, 28, 32, 37, 38, 41, 42, 44, 48
 ```
 
-The final increment from 30/50 to 31/50 came from row 39:
+The 30/50 to 31/50 increment came from row 39:
 
 - Instance: `instance_future-architect__vuls-86b60e1478e44d28b1aff6b9ac7e95ceb05bc5fc`
 - Repository: `future-architect/vuls`
@@ -40,6 +40,24 @@ hosts("127.0.0.1", []string{"127.0.0.1"}) -> []
 This fixed the previous official failure where the solver returned
 `["127.0.0.1"]` for that hidden contract case.
 
+The 31/50 to 32/50 increment came from row 5:
+
+- Instance:
+  `instance_ansible__ansible-a26c325bd8f6e2822d9d7e62f77a424c1db4fbf6-v0f01c69f1e2528b935359cfe578530722bca2c59`
+- Repository: `ansible/ansible`
+- Passing official tests:
+  `test/units/module_utils/urls/test_Request.py` and
+  `test/units/module_utils/urls/test_fetch_url.py` selected cases
+- Final focused run prefix:
+  `swe-bench-pro-prod-pr4-slimbake-offset5-count1-r1`
+- Focused run score: `1.0`
+- Official verifier evidence: `true`
+
+Key correction for row 5: the production multi-agent solver added source-only
+`use_netrc` support through `uri`, `fetch_url`, `open_url`, and `Request`, with
+the default preserving existing netrc behavior. When `use_netrc=false`, netrc
+credentials are ignored and explicit `Authorization` headers are preserved.
+
 Important caveat: this score is only meaningful for the production native
 multi-agent path because the solver repo is baked into the task image and Codex
 auth is mounted at runtime. Earlier scaffold or single-runner results were
@@ -53,8 +71,8 @@ missing row 16 (`swe-bench-pro-prod-pr4-noleak-offset16-count1-r2`). The live
 task container metadata visible to the solver was sanitized to `{}` and no row
 identity, official expected tests, selected test files, test patch, or private
 requirements were injected into the solver prompt. The row reached the official
-verifier with native solver exit code 0, but scored `0.0`; the score remains
-31/50.
+verifier with native solver exit code 0, but scored `0.0`; at that point the
+score remained 31/50.
 
 The row 16 failure exposed a general verifier weakness, not a reason to leak
 official expected tests: the verifier accepted a MARC XML/Binary parser parity
@@ -134,7 +152,8 @@ completion marker only when generic public checks are clean.
 Follow-up missing-row rerun
 `swe-bench-pro-prod-pr4-noleak-offset2-count1-r2` completed through the real
 production-native multi-agent path and reached the official verifier with native
-solver exit code 0. The row scored `0.0`, so the first-50 score remains 31/50.
+solver exit code 0. The row scored `0.0`, so at that point the first-50 score
+remained 31/50.
 The run is useful no-leak evidence: the task container's solver-visible
 metadata was `{}`, and direct prompt/ledger inspection found no
 `FAIL_TO_PASS`, `PASS_TO_PASS`, `test_patch`, selected-test, row-identity,
@@ -152,7 +171,8 @@ Follow-up missing-row reruns
 `swe-bench-pro-prod-pr4-noleak-offset15-count1-r1` and
 `swe-bench-pro-prod-pr4-noleak-offset15-count1-r2` both completed through the
 real production-native multi-agent path, reached the official verifier with
-native solver exit code 0, and scored `0.0`. The first-50 score remains 31/50.
+native solver exit code 0, and scored `0.0`. At that point the first-50 score
+remained 31/50.
 Both runs preserved the no-leak metadata boundary: solver-visible task metadata
 was `{}` and prompt/ledger inspection found no row identity, selected official
 tests, test patch, benchmark score, or previous-failure strings.
@@ -181,3 +201,10 @@ runtime files needed by the production solver (`launch.sh`, `bin/`, `prompts/`,
 excludes host-side tests, reports, run artifacts, docs, and eval harnesses.
 Regression checks simulate the bake context and assert that required runtime
 files are present while host-side benchmark memory is absent.
+
+The slim-bake path was then verified on row 5. Inside the live task container,
+solver-visible metadata was `{}`, `/opt/multiagent/tests`,
+`/opt/multiagent/evaluation/reports`, the scaffold parity harness, and root
+README were absent, while the runtime solver and prompts were present. The
+focused run scored `1.0`, confirming the reduced bake surface still supports a
+complete production-native solve.
