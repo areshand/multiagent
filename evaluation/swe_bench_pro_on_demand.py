@@ -161,6 +161,8 @@ class OnDemandImageManager:
             return True
         if path.parts and path.parts[0] == "tests":
             return True
+        if path.parts and path.parts[0] == "docs":
+            return True
         if len(path.parts) == 1 and path.suffix == ".md" and path.name != "orchestrator_prompt.md":
             return True
         if path.parts and path.parts[0] == "evaluation":

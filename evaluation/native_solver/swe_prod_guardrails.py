@@ -7,14 +7,11 @@ from pathlib import Path
 
 def required_public_symbols(issue: str, metadata: dict[str, object] | None = None) -> list[str]:
     requirement_text = issue
-    if metadata:
-        nested = metadata.get("swe_bench_pro")
-        source = nested if isinstance(nested, dict) else metadata
-        requirement_text += "\n" + "\n".join(
-            str(part)
-            for part in (source.get("problem_statement"), source.get("requirements"), source.get("interface"))
-            if part
-        )
+    # SWE benchmark metadata can contain answer-shaped verifier fields such as
+    # official requirements, interfaces, selected tests, and test patches. The
+    # solver must derive symbols from the public issue text and repository state
+    # only, so metadata is intentionally not used here.
+    _ = metadata
     symbols: set[str] = set()
     patterns = [
         r"must\s+be\s+exposed\s+as\s+`?([A-Za-z_][A-Za-z0-9_]*)`?",

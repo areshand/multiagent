@@ -510,6 +510,35 @@ solver_metadata = solve_swe_prod.public_solver_metadata(
     }
 )
 assert solver_metadata == {"language": "python"}, solver_metadata
+raw_private_contract = solve_swe_prod.official_test_contract(
+    {
+        "sample_id": 7,
+        "instance_id": "instance-7",
+        "language": "python",
+        "FAIL_TO_PASS": ["TestHidden"],
+        "selected_test_files_to_run": ["tests/hidden_test.py"],
+        "swe_bench_pro": {
+            "instance_id": "nested-instance-7",
+            "fail_to_pass": ["TestNestedHidden"],
+            "selected_test_files_to_run": ["tests/nested_hidden_test.py"],
+        },
+    }
+)
+assert raw_private_contract == {
+    "instance_id": None,
+    "fail_to_pass": [],
+    "pass_to_pass": [],
+    "selected_test_files_to_run": [],
+    "expected_test_count": 0,
+}, raw_private_contract
+symbols_from_raw_metadata = solve_swe_prod.required_public_symbols(
+    "Function Name: VisibleThing",
+    {
+        "requirements": "Function Name: LeakedThing",
+        "swe_bench_pro": {"requirements": "Function Name: NestedLeakedThing"},
+    },
+)
+assert symbols_from_raw_metadata == ["VisibleThing"], symbols_from_raw_metadata
 ledger = solve_swe_prod.contract_ledger_text(
     "visible issue text",
     {
@@ -554,6 +583,7 @@ for excluded in (
     "evaluation/runs/prior-run/results.json",
     "evaluation/swe_bench_pro_scaffold_parity.py",
     "README.md",
+    "docs/write-policy.paths",
     "permission-investigation.md",
 ):
     assert OnDemandImageManager._skip_repo_bake_path(Path(excluded)), excluded

@@ -179,6 +179,7 @@ def _list_from_metadata(value: object) -> list[str]:
 
 
 def official_test_contract(metadata: dict[str, object]) -> dict[str, object]:
+    metadata = public_solver_metadata(metadata or {})
     nested = metadata.get("swe_bench_pro")
     if isinstance(nested, dict):
         source: dict[str, object] = nested
@@ -199,6 +200,7 @@ def official_test_contract(metadata: dict[str, object]) -> dict[str, object]:
 def metadata_problem_text(metadata: dict[str, object] | None) -> str:
     if not metadata:
         return ""
+    metadata = public_solver_metadata(metadata)
     nested = metadata.get("swe_bench_pro")
     if isinstance(nested, dict):
         source: dict[str, object] = nested
