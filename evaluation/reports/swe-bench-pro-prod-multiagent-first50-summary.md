@@ -344,3 +344,23 @@ only blockers directly covered by the selected repository-visible tests; it
 cannot clear marker-style evidence requirements such as final output
 cardinality. This prevents a weak or missing verifier marker from being
 converted into a clean native completion by recovery logic.
+
+Follow-up diagnostic rerun
+`swe-bench-pro-prod-pr4-noleak-offset16-count1-r14-recovery-blockers` verified
+that hardening. The native production solver exited `rc=2` after about 2075
+seconds instead of pretending that the unresolved coverage-marker state was a
+clean completion. Because the run intentionally used
+`--score-failed-native-diff`, EvalScope still sent the rejected source diff to
+the official verifier for diagnostics. The official verifier scored that diff
+`1.0`, but the regenerated run report now records `clean_native_score: null`
+and `diagnostic_score: 1.0`, so this row is not counted as a clean production
+multi-agent solve.
+
+This is a no-leak measurement lesson, not a reason to feed row facts back into
+the solver. Solver-facing files were scanned for project names, fixture names,
+specific official failures, and row/offset identifiers, with no matches in the
+baked runtime prompts/guardrails/tests. The remaining allowed learning is
+generic: final-output probes must prove product-facing cardinality, public
+helper probes cannot clear unrelated marker requirements, and reports must
+separate clean native completions from diagnostic official scoring of rejected
+diffs.

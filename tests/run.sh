@@ -466,6 +466,7 @@ do
 done
 python3 - "$ROOT" <<'PY'
 import os
+import json
 import re
 import subprocess
 import sys
@@ -498,6 +499,7 @@ sys.modules["evalscope.utils.logger"] = SimpleNamespace(
     get_logger=lambda: SimpleNamespace(info=lambda *args, **kwargs: None, warning=lambda *args, **kwargs: None)
 )
 from evaluation import evalscope_multiagent_native_runner
+from evaluation import swe_bench_pro_scaffold_parity
 
 solver_source = (root / "evaluation/native_solver/solve_swe_prod.py").read_text(encoding="utf-8")
 multi_value_section = re.search(
@@ -512,6 +514,74 @@ field_shaped_markers = [
     if re.fullmatch(r"[a-z]+(?:_[a-z]+)+", marker)
 ]
 assert not field_shaped_markers, field_shaped_markers
+
+with tempfile.TemporaryDirectory() as td:
+    work_dir = Path(td) / "work"
+    report_dir = work_dir / "reports" / "codex-scaffold-parity"
+    log_dir = work_dir / "logs"
+    report_dir.mkdir(parents=True)
+    log_dir.mkdir(parents=True)
+    report_path = report_dir / "swe_bench_pro.json"
+    report_path.write_text('{"score": 1.0, "num": 1}\n', encoding="utf-8")
+    (log_dir / "eval_log.log").write_text(
+        "2026-07-11 12:15:01 - evalscope - INFO: multiagent-native exited: sample=0 rc=2 wall=2074.8s timed_out=False\n"
+        "2026-07-11 12:15:01 - evalscope - WARNING: multiagent-native exited with code 2; scoring current git diff by explicit config\n",
+        encoding="utf-8",
+    )
+    args = SimpleNamespace(
+        work_dir=work_dir,
+        limit=1,
+        on_demand_image_preload=True,
+        sample_count=None,
+        sample_offset=0,
+        output=Path(td) / "summary.json",
+        config_json=Path(td) / "config.json",
+        config_yaml=Path(td) / "config.yaml",
+        preflight_output=Path(td) / "preflight.json",
+        swe_bench_pro_repo_path=Path("/tmp/swe"),
+        dockerhub_username="jefzda",
+        platform="linux/amd64",
+        command_timeout=60.0,
+        agent_timeout=3600.0,
+        eval_timeout=3600,
+        no_auto_install=False,
+        agent_model_name="gpt-5",
+        agent_working_dir="/app",
+        on_demand_prune_after_sample=False,
+        on_demand_image_status=Path(td) / "image-status.json",
+        persistent_cache=False,
+        persistent_cache_root=Path("/tmp/cache"),
+        persistent_cache_mode="rw",
+        bake_native_solver=True,
+        native_solver_source=root,
+        native_codex_auth_json="",
+        native_codex_auth_container_home="/root/.codex-multiagent-prod",
+        score_failed_native_diff=True,
+        score_timed_out_native_diff=False,
+    )
+    config = {
+        "agent_config": {"mode": "external", "framework": "multiagent-native"},
+        "dataset_args": {
+            "swe_bench_pro": {
+                "extra_params": {"command_timeout": 60, "eval_timeout": 3600}
+            }
+        },
+    }
+    payload = swe_bench_pro_scaffold_parity.summarize_result(
+        args=args,
+        config=config,
+        run_result={"status": "completed"},
+        evalscope_report_path=report_path,
+        preflight={"official_scaffold_ready": True, "official_image_set_ready": False},
+        started_at=swe_bench_pro_scaffold_parity.dt.datetime.now(swe_bench_pro_scaffold_parity.dt.UTC),
+        completed_at=swe_bench_pro_scaffold_parity.dt.datetime.now(swe_bench_pro_scaffold_parity.dt.UTC),
+        status="completed",
+    )
+    assert payload["score"] == 1.0, json.dumps(payload, indent=2)
+    assert payload["clean_native_score"] is None, json.dumps(payload, indent=2)
+    assert payload["diagnostic_score"] == 1.0, json.dumps(payload, indent=2)
+    assert payload["native_runner"]["latest"]["returncode"] == 2, payload["native_runner"]
+    assert payload["native_runner"]["diagnostic_scored_diff"], payload["native_runner"]
 
 public_metadata = evalscope_multiagent_native_runner._public_solver_metadata(
     {

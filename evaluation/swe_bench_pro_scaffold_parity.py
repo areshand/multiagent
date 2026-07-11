@@ -14,6 +14,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -370,6 +371,49 @@ def find_evalscope_report(work_dir: Path, model_id: str) -> Path | None:
     return None
 
 
+def native_runner_summary(work_dir: Path) -> dict[str, Any] | None:
+    log_path = work_dir / "logs" / "eval_log.log"
+    if not log_path.exists():
+        return None
+
+    exit_events: list[dict[str, Any]] = []
+    scored_failed_diff = False
+    scored_timed_out_diff = False
+    for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        match = re.search(
+            r"multiagent-native exited: sample=(?P<sample>\S+) rc=(?P<rc>-?\d+) "
+            r"wall=(?P<wall>[0-9.]+)s timed_out=(?P<timed_out>True|False)",
+            line,
+        )
+        if match:
+            exit_events.append(
+                {
+                    "sample": match.group("sample"),
+                    "returncode": int(match.group("rc")),
+                    "wall_time_s": float(match.group("wall")),
+                    "timed_out": match.group("timed_out") == "True",
+                }
+            )
+        if "multiagent-native exited with code" in line and "scoring current git diff by explicit config" in line:
+            scored_failed_diff = True
+        if "multiagent-native timed out" in line and "scoring current git diff by explicit config" in line:
+            scored_timed_out_diff = True
+
+    if not exit_events and not scored_failed_diff and not scored_timed_out_diff:
+        return None
+
+    latest = exit_events[-1] if exit_events else None
+    clean = bool(latest and latest["returncode"] == 0 and not latest["timed_out"])
+    return {
+        "latest": latest,
+        "all_exit_events": exit_events,
+        "clean_native_completion": clean,
+        "scored_failed_native_diff": scored_failed_diff,
+        "scored_timed_out_native_diff": scored_timed_out_diff,
+        "diagnostic_scored_diff": scored_failed_diff or scored_timed_out_diff,
+    }
+
+
 def summarize_result(
     *,
     args: argparse.Namespace,
@@ -390,6 +434,18 @@ def summarize_result(
     if evalscope_report is not None:
         score = evalscope_report.get("score")
         sample_size = evalscope_report.get("num")
+    native_summary = (
+        native_runner_summary(args.work_dir)
+        if config.get("agent_config", {}).get("framework") == "multiagent-native"
+        else None
+    )
+    clean_native_score = score
+    diagnostic_score = None
+    if native_summary and native_summary.get("diagnostic_scored_diff"):
+        diagnostic_score = score
+        clean_native_score = None
+    elif native_summary and not native_summary.get("clean_native_completion"):
+        clean_native_score = None
 
     scaffold_parity = (
         status == "completed"
@@ -438,6 +494,8 @@ def summarize_result(
         "benchmark": "swe-bench-pro",
         "status": status,
         "score": score,
+        "clean_native_score": clean_native_score,
+        "diagnostic_score": diagnostic_score,
         "sample_size": sample_size,
         "official": full_official,
         "official_verifier_evidence": official_ready,
@@ -450,6 +508,7 @@ def summarize_result(
         "task_config_yaml": str(args.config_yaml),
         "preflight_report": str(args.preflight_output),
         "evalscope_result": json_safe(run_result),
+        "native_runner": native_summary,
         "parity": {
             "dataset": "ScaleAI/SWE-bench_Pro",
             "adapter": "evalscope swe_bench_pro",
