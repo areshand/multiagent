@@ -426,9 +426,13 @@ assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" '"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" '"test_patch"'
 assert_file_not_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "_enrich_metadata_with_official_contract(dict(task.metadata"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "Never gate production solving on official expected-test metadata"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "public solver inputs"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "solver metadata is public-only"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "orchestrator exited with unverified source diff"
 assert_file_not_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_ALLOW_EXPECTED_TEST_GUIDANCE"
 assert_file_not_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "official_test_contract_text"
+assert_file_not_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "full official contract"
+assert_file_not_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "Official requirements/interface excerpt"
 for prompt_path in \
   "$ROOT/prompts/worker.md" \
   "$ROOT/prompts/verifier.md" \
@@ -565,6 +569,9 @@ ledger = solve_swe_prod.contract_ledger_text(
         },
     },
 )
+assert "public solver inputs" in ledger, ledger
+assert "full official contract" not in ledger, ledger
+assert "Official requirements/interface excerpt" not in ledger, ledger
 for forbidden in (
     "sample_id",
     "row-7",
