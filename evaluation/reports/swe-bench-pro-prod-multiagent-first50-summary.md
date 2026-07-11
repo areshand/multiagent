@@ -454,3 +454,52 @@ failed on the old shape, and the final evidence only had a no-test package
 command plus source explanation. The wrapper rejection is the desired no-leak
 behavior: visible relevant failures require exact replacement probes or updated
 source-derived expectations, not a generic "tests are stale" assertion.
+
+`swe-bench-pro-prod-pr4-parallel4-offset18-r1` exited native `rc=2` after about
+777 seconds and was not submitted to official scoring. The solver attempted
+focused Teleport validation with `go test ./lib/client ./tool/tsh`, but the
+captured evidence only proved the `lib/client` side and left `tool/tsh` as
+remaining risk. The wrapper correctly rejected the diff rather than treating a
+partially observed multi-package validation run as clean acceptance evidence.
+
+`swe-bench-pro-prod-pr4-parallel4-offset20-r1` did not reach the production
+solver. It failed while baking the native solver into an older Alpine-based
+Teleport task image because the manual Node 22 musl bootstrap hit a runtime
+library compatibility problem. This is an eval-infra failure, not a solver
+score. The on-demand image bake now upgrades Alpine `libstdc++`/`libgcc` before
+manual Node extraction, and row 20 is being retried as
+`swe-bench-pro-prod-pr4-parallel4-offset20-r2`.
+
+`swe-bench-pro-prod-pr4-parallel4-offset20-r2` confirmed the first Alpine fix
+was insufficient. The image still failed before solver launch because the Node
+22 musl binary requires a newer C++ runtime symbol than this Alpine 3.17 task
+image can provide, while cross-version Alpine `libstdc++` upgrades conflict
+with the image's existing C toolchain packages. The general infra fix is to use
+a Node 20 musl runtime for Alpine manual installs; Node 20 satisfies Codex's
+minimum runtime and runs on the older Alpine image. Row 20 is being retried as
+`swe-bench-pro-prod-pr4-parallel4-offset20-r3`, which has passed image bake and
+started the native solver.
+
+`swe-bench-pro-prod-pr4-parallel4-offset20-r3` verified the Alpine image-bake
+fix. The task image baked successfully with Node `v20.19.0` and Codex CLI
+`0.144.1`, then launched the production native solver. The solver exited
+`rc=2` after about 226 seconds, so no rejected diff was submitted for official
+scoring. Row 20 is no longer an eval-infra blocker; it is now a normal native
+rejection.
+
+`swe-bench-pro-prod-pr4-parallel4-offset27-r1` exited native `rc=2` after about
+443 seconds and was not submitted to official scoring. The solver attempted
+`go test ./server`, but the run could not proceed because existing `go.sum`
+entries for required `google.golang.org/grpc` packages were missing. The
+general lesson is that validation infrastructure should separate dependency
+setup/remediation from product acceptance: a dependency-resolution failure is
+not proof the patch is correct, so the wrapper rejection is appropriate.
+
+`swe-bench-pro-prod-pr4-parallel4-offset28-r1` exited native `rc=2` after about
+908 seconds and was not submitted to official scoring. The solver produced a
+Flipt OFREP bulk-evaluation patch and attempted
+`go test ./internal/server/ofrep ./internal/server/evaluation`, but the final
+report only preserved the attempted command and patch tail rather than a
+completed passing validation transcript. This is another correct wrapper
+rejection: attempted focused validation is not the same as observed acceptance
+evidence.
