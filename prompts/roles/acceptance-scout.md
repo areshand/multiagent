@@ -134,6 +134,8 @@ Require the marker to prove the final product-facing output cardinality:
 `actual-output-count=N`, with expected and actual counts equal. Internal helper
 cardinality is not enough unless source evidence proves it is the acceptance
 surface.
+For SWE adapter runs, require the same command/output transcript in
+`/tmp/multiagent-prod-swe/multi-value-probe.txt`.
 
 ## Output Format
 

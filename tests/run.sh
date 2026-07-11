@@ -404,6 +404,13 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_ap
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "multi-value-probe-passed:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "final-output-field="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "expected-output-count=N"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "multi-value-probe.txt"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "machine-gated evidence markers"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "replacement-probe-passed:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "stale-visible-failure-justified:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "multi-value-probe-passed:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "final-output-field="
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "multi-value-probe.txt"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Inline golden expectations"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "nearest visible"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "narrow root-cause"
@@ -414,6 +421,7 @@ assert_file_contains "$ROOT/prompts/verifier.md" "replacement-probe-passed:"
 assert_file_contains "$ROOT/prompts/verifier.md" "multi-value-probe-passed:"
 assert_file_contains "$ROOT/prompts/verifier.md" "final-output-field="
 assert_file_contains "$ROOT/prompts/verifier.md" "expected-output-count=N"
+assert_file_contains "$ROOT/prompts/verifier.md" "multi-value-probe.txt"
 assert_file_contains "$ROOT/prompts/verifier.md" "visible inline golden expectations"
 assert_file_contains "$ROOT/prompts/verifier.md" "narrow root-cause"
 assert_file_contains "$ROOT/prompts/verifier.md" "compiled the package's test files"
@@ -421,12 +429,15 @@ assert_file_contains "$ROOT/prompts/verifier.md" "adapter-parity finding"
 assert_file_contains "$ROOT/prompts/worker.md" "When you expand a parser/reader allowlist"
 assert_file_contains "$ROOT/prompts/worker.md" "multi-value-probe-passed:"
 assert_file_contains "$ROOT/prompts/worker.md" "actual-output-count=N"
+assert_file_contains "$ROOT/prompts/worker.md" "multi-value-probe.txt"
 assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "multi-value-probe-passed:"
 assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "source-count=N"
+assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "multi-value-probe.txt"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "known failing relevant test"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "stale-visible-failure-justified:"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "multi-value-probe-passed:"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "final-output-field="
+assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "multi-value-probe.txt"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "visible tests"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "real production entrypoint"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "overreach boundary"
@@ -925,24 +936,49 @@ multi_value_probe_blockers = solve_swe_prod.validation_coverage_blockers(
     },
 )
 assert any("final product-facing output" in blocker for blocker in multi_value_probe_blockers), multi_value_probe_blockers
-multi_value_counted_probe_blockers = solve_swe_prod.validation_coverage_blockers(
-    "Record parser should preserve complete alternate linked fields.",
-    "diff --git a/records/decoder/decode.py b/records/decoder/decode.py\n"
-    "+def collect_linked_values(record, link):\n"
-    "+    linked_values = []\n"
-    "+    linked_values.append(link)\n",
-    "",
-    {
-        "status": "completed",
-        "validation": (
-            "pytest -q records/decoder/tests/test_decode.py passed. "
-            "multi-value-probe-passed: temporary decoder probe exercised final parser output; "
-            "final-output-field=parsed.related_values source-count=2 "
-            "expected-output-count=2 actual-output-count=2."
-        ),
-    },
-)
-assert not any("multi-value-probe-passed:" in blocker for blocker in multi_value_counted_probe_blockers), multi_value_counted_probe_blockers
+original_multi_value_probe_path = solve_swe_prod.MULTI_VALUE_PROBE_PATH
+try:
+    with tempfile.TemporaryDirectory() as td:
+        solve_swe_prod.MULTI_VALUE_PROBE_PATH = Path(td) / "multi-value-probe.txt"
+        counted_status = {
+            "status": "completed",
+            "validation": (
+                "pytest -q records/decoder/tests/test_decode.py passed. "
+                "multi-value-probe-passed: temporary decoder probe exercised final parser output; "
+                "final-output-field=parsed.related_values source-count=2 "
+                "expected-output-count=2 actual-output-count=2."
+            ),
+        }
+        multi_value_missing_artifact_blockers = solve_swe_prod.validation_coverage_blockers(
+            "Record parser should preserve complete alternate linked fields.",
+            "diff --git a/records/decoder/decode.py b/records/decoder/decode.py\n"
+            "+def collect_linked_values(record, link):\n"
+            "+    linked_values = []\n"
+            "+    linked_values.append(link)\n",
+            "",
+            counted_status,
+        )
+        assert any("multi-value-probe.txt" in blocker for blocker in multi_value_missing_artifact_blockers), multi_value_missing_artifact_blockers
+        solve_swe_prod.MULTI_VALUE_PROBE_PATH.write_text(
+            "Command: python /tmp/probe.py\n"
+            "Return code: 0\n"
+            "multi-value-probe-passed: final-output-field=parsed.related_values "
+            "source-count=2 expected-output-count=2 actual-output-count=2.\n",
+            encoding="utf-8",
+        )
+        multi_value_counted_probe_blockers = solve_swe_prod.validation_coverage_blockers(
+            "Record parser should preserve complete alternate linked fields.",
+            "diff --git a/records/decoder/decode.py b/records/decoder/decode.py\n"
+            "+def collect_linked_values(record, link):\n"
+            "+    linked_values = []\n"
+            "+    linked_values.append(link)\n",
+            "",
+            counted_status,
+        )
+        assert not any("multi-value-probe-passed:" in blocker for blocker in multi_value_counted_probe_blockers), multi_value_counted_probe_blockers
+finally:
+    solve_swe_prod.MULTI_VALUE_PROBE_PATH = original_multi_value_probe_path
+
 multi_value_mismatched_count_blockers = solve_swe_prod.validation_coverage_blockers(
     "Record parser should preserve complete alternate linked fields.",
     "diff --git a/records/decoder/decode.py b/records/decoder/decode.py\n"

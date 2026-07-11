@@ -364,3 +364,28 @@ generic: final-output probes must prove product-facing cardinality, public
 helper probes cannot clear unrelated marker requirements, and reports must
 separate clean native completions from diagnostic official scoring of rejected
 diffs.
+
+Follow-up clean rerun
+`swe-bench-pro-prod-pr4-noleak-offset16-count1-r15-final-marker-override` used
+the production-native no-leak path without diagnostic scoring. The native solver
+completed cleanly (`rc=0`) after about 914 seconds and reached the official
+verifier with official verifier evidence `true`, but scored `0.0`; row 16
+therefore remains missing and the first-50 score remains 32/50.
+
+The r15 examination found a trust-boundary bug in the no-leak direction. The
+final status text claimed `multi-value-probe-passed:` with product-facing
+counts (`source-count=3`, `expected-output-count=3`, `actual-output-count=3`),
+but the official public test log showed final parser output still had too few
+values in selected parser cases. The problem was not that the adapter withheld
+official hidden knowledge; the problem was that orchestration trusted a
+self-reported verifier sentence without machine-checkable probe evidence.
+
+The general no-leak hardening is now stricter: for parser/reader linked,
+alternate, repeated, complete, or multi-value behavior, a
+`multi-value-probe-passed:` claim must be backed by a rerunnable command/output
+transcript at `/tmp/multiagent-prod-swe/multi-value-probe.txt` with matching
+`final-output-field=...`, `source-count=N`, `expected-output-count=N`, and
+`actual-output-count=N` evidence. This still does not leak benchmark row facts
+or official expected tests into the solver. It only prevents a production
+multi-agent verifier from clearing hidden-contract risk by writing plausible
+but unverified status text.

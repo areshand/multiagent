@@ -84,6 +84,8 @@ The validation plan must name the final product-facing output field and require
 cardinality evidence in the final marker: `final-output-field=...`,
 `source-count=N`, `expected-output-count=N`, and `actual-output-count=N`, with
 expected and actual counts equal.
+For SWE adapter runs, require the matching command/output transcript at
+`/tmp/multiagent-prod-swe/multi-value-probe.txt`.
 
 When nearby visible tests or fixtures are expected to fail because the task
 changes their expected output, require a replacement probe that asserts the new

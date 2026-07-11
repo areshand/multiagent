@@ -45,6 +45,7 @@ DEFAULT_WORKDIR = Path("/app")
 RUNTIME_ROOT = Path("/tmp/multiagent-prod-swe")
 STATUS_PATH = RUNTIME_ROOT / "status.json"
 HELPER_PROBE_PATH = RUNTIME_ROOT / "helper-validation-probe.txt"
+MULTI_VALUE_PROBE_PATH = RUNTIME_ROOT / "multi-value-probe.txt"
 CONTRACT_LEDGER_PATH = RUNTIME_ROOT / "contract-ledger.md"
 TASK_METADATA_PATH = Path(os.environ.get("EVAL_TASK_METADATA_FILE", "/tmp/evalscope-native-multiagent-metadata.json"))
 CODEX_WRAPPER = RUNTIME_ROOT / "codex-bridge"
@@ -1303,7 +1304,7 @@ def validation_coverage_blockers(
             blockers.append(
                 "`multi-value-probe-passed:` must validate the final product-facing output, not only an internal helper; "
                 "include `final-output-field=...`, `source-count=N`, `expected-output-count=N`, and `actual-output-count=N`, "
-                "with expected and actual counts equal"
+                f"with expected and actual counts equal, and write matching command/output evidence to `{MULTI_VALUE_PROBE_PATH}`"
             )
 
     return blockers
@@ -1316,10 +1317,24 @@ def validation_coverage_blockers(
 def multi_value_probe_has_final_output_counts(status_text: str) -> bool:
     """Return whether a multi-value probe proves final output cardinality."""
 
-    marker_index = status_text.find("multi-value-probe-passed:")
-    if marker_index < 0:
+    status_evidence = multi_value_probe_evidence(status_text)
+    if not multi_value_probe_counts_match(status_evidence):
         return False
-    evidence = status_text[marker_index : marker_index + 1200]
+    try:
+        artifact_text = MULTI_VALUE_PROBE_PATH.read_text(encoding="utf-8", errors="replace").lower()
+    except OSError:
+        return False
+    return multi_value_probe_counts_match(artifact_text)
+
+
+def multi_value_probe_evidence(text: str) -> str:
+    marker_index = text.find("multi-value-probe-passed:")
+    if marker_index < 0:
+        return ""
+    return text[marker_index : marker_index + 1200]
+
+
+def multi_value_probe_counts_match(evidence: str) -> bool:
     if "final-output-field=" not in evidence:
         return False
     if not re.search(r"\bsource-count\s*=\s*\d+", evidence):

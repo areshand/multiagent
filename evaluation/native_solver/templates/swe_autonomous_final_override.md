@@ -54,9 +54,23 @@ As orchestrator:
    also name the concrete gate or helper inspected and must state how the source
    preserves the intended timing condition derived from issue text, visible
    tests, docs, callers, or runtime behavior.
-9. Completion requires both accepted source state in `/app` and
+9. Before writing completed status, check the final validation text for
+   machine-gated evidence markers:
+   - If a relevant visible test or fixture still fails and the verifier accepts
+     it as an old/stale expected output, the status JSON `validation` or `risk`
+     field must include exact `replacement-probe-passed:` and
+     `stale-visible-failure-justified:` markers. Name the source-derived
+     replacement probe and the visible source reason the old expectation changed.
+   - If parser/reader linked, alternate, repeated, complete, or multi-value
+     behavior changed, the status JSON `validation` field must include exact
+     `multi-value-probe-passed:` or `multi-value-probe-skip-justified:`. For a
+     passed probe, include `final-output-field=...`, `source-count=N`,
+     `expected-output-count=N`, and `actual-output-count=N`, with expected and
+     actual counts equal, and write the rerunnable command/output transcript to
+     `/tmp/multiagent-prod-swe/multi-value-probe.txt`.
+10. Completion requires both accepted source state in `/app` and
    `/tmp/multiagent-prod-swe/status.json`.
-10. If the task cannot be completed through worker plus verifier orchestration,
+11. If the task cannot be completed through worker plus verifier orchestration,
    write blocked status JSON with the exact reason instead of producing a
    natural-language final answer.
 

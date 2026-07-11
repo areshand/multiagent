@@ -101,7 +101,9 @@ The probe must assert the final product-facing output field, not only an
 internal helper or decoded intermediate field. Include
 `final-output-field=...`, `source-count=N`, `expected-output-count=N`, and
 `actual-output-count=N` in the final validation text, with expected and actual
-counts equal.
+counts equal. In SWE adapter runs, write the command/output transcript to
+`/tmp/multiagent-prod-swe/multi-value-probe.txt` so the adapter does not have to
+trust a self-reported sentence.
 
 For UI/component tasks, classify the request before editing. If the issue asks
 for additive public surface such as a story, export, example, or named symbol,

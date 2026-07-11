@@ -92,6 +92,9 @@ internal helper or decoded intermediate field. In the acceptance text include
 `actual-output-count=N`; expected and actual counts must match. If a value is
 promoted into a primary field for compatibility, also prove whether it must
 remain in the complete collection or why source-visible evidence excludes it.
+For SWE adapter runs, require the same command/output transcript in
+`/tmp/multiagent-prod-swe/multi-value-probe.txt`; a bare status sentence is not
+enough.
 
 Do not rely on leaked evaluator tests, hidden test names, non-public evaluator
 rows, or benchmark-only metadata as implementation guidance. During active
