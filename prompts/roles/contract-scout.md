@@ -84,6 +84,15 @@ final validation markers `replacement-probe-passed:` and
 `stale-visible-failure-justified:` when a still-failing visible check is accepted
 as an old expectation.
 
+For narrow root-cause tasks, include an overreach boundary. If the visible
+contract points to one missing initialization, branch, call site, or
+compatibility gap, mark unrelated adjacent rewrites to context lifetime, caches,
+request-specific state, retries, error response handling, or broad helper state
+as out of scope unless the source evidence directly connects that behavior to
+the failure. The validation plan must name the nearest package/test compile that
+includes same-package tests when structs, methods, helper state, or unexported
+interfaces are touched.
+
 For parser, serializer, importer/exporter, fixture-backed transformation, or
 data-shape tasks, route validation through the real production entrypoint and
 nearest visible fixture/test file when practical. Synthetic helper probes are

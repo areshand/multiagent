@@ -104,6 +104,16 @@ include both `replacement-probe-passed:` with the exact source-derived command o
 probe result and `stale-visible-failure-justified:` with the source-visible
 reason the old expectation changed.
 
+For narrow root-cause fixes, reject unrelated adjacent rewrites. If the issue
+points to one missing initialization, one missing branch, one call-site bug, or
+one compatibility gap, extra changes to request lifetime, caches, context
+propagation, error handling, retries, or broad helper state need direct evidence
+from issue text, visible source callers, docs, or a failing visible check. A
+larger patch is not accepted just because it looks plausibly related. If
+adjacent behavior is changed, require the nearest package/test compile that
+includes same-package tests or a source-level comparison of every affected
+struct field, helper signature, and caller contract.
+
 For parser, serializer, importer/exporter, fixture-backed transformation, or
 data-shape tasks, prefer the real production entrypoint and the nearest visible
 fixture/test file over synthetic low-level helper probes. If such a nearby
@@ -135,6 +145,11 @@ attempt a package compile check that includes test files, or explicitly compare
 the old and new signature against every reachable call site and visible
 compatibility evidence. A timed out compile/test command is unresolved risk, not
 acceptance evidence.
+If a worker claims a package test passed, verify that the command actually
+compiled the package's test files and was run after the final diff. Stale worker
+claims, no-test runs, or package commands that exclude same-package tests are not
+enough for patches that touch structs, methods, helper state, or unexported
+interfaces.
 If compile/test validation is already running in another live worker/verifier
 for the same package, do not start a duplicate command. Inspect the running
 command, wait for its result, or reject with a clear orchestration finding that

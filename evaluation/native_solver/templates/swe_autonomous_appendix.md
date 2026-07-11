@@ -117,6 +117,11 @@ Worker quality bar:
   serialized output, error text, or ordered list, treat that exact shape as
   normative. Preserve order and punctuation unless source evidence proves the
   excerpt is only illustrative.
+- For narrow root-cause fixes, avoid adjacent rewrites. If the issue points to
+  one missing initialization, branch, call site, or compatibility gap, do not
+  also change request lifetime, caches, context propagation, retries, error
+  response handling, or broad helper state unless visible source evidence
+  directly connects that behavior to the bug.
 - Treat symbols referenced by issue text, visible tests, docs, source callers,
   public APIs, schemas, or runtime boundaries as compatibility contracts,
   including package-private or unexported helpers in same-package tests.
@@ -178,6 +183,12 @@ Verifier quality bar:
   `replacement-probe-passed:` with the exact source-derived command/probe result
   and `stale-visible-failure-justified:` with the source-visible reason the old
   expectation changed.
+- Reject broad adjacent rewrites for narrow root-cause tasks unless direct
+  source evidence ties each extra behavior change to the issue. If the patch
+  changes context lifetime, caches, request-specific state, retries, error
+  handling, struct fields, helper state, or unexported interfaces, verify the
+  nearest package/test compile that includes same-package tests or perform a
+  source-level compatibility comparison of every affected field/signature.
 - For parser, serializer, importer/exporter, fixture-backed transformation, or
   data-shape tasks, prefer the real production entrypoint and nearest visible
   fixture/test file over synthetic low-level helper probes. If a nearby

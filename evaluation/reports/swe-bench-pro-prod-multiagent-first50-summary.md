@@ -224,3 +224,15 @@ official verifier evidence `true`, but scored `0.0`. Therefore row 8 remains in
 the missing list and the first-50 score remains 32/50. The official failure is
 now real solver quality evidence rather than an unscored infrastructure
 failure.
+
+The general row-8 solver lesson is overreach control plus validation freshness.
+The accepted diff changed the direct service-uploader initialization path, but
+also changed adjacent kube proxy context/cache/error-response behavior. The
+official verifier then failed during `lib/kube/proxy` test compilation. The
+general prompt update is to require verifiers and contract scouts to reject
+broad adjacent rewrites for narrow root-cause tasks unless source-visible
+evidence directly connects each extra behavior change to the issue. For
+compiled languages, a worker's validation claim is no longer enough when the
+patch touches structs, methods, helper state, or unexported interfaces; the
+verifier must confirm that the relevant package command compiled test files
+after the final diff, or perform a source-level compatibility comparison.
