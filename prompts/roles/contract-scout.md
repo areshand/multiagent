@@ -75,6 +75,11 @@ contract: workers and verifiers must check more than one matching value and must
 show where each value appears in the output. Treat first-match-only behavior as
 a hidden-contract risk unless source evidence proves the collection is meant to
 exclude one of the matches.
+For parser/reader linked or alternate multi-value changes, the validation plan
+must require `multi-value-probe-passed:` with a source-derived case containing
+at least two linked values through the affected entrypoint, or
+`multi-value-probe-skip-justified:` with source evidence that no such case is
+possible.
 
 When nearby visible tests or fixtures are expected to fail because the task
 changes their expected output, require a replacement probe that asserts the new

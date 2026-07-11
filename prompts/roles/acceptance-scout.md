@@ -124,6 +124,11 @@ For parser/reader allowlist, dispatch table, token-set, field-list, extension,
 or registry expansions, include an adapter-parity risk. Trace the newly accepted
 item through existing readers and confirm every concrete adapter/container used
 by the entrypoint provides the methods and return shape those readers require.
+For parser/reader linked or alternate multi-value changes, include a normative
+probe requiring at least two linked values through the affected entrypoint. The
+handoff should require `multi-value-probe-passed:` with the exact probe/command
+and output shape, or `multi-value-probe-skip-justified:` with source evidence
+that no two-value case applies.
 
 ## Output Format
 

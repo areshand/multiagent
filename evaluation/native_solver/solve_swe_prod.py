@@ -1253,6 +1253,53 @@ def validation_coverage_blockers(
                 "UI/keyboard interaction source changed, but validation only records static type/lint coverage; run or justify a nearby interaction test"
             )
 
+    parser_multi_value_issue = any(
+        marker in issue_and_diff
+        for marker in (
+            "parser",
+            "parse",
+            "reader",
+            "decoder",
+            "serializer",
+            "importer",
+            "exporter",
+            "fixture",
+            "record",
+            "records",
+        )
+    ) and bool(
+        re.search(
+            r"\b(all|every|complete|associated|linked|linkage|repeated|alternate|fallback-chain|multi-value|multiple)\b",
+            issue_and_diff,
+        )
+    )
+    parser_multi_value_diff = any(
+        marker in diff_lower
+        for marker in (
+            "get_linkages",
+            "linked_fields",
+            "linkages",
+            "alternate_names",
+            "alternate_titles",
+            "other_titles",
+            "append(",
+            "extend(",
+            "setdefault(",
+        )
+    )
+    if parser_multi_value_issue and parser_multi_value_diff and not any(
+        marker in status_text
+        for marker in (
+            "multi-value-probe-passed:",
+            "multi-value-probe-skip-justified:",
+        )
+    ):
+        blockers.append(
+            "parser/reader linked or alternate multi-value behavior changed, but status does not include "
+            "`multi-value-probe-passed:` with a source-derived probe covering at least two linked values "
+            "across the affected entrypoint, or `multi-value-probe-skip-justified:` with source evidence"
+        )
+
     return blockers
 
 

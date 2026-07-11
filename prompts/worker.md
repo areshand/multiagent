@@ -92,6 +92,12 @@ adapter/container implementation used by the entrypoint. If a reader calls
 methods on its backing record/container, preserve or add those methods for every
 adapter with the same return shape.
 
+For parser/reader linked or alternate multi-value changes, run or create a
+temporary source-derived probe with at least two linked values through the
+affected entrypoint. Report it as `multi-value-probe-passed:` with the exact
+command/probe and observed output shape, or `multi-value-probe-skip-justified:`
+with source evidence that no two-value case applies.
+
 For UI/component tasks, classify the request before editing. If the issue asks
 for additive public surface such as a story, export, example, or named symbol,
 prefer adding that surface while preserving the existing component

@@ -401,6 +401,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_ap
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "replacement probe asserts the new exact output shape"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "replacement-probe-passed:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "stale-visible-failure-justified:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "multi-value-probe-passed:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Inline golden expectations"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "nearest visible"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "narrow root-cause"
@@ -408,13 +409,17 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_ap
 assert_file_contains "$ROOT/prompts/verifier.md" "source review plus"
 assert_file_contains "$ROOT/prompts/verifier.md" "old/stale expectation"
 assert_file_contains "$ROOT/prompts/verifier.md" "replacement-probe-passed:"
+assert_file_contains "$ROOT/prompts/verifier.md" "multi-value-probe-passed:"
 assert_file_contains "$ROOT/prompts/verifier.md" "visible inline golden expectations"
 assert_file_contains "$ROOT/prompts/verifier.md" "narrow root-cause"
 assert_file_contains "$ROOT/prompts/verifier.md" "compiled the package's test files"
 assert_file_contains "$ROOT/prompts/verifier.md" "adapter-parity finding"
 assert_file_contains "$ROOT/prompts/worker.md" "When you expand a parser/reader allowlist"
+assert_file_contains "$ROOT/prompts/worker.md" "multi-value-probe-passed:"
+assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "multi-value-probe-passed:"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "known failing relevant test"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "stale-visible-failure-justified:"
+assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "multi-value-probe-passed:"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "visible tests"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "real production entrypoint"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "overreach boundary"
@@ -797,6 +802,37 @@ test_only_blockers = solve_swe_prod.implementation_scope_blockers(
     {"status": "completed", "validation": "test expectation changed"},
 )
 assert any("patch only changes tests" in blocker for blocker in test_only_blockers), test_only_blockers
+
+multi_value_blockers = solve_swe_prod.validation_coverage_blockers(
+    "Record parser should preserve complete alternate linked fields.",
+    "diff --git a/records/decoder/decode.py b/records/decoder/decode.py\n"
+    "+def get_linkages(record, link):\n"
+    "+    alternate_titles = []\n"
+    "+    alternate_titles.append(link)\n",
+    "",
+    {
+        "status": "completed",
+        "validation": "pytest -q records/decoder/tests/test_decode.py passed",
+    },
+)
+assert any("multi-value-probe-passed:" in blocker for blocker in multi_value_blockers), multi_value_blockers
+multi_value_probe_blockers = solve_swe_prod.validation_coverage_blockers(
+    "Record parser should preserve complete alternate linked fields.",
+    "diff --git a/records/decoder/decode.py b/records/decoder/decode.py\n"
+    "+def get_linkages(record, link):\n"
+    "+    alternate_titles = []\n"
+    "+    alternate_titles.append(link)\n",
+    "",
+    {
+        "status": "completed",
+        "validation": (
+            "pytest -q records/decoder/tests/test_decode.py passed. "
+            "multi-value-probe-passed: temporary decoder probe built one primary record "
+            "with two linked alternate fields and observed both alternates in other_titles."
+        ),
+    },
+)
+assert not any("multi-value-probe-passed:" in blocker for blocker in multi_value_probe_blockers), multi_value_probe_blockers
 
 ui_blockers = solve_swe_prod.validation_coverage_blockers(
     "Keyboard shortcuts in the message composer should be customizable.",

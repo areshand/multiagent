@@ -81,6 +81,11 @@ verify that every value is represented in the expected collection/output shape.
 If one matched value is also used as a primary value for compatibility, it still
 must not be silently dropped from the complete collection unless visible source
 evidence explicitly requires that exclusion.
+For parser/reader linked or alternate multi-value changes, do not accept only
+the current fixture suite. Require `multi-value-probe-passed:` with the exact
+source-derived probe or command that covered at least two linked values through
+the affected entrypoint, or `multi-value-probe-skip-justified:` with source
+evidence explaining why no two-value case is possible.
 
 Do not rely on leaked evaluator tests, hidden test names, non-public evaluator
 rows, or benchmark-only metadata as implementation guidance. During active

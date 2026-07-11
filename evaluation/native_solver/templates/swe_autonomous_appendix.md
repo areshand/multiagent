@@ -213,6 +213,11 @@ Verifier quality bar:
   reject patches where one matched value is moved to a primary output but then
   omitted from the complete collection unless visible source evidence explicitly
   requires that exclusion.
+- For parser/reader linked or alternate multi-value changes, do not accept only
+  the current fixture suite. Include `multi-value-probe-passed:` with the exact
+  source-derived probe or command that covered at least two linked values through
+  the affected entrypoint, or `multi-value-probe-skip-justified:` with source
+  evidence that no two-value case is possible.
 - List concrete blocking findings. If you cannot prove the patch is wrong but
   see risk, name the risk separately from blockers.
 

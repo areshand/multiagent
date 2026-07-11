@@ -285,3 +285,24 @@ public probe to pass when such a probe is available. Diagnostic runs may still
 use `--score-failed-native-diff` to send rejected diffs to the official verifier,
 but production-capability score runs should not count these as successful native
 solver exits.
+
+Follow-up rerun
+`swe-bench-pro-prod-pr4-noleak-offset16-count1-r11-block-public-probe` verified
+the wrapper hardening on the current PR4 branch. This time the native solver did
+not hit the unresolved-public-probe path: the adapter-selected repository-visible
+parser validation passed and the native solver exited `rc=0`. The official
+verifier still scored `0.0`, so row 16 remains missing and the first-50 score
+remains 32/50.
+
+The r11 failure exposed the next general hidden-contract gap. Passing the current
+repository fixture suite is not enough for parser/reader tasks whose issue and
+diff involve complete linked, alternate, repeated, or multi-value behavior. The
+official verifier can add new fixture rows to the same visible test file, while
+the no-leak solver must infer that risk from source semantics rather than from
+the official rows. The production validation gate now requires
+`multi-value-probe-passed:` for parser/reader linked or alternate multi-value
+changes: the worker/verifier must run or describe a source-derived probe with at
+least two linked values through the affected entrypoint, or provide
+`multi-value-probe-skip-justified:` with source evidence that no two-value case
+applies. This is intentionally generic and no-leak; it does not mention
+project-specific fixtures or expected answers.
