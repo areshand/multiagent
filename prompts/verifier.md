@@ -75,11 +75,12 @@ blocking rather than residual.
 
 When the issue uses completeness language such as all, every, complete,
 associated, linked, repeated, alternate, fallback chain, or multi-value, reject
-first-match-only fixes. Build or inspect a source-derived case with at least two
-matching values and verify that every value is represented in the expected
-collection/output shape. If one matched value is also used as a primary value
-for compatibility, it still must not be silently dropped from the complete
-collection unless visible source evidence explicitly requires that exclusion.
+first-match-only behavior; reject first-match-only fixes. Build or inspect a
+source-derived case with at least two matching values and
+verify that every value is represented in the expected collection/output shape.
+If one matched value is also used as a primary value for compatibility, it still
+must not be silently dropped from the complete collection unless visible source
+evidence explicitly requires that exclusion.
 
 Do not rely on leaked evaluator tests, hidden test names, non-public evaluator
 rows, or benchmark-only metadata as implementation guidance. During active

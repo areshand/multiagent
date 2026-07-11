@@ -1897,7 +1897,17 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                     outcome = "blocked"
                     break
                 if blockers:
-                    log(f"coverage gate still has blockers after follow-ups; preserving patch for scoring: {'; '.join(blockers)}")
+                    coverage_gate_unresolved = True
+                    log(f"completion marker refused because coverage blockers remain after follow-ups: {'; '.join(blockers)}")
+                    current_status = {
+                        "status": "blocked",
+                        "reason": "coverage blockers remain after adapter/verifier follow-ups",
+                        "blockers": blockers,
+                    }
+                    STATUS_PATH.write_text(json.dumps(current_status), encoding="utf-8")
+                    exit_code = 2
+                    outcome = "blocked"
+                    break
                 log(f"completion marker: {json.dumps(current_status, sort_keys=True)[:2000]}")
                 outcome = "completed"
                 break
@@ -2041,7 +2051,21 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         outcome = "blocked"
                         break
                     if blockers:
-                        log(f"coverage gate still has blockers after follow-ups; recovering accepted patch anyway: {'; '.join(blockers)}")
+                        coverage_gate_unresolved = True
+                        log(f"recovered completion refused because coverage blockers remain after follow-ups: {'; '.join(blockers)}")
+                        STATUS_PATH.write_text(
+                            json.dumps(
+                                {
+                                    "status": "blocked",
+                                    "reason": "coverage blockers remain after recovered acceptance",
+                                    "blockers": blockers,
+                                }
+                            ),
+                            encoding="utf-8",
+                        )
+                        exit_code = 2
+                        outcome = "blocked"
+                        break
                     STATUS_PATH.write_text(
                         json.dumps(
                             {
@@ -2279,6 +2303,25 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         blockers = blockers_after_passing_public_probe(blockers)
                         scope_blockers = blockers
                         coverage_blockers = []
+                    if not blockers and not coverage_probe_satisfied and coverage_probe_commands(workdir, issue, diff):
+                        probe_report, probe_passed = run_validation_coverage_probe(
+                            workdir,
+                            issue,
+                            diff,
+                            [
+                                "orchestrator exited after a coverage follow-up; adapter reran selected public validation before recovery"
+                            ],
+                        )
+                        if probe_passed:
+                            coverage_probe_satisfied = True
+                            latest_diff = git_diff(workdir)
+                            scope_blockers = implementation_scope_blockers(issue, latest_diff, {}, task_metadata)
+                            blockers = blockers_after_passing_public_probe(scope_blockers)
+                        else:
+                            blockers = [
+                                *scope_blockers,
+                                f"orchestrator exited after coverage follow-up and adapter-selected public validation failed; inspect {HELPER_PROBE_PATH}",
+                            ]
                     if blockers:
                         probe_report = ""
                         probe_passed = False
@@ -2423,7 +2466,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         exit_code = 2
                         outcome = "blocked"
                         break
-                    if diff.strip():
+                    if diff.strip() and (coverage_probe_satisfied or not coverage_probe_commands(workdir, issue, diff)):
                         STATUS_PATH.write_text(
                             json.dumps(
                                 {
@@ -2441,6 +2484,24 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         )
                         log("completion marker recovered after adapter helper probe and orchestrator exit")
                         outcome = "recovered"
+                        break
+                    if diff.strip():
+                        coverage_gate_unresolved = True
+                        STATUS_PATH.write_text(
+                            json.dumps(
+                                {
+                                    "status": "blocked",
+                                    "reason": "adapter public validation was not proven after coverage follow-up",
+                                    "blockers": [
+                                        f"adapter-selected public validation did not pass; inspect {HELPER_PROBE_PATH}"
+                                    ],
+                                }
+                            ),
+                            encoding="utf-8",
+                        )
+                        log("blocked marker: adapter public validation was not proven after coverage follow-up")
+                        exit_code = 2
+                        outcome = "blocked"
                         break
                 if not tmux_has_session(session) and diff_bytes == 0 and not state:
                     missing_session_captures += 1
@@ -2499,9 +2560,27 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
             validation_evidence = "captured tmux output contains passing visible validation"
         if (final_state != "blocked" or validation_evidence) and validation_evidence:
             final_status_for_blockers = status_with_recovered_validation(final_status, validation_evidence)
+            final_probe_blockers: list[str] = []
+            if coverage_probe_commands(workdir, issue, final_diff):
+                probe_report, probe_passed = run_validation_coverage_probe(
+                    workdir,
+                    issue,
+                    final_diff,
+                    ["final cleanup recovery requires adapter public validation before accepting visible-validation text"],
+                )
+                if probe_passed:
+                    final_status_for_blockers["validation"] = (
+                        str(final_status_for_blockers.get("validation", ""))
+                        + f"; helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})"
+                    )
+                else:
+                    final_probe_blockers.append(
+                        f"final cleanup recovery refused because adapter-selected public validation failed; inspect {HELPER_PROBE_PATH}"
+                    )
             final_blockers = [
                 *implementation_scope_blockers(issue, final_diff, final_status_for_blockers, task_metadata),
                 *validation_coverage_blockers(issue, final_diff, final_text, final_status_for_blockers, task_metadata),
+                *final_probe_blockers,
             ]
             final_blockers = blockers_after_passing_public_probe(final_blockers)
             if not final_blockers:

@@ -177,8 +177,8 @@ Verifier quality bar:
   assertion with a temporary probe or source-level comparison before accepting.
 - If a relevant visible test or nearby fixture fails after the patch, do not
   accept by calling it an old/stale expectation unless source-visible task
-  evidence explicitly requires that expected output to change and a replacement
-  probe asserts the new exact output shape for the failing field/path. If the
+  evidence explicitly requires that expected output to change. The replacement probe asserts the new exact output shape
+  for the failing field/path. If the
   final status accepts with that visible failure still present, include both
   `replacement-probe-passed:` with the exact source-derived command/probe result
   and `stale-visible-failure-justified:` with the source-visible reason the old

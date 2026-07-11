@@ -155,7 +155,7 @@ class MultiagentNativeRunner(AgentRunner):
             )
 
         raw_metadata = dict(task.metadata or {})
-        metadata = _public_solver_metadata(raw_metadata)
+        metadata = _public_solver_metadata(dict(task.metadata or {}))
         await self._write_file(env, _PROMPT_FILE, task.instruction)
         await self._write_file(env, _METADATA_FILE, json.dumps(metadata, indent=2, sort_keys=True))
 

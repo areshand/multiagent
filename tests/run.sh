@@ -421,6 +421,8 @@ assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "overreach boundary
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "adapter-parity contract"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_ADAPTER_HELPER_MODE"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "adapter helper advisory mode: not spawning source-editing helper"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "completion marker refused because coverage blockers remain after follow-ups"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "final cleanup recovery requires adapter public validation before accepting visible-validation text"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Do not rely on leaked evaluator tests"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "must not inject benchmark-row-specific probes"
 assert_file_contains "$ROOT/evaluation/README.md" "adapter helper defaults to advisory mode"

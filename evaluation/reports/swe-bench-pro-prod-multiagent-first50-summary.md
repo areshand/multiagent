@@ -263,3 +263,25 @@ those changes: trace the newly included item through reader functions, identify
 every concrete adapter/container used by each entrypoint, and verify any
 record/container callback methods exist with matching return shape before
 accepting.
+
+Follow-up rerun
+`swe-bench-pro-prod-pr4-noleak-offset16-count1-r10-adapter-parity` used the
+adapter-parity prompt update and the same production-native no-leak path. The
+run spent longer in the multi-agent loop and the adapter public validation probe
+caught failing nearby visible parser fixtures, forcing at least one follow-up.
+The native solver still exited `rc=0`, reached the official verifier with
+official verifier evidence `true`, and scored `0.0`; row 16 remains missing and
+the first-50 score remains 32/50.
+
+The r10 measurement exposed a wrapper recovery bug rather than a leak. After a
+coverage follow-up, one recovery path could accept any non-empty source diff if
+the heuristic blocker list was empty, even when an adapter-selected
+repository-visible validation command existed and had not passed. That made a
+known-bad public-probe failure look like a clean native completion. The wrapper
+now treats unresolved public-probe failures as terminal blockers for clean
+completion/recovery: normal completion, accepted-without-status recovery,
+coverage-follow-up recovery, and final cleanup recovery all require the selected
+public probe to pass when such a probe is available. Diagnostic runs may still
+use `--score-failed-native-diff` to send rejected diffs to the official verifier,
+but production-capability score runs should not count these as successful native
+solver exits.
