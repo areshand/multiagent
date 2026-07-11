@@ -46,6 +46,11 @@ Also include:
 - If legitimate product or visible-test paths reference missing fixture assets
   under paths such as `testdata/`, `fixtures/`, `golden/`, or snapshots, add the
   minimal required assets instead of dismissing the path as fixture-mismatched.
+- If the issue explicitly changes serialized output, CLI output, or parser
+  result shape, visible inline golden expectations can be implementation inputs.
+  Update those expectations only together with the source fix and only to the
+  new source-derived exact shape; never weaken, skip, delete, or broaden tests to
+  hide failures.
 
 ## Repo Write Policy
 

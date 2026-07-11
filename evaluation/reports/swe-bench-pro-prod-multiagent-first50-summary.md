@@ -147,3 +147,37 @@ benchmark scores or hidden-test failures from being fed into verifier input,
 follow-up instructions, worker requirements, or acceptance evidence. Tests also
 assert that production-facing prompts do not contain expected-test accounting
 tokens such as `FAIL_TO_PASS`, `PASS_TO_PASS`, or `test_patch`.
+
+Follow-up missing-row reruns
+`swe-bench-pro-prod-pr4-noleak-offset15-count1-r1` and
+`swe-bench-pro-prod-pr4-noleak-offset15-count1-r2` both completed through the
+real production-native multi-agent path, reached the official verifier with
+native solver exit code 0, and scored `0.0`. The first-50 score remains 31/50.
+Both runs preserved the no-leak metadata boundary: solver-visible task metadata
+was `{}` and prompt/ledger inspection found no row identity, selected official
+tests, test patch, benchmark score, or previous-failure strings.
+
+The row 15 retries exposed a general contract-validation weakness for
+parser/serializer data-shape tasks: the solver over-normalized Trivy
+`CveContents` entries, removed duplicate source records, and changed CVSS fields
+across broad visible parser fixtures. The official verifier failed `TestParse`.
+The general prompt/guardrail change is to require exact replacement evidence
+before accepting any still-failing relevant visible fixture, and to allow visible
+inline golden expectation updates only when the issue explicitly changes a
+serialized/CLI/parser output contract, the test update accompanies a source
+fix, and the assertion is tightened to the exact source-derived new output
+shape rather than weakened, skipped, deleted, or broadened. Test-only patches
+remain blocked.
+
+Additional image-bake leakage audit: direct metadata sanitization was not the
+only trust boundary. The production solver repo is copied into `/opt/multiagent`
+inside every task container, so host-side eval artifacts can become indirect
+benchmark memory if agents inspect that tree. Generated reports were already
+excluded, but the previous bake still shipped `tests/`, root docs, and
+non-runtime evaluation harness files that contained synthetic private-metadata
+fixtures and prior benchmark-process notes. The image baker now copies only the
+runtime files needed by the production solver (`launch.sh`, `bin/`, `prompts/`,
+`orchestrator_prompt.md`, and `evaluation/native_solver` runtime files) and
+excludes host-side tests, reports, run artifacts, docs, and eval harnesses.
+Regression checks simulate the bake context and assert that required runtime
+files are present while host-side benchmark memory is absent.

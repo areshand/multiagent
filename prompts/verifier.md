@@ -98,7 +98,11 @@ If a relevant visible test or nearby fixture fails after the patch, do not
 accept by labeling that failure as an old/stale expectation unless source-visible
 task evidence explicitly requires the expectation to change and you have run a
 replacement probe that asserts the new exact output shape. The replacement probe
-must cover the failing field/path, not just a weaker happy-path behavior.
+must cover the failing field/path, not just a weaker happy-path behavior. If you
+accept with a still-failing relevant visible test, the final validation text must
+include both `replacement-probe-passed:` with the exact source-derived command or
+probe result and `stale-visible-failure-justified:` with the source-visible
+reason the old expectation changed.
 
 For parser, serializer, importer/exporter, fixture-backed transformation, or
 data-shape tasks, prefer the real production entrypoint and the nearest visible
@@ -110,6 +114,12 @@ command that still needs to pass.
 If legitimate product paths or visible tests reference missing fixture assets
 under `testdata/`, `fixtures/`, `golden/`, or snapshot paths, reject a
 source-only completion that omits those assets.
+
+If the task explicitly changes serialized output, CLI output, or parser result
+shape, visible inline golden expectations may also need updates. Accept test-file
+expectation changes only when they accompany a source fix, assert the exact new
+source-derived output shape, and do not weaken, skip, delete, or broaden the
+test.
 
 For UI/component work, classify the task before accepting the diff. Additive
 public-surface tasks such as story/export/example/symbol exposure should not

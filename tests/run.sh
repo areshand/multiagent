@@ -399,10 +399,17 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_ap
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "unresolved parity gaps are blocking"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Reject first-match-only fixes"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "replacement probe asserts the new exact output shape"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "replacement-probe-passed:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "stale-visible-failure-justified:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Inline golden expectations"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "nearest visible"
 assert_file_contains "$ROOT/prompts/verifier.md" "source review plus"
 assert_file_contains "$ROOT/prompts/verifier.md" "old/stale expectation"
+assert_file_contains "$ROOT/prompts/verifier.md" "replacement-probe-passed:"
+assert_file_contains "$ROOT/prompts/verifier.md" "visible inline golden expectations"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "known failing relevant test"
+assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "stale-visible-failure-justified:"
+assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "visible tests"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "real production entrypoint"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_ADAPTER_HELPER_MODE"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "adapter helper advisory mode: not spawning source-editing helper"
@@ -440,6 +447,7 @@ from types import SimpleNamespace
 root = Path(sys.argv[1])
 sys.path.insert(0, str(root))
 from evaluation.native_solver import solve_swe_prod
+from evaluation.swe_bench_pro_on_demand import OnDemandImageManager
 from evaluation import swe_bench_pro_run_parallel_shards
 
 evalscope = SimpleNamespace()
@@ -539,6 +547,29 @@ for forbidden in (
 ):
     assert forbidden not in ledger, forbidden
 
+for excluded in (
+    "tests/run.sh",
+    "evaluation/README.md",
+    "evaluation/reports/prior-run.json",
+    "evaluation/runs/prior-run/results.json",
+    "evaluation/swe_bench_pro_scaffold_parity.py",
+    "README.md",
+    "permission-investigation.md",
+):
+    assert OnDemandImageManager._skip_repo_bake_path(Path(excluded)), excluded
+for included in (
+    "launch.sh",
+    "orchestrator_prompt.md",
+    "bin/subagent.sh",
+    "prompts/verifier.md",
+    "evaluation",
+    "evaluation/native_solver",
+    "evaluation/native_solver/solve_swe_prod.py",
+    "evaluation/native_solver/swe_prod_guardrails.py",
+    "evaluation/native_solver/templates/swe_autonomous_appendix.md",
+):
+    assert not OnDemandImageManager._skip_repo_bake_path(Path(included)), included
+
 with tempfile.TemporaryDirectory() as td:
     repo = Path(td)
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
@@ -630,6 +661,52 @@ real_helper_blockers = solve_swe_prod.implementation_scope_blockers(
 )
 assert any("load_config_value" in blocker for blocker in real_helper_blockers), real_helper_blockers
 assert any("helper-layer validation" in blocker for blocker in real_helper_blockers), real_helper_blockers
+
+stale_without_probe_blockers = solve_swe_prod.implementation_scope_blockers(
+    "Normalize duplicate serialized vulnerability content into one source record.",
+    "diff --git a/converter.go b/converter.go\n+func Convert() {}\n",
+    {"status": "completed", "validation": "1 failed because visible fixture still expects duplicate old shape"},
+)
+assert any("replacement-probe-passed:" in blocker for blocker in stale_without_probe_blockers), stale_without_probe_blockers
+stale_with_probe_blockers = solve_swe_prod.implementation_scope_blockers(
+    "Normalize duplicate serialized vulnerability content into one source record.",
+    "diff --git a/converter.go b/converter.go\n+func Convert() {}\n",
+    {
+        "status": "completed",
+        "validation": (
+            "visible parser/v2 fixture failed because it asserts the old duplicate object shape. "
+            "replacement-probe-passed: temporary converter probe returned one source record with merged severity. "
+            "stale-visible-failure-justified: issue/source contract requires one cveContents entry per source key."
+        ),
+    },
+)
+assert not any("failing evidence" in blocker for blocker in stale_with_probe_blockers), stale_with_probe_blockers
+compile_error_blockers = solve_swe_prod.implementation_scope_blockers(
+    "Normalize duplicate serialized vulnerability content into one source record.",
+    "diff --git a/converter.go b/converter.go\n+func Convert() {}\n",
+    {
+        "status": "completed",
+        "validation": (
+            "compile error: undefined: Convert. replacement-probe-passed: not relevant. "
+            "stale-visible-failure-justified: not relevant."
+        ),
+    },
+)
+assert any("compile-error evidence" in blocker for blocker in compile_error_blockers), compile_error_blockers
+
+output_contract_test_update_blockers = solve_swe_prod.implementation_scope_blockers(
+    "What did you expect to happen? The parser current output should become exactly one record per source. Current output has duplicate records.",
+    "diff --git a/converter.go b/converter.go\n+func Convert() {}\n"
+    "diff --git a/converter_test.go b/converter_test.go\n- old duplicate output\n+ new one-record output\n",
+    {"status": "completed", "validation": "source fix plus inline golden expectation updated to exact output shape"},
+)
+assert not any("patch changes test files" in blocker for blocker in output_contract_test_update_blockers), output_contract_test_update_blockers
+test_only_blockers = solve_swe_prod.implementation_scope_blockers(
+    "What did you expect to happen? The parser current output should become exactly one record per source. Current output has duplicate records.",
+    "diff --git a/converter_test.go b/converter_test.go\n- old duplicate output\n+ new one-record output\n",
+    {"status": "completed", "validation": "test expectation changed"},
+)
+assert any("patch only changes tests" in blocker for blocker in test_only_blockers), test_only_blockers
 
 ui_blockers = solve_swe_prod.validation_coverage_blockers(
     "Keyboard shortcuts in the message composer should be customizable.",

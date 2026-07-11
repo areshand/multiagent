@@ -57,6 +57,11 @@ identify those files explicitly. Missing assets under paths such as `testdata/`,
 `fixtures/`, `golden/`, or snapshot directories are implementation inputs, not
 optional test edits, when the source path expects them.
 
+When an output-contract task stores expected output inline in visible tests,
+classify those assertions as possible golden expectations. They may be updated
+only alongside source changes and only to the new exact source-derived shape;
+weakening, skipping, deleting, or broadening assertions is out of scope.
+
 When the task names multiple formats, implementations, clients, adapters,
 parsers, serializers, storage backends, or runtimes, treat parity across every
 named path as part of the contract. The validation plan must include one
@@ -74,7 +79,10 @@ exclude one of the matches.
 When nearby visible tests or fixtures are expected to fail because the task
 changes their expected output, require a replacement probe that asserts the new
 source-derived output shape for the exact failing field/path. Do not route a
-worker/verifier to accept a known failing relevant test as merely stale.
+worker/verifier to accept a known failing relevant test as merely stale. Require
+final validation markers `replacement-probe-passed:` and
+`stale-visible-failure-justified:` when a still-failing visible check is accepted
+as an old expectation.
 
 For parser, serializer, importer/exporter, fixture-backed transformation, or
 data-shape tasks, route validation through the real production entrypoint and

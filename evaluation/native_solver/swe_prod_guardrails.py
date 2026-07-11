@@ -125,8 +125,13 @@ def implementation_scope_blockers(
             + ", ".join(generated[:8])
         )
 
-    if any(marker in status_text for marker in ("failed", "failing", "undefined:", "does not compile", "compile error")):
-        blockers.append("reported validation contains failing or compile-error evidence; resolve it or justify with visible source evidence before completion")
+    if any(marker in status_text for marker in ("undefined:", "does not compile", "compile error")):
+        blockers.append("reported validation contains compile-error evidence; resolve it before completion")
+    elif any(marker in status_text for marker in ("failed", "failing")) and not stale_visible_failure_justified(status_text):
+        blockers.append(
+            "reported validation contains failing evidence; resolve it or include both "
+            "`replacement-probe-passed:` and `stale-visible-failure-justified:` markers with visible/source evidence"
+        )
 
     for symbol in required_public_symbols(issue, metadata):
         symbol_lower = symbol.lower()
@@ -162,6 +167,12 @@ def implementation_scope_blockers(
             )
 
     return blockers
+
+
+def stale_visible_failure_justified(status_text: str) -> bool:
+    """Return whether a reported visible-test failure has explicit no-leak replacement evidence."""
+    text = status_text.lower()
+    return "replacement-probe-passed:" in text and "stale-visible-failure-justified:" in text
 
 
 def helper_scope_hints(workdir: Path, issue: str, diff: str, blockers: list[str]) -> list[str]:
@@ -284,7 +295,13 @@ def _issue_explicitly_allows_tests(issue_lower: str) -> bool:
     return any(
         marker in issue_lower
         for marker in ("add test", "add tests", "update test", "update tests", "fixture", "testdata", "golden", "snapshot")
-    )
+    ) or _issue_mentions_output_contract_change(issue_lower)
+
+
+def _issue_mentions_output_contract_change(issue_lower: str) -> bool:
+    output_terms = ("expected output", "current output", "actual output", "output shape", "serialized output")
+    expectation_terms = ("what did you expect", "expected to happen", "should output", "should return", "should appear")
+    return any(term in issue_lower for term in output_terms) and any(term in issue_lower for term in expectation_terms)
 
 
 def _issue_named_helpers(issue: str) -> list[str]:

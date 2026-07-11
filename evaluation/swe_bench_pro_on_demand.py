@@ -159,6 +159,27 @@ class OnDemandImageManager:
         parts = set(path.parts)
         if parts & {".git", ".multiagent", "__pycache__", ".pytest_cache", "node_modules"}:
             return True
+        if path.parts and path.parts[0] == "tests":
+            return True
+        if len(path.parts) == 1 and path.suffix == ".md" and path.name != "orchestrator_prompt.md":
+            return True
+        if path.parts and path.parts[0] == "evaluation":
+            if path == Path("evaluation"):
+                return False
+            if len(path.parts) < 2 or path.parts[1] != "native_solver":
+                return True
+            allowed_native_solver = {
+                Path("evaluation/native_solver"),
+                Path("evaluation/native_solver/solve_swe_prod.py"),
+                Path("evaluation/native_solver/swe_prod_guardrails.py"),
+                Path("evaluation/native_solver/templates"),
+                Path("evaluation/native_solver/templates/swe_autonomous_appendix.md"),
+                Path("evaluation/native_solver/templates/swe_autonomous_final_override.md"),
+            }
+            if path not in allowed_native_solver and not (
+                len(path.parts) >= 3 and Path(*path.parts[:3]) == Path("evaluation/native_solver/templates")
+            ):
+                return True
         if len(path.parts) >= 2 and path.parts[0] == "evaluation" and path.parts[1] in {"reports", "runs"}:
             return True
         if path.name.endswith((".pyc", ".pyo", ".log")):

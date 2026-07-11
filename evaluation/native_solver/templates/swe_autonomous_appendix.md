@@ -21,10 +21,13 @@ Hard requirements:
    unrelated config unless the issue explicitly requires it. Fixture/testdata
    files are the exception only when legitimate product paths, visible tests, or
    source-derived validation require files under paths such as `testdata/`,
-   `fixtures/`, `golden/`, or snapshot directories. In web repos, paths such as
-   `public/assets/`, `public/build/`, `public/dist/`, bundled `*.bundle.*`, and
-   minified `*.min.*` outputs are generated artifacts, not acceptable source
-   fixes.
+   `fixtures/`, `golden/`, or snapshot directories. Inline golden expectations
+   in visible tests are also implementation inputs only when the task explicitly
+   changes an output contract; update them together with the source fix, and
+   never weaken, skip, delete, or broaden assertions to hide failures. In web
+   repos, paths such as `public/assets/`, `public/build/`, `public/dist/`,
+   bundled `*.bundle.*`, and minified `*.min.*` outputs are generated artifacts,
+   not acceptable source fixes.
 7. Run focused validation when practical. If full validation is too expensive,
    run the narrowest targeted check you can identify from nearby tests, package
    scripts, or repository conventions, and record exactly what ran.
@@ -170,7 +173,11 @@ Verifier quality bar:
 - If a relevant visible test or nearby fixture fails after the patch, do not
   accept by calling it an old/stale expectation unless source-visible task
   evidence explicitly requires that expected output to change and a replacement
-  probe asserts the new exact output shape for the failing field/path.
+  probe asserts the new exact output shape for the failing field/path. If the
+  final status accepts with that visible failure still present, include both
+  `replacement-probe-passed:` with the exact source-derived command/probe result
+  and `stale-visible-failure-justified:` with the source-visible reason the old
+  expectation changed.
 - For parser, serializer, importer/exporter, fixture-backed transformation, or
   data-shape tasks, prefer the real production entrypoint and nearest visible
   fixture/test file over synthetic low-level helper probes. If a nearby
