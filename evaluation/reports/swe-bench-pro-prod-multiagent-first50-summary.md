@@ -711,3 +711,65 @@ and termination discipline, not only eval infrastructure:
 - Official-miss rows need failure-root-cause review against the produced diff,
   then general prompt/role/tooling changes. They should not be fixed with
   benchmark-specific knowledge.
+
+## 2026-07-11 Checkpoint Refactor And Failed-Row Retry
+
+Two general orchestration checkpoints were added after the failed-row reruns:
+
+- Commit `6bb967e` adds a convergence checkpoint. If a source diff exists for a
+  long time without accepted verifier evidence or a terminal status, the native
+  wrapper sends the orchestrator a one-shot instruction to freeze scope, run
+  verifier/bounded repair, and then complete or block.
+- Commit `e661d4a` adds a no-diff planning checkpoint. If the orchestrator has
+  spent a long time with no `/app` diff and no status, the wrapper asks it to
+  stop broad exploration, choose narrow source paths, and spawn exactly one
+  bounded implementation worker or block.
+
+Both changes are general production-native controls. They do not use row
+identity, official tests, expected patches, or previous benchmark failures.
+Validation before pushing included:
+
+```text
+python3 -m py_compile evaluation/native_solver/solve_swe_prod.py evaluation/native_solver/swe_prod_guardrails.py
+bash -n tests/run.sh
+git diff --check
+perl -e 'alarm shift; exec @ARGV' 180 bash tests/run.sh
+```
+
+A four-wide retry wave was then attempted for rows `12, 20, 28, 37, 42, 44, 48`
+with prefix `swe-bench-pro-prod-pr4-convergence-offset{row}-r1`, 20g task
+memory, production-native solver bake, persistent caches, and clean official
+scoring only. This wave is not score evidence: several rows hit the Codex usage
+limit, and the remaining long-running rows were stopped after the reset window
+because the run was already contaminated.
+
+One follow-up retry with prefix
+`swe-bench-pro-prod-pr4-checkpoints2-offset{row}-r1` is also not score evidence.
+It was launched without the required host permission for the local model-proxy
+socket and failed before solver/scoring because the proxy could not bind
+`127.0.0.1`.
+
+The clean post-reset retry used prefix
+`swe-bench-pro-prod-pr4-checkpoints2b-offset{row}-r1` on rows 37 and 42:
+
+| Row | Repo | Native rc | Official evidence | Clean native score | Wall time | Outcome |
+| --- | --- | ---: | --- | ---: | ---: | --- |
+| 37 | gravitational/teleport | 2 | no | n/a | 1694.4s | Produced a Teleport database/TLS diff, but focused `go test ./lib/srv/db ./tool/tsh` still failed with TLS/setup errors and only narrow compile checks passed. |
+| 42 | ansible/ansible | 2 | no | n/a | 564.4s | Exited before official scoring after repeated bridge stream errors/native rejection. |
+
+Net score movement: none. The first-50 aggregate remains `33/50`
+production-native clean official passes, below the >70% target.
+
+The latest negative result narrows the root cause. Prompt/checkpoint nudges are
+helpful guardrails, but they are not strong enough by themselves:
+
+- Row 37 still spent many turns before a rejected completion, even with a real
+  diff. The orchestrator needs a wrapper-enforced progress watchdog or
+  hard-state intervention that can force bounded repair/stop decisions, not just
+  another text reminder.
+- Row 42 exited before the no-diff checkpoint threshold, so some failures need
+  earlier extraction of native validation state and faster routing to repair or
+  block.
+- Eval infra should detect Codex usage-limit and proxy-bind failures as harness
+  contamination immediately, stop those rows, and keep them out of solver-score
+  accounting.
