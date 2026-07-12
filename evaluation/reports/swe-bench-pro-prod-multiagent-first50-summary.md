@@ -487,6 +487,16 @@ fix. The task image baked successfully with Node `v20.19.0` and Codex CLI
 scoring. Row 20 is no longer an eval-infra blocker; it is now a normal native
 rejection.
 
+`swe-bench-pro-prod-pr4-parallel4-offset17-r1` completed native `rc=0` after
+about 1571 seconds, reached the official verifier, and scored `0.0`. This is a
+clean native miss. Official output showed `TestIsOvalDefAffected` failed and
+the `scanner` package no longer compiled because existing tests still referenced
+package-private Alpine parser helpers removed by the patch. The general lesson
+is the same public-contract principle at package-test scope: changed Go files
+must preserve helper methods that visible package tests or nearby source callers
+still reference, and focused validation must include the changed package's test
+suite when parser/helper APIs are edited.
+
 `swe-bench-pro-prod-pr4-parallel4-offset27-r1` exited native `rc=2` after about
 443 seconds and was not submitted to official scoring. The solver attempted
 `go test ./server`, but the run could not proceed because existing `go.sum`
@@ -503,3 +513,63 @@ report only preserved the attempted command and patch tail rather than a
 completed passing validation transcript. This is another correct wrapper
 rejection: attempted focused validation is not the same as observed acceptance
 evidence.
+
+`swe-bench-pro-prod-pr4-parallel4-offset32-r1` completed native `rc=0` after
+about 459 seconds, reached the official verifier, and scored `1.0`. This is a
+clean production-native pass. The patch updated Navidrome artist refresh logic
+and passed the solver's focused `go test ./model ./persistence` validation
+before official scoring.
+
+`swe-bench-pro-prod-pr4-parallel4-offset38-r1` exited native `rc=2` after about
+830 seconds and was not submitted to official scoring. The solver changed
+Teleport OSS user migration behavior, but the focused visible validation
+`go test ./lib/auth -run TestMigrateOSS` still failed because the patch changed
+the expected migrated role set from `["ossuser"]` to `["admin", "ossuser"]`.
+The wrapper rejection is correct: a visible focused test failure cannot be
+overridden by asserting the visible expectation is stale.
+
+`swe-bench-pro-prod-pr4-parallel4-offset42-r1` exited native `rc=2` after about
+412 seconds and was not submitted to official scoring. The preserved tail is
+Ansible collection-install source/test context rather than a clean final patch
+with completed passing focused validation. The wrapper correctly treated this as
+an unresolved native run instead of manufacturing an official score.
+
+`swe-bench-pro-prod-pr4-parallel4-offset41-r1` completed native `rc=0` after
+about 469 seconds, reached the official verifier, and scored `0.0`. This is a
+clean native miss. The solver accepted a Proton Pass UI patch based on source
+review and `git diff --check` after reporting local Jest harness issues, while
+the official selected Jest test failed to run because a mocked module path could
+not be resolved. The general lesson is that UI tasks still need runnable
+component-level evidence or an explicit source-level import/module resolution
+audit before acceptance; source review alone is too weak.
+
+`swe-bench-pro-prod-pr4-parallel4-offset37-r1` exited native `rc=2` after about
+1712 seconds and was not submitted to official scoring. The solver produced a
+Teleport database/TLS patch and passed `git diff --check`, but focused
+validation was incomplete and failing: `go test ./lib/srv/db ./lib/reversetunnel
+./tool/tsh` only showed `lib/reversetunnel` passing before `lib/srv/db` failed
+with repeated TLS setup errors (`local error: tls: bad record MAC`), and no
+useful `tool/tsh` result was captured. The wrapper rejection is correct because
+partial validation with an observed package failure is not acceptance evidence.
+
+`swe-bench-pro-prod-pr4-parallel4-offset48-r1` exited native `rc=2` after about
+857 seconds and was not submitted to official scoring. The solver patched
+Teleport `DeleteMFADevice` last-device behavior and passed a compile-only
+`go test ./lib/auth -run '^$' -count=1`, but the behavioral validations
+`go test ./lib/auth -run TestMFADevice -count=1` and
+`go test ./lib/auth -run TestMFADeviceManagement -count=1` failed before useful
+coverage with `transport: authentication handshake failed: local error: tls:
+bad record MAC`. The wrapper rejection is correct: source review plus
+compile-only validation is not enough for an official submission when the
+intended behavior is covered by focused tests that did not complete.
+
+`swe-bench-pro-prod-pr4-parallel4-offset44-r1` exited native `rc=2` after about
+1078 seconds and was not submitted to official scoring. The solver changed
+OpenLibrary MARC author/contribution parsing and passed a focused production
+parser probe plus `python -m py_compile openlibrary/catalog/marc/parse.py`, but
+the visible parser fixture validation
+`pytest -q openlibrary/catalog/marc/tests/test_parse.py::TestParseMARCBinary::test_binary --maxfail=1`
+still failed on `bijouorannualofl1828cole_meta.mrc` because the fixture expected
+the old `contributions` behavior. The wrapper rejection is correct: a source
+probe cannot override a failing visible fixture test for the same parser
+contract.
