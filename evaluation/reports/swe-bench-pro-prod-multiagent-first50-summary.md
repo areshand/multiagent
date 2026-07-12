@@ -607,3 +607,41 @@ treats `validation-repair-needed:` and nonzero focused validation return codes
 as blockers. This does not inject hidden tests or row-specific fixes; it only
 prevents source-only acceptance while repository-visible validation is still
 failing.
+
+Repair-loop reruns were launched for rows 37, 38, 44, and 48 with four parallel
+production-native workers:
+
+- `swe-bench-pro-prod-pr4-repairloop-offset37-r1` exited native `rc=2` after
+  about 1347 seconds and was not submitted to official scoring. The solver
+  produced a same-name Teleport database-service patch and attempted
+  `go test ./lib/srv/db ./tool/tsh`, but `lib/srv/db` still failed with
+  repeated `tls: bad record MAC` setup errors. The repair loop did not turn this
+  into a clean native completion.
+- `swe-bench-pro-prod-pr4-repairloop-offset38-r1` exited native `rc=2` after
+  about 856 seconds and was not submitted to official scoring. Follow-up repair
+  work still left `go test ./lib/auth -run TestMigrateOSS -count=1` failing:
+  the visible test expected `[]string{"ossuser"}` while the patch returned
+  `[]string{"ossuser", "admin"}`. The wrapper correctly refused the diff.
+- `swe-bench-pro-prod-pr4-repairloop-offset44-r1` exited native `rc=2` after
+  about 758 seconds and was not submitted to official scoring. The new loop did
+  force a follow-up/reconciliation path with `replacement-probe-passed:`,
+  `stale-visible-failure-justified:`, and `multi-value-probe-passed:` markers,
+  but the final transcript still kept a focused visible pytest node red. The
+  wrapper correctly treated this as unresolved instead of scoring the rejected
+  diff.
+- `swe-bench-pro-prod-pr4-repairloop-offset48-r1` exited native `rc=2` after
+  about 859 seconds and was not submitted to official scoring. A follow-up
+  narrowed the Teleport MFA predicate, but focused
+  `go test ./lib/auth -run Test.*MFADevice -count=1` still failed before clean
+  behavioral coverage with `transport: authentication handshake failed: local
+  error: tls: bad record MAC`.
+
+Net score movement from this rerun wave: no additional clean passes. The
+aggregate remains `33/50`, so the >70% target is still unmet. The useful
+learning is that prompt-level repair routing alone changes behavior but is not
+enough for rows where the environment-level validation command stays red or the
+solver decides a visible expectation is stale. The next general improvement
+should make stale-visible acceptance machine-checkable by the wrapper rather
+than only prompt-enforced: either the visible failing command must pass after a
+repair worker, or the wrapper must verify the replacement probe artifact covers
+the exact failing field/path before accepting a stale-visible exception.
