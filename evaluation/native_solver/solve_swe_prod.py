@@ -1586,6 +1586,31 @@ def send_orchestrator_convergence_review(
     send_tmux_literal(session, message)
 
 
+def send_orchestrator_no_diff_checkpoint(
+    session: str,
+    *,
+    elapsed_seconds: int,
+    issue: str,
+) -> None:
+    """Nudge long-running planning loops before they produce source changes."""
+
+    issue_excerpt = issue[:2500]
+    message = (
+        f"No-diff planning checkpoint: {elapsed_seconds}s elapsed and /app still has no materialized source diff. "
+        "This is a planning-loop warning, not a hidden-test hint. Stop broad repository exploration. "
+        "Restate the intended behavior, choose the narrowest likely source files from issue text, visible tests, docs, "
+        "source callers, public APIs, data schemas, fixtures, and runtime behavior, then spawn exactly one bounded "
+        "implementation worker over those paths. If no plausible source path can be identified from legitimate evidence, "
+        "write blocked status with the concrete discovery gap. Do not keep spawning read-only scouts or duplicate workers "
+        "over the same package without a new source-derived finding. Do not use leaked evaluator rows, benchmark scores, "
+        "hidden test names, or previous benchmark failures as guidance. "
+        f"Durable contract ledger: {CONTRACT_LEDGER_PATH}. Preserve every ledger item. "
+        "Issue excerpt for orientation only:\n"
+        + issue_excerpt
+    )
+    send_tmux_literal(session, message)
+
+
 def benchmark_specific_recovery_enabled(issue: str, blockers: list[str], diff: str) -> bool:
     """Deprecated compatibility hook.
 
@@ -1868,10 +1893,12 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     coverage_probe_satisfied = False
     selected_validation_claim_seen = False
     convergence_followup_sent = False
+    no_diff_checkpoint_sent = False
     convergence_start = time.monotonic()
     coverage_followup_limit = int(os.environ.get("EVAL_COVERAGE_FOLLOWUP_LIMIT", "3"))
     early_scope_followup_limit = int(os.environ.get("EVAL_EARLY_SCOPE_FOLLOWUP_LIMIT", "3"))
     convergence_followup_after = int(os.environ.get("EVAL_CONVERGENCE_FOLLOWUP_AFTER", "900"))
+    no_diff_checkpoint_after = int(os.environ.get("EVAL_NO_DIFF_CHECKPOINT_AFTER", "600"))
     adapter_helper_worker_limit = int(os.environ.get("EVAL_ADAPTER_HELPER_WORKER_LIMIT", "1"))
     adapter_helper_mode = os.environ.get("EVAL_ADAPTER_HELPER_MODE", "advisory").strip().lower()
     adapter_helper_source_edit_opt_in = os.environ.get("EVAL_ADAPTER_HELPER_ALLOW_SOURCE_EDITS", "").strip().lower() in {
@@ -2379,6 +2406,27 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                     log(
                         "convergence checkpoint sent after "
                         f"{int(time.monotonic() - convergence_start)}s with diff_bytes={diff_bytes}"
+                    )
+                    last_capture = time.monotonic()
+                    time.sleep(5)
+                    continue
+                if (
+                    not state
+                    and diff_bytes == 0
+                    and not no_diff_checkpoint_sent
+                    and no_diff_checkpoint_after > 0
+                    and time.monotonic() - convergence_start >= no_diff_checkpoint_after
+                    and tmux_has_session(session)
+                ):
+                    send_orchestrator_no_diff_checkpoint(
+                        session,
+                        elapsed_seconds=int(time.monotonic() - convergence_start),
+                        issue=issue,
+                    )
+                    no_diff_checkpoint_sent = True
+                    log(
+                        "no-diff planning checkpoint sent after "
+                        f"{int(time.monotonic() - convergence_start)}s"
                     )
                     last_capture = time.monotonic()
                     time.sleep(5)
