@@ -93,6 +93,13 @@ Benchmark spawning path:
   If a worker final message appears before its selected command exits, poll the
   worker/process list until the command result is captured, then pass that
   result to the verifier.
+- If captured worker or verifier output says a relevant visible test, fixture,
+  compile, package, component, or source-derived probe failed after the patch,
+  treat that as repair work. Do not write completed status and do not accept by
+  source review alone. Record the failing command/output in the validation lease
+  table, spawn a fresh bounded repair worker over the implicated source paths,
+  and require the follow-up to rerun the same command or a narrower
+  source-derived equivalent before final verification.
 - If worker/verifier spawning fails, record the exact blocker in status JSON
   only after retrying once with a fresh, differently named bounded worker or
   verifier.
@@ -241,7 +248,11 @@ Required orchestration loop:
    files.
 5. If the verifier reports blocking findings, run one bounded worker follow-up
    using the verifier's exact findings, then run a second verifier pass.
-6. Before writing completed status, confirm the verifier accepted or only
+6. If worker or verifier output contains a relevant failed validation command,
+   run a bounded repair worker before treating the patch as complete. Source
+   review, compile-only validation, or a synthetic helper probe is not enough
+   while the nearest visible fixture/package/component command still fails.
+7. Before writing completed status, confirm the verifier accepted or only
    non-blocking risk remains, validation is accounted for, and `/app` has a
    non-empty source diff.
 

@@ -122,6 +122,15 @@ def implementation_scope_blockers(
             + ", ".join(generated[:8])
         )
 
+    if "validation-repair-needed:" in status_text:
+        blockers.append(
+            "reported validation explicitly requires a repair worker; resolve the failing command before completion"
+        )
+    if failed_validation_return_code(status_text) and not stale_visible_failure_justified(status_text):
+        blockers.append(
+            "reported validation includes a nonzero focused validation return code; rerun/fix it before completion "
+            "or justify the stale visible expectation with replacement-probe evidence"
+        )
     if any(marker in status_text for marker in ("undefined:", "does not compile", "compile error")):
         blockers.append("reported validation contains compile-error evidence; resolve it before completion")
     elif any(marker in status_text for marker in ("failed", "failing")) and not stale_visible_failure_justified(status_text):
@@ -175,6 +184,29 @@ def stale_visible_failure_justified(status_text: str) -> bool:
     """Return whether a reported visible-test failure has explicit no-leak replacement evidence."""
     text = status_text.lower()
     return "replacement-probe-passed:" in text and "stale-visible-failure-justified:" in text
+
+
+def failed_validation_return_code(status_text: str) -> bool:
+    text = status_text.lower()
+    if not any(
+        command in text
+        for command in (
+            "go test",
+            "pytest",
+            "python -m pytest",
+            "npm test",
+            "yarn test",
+            "pnpm test",
+            "jest",
+            "vitest",
+            "cargo test",
+        )
+    ):
+        return False
+    for match in re.finditer(r"(?:return code|exit code|rc)\s*[:=]\s*(\d+)", text):
+        if int(match.group(1)) != 0:
+            return True
+    return False
 
 
 def claims_stale_visible_failure(status_text: str) -> bool:

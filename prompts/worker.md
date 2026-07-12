@@ -85,6 +85,14 @@ If visible task evidence shows concrete expected outputs, write a temporary
 source-level probe that asserts the same literal shape. Do not replace an
 exact-order contract with a weaker semantic smoke check.
 
+If a relevant visible test, fixture, compile, package, component, or
+source-derived probe fails after your patch, do not report the task complete.
+Either repair the source and rerun the same command or stop with
+`validation-repair-needed:` that names the failing command, output tail,
+implicated source paths, and the next bounded repair assignment. Source review,
+compile-only checks, or a weaker synthetic probe cannot clear a still-failing
+nearby visible command.
+
 When you expand a parser/reader allowlist, dispatch table, accepted token set,
 field list, extension list, or format registry, trace the newly included item
 through the reader functions it now activates and through every concrete

@@ -120,6 +120,11 @@ accept with a still-failing relevant visible test, the final validation text mus
 include both `replacement-probe-passed:` with the exact source-derived command or
 probe result and `stale-visible-failure-justified:` with the source-visible
 reason the old expectation changed.
+When the failure is not proven stale by those markers, report
+`validation-repair-needed:` instead of acceptance. Include the failing command,
+return code/output tail, implicated source paths, and a bounded follow-up worker
+scope. Do not let source review, compile-only checks, or a weaker synthetic
+probe override a still-failing relevant visible validation command.
 
 For narrow root-cause fixes, reject unrelated adjacent rewrites. If the issue
 points to one missing initialization, one missing branch, one call-site bug, or

@@ -56,6 +56,13 @@ As orchestrator:
    tests, docs, callers, or runtime behavior.
 9. Before writing completed status, check the final validation text for
    machine-gated evidence markers:
+   - If worker or verifier output contains a relevant failed validation command,
+     spawn a fresh bounded repair worker before completion. Do not convert a
+     failing relevant visible test, fixture, compile, package, component, or
+     source-derived probe into source-only acceptance. Compile-only checks or
+     synthetic helper probes cannot replace a nearby failing visible command
+     unless the repair/verifier transcript proves that command is stale from
+     source-visible task evidence and includes the replacement probe below.
    - If a relevant visible test or fixture still fails and the verifier accepts
      it as an old/stale expected output, the status JSON `validation` or `risk`
      field must include exact `replacement-probe-passed:` and
@@ -64,10 +71,10 @@ As orchestrator:
    - If parser/reader linked, alternate, repeated, complete, or multi-value
      behavior changed, the status JSON `validation` field must include exact
      `multi-value-probe-passed:` or `multi-value-probe-skip-justified:`. For a
-     passed probe, include one singular `final-output-field=...` per affected
-     output collection, with `source-count=N`, `expected-output-count=N`, and
-     `actual-output-count=N`; expected and actual counts must match for each
-     field. Write the rerunnable command/output transcript to
+     passed probe, include one singular `final-output-field=...` per affected output collection,
+     with `source-count=N`, `expected-output-count=N`, and `actual-output-count=N`;
+     expected and actual counts must match for each field. Write the rerunnable
+     command/output transcript to
      `/tmp/multiagent-prod-swe/multi-value-probe.txt`.
 10. Completion requires both accepted source state in `/app` and
    `/tmp/multiagent-prod-swe/status.json`.

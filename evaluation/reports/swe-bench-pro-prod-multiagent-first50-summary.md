@@ -5,19 +5,19 @@ Date: 2026-07-03
 Scope: first 50 official-order SWE Bench Pro rows, evaluated with the
 production-container native multi-agent path.
 
-Result: 32/50 rows passed with official verifier evidence.
+Result: 33/50 rows passed with official verifier evidence.
 
 Passing official indices:
 
 ```text
 0, 1, 3, 4, 5, 6, 7, 9, 10, 11, 13, 19, 21, 22, 23, 24, 25, 26, 29, 30,
-31, 33, 34, 35, 36, 39, 40, 43, 45, 46, 47, 49
+31, 32, 33, 34, 35, 36, 39, 40, 43, 45, 46, 47, 49
 ```
 
 Missing official indices:
 
 ```text
-2, 8, 12, 14, 15, 16, 17, 18, 20, 27, 28, 32, 37, 38, 41, 42, 44, 48
+2, 8, 12, 14, 15, 16, 17, 18, 20, 27, 28, 37, 38, 41, 42, 44, 48
 ```
 
 The 30/50 to 31/50 increment came from row 39:
@@ -57,6 +57,21 @@ Key correction for row 5: the production multi-agent solver added source-only
 `use_netrc` support through `uri`, `fetch_url`, `open_url`, and `Request`, with
 the default preserving existing netrc behavior. When `use_netrc=false`, netrc
 credentials are ignored and explicit `Authorization` headers are preserved.
+
+The 32/50 to 33/50 increment came from row 32:
+
+- Instance: `instance_navidrome__navidrome-7b394fe9c3725c90d1a1518c45b943d4e155e7d9`
+- Repository: `navidrome/navidrome`
+- Final focused run prefix:
+  `swe-bench-pro-prod-pr4-parallel4-offset32-r1`
+- Focused run score: `1.0`
+- Official verifier evidence: `true`
+
+Key correction for row 32: the production native solver updated Navidrome
+artist refresh logic and passed focused `go test ./model ./persistence`
+validation before official scoring. The aggregate remains below the >70%
+target; reaching 36/50 requires at least three more clean production-native
+passes, not diagnostic scoring of rejected diffs.
 
 Important caveat: this score is only meaningful for the production native
 multi-agent path because the solver repo is baked into the task image and Codex
@@ -573,3 +588,22 @@ still failed on `bijouorannualofl1828cole_meta.mrc` because the fixture expected
 the old `contributions` behavior. The wrapper rejection is correct: a source
 probe cannot override a failing visible fixture test for the same parser
 contract.
+
+## 2026-07-11 Validation Failure Repair Loop Update
+
+The newest failed-row batch showed a general orchestration gap rather than a
+benchmark-specific missing fix. Rows 37, 44, and 48 all produced plausible
+source diffs, but the decisive evidence was a relevant visible validation
+failure or incomplete validation transcript. The wrapper correctly refused to
+submit those diffs. The production multi-agent improvement is to move that
+decision earlier: a worker or verifier that sees a relevant visible test,
+fixture, compile, package, component, or source-derived probe fail must route a
+fresh bounded repair worker before completion.
+
+PR4 now applies this as a general rule in the orchestrator prompt, validation
+scheduling playbook, orchestration routing playbook, worker prompt, verifier
+prompt, and SWE autonomous benchmark instructions. The guardrail code also
+treats `validation-repair-needed:` and nonzero focused validation return codes
+as blockers. This does not inject hidden tests or row-specific fixes; it only
+prevents source-only acceptance while repository-visible validation is still
+failing.

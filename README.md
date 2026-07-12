@@ -184,6 +184,13 @@ Do not spawn a verifier while a worker still owns a running validation lease for
 the same package/path. Poll the worker and capture the command result first;
 then pass that result into the verifier instruction.
 
+If the captured result is a failed relevant visible test, fixture, compile,
+package, component, or source-derived probe, route a bounded repair worker
+before final acceptance. Source review, compile-only checks, or weaker helper
+probes do not clear a still-failing nearby validation command unless the
+verifier proves the visible expectation is stale with source evidence and a
+replacement probe for the exact failing field/path.
+
 ## Verifier Workflow
 
 After a worker reports completion, the orchestrator may spawn one read-only

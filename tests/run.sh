@@ -301,6 +301,7 @@ assert_file_contains "$ROOT/orchestrator_prompt.md" "Role Routing"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "contract-scout.md"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "scope-guard.md"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "validation-coordinator.md"
+assert_file_contains "$ROOT/orchestrator_prompt.md" "failed relevant validation"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "proxy/scaffold"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "Prompt Modules"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "agent-spawning.md"
@@ -311,6 +312,7 @@ assert_file_contains "$ROOT/prompts/worker.md" "additive public surface"
 assert_file_contains "$ROOT/prompts/worker.md" "one expensive validation command"
 assert_file_contains "$ROOT/prompts/worker.md" "validation lease"
 assert_file_contains "$ROOT/prompts/worker.md" "legitimate product or visible-test paths"
+assert_file_contains "$ROOT/prompts/worker.md" "validation-repair-needed:"
 assert_file_contains "$ROOT/prompts/verifier.md" "Verifier Role Prompt"
 assert_file_contains "$ROOT/prompts/verifier.md" "Hidden Contract Verification"
 assert_file_contains "$ROOT/prompts/verifier.md" "unresolved risk"
@@ -350,6 +352,7 @@ assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "Validat
 assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "Validation Lease"
 assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "next-validation-owner"
 assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "Do not spawn a verifier"
+assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "repair-routing:"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Agent Spawning Playbook"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Ponytail implementation discipline"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Ponytail over-engineering pass"
@@ -364,6 +367,7 @@ assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "validat
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "Required Worker First Instruction"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "Safety Rules"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "parallel-execution.md"
+assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "Validation Failure Repair Workflow"
 assert_file_contains "$ROOT/prompts/playbooks/dag.md" "DAG Workflow Playbook"
 assert_file_contains "$ROOT/prompts/playbooks/recovery.md" "Recovery Playbook"
 assert_file_contains "$ROOT/prompts/playbooks/write-policy.md" "Write Policy Playbook"
@@ -375,6 +379,7 @@ assert_file_contains "$ROOT/README.md" "Contract Scout Workflow"
 assert_file_contains "$ROOT/README.md" "acceptance-scout.md"
 assert_file_contains "$ROOT/README.md" "Scope Guard Workflow"
 assert_file_contains "$ROOT/README.md" "Validation Coordinator Workflow"
+assert_file_contains "$ROOT/README.md" "bounded repair worker"
 assert_file_contains "$ROOT/README.md" "proxy behavior"
 assert_file_contains "$ROOT/README.md" "Verifier Workflow"
 assert_file_contains "$ROOT/README.md" "MULTIAGENT_VERIFIER_MAX_ITERATIONS=3"
@@ -417,6 +422,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_ap
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "nearest visible"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "narrow root-cause"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "same-package tests"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "fresh bounded repair worker"
 assert_file_contains "$ROOT/prompts/verifier.md" "source review plus"
 assert_file_contains "$ROOT/prompts/verifier.md" "old/stale expectation"
 assert_file_contains "$ROOT/prompts/verifier.md" "replacement-probe-passed:"
@@ -429,6 +435,7 @@ assert_file_contains "$ROOT/prompts/verifier.md" "visible inline golden expectat
 assert_file_contains "$ROOT/prompts/verifier.md" "narrow root-cause"
 assert_file_contains "$ROOT/prompts/verifier.md" "compiled the package's test files"
 assert_file_contains "$ROOT/prompts/verifier.md" "adapter-parity finding"
+assert_file_contains "$ROOT/prompts/verifier.md" "validation-repair-needed:"
 assert_file_contains "$ROOT/prompts/worker.md" "When you expand a parser/reader allowlist"
 assert_file_contains "$ROOT/prompts/worker.md" "multi-value-probe-passed:"
 assert_file_contains "$ROOT/prompts/worker.md" "actual-output-count=N"
@@ -909,6 +916,31 @@ compile_error_blockers = solve_swe_prod.implementation_scope_blockers(
     },
 )
 assert any("compile-error evidence" in blocker for blocker in compile_error_blockers), compile_error_blockers
+validation_repair_needed_blockers = solve_swe_prod.implementation_scope_blockers(
+    "Parser output should preserve author contribution shape.",
+    "diff --git a/openlibrary/catalog/marc/parse.py b/openlibrary/catalog/marc/parse.py\n+def read_authors(record):\n+    return []\n",
+    {
+        "status": "completed",
+        "validation": (
+            "validation-repair-needed: pytest -q openlibrary/catalog/marc/tests/test_parse.py failed. "
+            "Implicated source path: openlibrary/catalog/marc/parse.py"
+        ),
+    },
+)
+assert any("requires a repair worker" in blocker for blocker in validation_repair_needed_blockers), validation_repair_needed_blockers
+nonzero_validation_blockers = solve_swe_prod.implementation_scope_blockers(
+    "Parser output should preserve author contribution shape.",
+    "diff --git a/openlibrary/catalog/marc/parse.py b/openlibrary/catalog/marc/parse.py\n+def read_authors(record):\n+    return []\n",
+    {
+        "status": "completed",
+        "validation": (
+            "Command: pytest -q openlibrary/catalog/marc/tests/test_parse.py::TestParseMARCBinary::test_binary\n"
+            "Return code: 1\n"
+            "Output tail: assertion mismatch"
+        ),
+    },
+)
+assert any("nonzero focused validation return code" in blocker for blocker in nonzero_validation_blockers), nonzero_validation_blockers
 
 output_contract_test_update_blockers = solve_swe_prod.implementation_scope_blockers(
     "What did you expect to happen? The parser current output should become exactly one record per source. Current output has duplicate records.",

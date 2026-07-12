@@ -84,6 +84,32 @@ verifier that may duplicate the command.
 The orchestrator decides which findings become accepted follow-up; never pass
 raw verifier findings directly to the worker as orders.
 
+## Validation Failure Repair Workflow
+
+Use this workflow when a worker or verifier reports that a relevant visible
+test, fixture, compile, package, component, or source-derived probe failed after
+the patch. This is a repair signal, not acceptance evidence.
+
+1. Capture the exact failing command, return code, and output tail.
+2. Record or release the validation lease for the package/path before starting
+   replacement work.
+3. Derive the implicated source paths from the failing command, stack trace,
+   fixture name, changed files, and contract ledger.
+4. Spawn a fresh bounded repair worker with those paths in `--owned`; do not
+   send implementation instructions to a completed worker pane.
+5. Tell the repair worker to preserve the existing contract ledger and current
+   useful diff, fix the validation failure or prove it is stale from visible
+   source evidence, and rerun the same command or a narrower source-derived
+   equivalent.
+6. Only after the repair worker returns should a verifier decide acceptance,
+   residual risk, or a bounded second follow-up.
+
+Do not finalize on source review, compile-only checks, or synthetic helper
+probes while a relevant visible validation command is still failing. A stale
+visible expectation can be accepted only when the repair/verifier transcript
+contains both the source-visible reason and a replacement probe for the exact
+failing field/path.
+
 ## Progress And Status
 
 When the user asks for agent progress, load `prompts/playbooks/agent-spawning.md`

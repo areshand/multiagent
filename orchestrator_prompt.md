@@ -155,6 +155,12 @@ Core routing rules:
 - Before spawning verifiers, include `prompts/playbooks/agent-spawning.md`,
   `prompts/verifier.md`, and the verifier contract ledger. Respect
   `MULTIAGENT_VERIFIER_MAX_ITERATIONS`.
+- If a worker reports failed relevant validation, do not treat the failure as a
+  verifier-only paperwork issue. Capture the failing command/output, release or
+  record the validation lease, and spawn a fresh bounded repair worker over the
+  implicated source paths before any completion decision. A verifier may review
+  the failure and repair plan, but source-only acceptance cannot override a
+  failing relevant visible test, fixture, compile, or component check.
 - Use `SUBAGENT_CLI="$VERIFIER_CLI" bin/subagent.sh spawn ...` for scout,
   coordinator, and verifier roles unless the user directs otherwise.
 - Keep safety non-negotiable: capture before sending input, avoid overlapping

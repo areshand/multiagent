@@ -30,6 +30,11 @@ not silently take a second lease for the same package/path.
   result to the verifier.
 - If the owner is stale, capture the pane and process list, then explicitly
   kill/finalize or release the lease before replacement work starts.
+- If the lease result is failed and the command is relevant to the changed
+  source or contract ledger, route a bounded repair worker before acceptance.
+  Pass the failing command, output tail, changed files, and lease target to that
+  worker. Do not let a verifier turn a failed relevant validation into
+  acceptance by source review alone.
 - If two independent validators can run safely, record why they are disjoint:
   different package/path, different cache/resource boundary, or intentionally
   separate resource budget.
@@ -70,3 +75,5 @@ When reporting validation state to the user or a follow-up agent, include:
 3. `blocked-validations:` commands intentionally not duplicated and why.
 4. `next-validation-owner:` the one agent expected to produce each remaining
    package/path result.
+5. `repair-routing:` when a failed relevant validation requires a fresh bounded
+   source worker before final verification.
