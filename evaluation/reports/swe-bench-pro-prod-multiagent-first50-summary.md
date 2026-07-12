@@ -645,3 +645,69 @@ should make stale-visible acceptance machine-checkable by the wrapper rather
 than only prompt-enforced: either the visible failing command must pass after a
 repair worker, or the wrapper must verify the replacement probe artifact covers
 the exact failing field/path before accepting a stale-visible exception.
+
+## 2026-07-11 Failed-Row Parallel-4 Rerun With 20g Docker Memory
+
+After Docker Desktop memory was raised, the unresolved first-50 rows were rerun
+with a four-worker queue:
+
+- Rows: `2, 8, 12, 14, 15, 16, 17, 18, 20, 27, 28, 37, 38, 41, 42, 44, 48`.
+- Prefix: `swe-bench-pro-prod-pr4-parallel4c-offset{row}-r1`.
+- Solver path: production-native multiagent baked from
+  `/private/tmp/multiagent-pr4-live` with
+  `--native-solver-command /tmp/evalscope-native-multiagent-solver.sh`.
+- Docker memory: `--memory-limit 20g`.
+- Scoring mode: clean native official verifier only. No
+  `--score-failed-native-diff` diagnostic scoring was used.
+
+One earlier attempt with prefix `parallel4b` failed at the harness level because
+the sandboxed process could not bind the local model-proxy socket on
+`127.0.0.1`. That attempt is not score evidence. The `parallel4c` rerun was
+launched with the required host permissions and is the only four-wide rerun
+counted here.
+
+Final row outcomes:
+
+| Row | Repo | Native rc | Official evidence | Clean native score | Wall time | Outcome |
+| --- | --- | ---: | --- | ---: | ---: | --- |
+| 2 | NodeBB/NodeBB | 2 | no | n/a | 533.4s | Native validation rejection. |
+| 8 | gravitational/teleport | 0 | yes | 0.0 | 696.4s | Clean official miss. |
+| 12 | gravitational/teleport | 2 | no | n/a | 1186.7s | Native validation rejection. |
+| 14 | element-hq/element-web | 0 | yes | 0.0 | 775.2s | Clean official miss. |
+| 15 | future-architect/vuls | 2 | no | n/a | 378.7s | Native validation rejection. |
+| 16 | internetarchive/openlibrary | 124 | no | n/a | 3516.6s | Runtime timeout/stream failure, not a scored solver pass or official miss. |
+| 17 | future-architect/vuls | 124 | no | n/a | 3513.6s | Runtime timeout/stream failure, not a scored solver pass or official miss. |
+| 18 | gravitational/teleport | 2 | no | n/a | 359.9s | Native validation rejection. |
+| 20 | gravitational/teleport | 0 | yes | 0.0 | 1078.6s | Clean official miss. |
+| 27 | flipt-io/flipt | 2 | no | n/a | 548.1s | Native validation rejection. |
+| 28 | flipt-io/flipt | 2 | no | n/a | 1822.5s | Native validation rejection. |
+| 37 | gravitational/teleport | 2 | no | n/a | 1382.5s | Native validation rejection. |
+| 38 | gravitational/teleport | 0 | yes | 0.0 | 801.8s | Clean official miss. |
+| 41 | protonmail/webclients | 0 | yes | 0.0 | 748.9s | Clean official miss. |
+| 42 | ansible/ansible | 2 | no | n/a | 1412.6s | Native validation rejection after high tool-call churn. |
+| 44 | internetarchive/openlibrary | 2 | no | n/a | 1203.5s | Native validation rejection. |
+| 48 | gravitational/teleport | 2 | no | n/a | 813.3s | Native validation rejection. |
+
+Net score movement from this failed-row rerun: no additional clean passes. The
+aggregate remains `33/50` production-native clean official passes, so the >70%
+target is still unmet.
+
+The useful system-level result is negative but clear. Extra Docker memory and
+four-way parallelism improved throughput, but they did not close the solve-rate
+gap. The dominant remaining failure modes are not memory exhaustion: most rows
+either fail the native acceptance gate before official scoring, or reach the
+official verifier and fail hidden/official tests. Rows 16 and 17 show a
+separate reliability problem under parallel load: long Codex/API streaming runs
+can still end as runtime failures. Row 42 also exposed orchestration churn,
+running many tool-call turns before a native rejection.
+
+The next general multiagent improvement should therefore target solve quality
+and termination discipline, not only eval infrastructure:
+
+- The verifier should convert relevant visible failures into bounded repair
+  work earlier, but stale-visible exceptions must remain machine-checkable.
+- The orchestrator should detect high-turn churn and force a concise
+  hypothesis/test/fix decision rather than allowing indefinite tool-call loops.
+- Official-miss rows need failure-root-cause review against the produced diff,
+  then general prompt/role/tooling changes. They should not be fixed with
+  benchmark-specific knowledge.
