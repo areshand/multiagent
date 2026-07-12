@@ -773,3 +773,64 @@ helpful guardrails, but they are not strong enough by themselves:
 - Eval infra should detect Codex usage-limit and proxy-bind failures as harness
   contamination immediately, stop those rows, and keep them out of solver-score
   accounting.
+
+## 2026-07-12 Progress Watchdog And Final-Cleanup Probe Update
+
+PR4 now adds a harder production-native progress intervention on top of the
+prompt checkpoints. The native wrapper tracks whether a non-empty `/app` diff
+has actually changed. If the diff remains stale past
+`EVAL_PROGRESS_REPAIR_AFTER` and `EVAL_PROGRESS_REPAIR_MIN_STALL`, the wrapper
+runs only repository-visible validation and can launch one bounded
+progress-repair worker with source-derived ownership paths and generic
+blockers. This does not expose row identity, official tests, expected patches,
+benchmark scores, or previous benchmark failures.
+
+The wrapper also now has a final-cleanup recovery path for a common failed-row
+pattern: nonzero native exit, real source diff, but no durable worker validation
+evidence. Instead of immediately rejecting that state, it runs the same
+adapter-selected public validation probe. It recovers a completed status only
+when that probe passes and normal implementation/validation blockers are clean;
+otherwise the rejected diff remains unscored.
+
+Validation before pushing included:
+
+```text
+python3 -m py_compile evaluation/native_solver/solve_swe_prod.py evaluation/native_solver/swe_prod_guardrails.py evaluation/evalscope_multiagent_native_runner.py
+bash -n tests/run.sh
+git diff --check
+perl -e 'alarm shift; exec @ARGV' 180 bash tests/run.sh
+```
+
+The first targeted row-37 retry,
+`swe-bench-pro-prod-pr4-progresswatch-offset37-r1`, is not score evidence. It
+failed before solver launch because the local EvalScope 1.8.1 target directory
+had lost source modules such as `evalscope.api.registry` and
+`evalscope.agent.external.runners`. The dependency tree was restored with a
+targeted reinstall into `/private/tmp/evalscope_repair_20260702`, and imports
+for `evalscope.run`, the external runner API, and the SWE Bench Pro adapter were
+verified before rerunning.
+
+Clean targeted retry `swe-bench-pro-prod-pr4-progresswatch-offset37-r2` used the
+production-native solver bake, 20g task memory, persistent cache, and clean
+official scoring only. It exited native `rc=2` after `1808.2s`, with no official
+verifier evidence and no clean score. The run did show improved repair behavior:
+the agents spawned `worker-04-repair`, identified the missing
+`auth.Context.DatabaseServers` candidate-list risk, and patched
+`ProxyServer.authorize` to store the selected database-server slice on the auth
+context. However the final validation evidence was still too weak:
+`go test -run TestNonExistent ./lib/srv/db` passed with no tests, while the
+focused package validation result was not available. The native gate correctly
+refused to submit that rejected diff.
+
+Net score movement: none. The first-50 aggregate remains `33/50`
+production-native clean official passes.
+
+The useful learning is sharper than the earlier “orchestrator churn” diagnosis:
+the system can now discover and repair a likely hidden-contract risk, but it
+still fails to turn that repair into a clean terminal state with strong
+repository-visible validation. The next general improvement should focus on
+validation ownership and terminal-state discipline: repair workers must either
+run the real affected package tests, produce machine-checkable source-derived
+replacement evidence, or explicitly hand the diff to the wrapper's public probe
+before the orchestrator exits. No-test compile checks should not be treated as
+behavioral validation for source repairs.

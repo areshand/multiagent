@@ -431,6 +431,10 @@ assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "Converg
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_CONVERGENCE_FOLLOWUP_AFTER"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "No-diff planning checkpoint"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_NO_DIFF_CHECKPOINT_AFTER"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_PROGRESS_REPAIR_ENABLED"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "progress watchdog spawned bounded repair worker"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "production-native wrapper may run repository-visible validation"
+assert_file_contains "$ROOT/evaluation/README.md" "production-native progress watchdog"
 assert_file_contains "$ROOT/prompts/verifier.md" "source review plus"
 assert_file_contains "$ROOT/prompts/verifier.md" "old/stale expectation"
 assert_file_contains "$ROOT/prompts/verifier.md" "replacement-probe-passed:"
@@ -467,6 +471,8 @@ assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_AD
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "adapter helper advisory mode: not spawning source-editing helper"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "completion marker refused because coverage blockers remain after follow-ups"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "final cleanup recovery requires adapter public validation before accepting visible-validation text"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "final cleanup recovery found a source diff but no durable worker validation evidence"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "completion marker recovered at final cleanup after adapter public probe passed without durable worker evidence"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "stale-visible-reconciliation-passed:"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "STALE_VISIBLE_RECONCILIATION_PATH"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Do not rely on leaked evaluator tests"
@@ -580,6 +586,36 @@ assert "spawn exactly one bounded implementation worker" in no_diff_message, no_
 assert "concrete discovery gap" in no_diff_message, no_diff_message
 for forbidden in ("FAIL_TO_PASS", "PASS_TO_PASS", "test_patch", "selected_test_files_to_run"):
     assert forbidden not in no_diff_message, no_diff_message
+
+captured_worker_commands = []
+try:
+    def fake_worker_run(args, **_kwargs):
+        captured_worker_commands.append(args)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    solve_swe_prod.run = fake_worker_run
+    worker_name = solve_swe_prod.spawn_adapter_helper_worker(
+        root,
+        root,
+        {},
+        "The API should preserve explicit output ordering when parsing repeated flags.",
+        "diff --git a/src/service.py b/src/service.py\n+def fixed():\n+    return True\n",
+        ["progress watchdog adapter-selected public validation failed; inspect /tmp/multiagent-prod-swe/helper-validation-probe.txt"],
+        ["src/service.py"],
+        1,
+        "adapter public validation probe failed",
+        launch_reason="the production-native progress watchdog",
+    )
+finally:
+    solve_swe_prod.run = original_run
+assert worker_name == "worker-adapter-helper-01", worker_name
+spawn_commands = [args for args in captured_worker_commands if "spawn" in args]
+assert spawn_commands, captured_worker_commands
+spawn_instruction = spawn_commands[-1][-1]
+assert "production-native progress watchdog" in spawn_instruction, spawn_instruction
+assert "src/service.py" in spawn_instruction, spawn_instruction
+for forbidden in ("FAIL_TO_PASS", "PASS_TO_PASS", "test_patch", "selected_test_files_to_run"):
+    assert forbidden not in spawn_instruction, spawn_instruction
 
 solver_source = (root / "evaluation/native_solver/solve_swe_prod.py").read_text(encoding="utf-8")
 multi_value_section = re.search(

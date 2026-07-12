@@ -90,6 +90,11 @@ As orchestrator:
    status with evidence, or blocked status. Do not keep spawning exploratory
    workers over the same paths without a new failing command or source-derived
    contract finding.
+   If the same non-empty diff stays stale after this convergence window, the
+   production-native wrapper may run repository-visible validation and launch
+   one bounded progress-repair worker over source-derived ownership paths. Treat
+   that worker as authoritative for the named blockers; do not restart broad
+   planning unless it reports a concrete source-visible discovery gap.
 12. If a long planning loop has produced no `/app` source diff, stop broad
    exploration. Choose the narrowest likely source paths from legitimate
    task/source evidence, spawn exactly one bounded implementation worker over

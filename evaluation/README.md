@@ -148,6 +148,15 @@ production orchestrator loop. Set `EVAL_ADAPTER_HELPER_MODE=repair` only for
 explicit adapter-repair experiments, not production-capability score
 comparisons.
 
+One exception is the production-native progress watchdog. It is enabled by
+default with `EVAL_PROGRESS_REPAIR_ENABLED=1` and fires only after a non-empty
+source diff has stayed stale past `EVAL_PROGRESS_REPAIR_AFTER` and
+`EVAL_PROGRESS_REPAIR_MIN_STALL`. That path runs only repository-visible
+validation and can launch at most one bounded repair worker by default, using
+source-derived ownership paths and generic blockers. It is intended to measure
+the same multi-agent capability under a hard convergence intervention, not to
+inject hidden benchmark feedback.
+
 ## Security Model
 
 The `ponytail` adapter scores agent output by importing and executing the

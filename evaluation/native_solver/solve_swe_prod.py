@@ -1632,14 +1632,13 @@ def spawn_adapter_helper_worker(
     source_owned: list[str],
     index: int,
     probe_report: str = "",
+    launch_reason: str = "explicit adapter-repair experiment",
 ) -> str:
-    """Spawn an opt-in no-leak adapter helper worker.
+    """Spawn a bounded no-leak repair worker from wrapper-visible evidence.
 
-    This path is disabled by default and is only for explicit adapter-repair
-    experiments. It must not include project-specific hidden test knowledge or
-    memorized benchmark fixes; workers receive only the issue, current diff,
-    generic blockers, visible contract ledger, and source-derived ownership
-    hints.
+    This must not include project-specific hidden test knowledge or memorized
+    benchmark fixes; workers receive only the issue, current diff, generic
+    blockers, visible contract ledger, and source-derived ownership hints.
     """
 
     owned = list(dict.fromkeys(source_owned or helper_scope_hints(workdir, issue, diff, blockers)))
@@ -1654,7 +1653,7 @@ def spawn_adapter_helper_worker(
     probe_excerpt = probe_report[-4000:] if probe_report else ""
     ledger_excerpt = contract_ledger_excerpt()
     instruction = (
-        "You are a bounded source worker launched by an explicit adapter-repair experiment. "
+        f"You are a bounded source worker launched by {launch_reason}. "
         "Work in /app only. Do not submit PRs, push, or send external messages. "
         f"Assignment ID: {assignment_id}. Branch: benchmark. Stay inside these owned source paths: {owned_csv}. "
         "Do not edit tests, lockfiles, generated assets, bundled assets, or unrelated config unless the visible task/source contract requires fixture assets.\n\n"
@@ -1894,11 +1893,17 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     selected_validation_claim_seen = False
     convergence_followup_sent = False
     no_diff_checkpoint_sent = False
+    progress_repair_sent = False
     convergence_start = time.monotonic()
+    last_diff_digest = ""
+    last_diff_changed_at = convergence_start
     coverage_followup_limit = int(os.environ.get("EVAL_COVERAGE_FOLLOWUP_LIMIT", "3"))
     early_scope_followup_limit = int(os.environ.get("EVAL_EARLY_SCOPE_FOLLOWUP_LIMIT", "3"))
     convergence_followup_after = int(os.environ.get("EVAL_CONVERGENCE_FOLLOWUP_AFTER", "900"))
     no_diff_checkpoint_after = int(os.environ.get("EVAL_NO_DIFF_CHECKPOINT_AFTER", "600"))
+    progress_repair_enabled = env_truthy("EVAL_PROGRESS_REPAIR_ENABLED", True)
+    progress_repair_after = int(os.environ.get("EVAL_PROGRESS_REPAIR_AFTER", "1200"))
+    progress_repair_min_stall = int(os.environ.get("EVAL_PROGRESS_REPAIR_MIN_STALL", "240"))
     adapter_helper_worker_limit = int(os.environ.get("EVAL_ADAPTER_HELPER_WORKER_LIMIT", "1"))
     adapter_helper_mode = os.environ.get("EVAL_ADAPTER_HELPER_MODE", "advisory").strip().lower()
     adapter_helper_source_edit_opt_in = os.environ.get("EVAL_ADAPTER_HELPER_ALLOW_SOURCE_EDITS", "").strip().lower() in {
@@ -2104,7 +2109,12 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 break
             if time.monotonic() - last_capture > 60:
                 capture_session(session)
-                diff_bytes = len(git_diff(workdir).encode("utf-8"))
+                diff_snapshot = git_diff(workdir)
+                diff_bytes = len(diff_snapshot.encode("utf-8"))
+                diff_digest = hashlib.sha256(diff_snapshot.encode("utf-8", errors="replace")).hexdigest() if diff_bytes else ""
+                if diff_digest != last_diff_digest:
+                    last_diff_digest = diff_digest
+                    last_diff_changed_at = time.monotonic()
                 text = captured_text()
                 log(f"waiting status={state or 'none'} diff_bytes={diff_bytes}")
                 if (
@@ -2407,6 +2417,84 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         "convergence checkpoint sent after "
                         f"{int(time.monotonic() - convergence_start)}s with diff_bytes={diff_bytes}"
                     )
+                    last_capture = time.monotonic()
+                    time.sleep(5)
+                    continue
+                if (
+                    not state
+                    and diff_bytes > 0
+                    and progress_repair_enabled
+                    and not progress_repair_sent
+                    and progress_repair_after > 0
+                    and time.monotonic() - convergence_start >= progress_repair_after
+                    and time.monotonic() - last_diff_changed_at >= progress_repair_min_stall
+                    and tmux_has_session(session)
+                ):
+                    diff = diff_snapshot
+                    scope_blockers = implementation_scope_blockers(issue, diff, {}, task_metadata)
+                    coverage_blockers = validation_coverage_blockers(issue, diff, text, {}, task_metadata)
+                    blockers = [*scope_blockers, *coverage_blockers]
+                    probe_report = ""
+                    probe_passed = False
+                    if coverage_probe_commands(workdir, issue, diff):
+                        probe_report, probe_passed = run_validation_coverage_probe(
+                            workdir,
+                            issue,
+                            diff,
+                            blockers
+                            or [
+                                "progress watchdog observed a stale source diff; adapter ran public validation before repair"
+                            ],
+                        )
+                        if probe_passed:
+                            coverage_probe_satisfied = True
+                            blockers = blockers_after_passing_public_probe(scope_blockers)
+                        elif not coverage_blockers:
+                            blockers = [
+                                *scope_blockers,
+                                f"progress watchdog adapter-selected public validation failed; inspect {HELPER_PROBE_PATH}",
+                            ]
+                    progress_repair_sent = True
+                    if blockers and adapter_helper_workers_spawned < adapter_helper_worker_limit:
+                        adapter_helper_workers_spawned += 1
+                        try:
+                            helper_worker = spawn_adapter_helper_worker(
+                                repo_root,
+                                workdir,
+                                env,
+                                issue,
+                                diff,
+                                [
+                                    *blockers,
+                                    "Progress watchdog intervention: the same non-empty source diff has not converged to accepted validation/status. Continue from the current /app diff, fix the source-visible blockers, and do not broaden scope.",
+                                ],
+                                helper_scope_hints(workdir, issue, diff, blockers),
+                                adapter_helper_workers_spawned,
+                                probe_report,
+                                launch_reason="the production-native progress watchdog",
+                            )
+                            log(f"progress watchdog spawned bounded repair worker: {helper_worker}")
+                            adapter_helper_last_spawn_at = time.monotonic()
+                            adapter_helper_reprobe_done = False
+                            adapter_helper_last_probe_digest = None
+                            coverage_followup_at = time.monotonic()
+                            last_capture = 0.0
+                            time.sleep(5)
+                            continue
+                        except Exception as exc:
+                            log(f"progress watchdog repair worker spawn failed: {exc}")
+                    if blockers:
+                        send_orchestrator_followup(session, blockers, probe_report, helper_scope_hints(workdir, issue, diff, blockers))
+                        log("progress watchdog sent hard follow-up after stale diff: " + "; ".join(blockers))
+                        coverage_followup_at = time.monotonic()
+                    else:
+                        send_orchestrator_convergence_review(
+                            session,
+                            elapsed_seconds=int(time.monotonic() - convergence_start),
+                            diff=diff,
+                            source_hints=helper_scope_hints(workdir, issue, diff, []),
+                        )
+                        log("progress watchdog found no adapter blockers; requested terminal verifier/status")
                     last_capture = time.monotonic()
                     time.sleep(5)
                     continue
@@ -2840,6 +2928,44 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 outcome = "recovered"
             else:
                 log("final cleanup recovery refused; blockers remain: " + "; ".join(final_blockers))
+        elif final_state != "blocked" and coverage_probe_commands(workdir, issue, final_diff):
+            probe_report, probe_passed = run_validation_coverage_probe(
+                workdir,
+                issue,
+                final_diff,
+                ["final cleanup recovery found a source diff but no durable worker validation evidence"],
+            )
+            if probe_passed:
+                final_status_for_blockers = status_with_recovered_validation(
+                    final_status,
+                    f"adapter public helper probe passed at final cleanup ({HELPER_PROBE_PATH})",
+                )
+                final_blockers = [
+                    *implementation_scope_blockers(issue, final_diff, final_status_for_blockers, task_metadata),
+                    *validation_coverage_blockers(issue, final_diff, final_text, final_status_for_blockers, task_metadata),
+                ]
+                final_blockers = blockers_after_passing_public_probe(final_blockers)
+                if not final_blockers:
+                    STATUS_PATH.write_text(
+                        json.dumps(
+                            {
+                                "status": "completed",
+                                "summary": "source diff accepted after adapter public validation probe at final cleanup",
+                                "validation": "status marker recovered by benchmark wrapper; "
+                                f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
+                                "risk": "completion marker was recovered by the benchmark wrapper after missing durable worker validation evidence",
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+                    log("completion marker recovered at final cleanup after adapter public probe passed without durable worker evidence")
+                    coverage_gate_unresolved = False
+                    exit_code = 0
+                    outcome = "recovered"
+                else:
+                    log("final cleanup adapter public probe passed, but blockers remain: " + "; ".join(final_blockers))
+            else:
+                log(f"final cleanup adapter public probe failed without durable worker validation evidence; inspect {HELPER_PROBE_PATH}")
     if coverage_gate_unresolved:
         log("coverage gate remained unresolved; preserving current source diff for official verifier diagnostics")
     elif outcome == "blocked" and not final_diff.strip():
