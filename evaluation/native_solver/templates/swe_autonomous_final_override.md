@@ -68,6 +68,10 @@ As orchestrator:
      field must include exact `replacement-probe-passed:` and
      `stale-visible-failure-justified:` markers. Name the source-derived
      replacement probe and the visible source reason the old expectation changed.
+     Also write the reconciliation transcript to
+     `/tmp/multiagent-prod-swe/stale-visible-reconciliation.txt` with the same
+     exact markers so the eval wrapper can machine-check the decision after
+     final cleanup.
    - If parser/reader linked, alternate, repeated, complete, or multi-value
      behavior changed, the status JSON `validation` field must include exact
      `multi-value-probe-passed:` or `multi-value-probe-skip-justified:`. For a

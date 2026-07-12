@@ -410,6 +410,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_ap
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "final-output-field="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "expected-output-count=N"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "multi-value-probe.txt"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "stale-visible-reconciliation.txt"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "aggregate count"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "machine-gated evidence markers"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "replacement-probe-passed:"
@@ -417,6 +418,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_fi
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "multi-value-probe-passed:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "final-output-field="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "multi-value-probe.txt"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "stale-visible-reconciliation.txt"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "per affected output collection"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Inline golden expectations"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "nearest visible"
@@ -459,6 +461,8 @@ assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_AD
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "adapter helper advisory mode: not spawning source-editing helper"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "completion marker refused because coverage blockers remain after follow-ups"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "final cleanup recovery requires adapter public validation before accepting visible-validation text"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "stale-visible-reconciliation-passed:"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "STALE_VISIBLE_RECONCILIATION_PATH"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Do not rely on leaked evaluator tests"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "must not inject benchmark-row-specific probes"
 assert_file_contains "$ROOT/evaluation/README.md" "adapter helper defaults to advisory mode"
@@ -1139,6 +1143,43 @@ with tempfile.TemporaryDirectory() as td:
         recovered_status,
     )
     assert not any("Go source changed" in blocker for blocker in recovered_blockers), recovered_blockers
+
+with tempfile.TemporaryDirectory() as td:
+    runtime_root = Path(td)
+    old_multi_value_probe_path = solve_swe_prod.MULTI_VALUE_PROBE_PATH
+    try:
+        solve_swe_prod.MULTI_VALUE_PROBE_PATH = runtime_root / "multi-value-probe.txt"
+        reconciliation_path = runtime_root / "stale-visible-reconciliation.txt"
+        reconciliation_path.write_text(
+            "replacement-probe-passed: pytest tests/test_reader.py::test_final_shape passed\n"
+            "stale-visible-failure-justified: source-visible schema now emits all linked aliases.\n",
+            encoding="utf-8",
+        )
+        stale_evidence = solve_swe_prod.persisted_stale_visible_reconciliation_evidence(runtime_root)
+        assert "stale-visible-reconciliation-passed:" in stale_evidence, stale_evidence
+
+        reconciliation_path.write_text(
+            "replacement-probe-passed: not relevant\n"
+            "stale-visible-failure-justified: source-visible schema changed.\n",
+            encoding="utf-8",
+        )
+        assert solve_swe_prod.persisted_stale_visible_reconciliation_evidence(runtime_root) == ""
+
+        reconciliation_path.write_text(
+            "replacement-probe-passed: pytest tests/test_reader.py::test_final_shape passed\n"
+            "stale-visible-failure-justified: source-visible schema now emits all linked aliases.\n"
+            "multi-value-probe-passed: final-output-field=aliases source-count=2 expected-output-count=2 actual-output-count=2\n",
+            encoding="utf-8",
+        )
+        assert solve_swe_prod.persisted_stale_visible_reconciliation_evidence(runtime_root) == ""
+        solve_swe_prod.MULTI_VALUE_PROBE_PATH.write_text(
+            "multi-value-probe-passed: final-output-field=aliases source-count=2 expected-output-count=2 actual-output-count=2\n",
+            encoding="utf-8",
+        )
+        stale_evidence = solve_swe_prod.persisted_stale_visible_reconciliation_evidence(runtime_root)
+        assert "multi-value-probe-passed:" in stale_evidence, stale_evidence
+    finally:
+        solve_swe_prod.MULTI_VALUE_PROBE_PATH = old_multi_value_probe_path
 
 assert solve_swe_prod.is_disallowed_patch_path("patch.txt")
 assert solve_swe_prod.is_disallowed_patch_path("candidate.patch")

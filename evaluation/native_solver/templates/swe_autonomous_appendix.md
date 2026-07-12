@@ -189,7 +189,9 @@ Verifier quality bar:
   final status accepts with that visible failure still present, include both
   `replacement-probe-passed:` with the exact source-derived command/probe result
   and `stale-visible-failure-justified:` with the source-visible reason the old
-  expectation changed.
+  expectation changed. Also write the same reconciliation transcript to
+  `/tmp/multiagent-prod-swe/stale-visible-reconciliation.txt` so final cleanup
+  can machine-check the decision.
 - Reject broad adjacent rewrites for narrow root-cause tasks unless direct
   source evidence ties each extra behavior change to the issue. If the patch
   changes context lifetime, caches, request-specific state, retries, error
