@@ -420,11 +420,14 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_fi
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "multi-value-probe.txt"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "stale-visible-reconciliation.txt"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "per affected output collection"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "run a convergence"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Inline golden expectations"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "nearest visible"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "narrow root-cause"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "same-package tests"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "fresh bounded repair worker"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "Convergence checkpoint"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_CONVERGENCE_FOLLOWUP_AFTER"
 assert_file_contains "$ROOT/prompts/verifier.md" "source review plus"
 assert_file_contains "$ROOT/prompts/verifier.md" "old/stale expectation"
 assert_file_contains "$ROOT/prompts/verifier.md" "replacement-probe-passed:"
@@ -528,6 +531,33 @@ sys.modules["evalscope.utils.logger"] = SimpleNamespace(
 )
 from evaluation import evalscope_multiagent_native_runner
 from evaluation import swe_bench_pro_scaffold_parity
+
+captured_tmux_messages = []
+original_run = solve_swe_prod.run
+try:
+    def fake_tmux_run(args, **_kwargs):
+        if args[:3] == ["tmux", "send-keys", "-t"]:
+            captured_tmux_messages.append(args)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    solve_swe_prod.run = fake_tmux_run
+    solve_swe_prod.send_orchestrator_convergence_review(
+        "test-session",
+        elapsed_seconds=901,
+        diff="diff --git a/src/service.py b/src/service.py\n+def fixed():\n+    return True\n",
+        source_hints=["src/service.py"],
+    )
+finally:
+    solve_swe_prod.run = original_run
+literal_messages = [args[-1] for args in captured_tmux_messages if len(args) >= 6 and args[4] == "-l"]
+assert literal_messages, captured_tmux_messages
+convergence_message = literal_messages[0]
+assert "Convergence checkpoint" in convergence_message, convergence_message
+assert "spawn/read one verifier" in convergence_message, convergence_message
+assert "source-derived probe failed" in convergence_message, convergence_message
+assert "src/service.py" in convergence_message, convergence_message
+for forbidden in ("FAIL_TO_PASS", "PASS_TO_PASS", "test_patch", "selected_test_files_to_run"):
+    assert forbidden not in convergence_message, convergence_message
 
 solver_source = (root / "evaluation/native_solver/solve_swe_prod.py").read_text(encoding="utf-8")
 multi_value_section = re.search(

@@ -82,7 +82,15 @@ As orchestrator:
      `/tmp/multiagent-prod-swe/multi-value-probe.txt`.
 10. Completion requires both accepted source state in `/app` and
    `/tmp/multiagent-prod-swe/status.json`.
-11. If the task cannot be completed through worker plus verifier orchestration,
+11. If the run has a non-empty source diff but no accepted verifier/status
+   path after a long worker loop, stop broad exploration and run a convergence
+   checkpoint: inspect the current diff, identify the remaining source-visible
+   contract risk, and choose exactly one next action: read-only verifier,
+   bounded repair worker for a concrete failed validation/source gap, completed
+   status with evidence, or blocked status. Do not keep spawning exploratory
+   workers over the same paths without a new failing command or source-derived
+   contract finding.
+12. If the task cannot be completed through worker plus verifier orchestration,
    write blocked status JSON with the exact reason instead of producing a
    natural-language final answer.
 

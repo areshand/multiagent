@@ -1551,6 +1551,41 @@ def send_orchestrator_scope_warning(session: str, blockers: list[str], source_hi
     send_tmux_literal(session, message)
 
 
+def send_orchestrator_convergence_review(
+    session: str,
+    *,
+    elapsed_seconds: int,
+    diff: str,
+    source_hints: list[str],
+) -> None:
+    """Ask the production orchestrator to converge without injecting answer data."""
+
+    diff_excerpt = diff[-5000:] if diff else "No diff excerpt available."
+    hint_text = (
+        " Source-derived ownership candidates: " + ", ".join(source_hints) + "."
+        if source_hints
+        else " No specific source ownership candidates were auto-detected; use the current diff and read-only source discovery."
+    )
+    message = (
+        f"Convergence checkpoint: the benchmark adapter has observed a non-empty /app source diff for {elapsed_seconds}s "
+        "without a valid completion status. This is a churn warning, not a hidden-test hint. "
+        "Do not broaden scope or keep spawning exploratory workers. Freeze the current hypothesis, inspect the current diff, "
+        "and drive one of these outcomes: (1) spawn/read one verifier over the current diff, (2) if a relevant visible validation "
+        "or source-derived probe failed, spawn exactly one fresh bounded repair worker over the implicated source paths, or "
+        "(3) write blocked status with the unresolved source-visible contract. "
+        "Before acceptance, explicitly check hidden-contract risk from legitimate evidence only: issue text, visible tests, docs, "
+        "source callers, public APIs, data schemas, fixtures, and runtime behavior. Confirm API shape/package placement, nearest "
+        "runnable validation or compile coverage, output/error/ordering semantics, fixture assets, and adapter/helper parity for "
+        "every changed entrypoint. Do not use leaked evaluator rows, benchmark scores, hidden test names, or previous benchmark "
+        "failures as guidance. "
+        + hint_text
+        + f" Durable contract ledger: {CONTRACT_LEDGER_PATH}. Preserve every ledger item. "
+        "Current /app diff excerpt for orientation only:\n"
+        + diff_excerpt
+    )
+    send_tmux_literal(session, message)
+
+
 def benchmark_specific_recovery_enabled(issue: str, blockers: list[str], diff: str) -> bool:
     """Deprecated compatibility hook.
 
@@ -1832,8 +1867,11 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     coverage_gate_unresolved = False
     coverage_probe_satisfied = False
     selected_validation_claim_seen = False
+    convergence_followup_sent = False
+    convergence_start = time.monotonic()
     coverage_followup_limit = int(os.environ.get("EVAL_COVERAGE_FOLLOWUP_LIMIT", "3"))
     early_scope_followup_limit = int(os.environ.get("EVAL_EARLY_SCOPE_FOLLOWUP_LIMIT", "3"))
+    convergence_followup_after = int(os.environ.get("EVAL_CONVERGENCE_FOLLOWUP_AFTER", "900"))
     adapter_helper_worker_limit = int(os.environ.get("EVAL_ADAPTER_HELPER_WORKER_LIMIT", "1"))
     adapter_helper_mode = os.environ.get("EVAL_ADAPTER_HELPER_MODE", "advisory").strip().lower()
     adapter_helper_source_edit_opt_in = os.environ.get("EVAL_ADAPTER_HELPER_ALLOW_SOURCE_EDITS", "").strip().lower() in {
@@ -2321,6 +2359,30 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                     exit_code = 2
                     outcome = "blocked"
                     break
+                if (
+                    not state
+                    and diff_bytes > 0
+                    and not convergence_followup_sent
+                    and convergence_followup_after > 0
+                    and time.monotonic() - convergence_start >= convergence_followup_after
+                    and tmux_has_session(session)
+                ):
+                    diff = git_diff(workdir)
+                    source_hints = helper_scope_hints(workdir, issue, diff, [])
+                    send_orchestrator_convergence_review(
+                        session,
+                        elapsed_seconds=int(time.monotonic() - convergence_start),
+                        diff=diff,
+                        source_hints=source_hints,
+                    )
+                    convergence_followup_sent = True
+                    log(
+                        "convergence checkpoint sent after "
+                        f"{int(time.monotonic() - convergence_start)}s with diff_bytes={diff_bytes}"
+                    )
+                    last_capture = time.monotonic()
+                    time.sleep(5)
+                    continue
                 if (
                     not state
                     and diff_bytes > 0
