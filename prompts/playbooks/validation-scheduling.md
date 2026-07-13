@@ -16,14 +16,34 @@ Treat each expensive validation target as having one active lease:
 - `started`: best-known start time or pane/process evidence.
 - `resource-risk`: CPU, memory, cache contention, network, or emulation risk.
 
-The orchestrator owns the lease table in its notes or checkpoint updates. A
-worker or verifier may receive a lease in its first instruction, but it must
+The orchestrator owns the lease table. Prefer durable helper records over notes:
+
+```bash
+bin/subagent.sh validation-lease-acquire go-ofrep \
+  --owner worker-02-fix \
+  --target "./internal/server/ofrep ./internal/server/evaluation" \
+  --command "go test ./internal/server/ofrep ./internal/server/evaluation" \
+  --resource-risk "go test under Docker/Rosetta"
+```
+
+`validation-lease-acquire` rejects a second active lease for the same target.
+When a command completes, timeouts, or is abandoned, update it:
+
+```bash
+bin/subagent.sh validation-lease-status go-ofrep passed \
+  --result-json '{"command":"go test ./internal/server/ofrep ./internal/server/evaluation","returncode":0}'
+```
+
+A worker or verifier may receive a lease in its first instruction, but it must
 not silently take a second lease for the same package/path.
 
 ## Routing Rules
 
 - If a package/path has a running lease, poll that owner before starting another
   equivalent command.
+- Before starting an expensive command, acquire a validation lease. If the
+  helper reports a conflict, do not run the duplicate command; poll or inspect
+  the named owner and report `blocked-validations:`.
 - Do not spawn a verifier for a worker while that worker still owns a running
   validation lease. First capture/poll the worker until the leased command
   reaches passed, failed, timed-out, stale, or released. Then pass the captured
@@ -52,6 +72,7 @@ not silently take a second lease for the same package/path.
 When assigning a worker or verifier that may validate, include:
 
 - validation lease target, command, and owner
+- validation lease ID if a durable helper record exists
 - commands it may run without asking
 - commands it must not duplicate
 - how to report timeout/failure without launching a replacement command

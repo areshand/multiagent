@@ -260,7 +260,9 @@ tree, and post-reapply validation covers the affected package.
 If compile/test validation is already running in another live worker/verifier
 for the same package, do not start a duplicate command. Inspect the running
 command, wait for its result, or reject with a clear orchestration finding that
-the package has overlapping validators.
+the package has overlapping validators. If a durable validation lease is
+available, inspect it with `bin/subagent.sh validation-lease-show LEASE_ID`
+before deciding whether to run any expensive command yourself.
 
 ## Review Scope
 

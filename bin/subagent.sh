@@ -45,6 +45,10 @@ Usage:
   bin/subagent.sh todo-status TODO_ID open|assigned|resolved|reopened|closed
   bin/subagent.sh resolution-create TODO_ID --worker NAME --status resolved|blocked --validation-json JSON --why TEXT [--changed PATH[,PATH...]]
   bin/subagent.sh todo-close TODO_ID --verified-by NAME --recheck-json JSON [--notes TEXT]
+  bin/subagent.sh validation-lease-acquire LEASE_ID --owner NAME --target TEXT --command TEXT [--state planned|running] [--resource-risk TEXT]
+  bin/subagent.sh validation-lease-status LEASE_ID planned|running|passed|failed|timed-out|stale|released [--result-json JSON]
+  bin/subagent.sh validation-lease-show LEASE_ID
+  bin/subagent.sh validation-lease-list [--state STATE]
   bin/subagent.sh gate-check
   bin/subagent.sh poll NAME
   bin/subagent.sh inspect NAME [--lines N]
@@ -203,6 +207,18 @@ todo_status_file() {
   printf '%s/status\n' "$(todo_dir "$1")"
 }
 
+validation_lease_dir() {
+  printf '%s/validation-leases/%s\n' "$STATE_DIR" "$1"
+}
+
+validation_lease_meta_file() {
+  printf '%s/lease.env\n' "$(validation_lease_dir "$1")"
+}
+
+validation_lease_status_file() {
+  printf '%s/status\n' "$(validation_lease_dir "$1")"
+}
+
 default_worktree_path() {
   printf '%s/worktrees/%s\n' "$STATE_DIR" "$1"
 }
@@ -308,6 +324,32 @@ get_todo_status() {
   else
     printf 'unknown\n'
   fi
+}
+
+read_validation_lease_value() {
+  local lease_id="$1"
+  local key="$2"
+  read_env_value "$(validation_lease_meta_file "$lease_id")" "$key"
+}
+
+get_validation_lease_status() {
+  local lease_id="$1"
+  if [[ -f "$(validation_lease_status_file "$lease_id")" ]]; then
+    tr -d '\n' <"$(validation_lease_status_file "$lease_id")"
+  else
+    printf 'unknown\n'
+  fi
+}
+
+validate_validation_lease_status() {
+  local status="$1"
+  case "$status" in
+    planned|running|passed|failed|timed-out|stale|released)
+      ;;
+    *)
+      die "invalid validation lease status: $status"
+      ;;
+  esac
 }
 
 set_todo_status() {
@@ -1888,6 +1930,201 @@ if closure.get("todo_id") != todo_id or not isinstance(recheck, dict) or recheck
 ' "$dir" "$todo_id"
 }
 
+write_validation_lease_json() {
+  local lease_id="$1"
+  local dir
+  dir="$(validation_lease_dir "$lease_id")"
+  require_cmd python3
+  python3 -c '
+import json
+import pathlib
+import sys
+root = pathlib.Path(sys.argv[1])
+status = sys.argv[2]
+meta = {}
+for line in (root / "lease.env").read_text().splitlines():
+    if "=" in line:
+        key, value = line.split("=", 1)
+        meta[key] = value
+result_file = root / "result.json"
+result = json.loads(result_file.read_text()) if result_file.exists() else {}
+payload = {
+    "lease_id": meta["lease_id"],
+    "owner": meta["owner"],
+    "target": meta["target"],
+    "command": meta["command"],
+    "state": status,
+    "resource_risk": meta.get("resource_risk", ""),
+    "result": result,
+    "created_at": meta["created_at"],
+    "updated_at": meta.get("updated_at", meta["created_at"]),
+}
+(root / "lease.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+' "$dir" "$(get_validation_lease_status "$lease_id")"
+}
+
+validation_lease_acquire() {
+  local lease_id="${1:-}"
+  [[ -n "$lease_id" ]] || die "validation-lease-acquire requires LEASE_ID"
+  validate_name "$lease_id"
+  shift
+
+  local owner="" target="" command="" state="running" resource_risk=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --owner)
+        owner="${2:-}"
+        shift 2
+        ;;
+      --target)
+        target="${2:-}"
+        shift 2
+        ;;
+      --command)
+        command="${2:-}"
+        shift 2
+        ;;
+      --state)
+        state="${2:-}"
+        shift 2
+        ;;
+      --resource-risk)
+        resource_risk="${2:-}"
+        shift 2
+        ;;
+      *)
+        die "unknown validation-lease-acquire argument: $1"
+        ;;
+    esac
+  done
+
+  [[ -n "$owner" ]] || die "validation-lease-acquire requires --owner NAME"
+  validate_name "$owner"
+  [[ -n "$target" ]] || die "validation-lease-acquire requires --target TEXT"
+  [[ -n "$command" ]] || die "validation-lease-acquire requires --command TEXT"
+  reject_newline "--target" "$target"
+  reject_newline "--command" "$command"
+  reject_newline "--resource-risk" "$resource_risk"
+  validate_validation_lease_status "$state"
+  case "$state" in
+    planned|running)
+      ;;
+    *)
+      die "validation-lease-acquire state must be planned or running"
+      ;;
+  esac
+
+  local base="$STATE_DIR/validation-leases"
+  local existing_dir existing_id existing_target existing_state existing_owner
+  if [[ -d "$base" ]]; then
+    for existing_dir in "$base"/*; do
+      [[ -d "$existing_dir" ]] || continue
+      existing_id="$(basename "$existing_dir")"
+      [[ "$existing_id" != "$lease_id" ]] || continue
+      existing_target="$(read_validation_lease_value "$existing_id" target || true)"
+      [[ "$existing_target" == "$target" ]] || continue
+      existing_state="$(get_validation_lease_status "$existing_id")"
+      case "$existing_state" in
+        planned|running)
+          existing_owner="$(read_validation_lease_value "$existing_id" owner || true)"
+          die "validation lease conflict: target=$target lease=$existing_id owner=$existing_owner state=$existing_state"
+          ;;
+      esac
+    done
+  fi
+
+  local dir
+  dir="$(validation_lease_dir "$lease_id")"
+  [[ ! -e "$dir" ]] || die "validation lease already exists: $lease_id"
+  mkdir -p "$dir"
+  cat >"$(validation_lease_meta_file "$lease_id")" <<EOF
+lease_id=$lease_id
+owner=$owner
+target=$target
+command=$command
+resource_risk=$resource_risk
+created_at=$(timestamp)
+updated_at=$(timestamp)
+root=$ROOT
+EOF
+  printf '{}\n' >"$dir/result.json"
+  printf '%s\n' "$state" >"$(validation_lease_status_file "$lease_id")"
+  write_validation_lease_json "$lease_id"
+  printf 'validation lease acquired\t%s\t%s\t%s\n' "$lease_id" "$owner" "$state"
+}
+
+validation_lease_status() {
+  local lease_id="${1:-}"
+  local state="${2:-}"
+  [[ -n "$lease_id" && -n "$state" ]] || die "validation-lease-status requires LEASE_ID STATUS"
+  validate_name "$lease_id"
+  validate_validation_lease_status "$state"
+  shift 2
+
+  local result_json=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --result-json)
+        result_json="${2:-}"
+        shift 2
+        ;;
+      *)
+        die "unknown validation-lease-status argument: $1"
+        ;;
+    esac
+  done
+
+  [[ -f "$(validation_lease_meta_file "$lease_id")" ]] || die "no validation lease: $lease_id"
+  if [[ -n "$result_json" ]]; then
+    require_cmd python3
+    python3 -c 'import json, sys; json.loads(sys.argv[1])' "$result_json"
+    printf '%s\n' "$result_json" >"$(validation_lease_dir "$lease_id")/result.json"
+  fi
+  set_env_key "$(validation_lease_meta_file "$lease_id")" updated_at "$(timestamp)"
+  printf '%s\n' "$state" >"$(validation_lease_status_file "$lease_id")"
+  write_validation_lease_json "$lease_id"
+  printf 'validation lease status\t%s\t%s\n' "$lease_id" "$state"
+}
+
+validation_lease_show() {
+  local lease_id="${1:-}"
+  [[ -n "$lease_id" ]] || die "validation-lease-show requires LEASE_ID"
+  validate_name "$lease_id"
+  [[ -f "$(validation_lease_dir "$lease_id")/lease.json" ]] || die "no validation lease: $lease_id"
+  write_validation_lease_json "$lease_id"
+  cat "$(validation_lease_dir "$lease_id")/lease.json"
+}
+
+validation_lease_list() {
+  local state_filter=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --state)
+        state_filter="${2:-}"
+        validate_validation_lease_status "$state_filter"
+        shift 2
+        ;;
+      *)
+        die "unknown validation-lease-list argument: $1"
+        ;;
+    esac
+  done
+
+  local base="$STATE_DIR/validation-leases"
+  [[ -d "$base" ]] || return 0
+  local dir lease_id state owner target command
+  for dir in "$base"/*; do
+    [[ -d "$dir" ]] || continue
+    lease_id="$(basename "$dir")"
+    state="$(get_validation_lease_status "$lease_id")"
+    [[ -z "$state_filter" || "$state" == "$state_filter" ]] || continue
+    owner="$(read_validation_lease_value "$lease_id" owner || true)"
+    target="$(read_validation_lease_value "$lease_id" target || true)"
+    command="$(read_validation_lease_value "$lease_id" command || true)"
+    printf '%s\t%s\t%s\t%s\t%s\n' "$lease_id" "$state" "$owner" "$target" "$command"
+  done
+}
+
 gate_check() {
   local failed=0
   local findings_base="$STATE_DIR/findings"
@@ -2027,6 +2264,22 @@ case "$cmd" in
   todo-close)
     shift
     todo_close "$@"
+    ;;
+  validation-lease-acquire)
+    shift
+    validation_lease_acquire "$@"
+    ;;
+  validation-lease-status)
+    shift
+    validation_lease_status "$@"
+    ;;
+  validation-lease-show)
+    shift
+    validation_lease_show "$@"
+    ;;
+  validation-lease-list)
+    shift
+    validation_lease_list "$@"
     ;;
   gate-check)
     shift

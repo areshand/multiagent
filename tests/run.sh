@@ -344,6 +344,32 @@ MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" gate-check >"$TMPDI
 assert_file_contains "$TMPDIR/gate-closed.out" "accepted"
 assert_file_contains "$REPAIR_STATE/todos/todo-017/closure.json" '"verified_by": "verifier-01-ofrep-build"'
 
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease-acquire go-ofrep \
+  --owner worker-02-ofrep-build \
+  --target "./internal/server/ofrep ./internal/server/evaluation" \
+  --command "go test ./internal/server/ofrep ./internal/server/evaluation" \
+  --resource-risk "go test under Docker/Rosetta" >"$TMPDIR/lease-acquire.out"
+assert_file_contains "$TMPDIR/lease-acquire.out" $'validation lease acquired\tgo-ofrep\tworker-02-ofrep-build\trunning'
+if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease-acquire go-ofrep-dup \
+  --owner verifier-01-ofrep-build \
+  --target "./internal/server/ofrep ./internal/server/evaluation" \
+  --command "go test ./internal/server/ofrep ./internal/server/evaluation" >"$TMPDIR/lease-conflict.out" 2>&1; then
+  echo "expected duplicate active validation lease to fail" >&2
+  cat "$TMPDIR/lease-conflict.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/lease-conflict.out" "validation lease conflict"
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease-status go-ofrep passed \
+  --result-json '{"command":"go test ./internal/server/ofrep ./internal/server/evaluation","returncode":0}' >"$TMPDIR/lease-passed.out"
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease-acquire go-ofrep-followup \
+  --owner verifier-01-ofrep-build \
+  --target "./internal/server/ofrep ./internal/server/evaluation" \
+  --command "go test ./internal/server/ofrep ./internal/server/evaluation" >"$TMPDIR/lease-followup.out"
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease-list --state running >"$TMPDIR/lease-list.out"
+assert_file_contains "$TMPDIR/lease-list.out" $'go-ofrep-followup\trunning\tverifier-01-ofrep-build'
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease-show go-ofrep >"$TMPDIR/lease-show.out"
+assert_file_contains "$TMPDIR/lease-show.out" '"returncode": 0'
+
 assert_file_contains "$ROOT/orchestrator_prompt.md" "Do not inspect recovery state"
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'When `MULTIAGENT_RESUME=1`'
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'Only in that mode'
@@ -367,6 +393,7 @@ assert_file_contains "$ROOT/prompts/worker.md" "return shape, or package placeme
 assert_file_contains "$ROOT/prompts/worker.md" "additive public surface"
 assert_file_contains "$ROOT/prompts/worker.md" "one expensive validation command"
 assert_file_contains "$ROOT/prompts/worker.md" "validation lease"
+assert_file_contains "$ROOT/prompts/worker.md" "validation-lease-acquire"
 assert_file_contains "$ROOT/prompts/worker.md" "legitimate product or visible-test paths"
 assert_file_contains "$ROOT/prompts/worker.md" "validation-repair-needed:"
 assert_file_contains "$ROOT/prompts/worker.md" "structured worker"
@@ -377,6 +404,7 @@ assert_file_contains "$ROOT/prompts/verifier.md" "unresolved risk"
 assert_file_contains "$ROOT/prompts/verifier.md" "component interaction test"
 assert_file_contains "$ROOT/prompts/verifier.md" "overlapping validators"
 assert_file_contains "$ROOT/prompts/verifier.md" "validation lease"
+assert_file_contains "$ROOT/prompts/verifier.md" "validation-lease-show"
 assert_file_contains "$ROOT/prompts/verifier.md" "blocked-validations:"
 assert_file_contains "$ROOT/prompts/verifier.md" "Do not rely on leaked evaluator tests"
 assert_file_contains "$ROOT/prompts/verifier.md" "source-derived equivalence classes"
@@ -410,6 +438,8 @@ assert_file_contains "$ROOT/prompts/playbooks/parallel-execution.md" "Default to
 assert_file_contains "$ROOT/prompts/playbooks/parallel-execution.md" "If one subtree is blocked"
 assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "Validation Scheduling Playbook"
 assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "Validation Lease"
+assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "validation-lease-acquire"
+assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "validation-lease-status"
 assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "next-validation-owner"
 assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "Do not spawn a verifier"
 assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "repair-routing:"
@@ -446,6 +476,7 @@ assert_file_contains "$ROOT/README.md" "Launches are clean by default"
 assert_file_contains "$ROOT/README.md" "./launch.sh --resume"
 assert_file_contains "$ROOT/README.md" "Prompt Modules"
 assert_file_contains "$ROOT/README.md" "validation lease table"
+assert_file_contains "$ROOT/README.md" "validation-lease-acquire"
 assert_file_contains "$ROOT/README.md" "Contract Scout Workflow"
 assert_file_contains "$ROOT/README.md" "acceptance-scout.md"
 assert_file_contains "$ROOT/README.md" "Scope Guard Workflow"
@@ -473,6 +504,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "Re
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "hidden-test-shaped commands"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "One active validator per package/path"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "validation lease table"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "validation-lease-acquire"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Do not spawn a verifier while a worker still owns"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Fixture/testdata"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "unresolved parity gaps are blocking"

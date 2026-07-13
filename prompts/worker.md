@@ -210,6 +210,11 @@ evidence to recheck.
 
 Run only one expensive validation command per owned package at a time. Treat the
 orchestrator's validation lease as the authority for long compile/test commands.
+When given a durable lease ID, confirm it exists with
+`bin/subagent.sh validation-lease-show LEASE_ID`; when you own a new expensive
+validation, acquire it with `bin/subagent.sh validation-lease-acquire` before
+running the command and update it with `bin/subagent.sh validation-lease-status`
+after the command returns.
 Before starting a long compile/test for a package, check whether an identical
 command is already running in your pane or an orchestrator-provided process
 listing. If it is, wait for that result or report the duplicate-process blocker

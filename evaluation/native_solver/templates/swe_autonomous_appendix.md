@@ -94,6 +94,10 @@ Benchmark spawning path:
 - Maintain a validation lease table for expensive commands. For each package,
   test file, component suite, or build target, keep one owner, command, state,
   and resource-risk note. One active validator per package/path is the default.
+  Use `bin/subagent.sh validation-lease-acquire` before starting an expensive
+  command and `bin/subagent.sh validation-lease-status` when it passes, fails,
+  times out, becomes stale, or is released. If lease acquire reports a conflict,
+  poll the named owner instead of launching another copy.
 - Do not spawn a verifier while a worker still owns a running validation lease.
   If a worker final message appears before its selected command exits, poll the
   worker/process list until the command result is captured, then pass that
