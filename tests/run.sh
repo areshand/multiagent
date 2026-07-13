@@ -1193,6 +1193,15 @@ assert solve_swe_prod.blocked_status_recoverable_by_public_probe(
         ],
     }
 )
+assert solve_swe_prod.blocked_status_recoverable_by_public_probe(
+    {
+        "status": "blocked",
+        "reason": (
+            "Required worker agents completed without inspecting or modifying /app, "
+            "leaving an empty git diff."
+        ),
+    }
+)
 assert not solve_swe_prod.blocked_status_recoverable_by_public_probe(
     {"status": "blocked", "blockers": ["[official-hard] public API contract missing"]}
 )
@@ -1846,6 +1855,15 @@ assert solve_swe_prod.blocked_status_needs_diff_reconciliation(
         "status": "blocked",
         "reason": "worker attempted a stale patch that did not apply cleanly",
         "blockers": ["apply_patch: could not find hunk context in src/Keyboard.ts"],
+    }
+)
+assert solve_swe_prod.blocked_status_needs_diff_reconciliation(
+    {
+        "status": "blocked",
+        "reason": (
+            "Required worker agents completed without inspecting or modifying /app, "
+            "leaving an empty git diff."
+        ),
     }
 )
 assert not solve_swe_prod.blocked_status_needs_diff_reconciliation(

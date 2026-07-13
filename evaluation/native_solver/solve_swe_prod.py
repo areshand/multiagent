@@ -2250,6 +2250,17 @@ def status_records_selected_validation(current_status: dict[str, object]) -> boo
 def blocked_status_recoverable_by_public_probe(current_status: dict[str, object]) -> bool:
     if str(current_status.get("status", "")).lower() != "blocked":
         return False
+    text = json.dumps(current_status, sort_keys=True).lower()
+    stale_no_diff_markers = (
+        "empty git diff",
+        "leaving an empty git diff",
+        "without inspecting or modifying /app",
+        "without modifying /app",
+        "no scoreable source diff",
+        "no materialized source diff",
+    )
+    if any(marker in text for marker in stale_no_diff_markers):
+        return True
     blockers = current_status.get("blockers")
     if not isinstance(blockers, list) or not blockers:
         return False
@@ -2282,6 +2293,11 @@ def blocked_status_needs_diff_reconciliation(current_status: dict[str, object]) 
         "could not find hunk context",
         "hunk failed",
         "missing edits",
+        "empty git diff",
+        "leaving an empty git diff",
+        "without inspecting or modifying /app",
+        "without modifying /app",
+        "no materialized source diff",
     )
     return any(marker in text for marker in stale_markers)
 
