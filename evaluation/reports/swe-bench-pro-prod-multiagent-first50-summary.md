@@ -968,3 +968,39 @@ in-run contract that periodically forces a real verifier/validation handoff and
 terminates with a machine-readable reason before the native timeout. Otherwise
 the wrapper sees an active solver until it exits or times out, so a post-exit
 resume hook is too late to improve resolve rate.
+
+## 2026-07-13 Active-Run Terminal Deadline Checkpoint
+
+PR4 now adds a stronger active-run terminal checkpoint for the timeout/late-exit
+failure mode exposed by the resume rerun. When the native solver is still live
+near its deadline, the wrapper captures the current diff, runs the same generic
+public/source blocker and validation-probe path, and sends the live orchestrator
+a terminal countdown instruction. The instruction requires one of three
+production-native outcomes: final verifier plus completed status, one bounded
+repair plus verifier, or blocked status with the concrete public/source reason.
+
+If the orchestrator still does not write machine-readable status after the
+grace window, the wrapper writes a blocked status before the native timeout
+instead of allowing a silent long-tail timeout. This does not accept patches on
+behalf of the production solver; it preserves measurement integrity while
+making active-run terminal failures explicit and faster to diagnose.
+
+The generated terminal checkpoint is no-leak: it contains only current diff,
+public/source blockers, source-derived ownership hints, contract ledger excerpt,
+and adapter public validation output. It explicitly prohibits evaluator-only
+metadata and does not include row identity, hidden tests, selected evaluator
+tests, benchmark scores, or prior evaluator outcomes.
+
+Validation run for this change:
+
+```text
+python3 -m py_compile evaluation/native_solver/solve_swe_prod.py evaluation/native_solver/swe_prod_guardrails.py evaluation/evalscope_multiagent_native_runner.py
+bash -n tests/run.sh
+git diff --check
+perl -e 'alarm shift; exec @ARGV' 180 bash tests/run.sh
+```
+
+Score movement: not measured yet. The expected near-term effect is fewer
+`rc=124`/timeout rows and clearer active-run blockers; a follow-up failed-row
+rerun is still required to determine whether the stronger terminal checkpoint
+improves clean official submissions.

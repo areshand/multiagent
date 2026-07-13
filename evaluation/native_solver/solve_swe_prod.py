@@ -1644,6 +1644,47 @@ def send_orchestrator_no_diff_checkpoint(
     send_tmux_literal(session, message)
 
 
+def send_orchestrator_terminal_deadline(
+    session: str,
+    *,
+    remaining_seconds: int,
+    diff: str,
+    blockers: list[str],
+    probe_report: str,
+    source_hints: list[str],
+) -> None:
+    """Force a live production orchestrator toward a terminal status before timeout."""
+
+    blocker_text = "; ".join(blockers) if blockers else "no adapter blocker was found from public/source checks"
+    probe_excerpt = probe_report[-5000:] if probe_report else "No adapter public validation probe output."
+    diff_excerpt = diff[-5000:] if diff else "No current source diff."
+    hint_text = (
+        " Source-derived ownership candidates: " + ", ".join(source_hints) + "."
+        if source_hints
+        else " No specific source ownership candidates were auto-detected; use current diff and read-only source discovery only."
+    )
+    message = (
+        f"Terminal deadline checkpoint: about {remaining_seconds}s remain before the native SWE solver times out. "
+        "This is a public-source terminal discipline warning, not a hidden-test hint. Stop broad exploration now. "
+        "Do not spawn new exploratory workers. Do exactly one of these terminal actions: "
+        "(1) if the current diff is ready, spawn/read one final read-only verifier and write completed status with concrete "
+        "visible validation evidence; (2) if a public/source blocker remains, spawn at most one bounded repair worker over "
+        "the implicated paths, then one verifier; or (3) write blocked status with the concrete public/source reason. "
+        "A timeout without `/tmp/multiagent-prod-swe/status.json` will be treated as a production orchestration failure. "
+        "No-test compile checks are not behavioral validation for source changes. "
+        "Do not use leaked evaluator rows, hidden tests, selected evaluator tests, benchmark scores, or prior evaluator outcomes. "
+        f"Adapter/source blockers: {blocker_text}."
+        + hint_text
+        + f" Durable contract ledger: {CONTRACT_LEDGER_PATH}. Preserve every ledger item. Ledger excerpt:\n"
+        + contract_ledger_excerpt()
+        + "\nAdapter public validation probe output tail:\n"
+        + probe_excerpt
+        + "\nCurrent /app diff excerpt for terminal review only:\n"
+        + diff_excerpt
+    )
+    send_tmux_literal(session, message)
+
+
 def write_orchestrator_resume_prompt(
     base_prompt: Path,
     *,
@@ -1993,6 +2034,8 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     convergence_followup_sent = False
     no_diff_checkpoint_sent = False
     progress_repair_sent = False
+    terminal_deadline_sent = False
+    terminal_deadline_at: float | None = None
     convergence_start = time.monotonic()
     last_diff_digest = ""
     last_diff_changed_at = convergence_start
@@ -2003,6 +2046,8 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     progress_repair_enabled = env_truthy("EVAL_PROGRESS_REPAIR_ENABLED", True)
     progress_repair_after = int(os.environ.get("EVAL_PROGRESS_REPAIR_AFTER", "1200"))
     progress_repair_min_stall = int(os.environ.get("EVAL_PROGRESS_REPAIR_MIN_STALL", "240"))
+    terminal_deadline_remaining = int(os.environ.get("EVAL_TERMINAL_DEADLINE_REMAINING", "600"))
+    terminal_deadline_grace = int(os.environ.get("EVAL_TERMINAL_DEADLINE_GRACE", "300"))
     adapter_helper_worker_limit = int(os.environ.get("EVAL_ADAPTER_HELPER_WORKER_LIMIT", "1"))
     orchestrator_resume_limit = int(os.environ.get("EVAL_ORCHESTRATOR_RESUME_LIMIT", "1"))
     orchestrator_resume_attempts = 0
@@ -2301,6 +2346,93 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                     last_diff_changed_at = time.monotonic()
                 text = captured_text()
                 log(f"waiting status={state or 'none'} diff_bytes={diff_bytes}")
+                remaining_seconds = int(deadline - time.monotonic())
+                if (
+                    not state
+                    and not terminal_deadline_sent
+                    and terminal_deadline_remaining > 0
+                    and remaining_seconds <= terminal_deadline_remaining
+                    and tmux_has_session(session)
+                ):
+                    diff = diff_snapshot
+                    terminal_blockers: list[str] = []
+                    probe_report = ""
+                    if diff_bytes > 0:
+                        scope_blockers = implementation_scope_blockers(issue, diff, {}, task_metadata)
+                        coverage_blockers = validation_coverage_blockers(issue, diff, text, {}, task_metadata)
+                        terminal_blockers = [*scope_blockers, *coverage_blockers]
+                        if coverage_probe_satisfied:
+                            terminal_blockers = blockers_after_passing_public_probe(terminal_blockers)
+                        elif coverage_probe_commands(workdir, issue, diff):
+                            probe_report, probe_passed = run_validation_coverage_probe(
+                                workdir,
+                                issue,
+                                diff,
+                                terminal_blockers
+                                or [
+                                    "terminal deadline checkpoint ran public validation before forcing final orchestrator status"
+                                ],
+                            )
+                            if probe_passed:
+                                coverage_probe_satisfied = True
+                                terminal_blockers = blockers_after_passing_public_probe(scope_blockers)
+                            else:
+                                terminal_blockers = [
+                                    *scope_blockers,
+                                    f"terminal deadline adapter-selected public validation failed; inspect {HELPER_PROBE_PATH}",
+                                ]
+                    else:
+                        terminal_blockers = [
+                            "terminal deadline reached with no materialized source diff; write blocked status or produce the narrow source diff now"
+                        ]
+                    send_orchestrator_terminal_deadline(
+                        session,
+                        remaining_seconds=remaining_seconds,
+                        diff=diff,
+                        blockers=terminal_blockers,
+                        probe_report=probe_report,
+                        source_hints=helper_scope_hints(workdir, issue, diff, terminal_blockers),
+                    )
+                    terminal_deadline_sent = True
+                    terminal_deadline_at = time.monotonic()
+                    log(
+                        "terminal deadline checkpoint sent with "
+                        f"remaining={remaining_seconds}s blockers={'; '.join(terminal_blockers) if terminal_blockers else 'none'}"
+                    )
+                    last_capture = time.monotonic()
+                    time.sleep(5)
+                    continue
+                if (
+                    not state
+                    and terminal_deadline_at is not None
+                    and terminal_deadline_grace > 0
+                    and time.monotonic() - terminal_deadline_at >= terminal_deadline_grace
+                ):
+                    diff = git_diff(workdir)
+                    deadline_blockers = [
+                        *implementation_scope_blockers(issue, diff, {}, task_metadata),
+                        *validation_coverage_blockers(issue, diff, text, {}, task_metadata),
+                    ]
+                    if coverage_probe_satisfied:
+                        deadline_blockers = blockers_after_passing_public_probe(deadline_blockers)
+                    if not deadline_blockers:
+                        deadline_blockers = [
+                            "terminal deadline expired without completed/blocked status after orchestrator checkpoint; wrapper cannot accept an active-run diff without terminal verifier/status"
+                        ]
+                    STATUS_PATH.write_text(
+                        json.dumps(
+                            {
+                                "status": "blocked",
+                                "reason": "terminal deadline expired without machine-readable orchestrator status",
+                                "blockers": deadline_blockers,
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+                    log("blocked marker: terminal deadline expired without machine-readable orchestrator status")
+                    exit_code = 2
+                    outcome = "blocked"
+                    break
                 if (
                     not state
                     and diff_bytes > 0

@@ -592,6 +592,30 @@ assert "concrete discovery gap" in no_diff_message, no_diff_message
 for forbidden in ("FAIL_TO_PASS", "PASS_TO_PASS", "test_patch", "selected_test_files_to_run"):
     assert forbidden not in no_diff_message, no_diff_message
 
+captured_tmux_messages = []
+try:
+    solve_swe_prod.run = fake_tmux_run
+    solve_swe_prod.send_orchestrator_terminal_deadline(
+        "test-session",
+        remaining_seconds=599,
+        diff="diff --git a/src/service.py b/src/service.py\n+def fixed():\n+    return True\n",
+        blockers=["terminal deadline adapter-selected public validation failed; inspect helper-validation-probe.txt"],
+        probe_report="pytest -q tests/test_service.py failed",
+        source_hints=["src/service.py"],
+    )
+finally:
+    solve_swe_prod.run = original_run
+literal_messages = [args[-1] for args in captured_tmux_messages if len(args) >= 6 and args[4] == "-l"]
+assert literal_messages, captured_tmux_messages
+terminal_message = literal_messages[0]
+assert "Terminal deadline checkpoint" in terminal_message, terminal_message
+assert "write completed status" in terminal_message, terminal_message
+assert "write blocked status" in terminal_message, terminal_message
+assert "No-test compile checks are not behavioral validation" in terminal_message, terminal_message
+assert "src/service.py" in terminal_message, terminal_message
+for forbidden in ("FAIL_TO_PASS", "PASS_TO_PASS", "test_patch", "selected_test_files_to_run", "official failure", "selected official"):
+    assert forbidden not in terminal_message, terminal_message
+
 with tempfile.TemporaryDirectory() as td:
     runtime_root = Path(td) / "runtime"
     runtime_root.mkdir()
@@ -660,6 +684,9 @@ assert 'adapter_helper_repair_allowed("progress watchdog stale diff")' in solver
 )
 assert "launch_production_session" in solver_source and "resume=True" in solver_source and "--resume" in solver_source, (
     "unverified diffs should be recoverable by relaunching the production orchestrator"
+)
+assert "EVAL_TERMINAL_DEADLINE_REMAINING" in solver_source and "EVAL_TERMINAL_DEADLINE_GRACE" in solver_source, (
+    "active native runs need a terminal deadline checkpoint before timeout"
 )
 multi_value_section = re.search(
     r"parser_multi_value_diff = any\(\s*marker in diff_lower\s*for marker in \((?P<markers>.*?)\)\s*\)",
