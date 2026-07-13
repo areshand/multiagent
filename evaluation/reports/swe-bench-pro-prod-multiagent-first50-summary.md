@@ -1532,3 +1532,40 @@ visible tests. The verifier should force a final source-symbol map for touched
 packages: every renamed/removed helper, every new exported symbol expected by
 nearby tests, and every final-output probe cardinality claim must be checked
 against the actual package that owns the contract.
+
+## 2026-07-13 Source-Symbol Map Guardrail
+
+PR4 now implements the general lesson from rows 17 and 18 rather than adding
+row-specific knowledge. When the final diff adds, removes, renames, or moves
+source symbol definitions, production-native completion must include
+`source-symbol-map-passed:` evidence naming the owning package/path, each
+added/removed/renamed symbol, and caller/nearby-test/compile proof. If no
+definition-level contract changed, it must include
+`source-symbol-map-skip-justified:` with source evidence.
+
+This is a no-leak check. It uses only the public issue text, final source diff,
+visible callers/tests, and final status text. It is intended to catch general
+failure modes such as:
+
+- placing a correct-looking feature in a sibling package while nearby tests
+  expect symbols in another package;
+- removing or renaming helpers that visible same-package tests or callers still
+  reference;
+- accepting source-symbol claims from agent prose without proving them against
+  `git diff --name-only` and package compile/test evidence.
+
+Updated surfaces:
+
+- `evaluation/native_solver/swe_prod_guardrails.py` now detects changed source
+  symbol definitions and blocks final status without a sufficient
+  source-symbol map marker.
+- `prompts/verifier.md`, `prompts/worker.md`,
+  `prompts/roles/contract-scout.md`, and the SWE autonomous templates now
+  instruct agents to produce or require the marker with package/path and
+  caller/test evidence.
+- `tests/run.sh` includes regressions for both wrong-package exported symbols
+  and removed-helper compatibility.
+
+Validation passed: `python3 -m py_compile` on the native solver files,
+`bash -n tests/run.sh`, `git diff --check`, a focused source-symbol regression,
+and bounded `tests/run.sh`.

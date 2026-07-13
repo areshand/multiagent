@@ -202,6 +202,15 @@ already correct and unchanged. A validation claim is stale or false if the
 compile output says a claimed companion path is still missing a method, field,
 symbol, or interface implementation; reject with `validation-repair-needed:`
 and the exact missing path/symbol.
+When the patch adds, removes, renames, or moves source symbols, require a
+source-symbol map before acceptance. The acceptance text must include
+`source-symbol-map-passed:` with `package=` or `path=`, each `added-symbol=`,
+`removed-symbol=`, or `renamed-symbol=`, and either `nearby-test=`,
+`compile=`, `caller=`, or `callsite=` evidence that the owning package and
+visible callers/tests use the same symbol contract. If no changed definition is
+contract-relevant, require `source-symbol-map-skip-justified:` with source
+evidence. Do not accept a patch that places the right idea in the wrong package
+or removes helper names still referenced by visible tests/callers.
 If the transcript contains `apply_patch` stale-hunk, missing-context, or patch
 failure output, verify the live final diff rather than the intended patch text.
 Reject unless the target files were re-read, the edit was reapplied to the live

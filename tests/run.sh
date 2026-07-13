@@ -410,6 +410,8 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_ap
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "final-output-field="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "expected-output-count=N"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "multi-value-probe.txt"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "source-symbol-map-passed:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "removed-symbol="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "stale-visible-reconciliation.txt"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "aggregate count"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "machine-gated evidence markers"
@@ -418,6 +420,8 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_fi
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "multi-value-probe-passed:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "final-output-field="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "multi-value-probe.txt"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "source-symbol-map-passed:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "renamed-symbol="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "stale-visible-reconciliation.txt"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "per affected output collection"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "run a convergence"
@@ -452,6 +456,8 @@ assert_file_contains "$ROOT/prompts/verifier.md" "multi-value-probe-passed:"
 assert_file_contains "$ROOT/prompts/verifier.md" "final-output-field="
 assert_file_contains "$ROOT/prompts/verifier.md" "expected-output-count=N"
 assert_file_contains "$ROOT/prompts/verifier.md" "multi-value-probe.txt"
+assert_file_contains "$ROOT/prompts/verifier.md" "source-symbol-map-passed:"
+assert_file_contains "$ROOT/prompts/verifier.md" "wrong package"
 assert_file_contains "$ROOT/prompts/verifier.md" "aggregate count"
 assert_file_contains "$ROOT/prompts/verifier.md" "visible inline golden expectations"
 assert_file_contains "$ROOT/prompts/verifier.md" "narrow root-cause"
@@ -468,6 +474,8 @@ assert_file_contains "$ROOT/prompts/worker.md" "validation-repair-needed:"
 assert_file_contains "$ROOT/prompts/worker.md" "multi-value-probe-passed:"
 assert_file_contains "$ROOT/prompts/worker.md" "actual-output-count=N"
 assert_file_contains "$ROOT/prompts/worker.md" "multi-value-probe.txt"
+assert_file_contains "$ROOT/prompts/worker.md" "source-symbol-map-passed:"
+assert_file_contains "$ROOT/prompts/worker.md" "callsite="
 assert_file_contains "$ROOT/prompts/worker.md" "aggregate count"
 assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "multi-value-probe-passed:"
 assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "source-count=N"
@@ -480,6 +488,8 @@ assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "final-output-field
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "multi-value-probe.txt"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "aggregate counts"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "declared-type ownership risk"
+assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-symbol map contract"
+assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-symbol-map-passed:"
 assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "declared-type ownership risk"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "declared receiver"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "declared type at that call site"
@@ -1203,6 +1213,44 @@ nonzero_validation_blockers = solve_swe_prod.implementation_scope_blockers(
     },
 )
 assert any("nonzero focused validation return code" in blocker for blocker in nonzero_validation_blockers), nonzero_validation_blockers
+source_symbol_map_blockers = solve_swe_prod.implementation_scope_blockers(
+    "Add a linear benchmark generator for benchmark tests.",
+    "diff --git a/lib/client/bench.go b/lib/client/bench.go\n"
+    "+type LinearBenchmark struct { Step int }\n"
+    "+func NewLinearBenchmarkGenerator() {}\n",
+    {
+        "status": "completed",
+        "validation": "go test ./lib/client passed",
+    },
+)
+assert any("source-symbol-map-passed:" in blocker for blocker in source_symbol_map_blockers), source_symbol_map_blockers
+source_symbol_map_evidence_blockers = solve_swe_prod.implementation_scope_blockers(
+    "Add a linear benchmark generator for benchmark tests.",
+    "diff --git a/lib/client/bench.go b/lib/client/bench.go\n"
+    "+type LinearBenchmark struct { Step int }\n"
+    "+func NewLinearBenchmarkGenerator() {}\n",
+    {
+        "status": "completed",
+        "validation": (
+            "go test ./lib/client passed. "
+            "source-symbol-map-passed: path=lib/client/bench.go package=client "
+            "added-symbol=LinearBenchmark added-symbol=NewLinearBenchmarkGenerator "
+            "nearby-test=go test ./lib/client compile=go test ./lib/client caller=lib/client"
+        ),
+    },
+)
+assert not any("source-symbol-map-passed:" in blocker for blocker in source_symbol_map_evidence_blockers), source_symbol_map_evidence_blockers
+removed_symbol_map_blockers = solve_swe_prod.implementation_scope_blockers(
+    "Preserve Alpine package parser compatibility while adding source package support.",
+    "diff --git a/scanner/alpine.go b/scanner/alpine.go\n"
+    "-func (o *alpine) parseApkInstalledList(stdout string) {}\n"
+    "+func (o *alpine) parseApkInstalledDatabase(stdout string) {}\n",
+    {
+        "status": "completed",
+        "validation": "go test ./scanner/... passed",
+    },
+)
+assert any("source-symbol-map-passed:" in blocker for blocker in removed_symbol_map_blockers), removed_symbol_map_blockers
 
 output_contract_test_update_blockers = solve_swe_prod.implementation_scope_blockers(
     "What did you expect to happen? The parser current output should become exactly one record per source. Current output has duplicate records.",

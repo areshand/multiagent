@@ -114,6 +114,14 @@ several output fields into one aggregate count. In SWE adapter runs, write the c
 `/tmp/multiagent-prod-swe/multi-value-probe.txt` so the adapter does not have to
 trust a self-reported sentence.
 
+If your patch adds, removes, renames, or moves source symbols, include
+`source-symbol-map-passed:` in the final validation with exact `package=` or
+`path=`, each `added-symbol=`, `removed-symbol=`, or `renamed-symbol=`, and
+`nearby-test=`, `compile=`, `caller=`, or `callsite=` evidence proving the
+symbol belongs in that package and visible callers/tests still compile. If no
+definition-level symbol contract changed, include
+`source-symbol-map-skip-justified:` with source evidence.
+
 For UI/component tasks, classify the request before editing. If the issue asks
 for additive public surface such as a story, export, example, or named symbol,
 prefer adding that surface while preserving the existing component

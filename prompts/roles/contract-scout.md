@@ -109,6 +109,12 @@ protocol, trait, generated client/model, or adapter, include a declared-type own
 in the ledger. The validation plan must name either the
 compile/type command that proves the call site or the source files where the
 declared receiver type and method provider are defined.
+If the likely fix adds, removes, renames, or moves source symbols, include a
+source-symbol map contract. Name the owning package/path, exact added/removed/
+renamed symbols, visible callers/tests that reference them, and the command or
+source comparison that proves package placement. The final status should include
+`source-symbol-map-passed:` with that evidence, or
+`source-symbol-map-skip-justified:` when the diff does not change definitions.
 
 For parser, serializer, importer/exporter, fixture-backed transformation, or
 data-shape tasks, route validation through the real production entrypoint and

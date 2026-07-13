@@ -80,6 +80,14 @@ As orchestrator:
      expected and actual counts must match for each field. Write the rerunnable
      command/output transcript to
      `/tmp/multiagent-prod-swe/multi-value-probe.txt`.
+   - If the diff adds, removes, renames, or moves source symbols, the status
+     JSON `validation` field must include exact `source-symbol-map-passed:`
+     evidence with `package=` or `path=`, each `added-symbol=`,
+     `removed-symbol=`, or `renamed-symbol=`, and `nearby-test=`, `compile=`,
+     `caller=`, or `callsite=` proof that the owning package and visible
+     callers/tests match the final diff. Use
+     `source-symbol-map-skip-justified:` only when source evidence proves no
+     definition-level symbol contract changed.
 10. Completion requires both accepted source state in `/app` and
    `/tmp/multiagent-prod-swe/status.json`.
 11. If the run has a non-empty source diff but no accepted verifier/status

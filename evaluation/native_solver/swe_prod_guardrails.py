@@ -181,6 +181,14 @@ def implementation_scope_blockers(
                 f"issue names helper/interface `{helper}`, but the diff/status does not preserve or implement that exact name"
             )
 
+    symbol_changes = source_symbol_changes(diff)
+    if symbol_changes and not source_symbol_map_has_evidence(status_text):
+        blockers.append(
+            "source symbol contracts changed, but status does not include `source-symbol-map-passed:` "
+            "or `source-symbol-map-skip-justified:` with exact package/path placement, added/removed/renamed "
+            "symbols, and caller or nearby-test compatibility evidence"
+        )
+
     if any(marker in issue_lower for marker in ("resend", "re-send", "retry", "throttle", "expiry", "expired", "ttl")):
         if not any(marker in status_text for marker in ("resend-gate-checked:", "throttle", "ttl", "expiry")):
             blockers.append(
@@ -210,6 +218,57 @@ def helper_preservation_evidence(issue: str, text: str) -> str:
     if not helpers:
         return ""
     return "helper-contract-preserved: " + ", ".join(helpers)
+
+
+def source_symbol_changes(diff: str) -> list[str]:
+    """Return changed source symbol definitions that need package/path proof."""
+    changed_paths = _changed_paths(diff)
+    source_paths = [path for path in changed_paths if _is_source_symbol_path(path)]
+    if not source_paths:
+        return []
+
+    changes: list[str] = []
+    current_path = ""
+    for raw_line in diff.splitlines():
+        if raw_line.startswith("diff --git a/") and " b/" in raw_line:
+            current_path = raw_line.split(" b/", 1)[1].split("\t", 1)[0].strip()
+            continue
+        if current_path not in source_paths:
+            continue
+        if not raw_line.startswith(("+", "-")) or raw_line.startswith(("+++", "---")):
+            continue
+        line = raw_line[1:].strip()
+        if not line or line.startswith(("//", "#", "*")):
+            continue
+        symbol = _changed_symbol_name(current_path, line)
+        if symbol:
+            changes.append(f"{raw_line[0]}{current_path}:{symbol}")
+    return sorted(dict.fromkeys(changes))
+
+
+def source_symbol_map_has_evidence(status_text: str) -> bool:
+    text = status_text.lower()
+    if "source-symbol-map-skip-justified:" in text:
+        return any(marker in text for marker in ("package=", "path=", "file=")) and any(
+            marker in text for marker in ("no symbol", "unchanged symbol", "not a symbol", "source evidence")
+        )
+    if "source-symbol-map-passed:" not in text:
+        return False
+    has_owner = any(marker in text for marker in ("package=", "path=", "file=", "module="))
+    has_symbol = any(marker in text for marker in ("symbol=", "added-symbol=", "removed-symbol=", "renamed-symbol=", "caller="))
+    has_compatibility = any(
+        marker in text
+        for marker in (
+            "nearby-test=",
+            "compile=",
+            "caller=",
+            "callsite=",
+            "source-compatible",
+            "same-package",
+            "package-test",
+        )
+    )
+    return has_owner and has_symbol and has_compatibility
 
 
 def _helper_preservation_window_has_evidence(helper_lower: str, text_lower: str) -> bool:
@@ -574,6 +633,72 @@ def _is_generated_or_dependency_path(path: str) -> bool:
         or "generated" in Path(lower).parts
         or "node_modules" in Path(lower).parts
     )
+
+
+def _is_source_symbol_path(path: str) -> bool:
+    lower = path.lower()
+    if _is_test_path(path) or _is_generated_or_dependency_path(path):
+        return False
+    return lower.endswith((
+        ".go",
+        ".py",
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".rs",
+        ".java",
+        ".kt",
+        ".rb",
+    ))
+
+
+def _changed_symbol_name(path: str, line: str) -> str:
+    lower_path = path.lower()
+    patterns: list[str]
+    if lower_path.endswith(".go"):
+        patterns = [
+            r"\bfunc\s+(?:\([^)]+\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+            r"\btype\s+([A-Za-z_][A-Za-z0-9_]*)\s+(?:struct|interface|func|map|\[|[A-Za-z_])",
+            r"\bvar\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+            r"\bconst\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+        ]
+    elif lower_path.endswith(".py"):
+        patterns = [
+            r"\bdef\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+            r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\s*[\(:]",
+        ]
+    elif lower_path.endswith((".js", ".jsx", ".ts", ".tsx")):
+        patterns = [
+            r"\b(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+            r"\b(?:export\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+            r"\b(?:export\s+)?(?:interface|type|enum)\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+            r"\b(?:export\s+)?(?:const|let|var)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_][A-Za-z0-9_]*)\s*=>",
+        ]
+    elif lower_path.endswith(".rs"):
+        patterns = [
+            r"\b(?:pub\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+            r"\b(?:pub\s+)?(?:struct|enum|trait|type)\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+        ]
+    elif lower_path.endswith((".java", ".kt")):
+        patterns = [
+            r"\b(?:class|interface|enum|object)\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+            r"\b(?:public|private|protected|internal|static|final|suspend|\s)+\s*fun\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+            r"\b(?:public|private|protected|static|final|\s)+[A-Za-z_<>,\[\]?]+\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+        ]
+    elif lower_path.endswith(".rb"):
+        patterns = [
+            r"\bdef\s+(?:self\.)?([A-Za-z_][A-Za-z0-9_!?=]*)",
+            r"\bclass\s+([A-Za-z_][A-Za-z0-9_:]*)\b",
+            r"\bmodule\s+([A-Za-z_][A-Za-z0-9_:]*)\b",
+        ]
+    else:
+        return ""
+    for pattern in patterns:
+        match = re.search(pattern, line)
+        if match:
+            return match.group(1)
+    return ""
 
 
 def _issue_explicitly_allows_tests(issue_lower: str) -> bool:

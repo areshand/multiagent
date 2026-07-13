@@ -183,6 +183,14 @@ Verifier quality bar:
   correct and unchanged. Treat compile output showing a claimed companion still
   missing a method, field, symbol, or interface implementation as
   `validation-repair-needed:` with the exact missing path/symbol.
+- If the final diff adds, removes, renames, or moves source symbols, write
+  `source-symbol-map-passed:` in final validation with `package=` or `path=`,
+  every `added-symbol=`, `removed-symbol=`, or `renamed-symbol=`, and
+  `nearby-test=`, `compile=`, `caller=`, or `callsite=` evidence. This map must
+  prove package placement and compatibility for visible callers/tests; do not
+  accept code placed in the wrong package or helper names removed while tests or
+  callers still reference them. Use `source-symbol-map-skip-justified:` only
+  with source evidence that no definition-level symbol contract changed.
 - Validate the worker's validation claim. If the worker only ran an unrelated
   smoke check, a single guessed case while a relevant test file was available,
   or no check due to a service that could be locally started, run/request the
