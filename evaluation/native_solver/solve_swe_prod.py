@@ -1043,6 +1043,31 @@ def validation_text_has_no_test_evidence(text: str) -> bool:
     )
 
 
+def go_test_output_has_real_package_evidence(output: str) -> bool:
+    """Return true when Go output shows at least one package ran real tests."""
+
+    for line in output.splitlines():
+        stripped = line.strip()
+        if not re.match(r"^ok\s+\S+", stripped):
+            continue
+        lower = stripped.lower()
+        if "[no tests to run]" in lower or "[no test files]" in lower:
+            continue
+        return True
+    return False
+
+
+def validation_probe_has_no_test_evidence(label: str, output: str) -> bool:
+    """Classify adapter-selected probe output without rejecting mixed Go suites."""
+
+    label_lower = label.lower()
+    if "-run testnonexistent" in label_lower or "-run '^$'" in label_lower:
+        return True
+    if label_lower.startswith("go test") and go_test_output_has_real_package_evidence(output):
+        return False
+    return validation_text_has_no_test_evidence(f"{label}\n{output}")
+
+
 def validation_section_offsets(text: str) -> list[int]:
     """Return likely validation-section starts from a worker report."""
 
@@ -1650,7 +1675,7 @@ def run_validation_coverage_probe(workdir: Path, issue: str, diff: str, blockers
             output = (stdout + "\n" + stderr).strip()
             output = (output + "\n" if output else "") + f"adapter validation probe timed out after {exc.timeout} seconds"
         teardown_success = returncode != 0 and pytest_teardown_after_success(output)
-        no_test_evidence = validation_text_has_no_test_evidence(f"{label}\n{output}")
+        no_test_evidence = validation_probe_has_no_test_evidence(label, output)
         if (returncode != 0 and not teardown_success) or no_test_evidence:
             passed = False
         sections.append(

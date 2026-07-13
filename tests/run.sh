@@ -1375,6 +1375,21 @@ assert not solve_swe_prod.visible_validation_passed_in_text(
     "ok github.com/example/project/lib/srv/db 0.111s [no tests to run]\n"
 )
 assert solve_swe_prod.validation_text_has_no_test_evidence("go test -run '^$' ./pkg")
+mixed_go_probe_output = (
+    "ok github.com/example/project/internal/server/evaluation (cached)\n"
+    "? github.com/example/project/internal/server/metrics [no test files]\n"
+    "ok github.com/example/project/internal/server/ofrep 0.148s\n"
+)
+assert solve_swe_prod.go_test_output_has_real_package_evidence(mixed_go_probe_output)
+assert not solve_swe_prod.validation_probe_has_no_test_evidence("go test ./internal/server/...", mixed_go_probe_output)
+assert solve_swe_prod.validation_probe_has_no_test_evidence(
+    "go test -run '^$' ./internal/server/ofrep",
+    "ok github.com/example/project/internal/server/ofrep 0.111s [no tests to run]\n",
+)
+assert solve_swe_prod.validation_probe_has_no_test_evidence(
+    "go test ./internal/server/metrics",
+    "? github.com/example/project/internal/server/metrics [no test files]\n",
+)
 
 claim_diff = (
     "diff --git a/internal/server/evaluation/server.go b/internal/server/evaluation/server.go\n"
