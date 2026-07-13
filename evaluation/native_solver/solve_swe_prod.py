@@ -2207,6 +2207,26 @@ def blockers_after_passing_public_probe(blockers: list[str]) -> list[str]:
     return remaining
 
 
+def non_recoverable_final_validation_blockers(blockers: list[str]) -> list[str]:
+    """Block final-wrapper recovery for basic validation failures.
+
+    Adapter-selected public probes can add useful evidence, but they must not
+    convert a final Go source diff with only no-test compile evidence into a
+    completed submission.
+    """
+    hard: list[str] = []
+    for blocker in blockers:
+        lower = blocker.lower()
+        if (
+            "no-test compile check" in lower
+            or "no tests to run" in lower
+            or "-run testnonexistent" in lower
+            or "-run '^$'" in lower
+        ):
+            hard.append(blocker)
+    return hard
+
+
 def source_symbol_map_blocker_present(blockers: list[str]) -> bool:
     text = "\n".join(str(blocker).lower() for blocker in blockers)
     return (
@@ -4429,6 +4449,16 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
         final_status = status()
         final_state = str(final_status.get("status", "")).lower()
         final_text = captured_text()
+        original_final_validation_blockers = validation_coverage_blockers(
+            issue,
+            final_diff,
+            final_text,
+            final_status,
+            task_metadata,
+        )
+        non_recoverable_validation_blockers = non_recoverable_final_validation_blockers(
+            original_final_validation_blockers
+        )
         validation_evidence = persisted_subagent_visible_validation_evidence(final_diff)
         validation_evidence_kind = "visible"
         if not validation_evidence and visible_validation_passed_in_text(final_text):
@@ -4467,6 +4497,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
             final_blockers = [
                 *implementation_scope_blockers(issue, final_diff, final_status_for_blockers, task_metadata),
                 *validation_coverage_blockers(issue, final_diff, final_text, final_status_for_blockers, task_metadata),
+                *non_recoverable_validation_blockers,
                 *final_probe_blockers,
             ]
             final_blockers = blockers_after_passing_public_probe(final_blockers)
@@ -4521,6 +4552,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 final_blockers = [
                     *implementation_scope_blockers(issue, final_diff, final_status_for_blockers, task_metadata),
                     *validation_coverage_blockers(issue, final_diff, final_text, final_status_for_blockers, task_metadata),
+                    *non_recoverable_validation_blockers,
                 ]
                 final_blockers = blockers_after_passing_public_probe(final_blockers)
                 if not final_blockers:

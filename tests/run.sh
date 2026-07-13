@@ -2047,6 +2047,7 @@ with tempfile.TemporaryDirectory() as td:
         },
     )
     assert any("no-test compile check" in blocker for blocker in no_test_status_blockers), no_test_status_blockers
+    assert solve_swe_prod.non_recoverable_final_validation_blockers(no_test_status_blockers), no_test_status_blockers
 
 with tempfile.TemporaryDirectory() as td:
     runtime_root = Path(td)
