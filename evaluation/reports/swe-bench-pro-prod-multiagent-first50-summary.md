@@ -1445,3 +1445,40 @@ stale-claim cleanup, patch-application rebase, and declared API/interface
 verification mandatory before finalization. These are source-visible,
 no-leak checks; they do not require official expected tests or row-specific
 fix knowledge.
+
+## 2026-07-13 Stale-Diff And Parser-Gate Follow-Up
+
+PR4 commit `531d620` makes blocked stale-diff/stale-patch states recoverable
+when a live source diff exists. Instead of accepting a final status that names
+paths no longer present in the final diff, the wrapper relaunches the
+production orchestrator once and asks it to reconcile the live repository state.
+This is a general source-state check and does not use official expected tests.
+
+A two-row smoke run with prefix
+`swe-bench-pro-prod-pr4-531-stalediff-w{worker}-offset{offset}-count1` showed
+the stale-final-diff path was fixed, but exposed two different remaining
+outcomes:
+
+| Row | Repo | Native rc | Official evidence | Outcome |
+| --- | --- | ---: | --- | --- |
+| 2 | NodeBB/NodeBB | 2 | no | False native guardrail block: route/WebFinger diff was treated like a parser multi-value task because helper text included parse-like wording. |
+| 14 | element-hq/element-web | 2 | no | Real native verifier block: focused Node shortcut validation failed with an assertion mismatch before official scoring. |
+
+PR4 commits `43fcd86` and `01bc33b` then narrowed the parser multi-value
+guardrail to parser wording in the issue text or parser-like changed paths,
+with a regression for a WebFinger route that contains a `parseResource` helper.
+Validation for `01bc33b` passed: `python3 -m py_compile` on the native runner
+files, `bash -n tests/run.sh`, `git diff --check`, a focused parser/WebFinger
+regression, and bounded `tests/run.sh`.
+
+Focused row 2 rerun
+`swe-bench-pro-prod-pr4-01bc-parsercontext-offset2-r1` used the production
+native solver baked from `01bc33b`. Native result: `rc=0`, `405.8s`; official
+verifier evidence: `true`; focused official score: `0.0`.
+
+The result is now useful solver-quality evidence. The earlier false parser
+guardrail no longer blocks the row, the patch applies cleanly, and the official
+tests pass WebFinger happy-path and missing-local-user cases. The remaining
+official failures are hidden-contract misses around malformed or missing
+`resource` handling and guest `view:users` privilege checks. Score movement:
+none; the first-50 aggregate remains `33/50`.
