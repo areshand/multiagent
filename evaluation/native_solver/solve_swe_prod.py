@@ -898,7 +898,6 @@ def is_disallowed_patch_path(path: str) -> bool:
         or "/public/build/" in lowered
         or "/public/dist/" in lowered
         or lowered.endswith((".bundle.js", ".bundle.css", ".min.js", ".min.css"))
-        or (name.endswith("_mock.go") or name.startswith("mock_"))
         or name
         in {
             "package-lock.json",
@@ -4393,6 +4392,39 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     if restored:
         log(f"restored benchmark-disallowed changes: {restored}")
     final_diff = git_diff(workdir)
+    if exit_code == 0 and final_diff.strip():
+        final_status = status()
+        final_text = captured_text()
+        post_cleanup_blockers = [
+            *implementation_scope_blockers(issue, final_diff, final_status, task_metadata),
+            *validation_coverage_blockers(issue, final_diff, final_text, final_status, task_metadata),
+        ]
+        status_text = json.dumps(final_status, sort_keys=True)
+        if restored and not build_verification_has_evidence(status_text, final_diff):
+            post_cleanup_blockers.insert(
+                0,
+                "benchmark cleanup changed the final submitted diff after verifier acceptance; "
+                "rerun affected compile/test validation against the cleaned final diff before submission: "
+                + ", ".join(restored[:8]),
+            )
+        if post_cleanup_blockers:
+            STATUS_PATH.write_text(
+                json.dumps(
+                    {
+                        "status": "blocked",
+                        "reason": "post-cleanup final gate rejected stale validation evidence",
+                        "blockers": list(dict.fromkeys(post_cleanup_blockers)),
+                        "final_diff_sha256": final_diff_sha256(final_diff),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            log(
+                "post-cleanup final gate refused stale completion evidence; blockers remain: "
+                + "; ".join(list(dict.fromkeys(post_cleanup_blockers)))
+            )
+            exit_code = 2
+            outcome = "blocked"
     if exit_code != 0 and final_diff.strip():
         final_status = status()
         final_state = str(final_status.get("status", "")).lower()

@@ -428,6 +428,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_ap
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "owner-evidence="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "candidate-owner="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "source-owner-ledger:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "constructor-dependency-checked:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "finding-create"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "todo-create"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "resolution-create"
@@ -444,6 +445,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_fi
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "multi-value-probe.txt"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "source-symbol-map-passed:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "source-owner-ledger:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "constructor-dependency-checked:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "go-package-validation-passed:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "finding-create"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "todo-create"
@@ -494,6 +496,7 @@ assert_file_contains "$ROOT/prompts/verifier.md" "expected-output-count=N"
 assert_file_contains "$ROOT/prompts/verifier.md" "multi-value-probe.txt"
 assert_file_contains "$ROOT/prompts/verifier.md" "source-symbol-map-passed:"
 assert_file_contains "$ROOT/prompts/verifier.md" "source-owner-ledger:"
+assert_file_contains "$ROOT/prompts/verifier.md" "constructor-dependency-checked:"
 assert_file_contains "$ROOT/prompts/verifier.md" "go-package-validation-passed:"
 assert_file_contains "$ROOT/prompts/verifier.md" "one single machine-readable"
 assert_file_contains "$ROOT/prompts/verifier.md" "owner-evidence="
@@ -521,6 +524,7 @@ assert_file_contains "$ROOT/prompts/worker.md" "go-package-validation-passed:"
 assert_file_contains "$ROOT/prompts/worker.md" "owner-evidence="
 assert_file_contains "$ROOT/prompts/worker.md" "candidate-owner="
 assert_file_contains "$ROOT/prompts/worker.md" "source-owner-ledger:"
+assert_file_contains "$ROOT/prompts/worker.md" "constructor-dependency-checked:"
 assert_file_contains "$ROOT/prompts/worker.md" "callsite="
 assert_file_contains "$ROOT/prompts/worker.md" "aggregate count"
 assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "multi-value-probe-passed:"
@@ -537,6 +541,7 @@ assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "declared-type owne
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-symbol map contract"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-symbol-map-passed:"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-owner-ledger:"
+assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "constructor-dependency contract"
 assert_file_contains "$ROOT/prompts/roles/build-verifier.md" "build-verification-passed:"
 assert_file_contains "$ROOT/prompts/roles/build-verifier.md" "final-diff-sha256="
 assert_file_contains "$ROOT/prompts/roles/build-verifier.md" "go-package-validation-passed:"
@@ -813,6 +818,9 @@ assert "blocked_status_needs_diff_reconciliation" in solver_source and "blocked-
 assert "EVAL_NO_DIFF_BLOCKED_RETRY_LIMIT" in solver_source and "blocked with no materialized source diff" in solver_source, (
     "blocked no-diff worker outcomes should get one production-orchestrator retry"
 )
+assert "post-cleanup final gate rejected stale validation evidence" in solver_source and "benchmark cleanup changed the final submitted diff after verifier acceptance" in solver_source, (
+    "cleanup must not change the submitted diff after verifier hash-bound acceptance without forcing reverification"
+)
 multi_value_section = re.search(
     r"parser_multi_value_diff = any\(\s*marker in diff_lower\s*for marker in \((?P<markers>.*?)\)\s*\)",
     solver_source,
@@ -1035,6 +1043,10 @@ with tempfile.TemporaryDirectory() as td:
     subprocess.run(["git", "config", "commit.gpgsign", "false"], cwd=repo, check=True)
     (repo / "requirements.txt").write_text("PyYAML==5.4.1\n")
     (repo / "package-lock.json").write_text('{"lockfileVersion": 1}\n')
+    (repo / "internal" / "server" / "evaluation").mkdir(parents=True)
+    (repo / "internal" / "server" / "evaluation" / "evaluation_store_mock.go").write_text(
+        "package evaluation\n\nfunc OldMock() {}\n"
+    )
     (repo / "source.py").write_text("old = True\n")
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
     subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True)
@@ -1051,6 +1063,9 @@ with tempfile.TemporaryDirectory() as td:
 
     (repo / ".gomodcache" / "example.com" / "dep").mkdir(parents=True)
     (repo / ".gomodcache" / "example.com" / "dep" / "dep.go").write_text("package dep\n")
+    (repo / "internal" / "server" / "evaluation" / "evaluation_store_mock.go").write_text(
+        "package evaluation\n\nfunc NewMock() {}\n"
+    )
     (repo / "new_source.py").write_text("value = 1\n")
     intent = solve_swe_prod.mark_untracked_source_intent_to_add(repo)
     assert "new_source.py" in intent, intent
@@ -1058,6 +1073,8 @@ with tempfile.TemporaryDirectory() as td:
     removed = solve_swe_prod.cleanup_patch(repo, start)
     assert not (repo / ".gomodcache").exists(), "tool cache directory should be removed"
     assert removed == [], removed
+    source_mock = (repo / "internal" / "server" / "evaluation" / "evaluation_store_mock.go").read_text()
+    assert "NewMock" in source_mock, "source mock files are compiled Go sources and must not be restored by cleanup"
 
 assert not solve_swe_prod.benchmark_specific_recovery_enabled(
     "Configuration loading should return a structured result with warnings for deprecated options.",

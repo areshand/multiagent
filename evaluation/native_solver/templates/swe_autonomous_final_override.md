@@ -54,6 +54,11 @@ As orchestrator:
    also name the concrete gate or helper inspected and must state how the source
    preserves the intended timing condition derived from issue text, visible
    tests, docs, callers, or runtime behavior.
+   If the patch adds a new dependency, store, bridge, adapter, constructor
+   parameter, optional type assertion, or fallback provider, the status JSON
+   `validation` field must include `constructor-dependency-checked:` naming the
+   constructor/factory path, production wiring path, mock/fake path, and compile
+   or source evidence that every caller still has a compatible API shape.
 9. Before writing completed status, check the final validation text for
    machine-gated evidence markers:
    - If worker or verifier output contains a relevant failed validation command,

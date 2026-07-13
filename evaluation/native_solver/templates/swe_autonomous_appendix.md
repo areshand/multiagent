@@ -167,6 +167,15 @@ Worker quality bar:
   Prove the method exists on that declared type, not only on a nearby concrete
   implementation. For Go, this means checking the struct/interface field type
   such as `Storer` before calling a method through `s.store`.
+- If the patch introduces a new dependency, store, bridge, adapter, constructor
+  parameter, optional type assertion, or fallback provider, verify the full
+  constructor/dependency-injection contract. Check the owner struct, `New` or
+  factory signatures, production wiring, visible call sites, mocks/fakes, and
+  nearby tests. Do not accept an optional type assertion as the only provider
+  for required behavior when source evidence implies the server should own the
+  dependency. Final validation must include
+  `constructor-dependency-checked:` naming the constructor/factory path,
+  production wiring path, mock/fake path, and compile or source evidence.
 - Basic build correctness is non-negotiable and precedes hidden-contract
   reasoning. For any code diff, final validation must include
   `build-verification-passed: final-diff-sha256=... changed-files=N

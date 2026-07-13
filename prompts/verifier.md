@@ -198,6 +198,17 @@ check that covers the call site or a source-level declared-type proof naming the
 receiver type and method/provider. Treat compile output containing `has no field or method`,
 `undefined method`, or `undefined field` as blocking declared-type ownership
 evidence.
+When a patch introduces a new dependency, store, bridge, adapter, constructor
+parameter, optional type assertion, or fallback provider, verify the constructor
+and dependency-injection contract end to end. Inspect the owner struct, `New` or
+factory signatures, production wiring, visible call sites, mocks/fakes, and
+nearby tests. Do not accept an optional type assertion as the only provider for
+required behavior when the issue/source contract implies the server itself must
+own the dependency. Acceptance must include `constructor-dependency-checked:`
+with the constructor/factory path, production wiring path, mock/fake path, and
+compile or source evidence that every caller still has a compatible API shape.
+Missing mock/fake constructors, stale `New(...)` call sites, or dependency
+interfaces updated in the wrong package are blocking hidden-contract findings.
 If a worker claims a package test passed, verify that the command actually
 compiled the package's test files and was run after the final diff. Stale worker
 claims, no-test runs, or package commands that exclude same-package tests are not

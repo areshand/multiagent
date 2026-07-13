@@ -175,6 +175,15 @@ Rust, apply the same declared-type check to interfaces, protocols, generated
 model descriptors, and traits. If you cannot run the compile/type check, report
 `validation-repair-needed:` with the receiver type, method name, and implicated
 source path.
+If your patch introduces a new dependency, store, bridge, adapter, constructor
+parameter, optional type assertion, or fallback provider, audit the constructor
+and dependency-injection contract before completion. Check the owner struct,
+`New` or factory signatures, production wiring, visible call sites, mocks/fakes,
+and nearby tests. Do not hide required behavior behind an optional type
+assertion when the source contract implies the server should own the dependency.
+Final validation must include `constructor-dependency-checked:` with the
+constructor/factory path, production wiring path, mock/fake path, and compile or
+source evidence that every caller still has a compatible API shape.
 Do not report `go test -run TestNonExistent`, `go test -run '^$'`, `[no test
 files]`, `no tests to run`, or another no-test compile check as behavioral
 validation for a source repair. Those checks can support compile sanity only;

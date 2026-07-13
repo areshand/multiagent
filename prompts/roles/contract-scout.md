@@ -109,6 +109,13 @@ protocol, trait, generated client/model, or adapter, include a declared-type own
 in the ledger. The validation plan must name either the
 compile/type command that proves the call site or the source files where the
 declared receiver type and method provider are defined.
+If the likely fix adds a new dependency, store, bridge, adapter, constructor
+parameter, optional type assertion, or fallback provider, include a
+constructor-dependency contract. Name the owner struct, constructor/factory,
+production wiring call site, mocks/fakes, and visible tests/callers that must
+remain source-compatible. Flag optional type assertions as risk when the task
+contract implies required behavior should be supplied through owned dependency
+injection.
 If the likely fix adds, removes, renames, or moves source symbols, include a
 source-symbol map contract. Name the owning package/path, exact added/removed/
 renamed symbols, visible callers/tests that reference them, and the command or
