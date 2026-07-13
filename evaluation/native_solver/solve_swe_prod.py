@@ -1495,6 +1495,55 @@ def changed_paths_from_diff(diff: str) -> set[str]:
     return paths
 
 
+def final_diff_sha256(diff: str) -> str:
+    return hashlib.sha256(diff.encode("utf-8")).hexdigest()
+
+
+def is_test_path(path: str) -> bool:
+    parts = Path(path).parts
+    name = Path(path).name.lower()
+    return (
+        "test" in parts
+        or "tests" in parts
+        or name.startswith("test_")
+        or name.endswith("_test.go")
+        or name.endswith(".test.ts")
+        or name.endswith(".test.tsx")
+        or name.endswith(".spec.ts")
+        or name.endswith(".spec.tsx")
+        or name.endswith(".test.js")
+        or name.endswith(".spec.js")
+        or "__tests__" in parts
+    )
+
+
+def changed_code_paths_from_diff(diff: str) -> list[str]:
+    return sorted(
+        path
+        for path in changed_paths_from_diff(diff)
+        if Path(path).suffix in SOURCE_CLAIM_EXTENSIONS
+        and not is_test_path(path)
+        and not path.startswith((".cache/", ".gomodcache/", "node_modules/", "vendor/"))
+    )
+
+
+def build_verification_has_evidence(text: str, diff: str) -> bool:
+    lower = text.lower().replace("\\n", "\n")
+    diff_hash = final_diff_sha256(diff).lower()
+    if "build-verification-passed:" not in lower:
+        return False
+    for match in re.finditer("build-verification-passed:", lower):
+        window = lower[match.start() : match.start() + 800]
+        if f"final-diff-sha256={diff_hash}" not in window and f'"final_diff_hash": "{diff_hash}"' not in window:
+            continue
+        if not any(marker in window for marker in ("compile_clean=true", '"compile_clean": true')):
+            continue
+        if not any(marker in window for marker in ("returncode=0", "rc=0", '"rc": 0', '"returncode": 0')):
+            continue
+        return True
+    return False
+
+
 def claimed_changed_source_paths(text: str) -> set[str]:
     claimed: set[str] = set()
     in_changed_section = False
@@ -1592,10 +1641,26 @@ def validation_coverage_blockers(
     # text may include the original prompt or adapter follow-up instructions,
     # so treating it as proof can turn instructions into false evidence.
     status_text = json.dumps(current_status, sort_keys=True).lower()
+    evidence_text = status_text
+    if "helper-validation-passed:" in status_text and HELPER_PROBE_PATH.exists():
+        try:
+            evidence_text += "\n" + HELPER_PROBE_PATH.read_text(encoding="utf-8", errors="replace").lower()
+        except OSError:
+            pass
     official_contract_satisfied = official_expected_tests_satisfied_by_text(metadata or {}, text)
     blockers: list[str] = [] if official_contract_satisfied else official_expected_test_blockers(metadata or {}, current_status)
     blockers.extend(claimed_changed_path_blockers(diff, f"{text}\n{json.dumps(current_status, sort_keys=True)}"))
     blockers.extend(stale_patch_application_blockers(text))
+    changed_code_paths = changed_code_paths_from_diff(diff)
+    if changed_code_paths and not build_verification_has_evidence(evidence_text, diff):
+        blockers.append(
+            "final patch changes code, but submission lacks hash-bound build verification for the final diff: "
+            + ", ".join(changed_code_paths[:8])
+            + "; run affected compile/test commands after the final diff and record "
+            "`build-verification-passed: final-diff-sha256="
+            + final_diff_sha256(diff)
+            + " compile_clean=true returncode=0`"
+        )
 
     uses_data_helper = any(
         marker in diff_lower
@@ -1642,12 +1707,7 @@ def validation_coverage_blockers(
         for line in diff.splitlines()
     )
     if touches_go_source:
-        go_evidence_text = status_text
-        if "helper-validation-passed:" in status_text and HELPER_PROBE_PATH.exists():
-            try:
-                go_evidence_text += "\n" + HELPER_PROBE_PATH.read_text(encoding="utf-8", errors="replace").lower()
-            except OSError:
-                pass
+        go_evidence_text = evidence_text
         go_packages = changed_go_package_args(diff)
         go_validation_markers = (
             "go test",
@@ -2002,6 +2062,26 @@ def run_validation_coverage_probe(workdir: Path, issue: str, diff: str, blockers
                 "tests passed before a teardown transport error."
             )
     if passed:
+        diff_hash = final_diff_sha256(diff)
+        changed_files = len(changed_paths_from_diff(diff))
+        sections.append(
+            f"\nbuild-verification-passed: final-diff-sha256={diff_hash} "
+            f"changed-files={changed_files} compile_clean=true returncode=0"
+        )
+        go_packages = changed_go_package_args(diff)
+        for package in go_packages:
+            go_command = next(
+                (
+                    " ".join(command)
+                    for command in commands
+                    if command[:2] == ["go", "test"] and (package in command[2:] or any(arg.endswith("/...") for arg in command[2:]))
+                ),
+                "go test " + package,
+            )
+            sections.append(
+                f"go-package-validation-passed: package={package} command={shlex.quote(go_command)} "
+                f"returncode=0 final-diff-sha256={diff_hash}"
+            )
         sections.append("\nhelper-validation-passed: adapter public helper probe")
     report = "\n".join(sections)
     HELPER_PROBE_PATH.write_text(report, encoding="utf-8")

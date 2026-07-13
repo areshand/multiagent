@@ -159,6 +159,11 @@ Worker quality bar:
   Prove the method exists on that declared type, not only on a nearby concrete
   implementation. For Go, this means checking the struct/interface field type
   such as `Storer` before calling a method through `s.store`.
+- Basic build correctness is non-negotiable and precedes hidden-contract
+  reasoning. For any code diff, final validation must include
+  `build-verification-passed: final-diff-sha256=... changed-files=N
+  compile_clean=true returncode=0` for commands run after the final diff. If the
+  diff changes after validation, rerun the build verifier and update the hash.
 - For Go patches, derive affected packages from `git diff --name-only` and run
   `go test ./affected/package` or a broader command that covers every changed
   non-test `.go` package after the final diff. Final validation must include

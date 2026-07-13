@@ -512,7 +512,12 @@ assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "declared-type owne
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-symbol map contract"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-symbol-map-passed:"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-owner-ledger:"
+assert_file_contains "$ROOT/prompts/roles/build-verifier.md" "build-verification-passed:"
+assert_file_contains "$ROOT/prompts/roles/build-verifier.md" "final-diff-sha256="
+assert_file_contains "$ROOT/prompts/roles/build-verifier.md" "go-package-validation-passed:"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "source-owner-ledger:"
+assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "prompts/roles/build-verifier.md"
+assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "build-verification-passed:"
 assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "declared-type ownership risk"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "declared receiver"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "declared type at that call site"
@@ -1155,13 +1160,44 @@ go_two_pkg_diff = (
     "diff --git a/lib/a/foo.go b/lib/a/foo.go\n+func Foo() {}\n"
     "diff --git a/lib/b/bar.go b/lib/b/bar.go\n+func Bar() {}\n"
 )
+go_two_pkg_hash = solve_swe_prod.final_diff_sha256(go_two_pkg_diff)
+go_missing_build_blockers = solve_swe_prod.validation_coverage_blockers(
+    "Go packages should compile after changing request handling.",
+    go_two_pkg_diff,
+    "",
+    {
+        "status": "completed",
+        "validation": (
+            "go-package-validation-passed: package=./lib/a command='go test ./lib/a' returncode=0. "
+            "go-package-validation-passed: package=./lib/b command='go test ./lib/b' returncode=0."
+        ),
+    },
+)
+assert any("hash-bound build verification" in blocker for blocker in go_missing_build_blockers), go_missing_build_blockers
+go_wrong_hash_blockers = solve_swe_prod.validation_coverage_blockers(
+    "Go packages should compile after changing request handling.",
+    go_two_pkg_diff,
+    "",
+    {
+        "status": "completed",
+        "validation": (
+            "build-verification-passed: final-diff-sha256=deadbeef changed-files=2 compile_clean=true returncode=0. "
+            "go-package-validation-passed: package=./lib/a command='go test ./lib/a' returncode=0. "
+            "go-package-validation-passed: package=./lib/b command='go test ./lib/b' returncode=0."
+        ),
+    },
+)
+assert any("hash-bound build verification" in blocker for blocker in go_wrong_hash_blockers), go_wrong_hash_blockers
 go_partial_pkg_blockers = solve_swe_prod.validation_coverage_blockers(
     "Go packages should compile after changing request handling.",
     go_two_pkg_diff,
     "",
     {
         "status": "completed",
-        "validation": "go-package-validation-passed: package=./lib/a command='go test ./lib/a' returncode=0",
+        "validation": (
+            f"build-verification-passed: final-diff-sha256={go_two_pkg_hash} changed-files=2 compile_clean=true returncode=0. "
+            "go-package-validation-passed: package=./lib/a command='go test ./lib/a' returncode=0"
+        ),
     },
 )
 assert any("./lib/b" in blocker for blocker in go_partial_pkg_blockers), go_partial_pkg_blockers
@@ -1172,6 +1208,7 @@ go_all_pkg_blockers = solve_swe_prod.validation_coverage_blockers(
     {
         "status": "completed",
         "validation": (
+            f"build-verification-passed: final-diff-sha256={go_two_pkg_hash} changed-files=2 compile_clean=true returncode=0. "
             "go-package-validation-passed: package=./lib/a command='go test ./lib/a' returncode=0. "
             "go-package-validation-passed: package=./lib/b command='go test ./lib/b' returncode=0."
         ),

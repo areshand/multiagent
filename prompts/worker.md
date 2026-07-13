@@ -93,6 +93,12 @@ implicated source paths, and the next bounded repair assignment. Source review,
 compile-only checks, or a weaker synthetic probe cannot clear a still-failing
 nearby visible command.
 
+For any code diff, final validation must include hash-bound build evidence for
+the final patch:
+`build-verification-passed: final-diff-sha256=... changed-files=N
+compile_clean=true returncode=0`. This evidence must come from commands run
+after the final diff. If you edit again, rerun validation and update the hash.
+
 When you expand a parser/reader allowlist, dispatch table, accepted token set,
 field list, extension list, or format registry, trace the newly included item
 through the reader functions it now activates and through every concrete

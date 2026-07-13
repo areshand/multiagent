@@ -1013,6 +1013,23 @@ The gate treats `undefined:`, `undefined method`, `undefined field`,
 `has no field or method`, `build failed`, `FAIL`, and nonzero return codes as
 blocking. One `ok` package no longer clears a different changed package.
 
+Follow-up architecture correction: this class of failure should not be handled
+as eval recovery. It is a non-negotiable submission invariant. PR4 now separates
+the build-verifier role from behavior verification and requires hash-bound
+machine evidence before submission:
+
+```text
+build-verification-passed: final-diff-sha256=... changed-files=N compile_clean=true returncode=0
+```
+
+The hash must match the final submitted diff. If a worker edits after
+validation, previous validation is stale. Behavior/hidden-contract verification
+can only happen after the build verifier proves the final changed packages
+compile/test cleanly. This directly addresses the row 28 failure mode where the
+system over-optimized around adapter recovery, stale evidence, no-test checks,
+and helper preservation while underweighting the simpler invariant that the
+final patch must compile under the changed package graph.
+
 ## 2026-07-13 Source Owner Evidence Hardening
 
 Focused row 18 smoke

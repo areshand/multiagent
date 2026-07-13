@@ -80,6 +80,14 @@ worker/verifier loop mechanics and `prompts/verifier.md` for the review role.
 The verifier module requires a verifier contract ledger, source-derived
 hidden-contract probes, assumption challenges, and an over-engineering pass.
 
+Before behavior verification or submission, run the build-verifier workflow for
+any code diff. Load `prompts/roles/build-verifier.md` and require
+`build-verification-passed: final-diff-sha256=... compile_clean=true
+returncode=0` bound to the current `git diff`, plus per-language package markers
+such as `go-package-validation-passed:`. Do not treat behavior verifier prose as
+build evidence, and do not submit a patch until both build verification and
+behavior verification pass.
+
 Before spawning the verifier, load `prompts/playbooks/validation-scheduling.md`
 if the worker ran or is running expensive validation. Do not spawn the verifier
 until the worker's validation lease has a captured passed, failed, timed-out,

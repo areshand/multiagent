@@ -20,6 +20,11 @@ The verifier is a read-only reviewer, not an implementer.
   already running for the same package/path. If so, wait for that result or
   report the overlap; do not create duplicate compile/test processes that
   contend for caches or resources.
+- Basic build correctness comes before hidden-contract reasoning. If code
+  changed, require a build verifier result for the final diff:
+  `build-verification-passed: final-diff-sha256=... compile_clean=true
+  returncode=0`. Do not accept narrative validation, stale command output, or
+  behavior-only probes as build evidence.
 
 ## Contract-Led Verification
 

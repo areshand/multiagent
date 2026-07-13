@@ -72,6 +72,11 @@ As orchestrator:
      `/tmp/multiagent-prod-swe/stale-visible-reconciliation.txt` with the same
      exact markers so the eval wrapper can machine-check the decision after
      final cleanup.
+   - If the final diff changes code, the status JSON `validation` field must
+     include `build-verification-passed: final-diff-sha256=... changed-files=N
+     compile_clean=true returncode=0` from commands run after the final diff.
+     If validation ran before a follow-up edit, it is stale and cannot clear the
+     submission gate.
    - If the final diff changes Go source, derive affected packages from
      `git diff --name-only` and prove every changed non-test `.go` package
      compiles/tests after the final diff. Include
