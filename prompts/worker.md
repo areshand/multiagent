@@ -117,12 +117,15 @@ trust a self-reported sentence.
 If your patch adds, removes, renames, or moves source symbols, include
 one single machine-readable `source-symbol-map-passed:` line in the final
 validation with exact `package=` or `path=`, each `added-symbol=`,
-`removed-symbol=`, or `renamed-symbol=`, and `nearby-test=`, `compile=`,
-`caller=`, or `callsite=` evidence proving the symbol belongs in that package
-and visible callers/tests still compile. Do not write markdown prose such as
+`removed-symbol=`, or `renamed-symbol=`, `owner-evidence=` proving you compared
+the plausible owning packages/modules from issue terms, imports, docs, callers,
+or nearby tests, `candidate-owner=` for any plausible issue-term package that
+was considered but not edited, and `nearby-test=`, `compile=`, `caller=`, or
+`callsite=` evidence proving the symbol belongs in that package and visible
+callers/tests still compile. Do not write markdown prose such as
 ``source-symbol-map-passed: `path` adds `symbol` in package `name```; use
 literal key/value tokens such as
-`source-symbol-map-passed: path=lib/client/bench.go package=client added-symbol=LinearBenchmark compile=go-test-lib-client`.
+`source-symbol-map-passed: path=lib/benchmark/linear.go package=benchmark added-symbol=Linear owner-evidence=issue-term-benchmark-package compile=go-test-lib-benchmark`.
 If no definition-level symbol contract changed, include one single
 machine-readable `source-symbol-map-skip-justified:` line with `path=` or
 `package=` and source evidence.

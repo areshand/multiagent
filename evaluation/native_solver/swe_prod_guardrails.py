@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 
@@ -186,8 +187,12 @@ def implementation_scope_blockers(
         blockers.append(
             "source symbol contracts changed, but status does not include `source-symbol-map-passed:` "
             "or `source-symbol-map-skip-justified:` with exact package/path placement, added/removed/renamed "
-            "symbols, and caller or nearby-test compatibility evidence"
+            "symbols, owner-discovery evidence, and caller or nearby-test compatibility evidence"
         )
+    elif symbol_changes:
+        workdir = _metadata_workdir(metadata)
+        if workdir:
+            blockers.extend(source_symbol_owner_candidate_blockers(workdir, issue, diff, current_status))
 
     if any(marker in issue_lower for marker in ("resend", "re-send", "retry", "throttle", "expiry", "expired", "ttl")):
         if not any(marker in status_text for marker in ("resend-gate-checked:", "throttle", "ttl", "expiry")):
@@ -196,6 +201,54 @@ def implementation_scope_blockers(
             )
 
     return blockers
+
+
+def source_symbol_owner_candidate_blockers(
+    workdir: Path,
+    issue: str,
+    diff: str,
+    current_status: dict[str, object],
+) -> list[str]:
+    """Block source-symbol completions that ignore better issue-term owner dirs."""
+    if not source_symbol_changes(diff):
+        return []
+    status_text = json.dumps(current_status, sort_keys=True).lower()
+    if "source-symbol-map-passed:" not in status_text or "source-symbol-map-skip-justified:" in status_text:
+        return []
+
+    issue_terms = _source_owner_issue_terms(issue)
+    if not issue_terms:
+        return []
+
+    changed_dirs = {
+        str(Path(path).parent).replace(".", "").strip("/")
+        for path in _changed_paths(diff)
+        if _is_source_symbol_path(path) and not _is_test_path(path)
+    }
+    changed_dirs = {path for path in changed_dirs if path}
+    changed_text = " ".join(changed_dirs).lower()
+    candidates = _source_owner_candidate_dirs(workdir, issue_terms)
+    unaccounted: list[str] = []
+    for candidate in candidates:
+        candidate_lower = candidate.lower()
+        if any(_same_or_nested_path(candidate_lower, changed.lower()) for changed in changed_dirs):
+            continue
+        if candidate_lower in status_text:
+            continue
+        # Only block when the issue-term directory is more specific than the
+        # edited package. If the edited path already carries the term, the normal
+        # source-symbol map and package validation rules are enough.
+        candidate_terms = [term for term in issue_terms if _path_has_exact_term(candidate_lower, term)]
+        if candidate_terms and not any(term in changed_text for term in candidate_terms):
+            unaccounted.append(candidate)
+
+    if not unaccounted:
+        return []
+    return [
+        "source-symbol owner evidence does not account for plausible issue-term owner package(s) outside edited paths: "
+        + ", ".join(unaccounted[:6])
+        + "; compare these candidates in owner-evidence= or move the symbols before completion"
+    ]
 
 
 def helper_preservation_evidence(issue: str, text: str) -> str:
@@ -218,6 +271,105 @@ def helper_preservation_evidence(issue: str, text: str) -> str:
     if not helpers:
         return ""
     return "helper-contract-preserved: " + ", ".join(helpers)
+
+
+def _metadata_workdir(metadata: dict[str, object] | None) -> Path | None:
+    if not isinstance(metadata, dict):
+        return None
+    raw = metadata.get("_solver_workdir")
+    if not isinstance(raw, str) or not raw:
+        return None
+    path = Path(raw)
+    return path if path.exists() else None
+
+
+def _source_owner_issue_terms(issue: str) -> set[str]:
+    terms: set[str] = set()
+    stop = {
+        "add",
+        "adds",
+        "added",
+        "change",
+        "changed",
+        "fix",
+        "test",
+        "tests",
+        "should",
+        "would",
+        "could",
+        "when",
+        "with",
+        "from",
+        "into",
+        "this",
+        "that",
+        "have",
+        "make",
+        "new",
+        "old",
+        "public",
+        "private",
+        "config",
+        "configuration",
+        "generator",
+        "linear",
+    }
+    for token in re.findall(r"\b[a-z][a-z0-9_-]{3,}\b", issue.lower()):
+        token = token.replace("_", "-")
+        if token in stop or token.endswith("ing"):
+            continue
+        terms.add(token)
+        if token.endswith("s") and len(token) > 4:
+            terms.add(token[:-1])
+    return terms
+
+
+def _source_owner_candidate_dirs(workdir: Path, issue_terms: set[str]) -> list[str]:
+    candidates: list[str] = []
+    skip_dirs = {
+        ".git",
+        ".hg",
+        ".svn",
+        "node_modules",
+        "vendor",
+        "dist",
+        "build",
+        "target",
+        "__pycache__",
+        ".tox",
+        ".venv",
+    }
+    source_suffixes = {".go", ".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".rs", ".java", ".kt", ".rb", ".php"}
+    for root, dirs, files in os.walk(workdir):
+        root_path = Path(root)
+        rel = root_path.relative_to(workdir)
+        depth = len(rel.parts)
+        dirs[:] = [name for name in dirs if name not in skip_dirs and not name.startswith(".") and depth < 5]
+        if rel == Path(".") or depth == 0:
+            continue
+        rel_text = rel.as_posix().lower()
+        if not any(_path_has_exact_term(rel_text, term) for term in issue_terms):
+            continue
+        if not any(Path(name).suffix in source_suffixes for name in files):
+            continue
+        candidates.append(rel.as_posix())
+        if len(candidates) >= 24:
+            break
+    return sorted(dict.fromkeys(candidates))
+
+
+def _path_has_exact_term(path_text: str, term: str) -> bool:
+    parts = [part for part in re.split(r"[/_.-]+", path_text.lower()) if part]
+    variants = {term}
+    if term.endswith("s") and len(term) > 4:
+        variants.add(term[:-1])
+    else:
+        variants.add(term + "s")
+    return any(part in variants for part in parts)
+
+
+def _same_or_nested_path(candidate: str, changed: str) -> bool:
+    return candidate == changed or changed.startswith(candidate + "/") or candidate.startswith(changed + "/")
 
 
 def source_symbol_changes(diff: str) -> list[str]:
@@ -256,6 +408,18 @@ def source_symbol_map_has_evidence(status_text: str) -> bool:
         return False
     has_owner = any(marker in text for marker in ("package=", "path=", "file=", "module="))
     has_symbol = any(marker in text for marker in ("symbol=", "added-symbol=", "removed-symbol=", "renamed-symbol=", "caller="))
+    has_owner_evidence = any(
+        marker in text
+        for marker in (
+            "owner-evidence=",
+            "owner-proof=",
+            "source-owner=",
+            "candidate-owner=",
+            "owner-candidate=",
+            "issue-term=",
+            "package-owner=",
+        )
+    )
     has_compatibility = any(
         marker in text
         for marker in (
@@ -268,7 +432,7 @@ def source_symbol_map_has_evidence(status_text: str) -> bool:
             "package-test",
         )
     )
-    return has_owner and has_symbol and has_compatibility
+    return has_owner and has_symbol and has_owner_evidence and has_compatibility
 
 
 def _helper_preservation_window_has_evidence(helper_lower: str, text_lower: str) -> bool:

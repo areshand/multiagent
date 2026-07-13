@@ -206,12 +206,15 @@ When the patch adds, removes, renames, or moves source symbols, require a
 source-symbol map before acceptance. The acceptance text must include
 one single machine-readable line beginning `source-symbol-map-passed:` with
 `package=` or `path=`, each `added-symbol=`, `removed-symbol=`, or
-`renamed-symbol=`, and either `nearby-test=`, `compile=`, `caller=`, or
-`callsite=` evidence that the owning package and visible callers/tests use the
-same symbol contract. Do not write this marker as markdown prose such as
+`renamed-symbol=`, `owner-evidence=` describing how plausible package/module
+owners were compared from issue terms, imports, docs, callers, or nearby tests,
+`candidate-owner=` for any plausible issue-term package that was considered but
+not edited, and either `nearby-test=`, `compile=`, `caller=`, or `callsite=`
+evidence that the owning package and visible callers/tests use the same symbol
+contract. Do not write this marker as markdown prose such as
 ``source-symbol-map-passed: `path` adds `symbol` in package `name```; it must
 use literal key/value tokens such as
-`source-symbol-map-passed: path=lib/client/bench.go package=client added-symbol=LinearBenchmark compile=go-test-lib-client`.
+`source-symbol-map-passed: path=lib/benchmark/linear.go package=benchmark added-symbol=Linear owner-evidence=issue-term-benchmark-package compile=go-test-lib-benchmark`.
 If no changed definition is contract-relevant, require one single
 machine-readable `source-symbol-map-skip-justified:` line with `path=` or
 `package=` and source evidence. Do not accept a patch that places the right idea

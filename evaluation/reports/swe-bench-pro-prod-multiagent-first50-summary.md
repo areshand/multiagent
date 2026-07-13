@@ -955,6 +955,56 @@ official scoring only, and up to four concurrent rows. Prefix:
 Net score movement: none. The first-50 aggregate remains `33/50`
 production-native clean official passes, still below the >70% target.
 
+## 2026-07-13 Source Owner Evidence Hardening
+
+Focused row 18 smoke
+`swe-bench-pro-prod-pr4-ownerproof-offset18-r1` tested the first owner-evidence
+prompt/marker change. Native result: `rc=0`, `400.3s`; official verifier
+evidence: `true`; clean native score: `0.0`.
+
+The run showed that merely requiring `owner-evidence=` was too weak. The
+production agents still placed the new benchmark generator in `lib/client` and
+wrote a plausible self-justifying owner marker:
+
+```text
+owner-evidence=issue-terms-benchmark-generator-and-existing-Benchmark-in-lib/client/bench.go
+```
+
+Official verification again failed because the implementation did not satisfy
+the expected benchmark package/API surface. The general lesson is that
+source-symbol owner evidence cannot be only free text attached to the edited
+package; it must account for plausible alternate source owners before a clean
+native completion is accepted.
+
+PR4 now tightens this in two ways. First, `source-symbol-map-passed:` requires
+`owner-evidence=` plus `candidate-owner=` markers in the production-facing
+worker, verifier, autonomous appendix, and final override. Second, the native
+guardrail can use the public task checkout as source evidence: when changed
+source symbols are added under one path and issue terms point to another
+source package directory, completion is blocked unless that candidate owner is
+explicitly accounted for. This uses only public issue text and repository
+source paths, not official tests or hidden expected patches.
+
+Focused row 18 smoke
+`swe-bench-pro-prod-pr4-ownercandidate-offset18-r1` used the source-tree
+candidate guardrail. Native result: `rc=2`, `417.6s`; official verifier
+evidence: `false`; clean native score: `n/a`.
+
+This changed the measurement outcome in the desired direction: the wrong
+`lib/client` diff was no longer submitted as a clean production-native
+completion. The wrapper rejected it before official scoring because durable
+`status.json` did not contain an acceptable source-symbol map after the
+coverage follow-up. The remaining row 18 gap is still solve quality and
+terminal handoff: the agents continue to infer `lib/client` as the API owner
+and do not yet create the benchmark-package symbols required by the task.
+
+Net score movement: none. The first-50 aggregate remains `33/50`
+production-native clean official passes. The next general improvement should
+make read-only source ownership discovery stronger before implementation, not
+just stronger at final acceptance: new API tasks should enumerate candidate
+packages/modules from issue terms, file names, package declarations, and import
+paths before the first edit, then assign the worker to the selected owner path.
+
 The new production-orchestrator resume hook did not materially affect this
 batch because the dominant failures were not the narrow post-exit state it
 targets. Most rows exited `rc=2` from the native gate while still treated as

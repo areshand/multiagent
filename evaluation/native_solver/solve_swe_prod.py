@@ -1755,10 +1755,12 @@ def source_symbol_map_resume_instructions(blockers: list[str]) -> str:
         "changed package/module declarations, changed symbol definitions, visible callers, and nearby tests. "
         "If the diff adds, removes, renames, or moves source symbols, the final `/tmp/multiagent-prod-swe/status.json` "
         "must contain one single machine-readable `source-symbol-map-passed:` line naming the owning `package=` or "
-        "`path=`, each `added-symbol=`, `removed-symbol=`, or `renamed-symbol=`, and at least one source-derived "
-        "compatibility proof such as `compile=`, `nearby-test=`, `caller=`, or `callsite=`. Do not write markdown "
+        "`path=`, each `added-symbol=`, `removed-symbol=`, or `renamed-symbol=`, `owner-evidence=` proving plausible "
+        "source owners were compared from issue terms, imports, docs, callers, or nearby tests, `candidate-owner=` for any "
+        "plausible issue-term package that was considered but not edited, and at least one source-derived compatibility proof "
+        "such as `compile=`, `nearby-test=`, `caller=`, or `callsite=`. Do not write markdown "
         "prose such as ``source-symbol-map-passed: `path` adds `symbol` in package `name```; use literal key/value "
-        "tokens such as `source-symbol-map-passed: path=lib/client/bench.go package=client added-symbol=LinearBenchmark compile=go-test-lib-client`. "
+        "tokens such as `source-symbol-map-passed: path=lib/benchmark/linear.go package=benchmark added-symbol=Linear owner-evidence=issue-term-benchmark-package compile=go-test-lib-benchmark`. "
         "If no source-symbol contract changed, write one single machine-readable `source-symbol-map-skip-justified:` "
         "line with the exact `path=` or `package=` and source evidence. "
         "Verifier prose, worker summaries, and passing no-test compile checks are not sufficient; the durable final "
@@ -2262,6 +2264,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     write_apply_patch_helper()
     issue = read_prompt(prompt_path)
     task_metadata = read_task_metadata()
+    task_metadata["_solver_workdir"] = str(workdir)
     log("solver metadata is public-only; official expected-test metadata is not exposed to the solver")
     autonomous_prompt = make_prompt(repo_root, workdir, issue, task_metadata)
     session = f"swe-prod-{os.getpid()}"

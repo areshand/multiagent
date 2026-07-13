@@ -83,13 +83,15 @@ As orchestrator:
    - If the diff adds, removes, renames, or moves source symbols, the status
      JSON `validation` field must include one single machine-readable
      `source-symbol-map-passed:` line with `package=` or `path=`, each
-     `added-symbol=`, `removed-symbol=`, or `renamed-symbol=`, and
+     `added-symbol=`, `removed-symbol=`, or `renamed-symbol=`,
+     `owner-evidence=` proving plausible source owners were compared from issue
+     terms, imports, docs, callers, or nearby tests, `candidate-owner=` for any
+     plausible issue-term package that was considered but not edited, and
      `nearby-test=`, `compile=`, `caller=`, or `callsite=` proof that the
-     owning package and visible callers/tests match the final diff. Do not write
-     markdown prose such as
+     owning package and visible callers/tests match the final diff. Do not write markdown prose such as
      ``source-symbol-map-passed: `path` adds `symbol` in package `name```; use
      literal key/value tokens such as
-     `source-symbol-map-passed: path=lib/client/bench.go package=client added-symbol=LinearBenchmark compile=go-test-lib-client`.
+     `source-symbol-map-passed: path=lib/benchmark/linear.go package=benchmark added-symbol=Linear owner-evidence=issue-term-benchmark-package compile=go-test-lib-benchmark`.
      Use one single machine-readable `source-symbol-map-skip-justified:` line
      only when it includes `path=` or `package=` and source evidence proving no
      definition-level symbol contract changed.

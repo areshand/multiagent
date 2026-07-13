@@ -411,6 +411,8 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_ap
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "expected-output-count=N"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "multi-value-probe.txt"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "source-symbol-map-passed:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "owner-evidence="
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "candidate-owner="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "one single machine-readable"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "removed-symbol="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "stale-visible-reconciliation.txt"
@@ -422,6 +424,8 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_fi
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "final-output-field="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "multi-value-probe.txt"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "source-symbol-map-passed:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "owner-evidence="
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "candidate-owner="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "one single machine-readable"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "renamed-symbol="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "stale-visible-reconciliation.txt"
@@ -460,6 +464,8 @@ assert_file_contains "$ROOT/prompts/verifier.md" "expected-output-count=N"
 assert_file_contains "$ROOT/prompts/verifier.md" "multi-value-probe.txt"
 assert_file_contains "$ROOT/prompts/verifier.md" "source-symbol-map-passed:"
 assert_file_contains "$ROOT/prompts/verifier.md" "one single machine-readable"
+assert_file_contains "$ROOT/prompts/verifier.md" "owner-evidence="
+assert_file_contains "$ROOT/prompts/verifier.md" "candidate-owner="
 assert_file_contains "$ROOT/prompts/verifier.md" "wrong package"
 assert_file_contains "$ROOT/prompts/verifier.md" "aggregate count"
 assert_file_contains "$ROOT/prompts/verifier.md" "visible inline golden expectations"
@@ -479,6 +485,8 @@ assert_file_contains "$ROOT/prompts/worker.md" "actual-output-count=N"
 assert_file_contains "$ROOT/prompts/worker.md" "multi-value-probe.txt"
 assert_file_contains "$ROOT/prompts/worker.md" "source-symbol-map-passed:"
 assert_file_contains "$ROOT/prompts/worker.md" "one single machine-readable"
+assert_file_contains "$ROOT/prompts/worker.md" "owner-evidence="
+assert_file_contains "$ROOT/prompts/worker.md" "candidate-owner="
 assert_file_contains "$ROOT/prompts/worker.md" "callsite="
 assert_file_contains "$ROOT/prompts/worker.md" "aggregate count"
 assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "multi-value-probe-passed:"
@@ -1248,8 +1256,61 @@ source_symbol_map_evidence_blockers = solve_swe_prod.implementation_scope_blocke
         ),
     },
 )
-assert not any("source-symbol-map-passed:" in blocker for blocker in source_symbol_map_evidence_blockers), source_symbol_map_evidence_blockers
-assert not solve_swe_prod.source_symbol_map_blocker_present(source_symbol_map_evidence_blockers), source_symbol_map_evidence_blockers
+assert any("source-symbol-map-passed:" in blocker for blocker in source_symbol_map_evidence_blockers), source_symbol_map_evidence_blockers
+source_symbol_map_owner_evidence_blockers = solve_swe_prod.implementation_scope_blockers(
+    "Add a linear benchmark generator for benchmark tests.",
+    "diff --git a/lib/benchmark/linear.go b/lib/benchmark/linear.go\n"
+    "+type Linear struct { Step int }\n"
+    "+func NewLinearGenerator() {}\n",
+    {
+        "status": "completed",
+        "validation": (
+            "go test ./lib/benchmark passed. "
+            "source-symbol-map-passed: path=lib/benchmark/linear.go package=benchmark "
+            "added-symbol=Linear added-symbol=NewLinearGenerator "
+            "owner-evidence=issue-term-benchmark-package "
+            "nearby-test=go test ./lib/benchmark compile=go test ./lib/benchmark caller=lib/benchmark"
+        ),
+    },
+)
+assert not any("source-symbol-map-passed:" in blocker for blocker in source_symbol_map_owner_evidence_blockers), source_symbol_map_owner_evidence_blockers
+assert not solve_swe_prod.source_symbol_map_blocker_present(source_symbol_map_owner_evidence_blockers), source_symbol_map_owner_evidence_blockers
+with tempfile.TemporaryDirectory() as source_owner_tmp:
+    source_owner_repo = Path(source_owner_tmp)
+    (source_owner_repo / "lib" / "client").mkdir(parents=True)
+    (source_owner_repo / "lib" / "benchmark").mkdir(parents=True)
+    (source_owner_repo / "lib" / "client" / "bench.go").write_text("package client\n", encoding="utf-8")
+    (source_owner_repo / "lib" / "benchmark" / "benchmark.go").write_text("package benchmark\n", encoding="utf-8")
+    wrong_owner_blockers = solve_swe_prod.implementation_scope_blockers(
+        "Add a linear benchmark generator for benchmark tests.",
+        "diff --git a/lib/client/bench.go b/lib/client/bench.go\n"
+        "+type LinearBenchmarkConfigGenerator struct { Step int }\n",
+        {
+            "status": "completed",
+            "validation": (
+                "source-symbol-map-passed: path=lib/client/bench.go package=client "
+                "added-symbol=LinearBenchmarkConfigGenerator owner-evidence=issue-terms-benchmark-generator "
+                "compile=go-test-lib-client"
+            ),
+        },
+        {"_solver_workdir": str(source_owner_repo)},
+    )
+    assert any("lib/benchmark" in blocker for blocker in wrong_owner_blockers), wrong_owner_blockers
+    compared_owner_blockers = solve_swe_prod.implementation_scope_blockers(
+        "Add a linear benchmark generator for benchmark tests.",
+        "diff --git a/lib/client/bench.go b/lib/client/bench.go\n"
+        "+type LinearBenchmarkConfigGenerator struct { Step int }\n",
+        {
+            "status": "completed",
+            "validation": (
+                "source-symbol-map-passed: path=lib/client/bench.go package=client "
+                "added-symbol=LinearBenchmarkConfigGenerator owner-evidence=compared-lib/benchmark-existing-api "
+                "candidate-owner=lib/benchmark compile=go-test-lib-client"
+            ),
+        },
+        {"_solver_workdir": str(source_owner_repo)},
+    )
+    assert not any("lib/benchmark" in blocker for blocker in compared_owner_blockers), compared_owner_blockers
 removed_symbol_map_blockers = solve_swe_prod.implementation_scope_blockers(
     "Preserve Alpine package parser compatibility while adding source package support.",
     "diff --git a/scanner/alpine.go b/scanner/alpine.go\n"

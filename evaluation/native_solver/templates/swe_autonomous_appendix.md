@@ -186,14 +186,16 @@ Verifier quality bar:
 - If the final diff adds, removes, renames, or moves source symbols, write
   one single machine-readable `source-symbol-map-passed:` line in final
   validation with `package=` or `path=`, every `added-symbol=`,
-  `removed-symbol=`, or `renamed-symbol=`, and `nearby-test=`, `compile=`,
-  `caller=`, or `callsite=` evidence. This map must prove package placement and
-  compatibility for visible callers/tests; do not accept code placed in the
-  wrong package or helper names removed while tests or callers still reference
-  them. Do not write markdown prose such as
+  `removed-symbol=`, or `renamed-symbol=`, `owner-evidence=` proving plausible
+  source owners were compared from issue terms, imports, docs, callers, or
+  nearby tests, `candidate-owner=` for any plausible issue-term package that was
+  considered but not edited, and `nearby-test=`, `compile=`, `caller=`, or
+  `callsite=` evidence. This map must prove package placement and compatibility
+  for visible callers/tests; do not accept code placed in the wrong package or
+  helper names removed while tests or callers still reference them. Do not write markdown prose such as
   ``source-symbol-map-passed: `path` adds `symbol` in package `name```; use
   literal key/value tokens such as
-  `source-symbol-map-passed: path=lib/client/bench.go package=client added-symbol=LinearBenchmark compile=go-test-lib-client`.
+  `source-symbol-map-passed: path=lib/benchmark/linear.go package=benchmark added-symbol=Linear owner-evidence=issue-term-benchmark-package compile=go-test-lib-benchmark`.
   Use one single machine-readable `source-symbol-map-skip-justified:` line only
   with `path=` or `package=` and source evidence that no definition-level symbol
   contract changed.
