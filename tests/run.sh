@@ -288,6 +288,62 @@ MOCK_TMUX_HAS_SESSION=0 \
   "$ROOT/launch.sh" --session launch-explicit-prompt --root "$LAUNCH_TARGET" --no-attach >"$TMPDIR/launch-explicit.out"
 assert_file_contains "$TMPDIR/launch-explicit-state/orchestrator-bootstrap.sh" "$(printf '%q' "$EXPLICIT_PROMPT")"
 
+REPAIR_STATE="$TMPDIR/repair-state"
+mkdir -p "$REPAIR_STATE"
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" finding-create build-go-ofrep \
+  --severity blocking \
+  --type compile_failure \
+  --summary "Changed Go packages do not compile" \
+  --affected internal/server/ofrep/evaluation.go,internal/server/evaluation/ofrep_bridge.go \
+  --evidence-json '{"command":"go test ./internal/server/ofrep ./internal/server/evaluation","returncode":1,"stderr_excerpt":"undefined: req.Request"}' \
+  --required-resolution "Final diff must compile with rc=0 for both changed Go packages." >"$TMPDIR/finding-create.out"
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" todo-create todo-017 \
+  --source-finding-id build-go-ofrep \
+  --task "Fix Go compile failure in changed packages." \
+  --context "Exact verifier evidence." \
+  --done-criteria "run go test ./internal/server/ofrep" \
+  --done-criteria "record returncode=0 after final diff" >"$TMPDIR/todo-create.out"
+if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" resolution-create todo-017 \
+  --worker worker-02-ofrep-build \
+  --status resolved \
+  --changed internal/server/ofrep/evaluation.go \
+  --validation-json '[{"cmd":"go test ./internal/server/ofrep","rc":1}]' \
+  --why "Claimed fixed despite failing validation." >"$TMPDIR/resolution-bad.out" 2>&1; then
+  echo "expected resolved todo with nonzero validation rc to fail" >&2
+  cat "$TMPDIR/resolution-bad.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/resolution-bad.out" "nonzero rc=1"
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" resolution-create todo-017 \
+  --worker worker-02-ofrep-build \
+  --status resolved \
+  --changed internal/server/ofrep/evaluation.go \
+  --validation-json '[{"cmd":"go test ./internal/server/ofrep","rc":0}]' \
+  --why "Changed package compiles after the final diff." >"$TMPDIR/resolution-create.out"
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" todo-status todo-017 closed >"$TMPDIR/direct-close.out"
+if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-missing-closure.out" 2>&1; then
+  echo "expected direct closed todo without verifier closure to fail gate-check" >&2
+  cat "$TMPDIR/gate-missing-closure.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/gate-missing-closure.out" "closed-todo-missing-verifier-closure"
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" todo-status todo-017 resolved >"$TMPDIR/reopen-resolved.out"
+if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" todo-close todo-017 \
+  --verified-by verifier-01-ofrep-build \
+  --recheck-json '{"accepted":false,"finding_rechecked":"build-go-ofrep"}' >"$TMPDIR/close-rejected.out" 2>&1; then
+  echo "expected verifier closure with accepted=false to fail" >&2
+  cat "$TMPDIR/close-rejected.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/close-rejected.out" "accepted=true"
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" todo-close todo-017 \
+  --verified-by verifier-01-ofrep-build \
+  --recheck-json '{"accepted":true,"finding_rechecked":"build-go-ofrep","commands":[{"cmd":"go test ./internal/server/ofrep","rc":0}],"final_diff_hash":"abc123"}' \
+  --notes "Verifier rechecked original finding after worker resolution." >"$TMPDIR/todo-close.out"
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-closed.out"
+assert_file_contains "$TMPDIR/gate-closed.out" "accepted"
+assert_file_contains "$REPAIR_STATE/todos/todo-017/closure.json" '"verified_by": "verifier-01-ofrep-build"'
+
 assert_file_contains "$ROOT/orchestrator_prompt.md" "Do not inspect recovery state"
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'When `MULTIAGENT_RESUME=1`'
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'Only in that mode'
@@ -360,6 +416,7 @@ assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "repair-
 assert_file_contains "$ROOT/prompts/playbooks/finding-todo-loop.md" "Finding Todo Loop Playbook"
 assert_file_contains "$ROOT/prompts/playbooks/finding-todo-loop.md" "verifier writes structured findings"
 assert_file_contains "$ROOT/prompts/playbooks/finding-todo-loop.md" "resolution-create"
+assert_file_contains "$ROOT/prompts/playbooks/finding-todo-loop.md" "todo-close"
 assert_file_contains "$ROOT/prompts/playbooks/finding-todo-loop.md" "gate-check"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Agent Spawning Playbook"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Ponytail implementation discipline"
@@ -367,6 +424,7 @@ assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Ponytail over-
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "hidden-contract probes"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" 'verifier suggests no follow-up'
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "todo-create"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "todo-close"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "gate-check"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" 'WORKER_CLI="${WORKER_CLI:-claude}"'
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "Orchestration Routing Playbook"
@@ -379,6 +437,7 @@ assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "Safety 
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "parallel-execution.md"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "Validation Failure Repair Workflow"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "finding-todo-loop.md"
+assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "todo-close"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "Build verification failures are not eval-wrapper paperwork"
 assert_file_contains "$ROOT/prompts/playbooks/dag.md" "DAG Workflow Playbook"
 assert_file_contains "$ROOT/prompts/playbooks/recovery.md" "Recovery Playbook"
@@ -404,6 +463,7 @@ assert_file_contains "$ROOT/README.md" "Evaluation Framework"
 assert_file_contains "$ROOT/README.md" "Parallel DAG Discipline"
 assert_file_contains "$ROOT/README.md" "Structured Repair Loop"
 assert_file_contains "$ROOT/README.md" "finding-todo-loop.md"
+assert_file_contains "$ROOT/README.md" "todo-close"
 assert_file_contains "$ROOT/README.md" 'orchestration` adapter covers planning behavior'
 assert_file_contains "$ROOT/README.md" "evaluation/tasks"
 assert_file_contains "$ROOT/evaluation/README.md" "large-update-300"
@@ -432,6 +492,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_ap
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "finding-create"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "todo-create"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "resolution-create"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "todo-close"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "gate-check"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "one single machine-readable"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "removed-symbol="
@@ -450,6 +511,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_fi
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "finding-create"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "todo-create"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "resolution-create"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "todo-close"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "gate-check"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "owner-evidence="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "candidate-owner="
@@ -1791,7 +1853,13 @@ ui_skip_blockers = solve_swe_prod.validation_coverage_blockers(
     "",
     {
         "status": "completed",
-        "validation": "ui-validation-skip-justified: no component test harness exists; source-level event matcher table inspected",
+        "validation": (
+            "ui-validation-skip-justified: no component test harness exists; "
+            "source-level event matcher table inspected. "
+            "build-verification-passed: "
+            "final-diff-sha256=7fbc8818b5b782df7e698f4d12d7b406e1cca2ec1a3c2fc779b9d7977dfa3b8d "
+            "changed-files=1 compile_clean=true returncode=0"
+        ),
     },
 )
 assert not ui_skip_blockers, ui_skip_blockers
@@ -2331,8 +2399,9 @@ if "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-resolved.out" 2>&1; then
 fi
 assert_file_contains "$TMPDIR/gate-resolved.out" $'reject\topen-blocking-todo\tfinding=build-go-ofrep\ttodo=todo-017\tstatus=resolved'
 
-todo_closed_output="$("$ROOT/bin/subagent.sh" todo-status todo-017 closed)"
-[[ "$todo_closed_output" == $'todo status\ttodo-017\tclosed' ]]
+todo_closed_output="$("$ROOT/bin/subagent.sh" todo-close todo-017 --verified-by verifier-01-ofrep --recheck-json '{"accepted":true,"finding_rechecked":"build-go-ofrep","commands":[{"cmd":"go test ./internal/server/ofrep","rc":0},{"cmd":"go test ./internal/server/evaluation","rc":0}],"final_diff_hash":"abc123"}' --notes "Verifier accepted worker resolution.")"
+[[ "$todo_closed_output" == $'todo closed\ttodo-017\tverifier-01-ofrep' ]]
+assert_file_contains "$MULTIAGENT_STATE_DIR/todos/todo-017/closure.json" '"accepted": true'
 gate_closed_output="$("$ROOT/bin/subagent.sh" gate-check)"
 [[ "$gate_closed_output" == $'accepted\tfinal-gate' ]]
 

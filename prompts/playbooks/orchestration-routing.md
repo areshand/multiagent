@@ -104,7 +104,8 @@ verifier that may duplicate the command.
 The orchestrator decides which findings become accepted follow-up; never pass
 raw verifier findings directly to the worker as orders. Accepted blocking
 findings become todo queue items with done criteria, and a todo is retired only
-after a verifier accepts the worker's resolution evidence.
+through `bin/subagent.sh todo-close ...` after a verifier accepts the worker's
+resolution evidence.
 
 ## Validation Failure Repair Workflow
 
@@ -160,7 +161,7 @@ and use its progress/status procedure.
 2. Spawn: create assignment metadata, load the right prompt module, start the agent, send the assignment.
 3. Monitor: use `bin/status.sh`, inspect busy/blocked/done states, update checkpoints.
 4. Coordinate: resolve blockers, prevent ownership conflicts, maintain validation leases, run scope guard when diff shape is risky, route verification, spawn independent follow-ups.
-5. Accept: run `assignment-check`, review verifier findings, close or reopen todo resolutions after reverification, run `bin/subagent.sh gate-check`, finalize agents.
+5. Accept: run `assignment-check`, review verifier findings, close accepted todo resolutions with `bin/subagent.sh todo-close ...` after reverification or reopen them, run `bin/subagent.sh gate-check`, finalize agents.
 6. Report: summarize status, branches, commits, blockers, state paths, validation, and residual risk.
 
 ## Optional Playbooks

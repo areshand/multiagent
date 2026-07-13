@@ -51,7 +51,7 @@ bounded task, exact evidence, owned paths, and objective done criteria.
 
 ## Worker Resolution
 
-A worker assigned a todo must close the todo with evidence, not only a sentence:
+A worker assigned a todo must record resolution evidence, not only a sentence:
 
 ```bash
 bin/subagent.sh resolution-create todo-017 \
@@ -67,10 +67,14 @@ bin/subagent.sh resolution-create todo-017 \
 ## Reverification And Gate
 
 The verifier compares the worker resolution against the original finding and
-done criteria. If the issue is fixed, the orchestrator records:
+done criteria. If the issue is fixed, the orchestrator closes the todo with
+verifier recheck evidence:
 
 ```bash
-bin/subagent.sh todo-status todo-017 closed
+bin/subagent.sh todo-close todo-017 \
+  --verified-by verifier-01-ofrep-build \
+  --recheck-json '{"accepted":true,"finding_rechecked":"build-go-ofrep","commands":[{"cmd":"go test ./internal/server/ofrep","rc":0},{"cmd":"go test ./internal/server/evaluation","rc":0}],"final_diff_hash":"..."}' \
+  --notes "Verifier rechecked the original finding after worker resolution."
 ```
 
 If evidence is stale, partial, missing, or contradicted by source/commands,
@@ -87,6 +91,7 @@ bin/subagent.sh gate-check
 ```
 
 Do not accept while `gate-check` reports an unqueued blocking finding or any
-open, assigned, resolved, or reopened todo. For code patches, build
-verification is one required finding/todo class; behavior and hidden-contract
-findings use the same loop.
+open, assigned, resolved, or reopened todo. A closed todo also fails the gate if
+it lacks worker resolution evidence or verifier closure evidence. For code
+patches, build verification is one required finding/todo class; behavior and
+hidden-contract findings use the same loop.

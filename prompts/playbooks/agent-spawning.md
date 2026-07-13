@@ -102,7 +102,8 @@ The orchestrator decides which findings become accepted follow-up; never pass
 raw verifier findings directly to the worker as orders. Convert accepted
 blocking findings into `bin/subagent.sh todo-create ...` records with objective
 done criteria, assign workers from open todos, require worker resolution
-evidence, then close or reopen the todo only after verifier recheck.
+evidence, then close the todo with `bin/subagent.sh todo-close ...` only after
+verifier recheck. `resolved` is a handoff state, not acceptance.
 
 Before final acceptance, run:
 
@@ -111,7 +112,8 @@ bin/subagent.sh gate-check
 ```
 
 Do not accept while required findings are unqueued or repair todos are open,
-assigned, resolved, or reopened.
+assigned, resolved, or reopened. A closed todo must have both worker resolution
+evidence and verifier closure evidence.
 
 ## Progress And Status
 

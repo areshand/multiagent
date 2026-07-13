@@ -44,6 +44,7 @@ Usage:
   bin/subagent.sh todo-assign TODO_ID NAME
   bin/subagent.sh todo-status TODO_ID open|assigned|resolved|reopened|closed
   bin/subagent.sh resolution-create TODO_ID --worker NAME --status resolved|blocked --validation-json JSON --why TEXT [--changed PATH[,PATH...]]
+  bin/subagent.sh todo-close TODO_ID --verified-by NAME --recheck-json JSON [--notes TEXT]
   bin/subagent.sh gate-check
   bin/subagent.sh poll NAME
   bin/subagent.sh inspect NAME [--lines N]
@@ -1362,6 +1363,106 @@ payload = {
 ' "$dir"
 }
 
+write_closure_json() {
+  local todo_id="$1"
+  local dir
+  dir="$(todo_dir "$todo_id")"
+  require_cmd python3
+  python3 -c '
+import json
+import pathlib
+import sys
+root = pathlib.Path(sys.argv[1])
+meta = {}
+for line in (root / "closure.env").read_text().splitlines():
+    if "=" in line:
+        key, value = line.split("=", 1)
+        meta[key] = value
+with (root / "recheck.json").open() as fh:
+    recheck = json.load(fh)
+payload = {
+    "todo_id": meta["todo_id"],
+    "source_finding_id": meta["source_finding_id"],
+    "verified_by": meta["verified_by"],
+    "recheck": recheck,
+    "notes": meta.get("notes", ""),
+    "created_at": meta["created_at"],
+}
+(root / "closure.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+' "$dir"
+}
+
+validate_resolution_payload() {
+  local status="$1"
+  local validation_json="$2"
+  require_cmd python3
+  python3 -c '
+import json
+import sys
+status = sys.argv[1]
+raw = sys.argv[2]
+try:
+    payload = json.loads(raw)
+except Exception as exc:
+    raise SystemExit(f"invalid validation JSON: {exc}")
+if not isinstance(payload, list) or not payload:
+    raise SystemExit("validation JSON must be a non-empty array")
+for idx, item in enumerate(payload):
+    if not isinstance(item, dict):
+        raise SystemExit(f"validation item {idx} must be an object")
+    has_command = bool(str(item.get("cmd", "")).strip())
+    has_rc = "rc" in item
+    has_source = any(str(item.get(key, "")).strip() for key in ("source_reasoning", "source_evidence", "evidence"))
+    if not ((has_command and has_rc) or has_source):
+        raise SystemExit(f"validation item {idx} needs cmd+rc or source evidence")
+    if has_rc:
+        try:
+            rc = int(item["rc"])
+        except Exception:
+            raise SystemExit(f"validation item {idx} rc must be an integer")
+        if status == "resolved" and rc != 0:
+            raise SystemExit(f"resolved validation item {idx} has nonzero rc={rc}")
+' "$status" "$validation_json"
+}
+
+validate_closure_payload() {
+  local recheck_json="$1"
+  require_cmd python3
+  python3 -c '
+import json
+import sys
+raw = sys.argv[1]
+try:
+    payload = json.loads(raw)
+except Exception as exc:
+    raise SystemExit(f"invalid recheck JSON: {exc}")
+if not isinstance(payload, dict):
+    raise SystemExit("recheck JSON must be an object")
+if payload.get("accepted") is not True:
+    raise SystemExit("recheck JSON must include accepted=true")
+if not any(key in payload for key in ("finding_rechecked", "source_finding_id", "commands", "evidence", "final_diff_hash")):
+    raise SystemExit("recheck JSON must name the finding, commands, evidence, or final diff hash")
+commands = payload.get("commands", [])
+if commands is None:
+    commands = []
+if not isinstance(commands, list):
+    raise SystemExit("recheck commands must be an array when present")
+for idx, item in enumerate(commands):
+    if not isinstance(item, dict):
+        raise SystemExit(f"recheck command {idx} must be an object")
+    if not str(item.get("cmd", "")).strip():
+        raise SystemExit(f"recheck command {idx} missing cmd")
+    if "rc" not in item:
+        raise SystemExit(f"recheck command {idx} missing rc")
+    try:
+        rc = int(item["rc"])
+    except Exception:
+        raise SystemExit(f"recheck command {idx} rc must be an integer")
+    if rc != 0:
+        raise SystemExit(f"recheck command {idx} has nonzero rc={rc}")
+' "$recheck_json"
+}
+
 finding_create() {
   local finding_id="${1:-}"
   [[ -n "$finding_id" ]] || die "finding-create requires FINDING_ID"
@@ -1674,6 +1775,7 @@ resolution_create() {
   [[ -n "$validation_json" ]] || die "resolution-create requires --validation-json JSON"
   [[ -n "$why" ]] || die "resolution-create requires --why TEXT"
   reject_newline "--why" "$why"
+  validate_resolution_payload "$status" "$validation_json"
 
   local dir
   dir="$(todo_dir "$todo_id")"
@@ -1695,6 +1797,95 @@ EOF
   set_env_key "$(todo_meta_file "$todo_id")" updated_at "$(timestamp)"
   write_todo_json "$todo_id"
   printf 'resolution recorded\t%s\t%s\t%s\n' "$todo_id" "$worker" "$status"
+}
+
+todo_close() {
+  local todo_id="${1:-}"
+  [[ -n "$todo_id" ]] || die "todo-close requires TODO_ID"
+  validate_name "$todo_id"
+  shift
+
+  local verified_by="" recheck_json="" notes=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --verified-by)
+        verified_by="${2:-}"
+        shift 2
+        ;;
+      --recheck-json)
+        recheck_json="${2:-}"
+        shift 2
+        ;;
+      --notes)
+        notes="${2:-}"
+        shift 2
+        ;;
+      *)
+        die "unknown todo-close argument: $1"
+        ;;
+    esac
+  done
+
+  [[ -f "$(todo_meta_file "$todo_id")" ]] || die "no todo: $todo_id"
+  [[ "$(get_todo_status "$todo_id")" == "resolved" ]] || die "todo-close requires a resolved todo"
+  [[ -f "$(todo_dir "$todo_id")/resolution.json" ]] || die "todo-close requires worker resolution evidence"
+  [[ -n "$verified_by" ]] || die "todo-close requires --verified-by NAME"
+  validate_name "$verified_by"
+  [[ -n "$recheck_json" ]] || die "todo-close requires --recheck-json JSON"
+  reject_newline "--notes" "$notes"
+  validate_closure_payload "$recheck_json"
+
+  local source_finding_id dir
+  source_finding_id="$(read_todo_value "$todo_id" source_finding_id)"
+  dir="$(todo_dir "$todo_id")"
+  cat >"$dir/closure.env" <<EOF
+todo_id=$todo_id
+source_finding_id=$source_finding_id
+verified_by=$verified_by
+notes=$notes
+created_at=$(timestamp)
+EOF
+  printf '%s\n' "$recheck_json" >"$dir/recheck.json"
+  write_closure_json "$todo_id"
+  set_env_key "$(todo_meta_file "$todo_id")" updated_at "$(timestamp)"
+  set_todo_status "$todo_id" "closed"
+  write_todo_json "$todo_id"
+  printf 'todo closed\t%s\t%s\n' "$todo_id" "$verified_by"
+}
+
+audit_closed_todo() {
+  local todo_id="$1"
+  local dir
+  dir="$(todo_dir "$todo_id")"
+  if [[ ! -f "$dir/resolution.json" ]]; then
+    printf 'reject\tclosed-todo-missing-resolution\ttodo=%s\n' "$todo_id"
+    return 1
+  fi
+  if [[ ! -f "$dir/closure.json" ]]; then
+    printf 'reject\tclosed-todo-missing-verifier-closure\ttodo=%s\n' "$todo_id"
+    return 1
+  fi
+  require_cmd python3
+  python3 -c '
+import json
+import pathlib
+import sys
+root = pathlib.Path(sys.argv[1])
+todo_id = sys.argv[2]
+try:
+    resolution = json.loads((root / "resolution.json").read_text())
+    closure = json.loads((root / "closure.json").read_text())
+except Exception as exc:
+    print(f"reject\tclosed-todo-invalid-evidence\ttodo={todo_id}\treason={exc}")
+    raise SystemExit(1)
+if resolution.get("todo_id") != todo_id or resolution.get("status") != "resolved":
+    print(f"reject\tclosed-todo-invalid-resolution\ttodo={todo_id}")
+    raise SystemExit(1)
+recheck = closure.get("recheck")
+if closure.get("todo_id") != todo_id or not isinstance(recheck, dict) or recheck.get("accepted") is not True:
+    print(f"reject\tclosed-todo-invalid-closure\ttodo={todo_id}")
+    raise SystemExit(1)
+' "$dir" "$todo_id"
 }
 
 gate_check() {
@@ -1738,6 +1929,8 @@ gate_check() {
       status="$(get_todo_status "$todo_id")"
       if [[ "$status" != "closed" ]]; then
         printf 'reject\topen-todo\ttodo=%s\tstatus=%s\n' "$todo_id" "$status"
+        failed=1
+      elif ! audit_closed_todo "$todo_id"; then
         failed=1
       fi
     done
@@ -1830,6 +2023,10 @@ case "$cmd" in
   resolution-create)
     shift
     resolution_create "$@"
+    ;;
+  todo-close)
+    shift
+    todo_close "$@"
     ;;
   gate-check)
     shift

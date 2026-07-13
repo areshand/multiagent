@@ -122,10 +122,11 @@ As orchestrator:
    blocking verifier or adapter issue must be recorded with
    `bin/subagent.sh finding-create`, converted into a `bin/subagent.sh
    todo-create` repair item, resolved by a worker with `bin/subagent.sh
-   resolution-create` evidence, and closed only after verifier recheck. Run
-   `bin/subagent.sh gate-check`; if it rejects an unqueued finding or an open,
-   assigned, resolved, or reopened todo, route repair or write blocked status
-   instead of completed status.
+   resolution-create` evidence, and closed with `bin/subagent.sh todo-close`
+   only after verifier recheck accepts the original finding. Run
+   `bin/subagent.sh gate-check`; if it rejects an unqueued finding, an open,
+   assigned, resolved, reopened todo, or a closed todo without closure evidence,
+   route repair or write blocked status instead of completed status.
 11. Completion requires both accepted source state in `/app` and
    `/tmp/multiagent-prod-swe/status.json`.
 12. If the run has a non-empty source diff but no accepted verifier/status

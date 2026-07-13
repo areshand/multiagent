@@ -111,8 +111,9 @@ exploration/exploitation policy for running independent work in parallel.
 
 `prompts/playbooks/finding-todo-loop.md` contains the generic structured repair
 loop: verifier findings, orchestrator todos, worker resolution reports,
-reverification, and `bin/subagent.sh gate-check`. Build verification failures
-are one instance of this loop, not special eval-only wrapper logic.
+verifier closure through `bin/subagent.sh todo-close`, and
+`bin/subagent.sh gate-check`. Build verification failures are one instance of
+this loop, not special eval-only wrapper logic.
 
 `prompts/playbooks/orchestration-routing.md` contains the detailed role-routing
 workflow for contract scouts, scope guards, validation coordinators, worker

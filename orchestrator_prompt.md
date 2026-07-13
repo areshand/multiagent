@@ -159,7 +159,8 @@ Core routing rules:
 - Treat blocking verifier output as structured state. Load
   `prompts/playbooks/finding-todo-loop.md`; require verifier findings, convert
   accepted blocking findings into todos, route bounded repair workers from open
-  todos, and run `bin/subagent.sh gate-check` before final acceptance.
+  todos, close accepted resolutions with `bin/subagent.sh todo-close ...`, and
+  run `bin/subagent.sh gate-check` before final acceptance.
 - If a worker reports failed relevant validation, do not treat the failure as a
   verifier-only paperwork issue. Capture the failing command/output, release or
   record the validation lease, and spawn a fresh bounded repair worker over the
