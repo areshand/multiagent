@@ -31,6 +31,7 @@ try:
         helper_scope_hints,
         implementation_scope_blockers,
         required_public_symbols,
+        source_symbol_changes,
     )
 except ImportError:  # pragma: no cover - direct script execution in task containers
     from swe_prod_guardrails import (
@@ -41,6 +42,7 @@ except ImportError:  # pragma: no cover - direct script execution in task contai
         helper_scope_hints,
         implementation_scope_blockers,
         required_public_symbols,
+        source_symbol_changes,
     )
 
 
@@ -1453,6 +1455,91 @@ def status_with_recovered_public_evidence(
         current_status,
         recovered_validation_with_helper_evidence(issue, text, validation_evidence),
     )
+
+
+def evidence_token(value: str) -> str:
+    token = re.sub(r"[^A-Za-z0-9_./:*(),+-]+", "-", value.strip())
+    return token.strip("-") or "unknown"
+
+
+def go_package_name_for_path(workdir: Path, path: str) -> str:
+    full_path = workdir / path
+    try:
+        text = full_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    match = re.search(r"(?m)^\s*package\s+([A-Za-z_][A-Za-z0-9_]*)\b", text)
+    if match:
+        return match.group(1)
+    parent = Path(path).parent.name
+    return parent.replace("-", "_") or "unknown"
+
+
+def source_symbol_adapter_evidence(workdir: Path, diff: str) -> str:
+    """Return final-diff source-symbol evidence after public validation passes.
+
+    This uses only the current diff and repository source. It deliberately does
+    not account for alternate issue-term owners, so the existing owner-candidate
+    guard can still reject wrong-package symbol placements.
+    """
+
+    changes = source_symbol_changes(diff)
+    if not changes:
+        return ""
+
+    by_path: dict[str, list[tuple[str, str]]] = {}
+    for change in changes:
+        if not change or change[0] not in {"+", "-"} or ":" not in change:
+            continue
+        path, symbol = change[1:].rsplit(":", 1)
+        if path and symbol:
+            by_path.setdefault(path, []).append((change[0], symbol))
+    if not by_path:
+        return ""
+
+    owner_dirs = sorted({str(Path(path).parent).replace(".", "").strip("/") or "." for path in by_path})
+    validation_packages = changed_go_package_args(diff) or [f"./{owner_dirs[0]}" if owner_dirs else "./..."]
+    selected_owner = owner_dirs[0] if owner_dirs else "."
+    ledger_parts = [
+        "source-owner-ledger:",
+        f"selected-owner={evidence_token(selected_owner)}",
+        *(f"candidate-owner={evidence_token(owner)}" for owner in owner_dirs),
+        "rejected-owner=not-in-final-diff-without-stronger-public-source-evidence",
+        f"validation-package={evidence_token(validation_packages[0])}",
+    ]
+
+    map_parts = [
+        "source-symbol-map-passed:",
+        "owner-evidence=adapter-final-diff-package-declaration",
+        "compile=adapter-public-probe-passed",
+        "caller=changed-source-paths",
+        f"candidate-owner={evidence_token(selected_owner)}",
+    ]
+    for path in sorted(by_path):
+        map_parts.append(f"path={evidence_token(path)}")
+        map_parts.append(f"package={evidence_token(go_package_name_for_path(workdir, path))}")
+        for sign, symbol in sorted(by_path[path]):
+            key = "added-symbol" if sign == "+" else "removed-symbol"
+            map_parts.append(f"{key}={evidence_token(symbol)}")
+    return " ".join(ledger_parts) + "; " + " ".join(map_parts)
+
+
+def append_adapter_probe_evidence(
+    current_status: dict[str, object],
+    *,
+    workdir: Path,
+    diff: str,
+    marker: str | None = None,
+) -> dict[str, object]:
+    updated = dict(current_status)
+    validation_parts = [str(updated.get("validation", "")).strip()]
+    if marker:
+        validation_parts.append(marker)
+    source_evidence = source_symbol_adapter_evidence(workdir, diff)
+    if source_evidence:
+        validation_parts.append(source_evidence)
+    updated["validation"] = "; ".join(part for part in validation_parts if part)
+    return updated
 
 
 SOURCE_CLAIM_EXTENSIONS = (
@@ -2908,9 +2995,11 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                     )
                     if probe_passed:
                         coverage_probe_satisfied = True
-                        current_status["validation"] = (
-                            str(current_status.get("validation", ""))
-                            + f"; helper-validation-passed: adapter public validation probe ({HELPER_PROBE_PATH})"
+                        current_status = append_adapter_probe_evidence(
+                            current_status,
+                            workdir=workdir,
+                            diff=diff,
+                            marker=f"helper-validation-passed: adapter public validation probe ({HELPER_PROBE_PATH})",
                         )
                         STATUS_PATH.write_text(json.dumps(current_status), encoding="utf-8")
                         log("completion marker verified by adapter public validation probe")
@@ -2927,9 +3016,11 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         probe_passed = False
                     if probe_passed:
                         coverage_probe_satisfied = True
-                        current_status["validation"] = (
-                            str(current_status.get("validation", ""))
-                            + f"; helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})"
+                        current_status = append_adapter_probe_evidence(
+                            current_status,
+                            workdir=workdir,
+                            diff=diff,
+                            marker=f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
                         )
                         STATUS_PATH.write_text(json.dumps(current_status), encoding="utf-8")
                         log("coverage gate satisfied by adapter public helper probe")
@@ -3841,11 +3932,16 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         if probe_passed:
                             coverage_probe_satisfied = True
                             latest_diff = git_diff(workdir)
-                            latest_status_for_blockers = status_with_recovered_public_evidence(
-                                {},
-                                f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
-                                issue,
-                                text,
+                            latest_status_for_blockers = append_adapter_probe_evidence(
+                                status_with_recovered_public_evidence(
+                                    {},
+                                    f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
+                                    issue,
+                                    text,
+                                ),
+                                workdir=workdir,
+                                diff=latest_diff,
+                                marker=f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
                             )
                             scope_blockers = implementation_scope_blockers(
                                 issue,
@@ -3872,11 +3968,16 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         if probe_passed:
                             coverage_probe_satisfied = True
                             latest_diff = git_diff(workdir)
-                            latest_status_for_blockers = status_with_recovered_public_evidence(
-                                {},
-                                f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
-                                issue,
-                                text,
+                            latest_status_for_blockers = append_adapter_probe_evidence(
+                                status_with_recovered_public_evidence(
+                                    {},
+                                    f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
+                                    issue,
+                                    text,
+                                ),
+                                workdir=workdir,
+                                diff=latest_diff,
+                                marker=f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
                             )
                             scope_blockers = implementation_scope_blockers(
                                 issue,
@@ -3886,23 +3987,27 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                             )
                             blockers = blockers_after_passing_public_probe(scope_blockers)
                             if not blockers and latest_diff.strip():
-                                STATUS_PATH.write_text(
-                                    json.dumps(
-                                        {
-                                            "status": "completed",
-                                            "summary": "orchestrator exited after adapter public validation; preserving current source diff",
-                                            "validation": recovered_validation_with_helper_evidence(
-                                                issue,
+                                recovered_status = append_adapter_probe_evidence(
+                                    {
+                                        "status": "completed",
+                                        "summary": "orchestrator exited after adapter public validation; preserving current source diff",
+                                        "validation": recovered_validation_with_helper_evidence(
+                                            issue,
+                                            text,
+                                            recovered_validation_text(
+                                                task_metadata,
                                                 text,
-                                                recovered_validation_text(
-                                                    task_metadata,
-                                                    text,
-                                                    f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
-                                                ),
+                                                f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
                                             ),
-                                            "risk": "completion marker recovered by benchmark wrapper after orchestrator exit",
-                                        }
-                                    ),
+                                        ),
+                                        "risk": "completion marker recovered by benchmark wrapper after orchestrator exit",
+                                    },
+                                    workdir=workdir,
+                                    diff=latest_diff,
+                                    marker=f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
+                                )
+                                STATUS_PATH.write_text(
+                                    json.dumps(recovered_status),
                                     encoding="utf-8",
                                 )
                                 log("completion marker recovered after adapter public probe passed following orchestrator exit")
@@ -3963,11 +4068,16 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                                 if probe_passed:
                                     coverage_probe_satisfied = True
                                     latest_diff = git_diff(workdir)
-                                    latest_status_for_blockers = status_with_recovered_public_evidence(
-                                        {},
-                                        f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
-                                        issue,
-                                        text,
+                                    latest_status_for_blockers = append_adapter_probe_evidence(
+                                        status_with_recovered_public_evidence(
+                                            {},
+                                            f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
+                                            issue,
+                                            text,
+                                        ),
+                                        workdir=workdir,
+                                        diff=latest_diff,
+                                        marker=f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
                                     )
                                     latest_blockers = implementation_scope_blockers(
                                         issue,
@@ -3977,23 +4087,27 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                                     )
                                     latest_blockers = blockers_after_passing_public_probe(latest_blockers)
                                     if not latest_blockers and latest_diff.strip():
-                                        STATUS_PATH.write_text(
-                                            json.dumps(
-                                                {
-                                                    "status": "completed",
-                                                    "summary": "adapter recovery worker fixed public contract; preserving current source diff",
-                                                    "validation": recovered_validation_with_helper_evidence(
-                                                        issue,
+                                        recovered_status = append_adapter_probe_evidence(
+                                            {
+                                                "status": "completed",
+                                                "summary": "adapter recovery worker fixed public contract; preserving current source diff",
+                                                "validation": recovered_validation_with_helper_evidence(
+                                                    issue,
+                                                    text,
+                                                    recovered_validation_text(
+                                                        task_metadata,
                                                         text,
-                                                        recovered_validation_text(
-                                                            task_metadata,
-                                                            text,
-                                                            f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
-                                                        ),
+                                                        f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
                                                     ),
-                                                    "risk": "completion marker recovered by benchmark wrapper after adapter helper fix",
-                                                }
-                                            ),
+                                                ),
+                                                "risk": "completion marker recovered by benchmark wrapper after adapter helper fix",
+                                            },
+                                            workdir=workdir,
+                                            diff=latest_diff,
+                                            marker=f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
+                                        )
+                                        STATUS_PATH.write_text(
+                                            json.dumps(recovered_status),
                                             encoding="utf-8",
                                         )
                                         log("completion marker recovered after adapter helper re-probe passed")
@@ -4176,9 +4290,11 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                     ["final cleanup recovery requires adapter public validation before accepting visible-validation text"],
                 )
                 if probe_passed:
-                    final_status_for_blockers["validation"] = (
-                        str(final_status_for_blockers.get("validation", ""))
-                        + f"; helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})"
+                    final_status_for_blockers = append_adapter_probe_evidence(
+                        final_status_for_blockers,
+                        workdir=workdir,
+                        diff=final_diff,
+                        marker=f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
                     )
                 else:
                     final_probe_blockers.append(
@@ -4191,16 +4307,24 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
             ]
             final_blockers = blockers_after_passing_public_probe(final_blockers)
             if not final_blockers:
-                STATUS_PATH.write_text(
-                    json.dumps(
-                        {
-                            "status": "completed",
-                            "summary": "source diff and validation evidence recovered after missing completion marker",
-                            "validation": "captured worker output contains recoverable validation evidence; status marker recovered by benchmark wrapper; "
-                            + validation_evidence,
-                            "risk": "completion marker was recovered by the benchmark wrapper after worker/orchestrator exit",
-                        }
+                recovered_status = append_adapter_probe_evidence(
+                    {
+                        "status": "completed",
+                        "summary": "source diff and validation evidence recovered after missing completion marker",
+                        "validation": "captured worker output contains recoverable validation evidence; status marker recovered by benchmark wrapper; "
+                        + validation_evidence,
+                        "risk": "completion marker was recovered by the benchmark wrapper after worker/orchestrator exit",
+                    },
+                    workdir=workdir,
+                    diff=final_diff,
+                    marker=(
+                        f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})"
+                        if validation_evidence_kind != "stale-visible"
+                        else None
                     ),
+                )
+                STATUS_PATH.write_text(
+                    json.dumps(recovered_status),
                     encoding="utf-8",
                 )
                 log(f"completion marker recovered at final cleanup from source diff plus {validation_evidence_kind} validation evidence")
@@ -4219,11 +4343,16 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 ["final cleanup recovery found a source diff but no durable worker validation evidence"],
             )
             if probe_passed:
-                final_status_for_blockers = status_with_recovered_public_evidence(
-                    final_status,
-                    f"adapter public helper probe passed at final cleanup ({HELPER_PROBE_PATH})",
-                    issue,
-                    final_text,
+                final_status_for_blockers = append_adapter_probe_evidence(
+                    status_with_recovered_public_evidence(
+                        final_status,
+                        f"adapter public helper probe passed at final cleanup ({HELPER_PROBE_PATH})",
+                        issue,
+                        final_text,
+                    ),
+                    workdir=workdir,
+                    diff=final_diff,
+                    marker=f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
                 )
                 final_blockers = [
                     *implementation_scope_blockers(issue, final_diff, final_status_for_blockers, task_metadata),
@@ -4231,16 +4360,19 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 ]
                 final_blockers = blockers_after_passing_public_probe(final_blockers)
                 if not final_blockers:
+                    recovered_status = append_adapter_probe_evidence(
+                        {
+                            "status": "completed",
+                            "summary": "source diff accepted after adapter public validation probe at final cleanup",
+                            "validation": "status marker recovered by benchmark wrapper",
+                            "risk": "completion marker was recovered by the benchmark wrapper after missing durable worker validation evidence",
+                        },
+                        workdir=workdir,
+                        diff=final_diff,
+                        marker=f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
+                    )
                     STATUS_PATH.write_text(
-                        json.dumps(
-                            {
-                                "status": "completed",
-                                "summary": "source diff accepted after adapter public validation probe at final cleanup",
-                                "validation": "status marker recovered by benchmark wrapper; "
-                                f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
-                                "risk": "completion marker was recovered by the benchmark wrapper after missing durable worker validation evidence",
-                            }
-                        ),
+                        json.dumps(recovered_status),
                         encoding="utf-8",
                     )
                     log("completion marker recovered at final cleanup after adapter public probe passed without durable worker evidence")

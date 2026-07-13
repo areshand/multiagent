@@ -955,6 +955,43 @@ official scoring only, and up to four concurrent rows. Prefix:
 Net score movement: none. The first-50 aggregate remains `33/50`
 production-native clean official passes, still below the >70% target.
 
+## 2026-07-13 Row 28 Adapter Evidence Handoff
+
+PR4 now derives conservative source-symbol evidence from the final diff after
+repository-visible adapter validation passes. This evidence uses only public
+source state: changed paths, package declarations, changed symbol definitions,
+and the adapter-selected validation result. It writes exact
+`source-owner-ledger:` and `source-symbol-map-passed:` markers into recovered
+status evidence. It intentionally does not list alternate issue-term owner
+packages, so the existing wrong-owner blocker still rejects cases like the row
+18 `lib/client` versus `lib/benchmark` miss.
+
+Focused row 28 smoke
+`swe-bench-pro-prod-pr4-adapter-symbol-evidence-offset28-r1` used the
+production-native solver baked from the live PR4 worktree. Native result:
+`rc=124`, `3135.7s`; official verifier evidence: `false`; clean native score:
+`n/a`. The report classifies it as `native_timeout_without_submission` with
+root cause `terminal_state_gap`.
+
+This rerun confirms the original compile-gate issue is no longer the active
+row 28 failure. The adapter public validation probe passed changed package
+checks and emitted exact hash-bound evidence:
+
+```text
+build-verification-passed: final-diff-sha256=3d66c4e823bad7955012a66c75798a95bd178abf8638f22128609f42ffe86aa3 changed-files=2 compile_clean=true returncode=0
+go-package-validation-passed: package=./internal/server/evaluation ... returncode=0
+go-package-validation-passed: package=./internal/server/ofrep ... returncode=0
+```
+
+The remaining failure was terminal-state recovery: the orchestrator did not
+write durable `status.json`; final cleanup ran the adapter probe, but one
+branch evaluated source-symbol blockers before adding the adapter-derived
+source-symbol evidence. PR4 now fixes that consistency bug: final cleanup
+evaluates blockers with the same adapter-derived evidence that it will write to
+recovered `status.json`, and recovered status writes preserve that evidence.
+
+Net score movement: none. The first-50 aggregate remains `33/50`.
+
 ## 2026-07-13 Source-Owner Ledger Gate
 
 PR4 now makes the source-owner ledger a machine-enforced acceptance

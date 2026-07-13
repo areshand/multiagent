@@ -1259,6 +1259,14 @@ with tempfile.TemporaryDirectory() as td:
         native_summary={"clean_native_completion": False},
     )
     assert gate_postmortem and gate_postmortem["category"] == "native_submission_gate_rejection", gate_postmortem
+    timeout_postmortem = swe_bench_pro_scaffold_parity.failure_postmortem(
+        work_dir=postmortem_root,
+        run_result={"status": "completed"},
+        evalscope_report=None,
+        score=None,
+        native_summary={"clean_native_completion": False, "latest": {"returncode": 124}},
+    )
+    assert timeout_postmortem and timeout_postmortem["category"] == "native_timeout_without_submission", timeout_postmortem
 
 stale_without_probe_blockers = solve_swe_prod.implementation_scope_blockers(
     "Normalize duplicate serialized vulnerability content into one source record.",
@@ -1413,6 +1421,33 @@ source_symbol_map_without_owner_ledger_blockers = solve_swe_prod.implementation_
     },
 )
 assert any("source-owner-ledger:" in blocker for blocker in source_symbol_map_without_owner_ledger_blockers), source_symbol_map_without_owner_ledger_blockers
+with tempfile.TemporaryDirectory() as adapter_symbol_tmp:
+    adapter_repo = Path(adapter_symbol_tmp)
+    (adapter_repo / "internal" / "server" / "ofrep").mkdir(parents=True)
+    (adapter_repo / "internal" / "server" / "ofrep" / "server.go").write_text(
+        "package ofrep\n\ntype flagLister interface {}\nfunc (s *Server) bulkFlagKeys() {}\n",
+        encoding="utf-8",
+    )
+    adapter_symbol_diff = (
+        "diff --git a/internal/server/ofrep/server.go b/internal/server/ofrep/server.go\n"
+        "+type flagLister interface {}\n"
+        "+func (s *Server) bulkFlagKeys() {}\n"
+    )
+    adapter_symbol_evidence = solve_swe_prod.source_symbol_adapter_evidence(adapter_repo, adapter_symbol_diff)
+    assert "source-owner-ledger:" in adapter_symbol_evidence, adapter_symbol_evidence
+    assert "source-symbol-map-passed:" in adapter_symbol_evidence, adapter_symbol_evidence
+    assert "added-symbol=flagLister" in adapter_symbol_evidence, adapter_symbol_evidence
+    adapter_symbol_blockers = solve_swe_prod.implementation_scope_blockers(
+        "OFREP bulk evaluation should list flags when context flags are missing.",
+        adapter_symbol_diff,
+        {
+            "status": "completed",
+            "validation": "helper-validation-passed: adapter public helper probe. " + adapter_symbol_evidence,
+        },
+        {"_solver_workdir": str(adapter_repo)},
+    )
+    assert not any("source-symbol-map-passed:" in blocker for blocker in adapter_symbol_blockers), adapter_symbol_blockers
+    assert not any("source-owner-ledger:" in blocker for blocker in adapter_symbol_blockers), adapter_symbol_blockers
 with tempfile.TemporaryDirectory() as source_owner_tmp:
     source_owner_repo = Path(source_owner_tmp)
     (source_owner_repo / "lib" / "client").mkdir(parents=True)
@@ -1436,6 +1471,22 @@ with tempfile.TemporaryDirectory() as source_owner_tmp:
         {"_solver_workdir": str(source_owner_repo)},
     )
     assert any("lib/benchmark" in blocker for blocker in wrong_owner_blockers), wrong_owner_blockers
+    auto_wrong_owner_evidence = solve_swe_prod.source_symbol_adapter_evidence(
+        source_owner_repo,
+        "diff --git a/lib/client/bench.go b/lib/client/bench.go\n"
+        "+type LinearBenchmarkConfigGenerator struct { Step int }\n",
+    )
+    auto_wrong_owner_blockers = solve_swe_prod.implementation_scope_blockers(
+        "Add a linear benchmark generator for benchmark tests.",
+        "diff --git a/lib/client/bench.go b/lib/client/bench.go\n"
+        "+type LinearBenchmarkConfigGenerator struct { Step int }\n",
+        {
+            "status": "completed",
+            "validation": "helper-validation-passed: adapter public helper probe. " + auto_wrong_owner_evidence,
+        },
+        {"_solver_workdir": str(source_owner_repo)},
+    )
+    assert any("lib/benchmark" in blocker for blocker in auto_wrong_owner_blockers), auto_wrong_owner_blockers
     compared_owner_blockers = solve_swe_prod.implementation_scope_blockers(
         "Add a linear benchmark generator for benchmark tests.",
         "diff --git a/lib/client/bench.go b/lib/client/bench.go\n"

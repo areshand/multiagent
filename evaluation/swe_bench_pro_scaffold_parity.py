@@ -466,6 +466,8 @@ def failure_postmortem(
     compile_markers = [marker for marker in COMPILE_FAILURE_PATTERNS if marker in text]
     submission_gate_markers = [marker for marker in SUBMISSION_GATE_REJECTION_PATTERNS if marker in text]
     native_clean = bool(native_summary and native_summary.get("clean_native_completion"))
+    latest_native = native_summary.get("latest") if isinstance(native_summary, dict) else None
+    native_returncode = latest_native.get("returncode") if isinstance(latest_native, dict) else None
     native_rejected = bool(native_summary and not native_clean and submission_gate_markers)
 
     if compile_markers and score == 0 and native_clean:
@@ -476,6 +478,17 @@ def failure_postmortem(
             "required_response": (
                 "Stop prompt/adapter recovery work and strengthen the build verifier/submission gate. "
                 "A patch that fails compile/build must not reach the official verifier."
+            ),
+        }
+    if native_returncode == 124:
+        return {
+            "category": "native_timeout_without_submission",
+            "root_cause": "terminal_state_gap",
+            "markers": submission_gate_markers[:4],
+            "required_response": (
+                "Treat this as a production orchestration terminal-state failure. If repository-visible "
+                "validation passed, the native wrapper must either recover a machine-readable completed "
+                "status before timeout or write an explicit blocked status with remaining blockers."
             ),
         }
     if native_rejected:
