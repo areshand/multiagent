@@ -38,6 +38,23 @@ DEFAULT_NATIVE_SOLVER_COMMAND = "/tmp/evalscope-native-multiagent-solver.sh"
 DEFAULT_NATIVE_SOLVER_SOURCE = Path(__file__).resolve().parents[1]
 DEFAULT_FULL_SPLIT_SIZE = 731
 
+COMPILE_FAILURE_PATTERNS = (
+    "undefined:",
+    "undefined method",
+    "undefined field",
+    "has no field or method",
+    "build failed",
+    "compile failed",
+    "compilation failed",
+)
+
+SUBMISSION_GATE_REJECTION_PATTERNS = (
+    "refusing to score rejected git diff",
+    "coverage blockers remain",
+    "validation coverage gate remained unresolved",
+    "final patch changes code, but submission lacks hash-bound build verification",
+)
+
 
 def parse_limit(raw: str) -> int | None:
     if raw.lower() in {"none", "full", "all", "0"}:
@@ -414,6 +431,75 @@ def native_runner_summary(work_dir: Path) -> dict[str, Any] | None:
     }
 
 
+def read_failure_artifact_text(work_dir: Path, run_result: dict[str, Any] | None, evalscope_report: dict[str, Any] | None) -> str:
+    chunks: list[str] = []
+    if run_result:
+        chunks.append(json.dumps(json_safe(run_result), sort_keys=True))
+    if evalscope_report:
+        chunks.append(json.dumps(json_safe(evalscope_report), sort_keys=True))
+    artifact_paths = [work_dir / "logs" / "eval_log.log"]
+    reports_dir = work_dir / "reports"
+    if reports_dir.exists():
+        artifact_paths.extend(sorted(reports_dir.glob("**/*.json"))[:8])
+    for path in artifact_paths:
+        if not path.exists() or not path.is_file():
+            continue
+        try:
+            chunks.append(path.read_text(encoding="utf-8", errors="replace")[-200_000:])
+        except OSError:
+            continue
+    return "\n".join(chunks).lower()
+
+
+def failure_postmortem(
+    *,
+    work_dir: Path,
+    run_result: dict[str, Any] | None,
+    evalscope_report: dict[str, Any] | None,
+    score: float | None,
+    native_summary: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    text = read_failure_artifact_text(work_dir, run_result, evalscope_report)
+    if not text:
+        return None
+
+    compile_markers = [marker for marker in COMPILE_FAILURE_PATTERNS if marker in text]
+    submission_gate_markers = [marker for marker in SUBMISSION_GATE_REJECTION_PATTERNS if marker in text]
+    native_clean = bool(native_summary and native_summary.get("clean_native_completion"))
+    native_rejected = bool(native_summary and not native_clean and submission_gate_markers)
+
+    if compile_markers and score == 0 and native_clean:
+        return {
+            "category": "official_compile_failure",
+            "root_cause": "submission_invariant_gap",
+            "markers": compile_markers,
+            "required_response": (
+                "Stop prompt/adapter recovery work and strengthen the build verifier/submission gate. "
+                "A patch that fails compile/build must not reach the official verifier."
+            ),
+        }
+    if native_rejected:
+        return {
+            "category": "native_submission_gate_rejection",
+            "root_cause": "pre_official_acceptance_invariant_blocked_submission",
+            "markers": submission_gate_markers[:4],
+            "required_response": (
+                "Do not count this as an official solver miss. Inspect the blocked invariants, then fix the "
+                "orchestrator/verifier structured evidence or source patch before rerunning."
+            ),
+        }
+    if compile_markers and score == 0:
+        return {
+            "category": "compile_failure_detected",
+            "root_cause": "build_correctness_failure",
+            "markers": compile_markers,
+            "required_response": (
+                "Route analysis to the build verifier and changed-package compile/test gate before hidden-contract work."
+            ),
+        }
+    return None
+
+
 def summarize_result(
     *,
     args: argparse.Namespace,
@@ -446,6 +532,14 @@ def summarize_result(
         clean_native_score = None
     elif native_summary and not native_summary.get("clean_native_completion"):
         clean_native_score = None
+
+    postmortem = failure_postmortem(
+        work_dir=args.work_dir,
+        run_result=run_result,
+        evalscope_report=evalscope_report,
+        score=score,
+        native_summary=native_summary,
+    )
 
     scaffold_parity = (
         status == "completed"
@@ -509,6 +603,7 @@ def summarize_result(
         "preflight_report": str(args.preflight_output),
         "evalscope_result": json_safe(run_result),
         "native_runner": native_summary,
+        "failure_postmortem": postmortem,
         "parity": {
             "dataset": "ScaleAI/SWE-bench_Pro",
             "adapter": "evalscope swe_bench_pro",

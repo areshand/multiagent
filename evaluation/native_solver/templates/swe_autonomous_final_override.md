@@ -81,9 +81,10 @@ As orchestrator:
      `git diff --name-only` and prove every changed non-test `.go` package
      compiles/tests after the final diff. Include
      `go-package-validation-passed: package=... command=... returncode=0` for
-     each changed package, or the full `go test` command transcript showing
-     return code 0 and covering every changed package. One passing package does
-     not clear another changed package. Treat `undefined:`,
+     each changed package. A human-readable `go test` transcript without this
+     exact marker is useful diagnostic context, but it does not clear the
+     submission gate. One passing package does not clear another changed package.
+     Treat `undefined:`,
      `has no field or method`, `build failed`, `FAIL`, or any nonzero return
      code as blocking.
    - If parser/reader linked, alternate, repeated, complete, or multi-value

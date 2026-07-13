@@ -1001,9 +1001,8 @@ still too narrative-driven. It could accept a patch after seeing one passing Go
 package while another changed package still had compile errors such as a
 non-existent field or method. PR4 now derives changed Go packages from
 `git diff --name-only` and requires post-final-diff compile/test evidence for
-every changed non-test `.go` package. Accepted evidence must either be a full
-`go test` transcript covering each changed package with return code 0, or a
-machine-readable marker:
+every changed non-test `.go` package. Accepted evidence must be a
+machine-readable marker for each package:
 
 ```text
 go-package-validation-passed: package=... command=... returncode=0
@@ -1012,6 +1011,8 @@ go-package-validation-passed: package=... command=... returncode=0
 The gate treats `undefined:`, `undefined method`, `undefined field`,
 `has no field or method`, `build failed`, `FAIL`, and nonzero return codes as
 blocking. One `ok` package no longer clears a different changed package.
+A human-readable `go test` transcript is diagnostic context only; it does not
+clear the submission gate without the exact marker.
 
 Follow-up architecture correction: this class of failure should not be handled
 as eval recovery. It is a non-negotiable submission invariant. PR4 now separates
@@ -1029,6 +1030,32 @@ compile/test cleanly. This directly addresses the row 28 failure mode where the
 system over-optimized around adapter recovery, stale evidence, no-test checks,
 and helper preservation while underweighting the simpler invariant that the
 final patch must compile under the changed package graph.
+
+Focused row 28 build-gate rerun
+`swe-bench-pro-prod-pr4-buildgate-offset28-r1` used the production-native solver
+baked from PR4 commit `e90b166`. Native result: `rc=2`, `1939.0s`; official
+verifier evidence: `false`; clean native score: `n/a`.
+
+This is the desired direction for the old `req.Request undefined` class of
+failure: the patch did not reach official scoring. The new report
+`failure_postmortem` classified the run as
+`native_submission_gate_rejection`, with root cause
+`pre_official_acceptance_invariant_blocked_submission`. The native output
+showed agents had produced useful source changes and some package tests passed,
+but the final status still used narrative evidence such as
+`build-verification-passed: ... returned 0` and
+`go-package-validation-passed: <package>` instead of the exact hash-bound
+key/value markers. The submission gate therefore blocked before official
+verification rather than producing another misleading official `0.0`.
+
+PR4 now also records report-level `failure_postmortem` classifications. If a
+clean native run reaches official verifier and fails with compile/build markers
+such as `undefined:`, `has no field or method`, or `build failed`, the report
+classifies it as `official_compile_failure` with root cause
+`submission_invariant_gap` and directs follow-up work back to the build
+verifier/submission gate before prompt, adapter, or hidden-contract changes.
+
+Net score movement: none. The first-50 aggregate remains `33/50`.
 
 ## 2026-07-13 Source Owner Evidence Hardening
 

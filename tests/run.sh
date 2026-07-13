@@ -582,6 +582,7 @@ from types import SimpleNamespace
 root = Path(sys.argv[1])
 sys.path.insert(0, str(root))
 from evaluation.native_solver import solve_swe_prod
+from evaluation import swe_bench_pro_scaffold_parity
 from evaluation.swe_bench_pro_on_demand import OnDemandImageManager
 from evaluation import swe_bench_pro_run_parallel_shards
 
@@ -1228,6 +1229,36 @@ go_compile_failure_blockers = solve_swe_prod.validation_coverage_blockers(
     },
 )
 assert any("compile/build failure evidence" in blocker for blocker in go_compile_failure_blockers), go_compile_failure_blockers
+
+with tempfile.TemporaryDirectory() as td:
+    postmortem_root = Path(td)
+    (postmortem_root / "logs").mkdir(parents=True)
+    (postmortem_root / "logs" / "eval_log.log").write_text(
+        "official verifier: undefined: req.Request\nFAIL pkg [build failed]\n",
+        encoding="utf-8",
+    )
+    compile_postmortem = swe_bench_pro_scaffold_parity.failure_postmortem(
+        work_dir=postmortem_root,
+        run_result={"status": "completed"},
+        evalscope_report={"score": 0.0},
+        score=0.0,
+        native_summary={"clean_native_completion": True},
+    )
+    assert compile_postmortem and compile_postmortem["category"] == "official_compile_failure", compile_postmortem
+
+    (postmortem_root / "logs" / "eval_log.log").write_text(
+        "multiagent-native exited with code 2; refusing to score rejected git diff: "
+        "final patch changes code, but submission lacks hash-bound build verification\n",
+        encoding="utf-8",
+    )
+    gate_postmortem = swe_bench_pro_scaffold_parity.failure_postmortem(
+        work_dir=postmortem_root,
+        run_result={"status": "completed"},
+        evalscope_report=None,
+        score=None,
+        native_summary={"clean_native_completion": False},
+    )
+    assert gate_postmortem and gate_postmortem["category"] == "native_submission_gate_rejection", gate_postmortem
 
 stale_without_probe_blockers = solve_swe_prod.implementation_scope_blockers(
     "Normalize duplicate serialized vulnerability content into one source record.",

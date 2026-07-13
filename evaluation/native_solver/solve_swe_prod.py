@@ -1748,7 +1748,7 @@ def validation_coverage_blockers(
                 "Go source changed, but final validation does not prove affected package compile/test success for: "
                 + ", ".join(missing_go_packages)
                 + "; run `go test ./affected/package` for every changed Go package after the final diff and record "
-                "`go-package-validation-passed: package=... command=... returncode=0` or the full command transcript"
+                "`go-package-validation-passed: package=... command=... returncode=0` for every changed package"
             )
         elif not any(marker in go_evidence_text for marker in go_validation_markers):
             blockers.append(

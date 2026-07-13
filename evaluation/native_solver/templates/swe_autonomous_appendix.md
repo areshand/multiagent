@@ -168,10 +168,11 @@ Worker quality bar:
   `go test ./affected/package` or a broader command that covers every changed
   non-test `.go` package after the final diff. Final validation must include
   `go-package-validation-passed: package=... command=... returncode=0` for each
-  changed package, or the full command transcript proving return code 0 for
-  every changed package. One passing package does not clear another changed
-  package. Treat `undefined:`, `has no field or method`, `build failed`, `FAIL`,
-  or any nonzero return code as blocking.
+  changed package. A transcript that says a command returned 0 is not acceptance
+  evidence unless the exact marker is also present for every changed package.
+  One passing package does not clear another changed package. Treat
+  `undefined:`, `has no field or method`, `build failed`, `FAIL`, or any nonzero
+  return code as blocking.
 - Trace one layer below changed feature code into helper APIs when the issue
   mentions keys, fallback sources, expired records, parsers, serializers,
   adapters, persistence, or missing data.
