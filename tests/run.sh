@@ -726,6 +726,9 @@ assert "verifier_exact_followup_available" in solver_source and "Verifier exact-
 assert "stale_patch_application_blockers" in solver_source and "could not find hunk context" in solver_source, (
     "stale patch application failures should be machine-gated before acceptance"
 )
+assert "blocked_status_needs_diff_reconciliation" in solver_source and "blocked-status diff reconciliation resume launched" in solver_source, (
+    "blocked stale-claim/stale-patch statuses with live source diffs should get one production resume before terminal rejection"
+)
 assert "EVAL_NO_DIFF_BLOCKED_RETRY_LIMIT" in solver_source and "blocked with no materialized source diff" in solver_source, (
     "blocked no-diff worker outcomes should get one production-orchestrator retry"
 )
@@ -1421,6 +1424,29 @@ stale_patch_blockers = solve_swe_prod.stale_patch_application_blockers(
 )
 assert stale_patch_blockers and "re-read the current target files" in stale_patch_blockers[0], stale_patch_blockers
 assert not solve_swe_prod.stale_patch_application_blockers("apply_patch completed successfully")
+assert solve_swe_prod.blocked_status_needs_diff_reconciliation(
+    {
+        "status": "blocked",
+        "reason": "coverage blockers remain",
+        "blockers": [
+            "agent claimed changed source paths are absent from final git diff; make the missing edits or remove the stale claim before acceptance: src/user/index.js"
+        ],
+    }
+)
+assert solve_swe_prod.blocked_status_needs_diff_reconciliation(
+    {
+        "status": "blocked",
+        "reason": "worker attempted a stale patch that did not apply cleanly",
+        "blockers": ["apply_patch: could not find hunk context in src/Keyboard.ts"],
+    }
+)
+assert not solve_swe_prod.blocked_status_needs_diff_reconciliation(
+    {
+        "status": "blocked",
+        "reason": "focused validation failed",
+        "blockers": ["go test ./pkg failed with a visible assertion"],
+    }
+)
 
 with tempfile.TemporaryDirectory() as td:
     runtime_root = Path(td)

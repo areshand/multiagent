@@ -1733,6 +1733,36 @@ def blocked_status_recoverable_by_public_probe(current_status: dict[str, object]
     return not blockers_after_passing_public_probe([str(blocker) for blocker in blockers])
 
 
+def blocked_status_needs_diff_reconciliation(current_status: dict[str, object]) -> bool:
+    """Return true for terminal blockers that require re-reading the live diff.
+
+    These are not acceptance blockers that a public probe can clear. They mean
+    the agent/verifier is reasoning from stale narrative or a patch plan that
+    is not present in the actual working tree, so the production orchestrator
+    should get one bounded resume over the live diff before the wrapper treats
+    the run as terminal.
+    """
+
+    if str(current_status.get("status", "")).lower() != "blocked":
+        return False
+    text = json.dumps(current_status, sort_keys=True).lower()
+    stale_markers = (
+        "claimed changed source paths are absent from final git diff",
+        "absent from final git diff",
+        "remove the stale claim",
+        "stale claim",
+        "claimed companion",
+        "claimed changed files",
+        "stale patch",
+        "patch did not apply",
+        "did not apply cleanly",
+        "could not find hunk context",
+        "hunk failed",
+        "missing edits",
+    )
+    return any(marker in text for marker in stale_markers)
+
+
 def has_hard_scope_blocker(blockers: list[str]) -> bool:
     return any("[public-hard]" in blocker.lower() or "[official-hard]" in blocker.lower() for blocker in blockers)
 
@@ -2596,6 +2626,42 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         "",
                     ):
                         log(f"no-diff blocked retry launched attempt={no_diff_blocked_retries}")
+                        time.sleep(5)
+                        continue
+                if (
+                    diff.strip()
+                    and blocked_status_needs_diff_reconciliation(current_status)
+                    and orchestrator_resume_attempts < orchestrator_resume_limit
+                    and int(deadline - time.monotonic()) > 300
+                ):
+                    capture_session(session)
+                    text = captured_text()
+                    status_blockers = current_status.get("blockers")
+                    if isinstance(status_blockers, list):
+                        blockers = [str(blocker) for blocker in status_blockers]
+                    else:
+                        blockers = [str(current_status.get("reason") or "blocked status requires live diff reconciliation")]
+                    blockers = list(
+                        dict.fromkeys(
+                            [
+                                *blockers,
+                                *implementation_scope_blockers(issue, diff, current_status, task_metadata),
+                                *validation_coverage_blockers(issue, diff, text, current_status, task_metadata),
+                                (
+                                    "Blocked-status reconciliation: re-read the live files and `git diff --name-only`; "
+                                    "make claimed files/hunks match the actual final diff or remove stale claims before final status."
+                                ),
+                            ]
+                        )
+                    )
+                    if relaunch_orchestrator_for_blockers(
+                        "blocked status has stale claims or stale patch evidence against a live source diff",
+                        diff,
+                        blockers,
+                        "",
+                        force_live_handoff=True,
+                    ):
+                        log("blocked-status diff reconciliation resume launched")
                         time.sleep(5)
                         continue
                 log(f"blocked marker: {json.dumps(current_status, sort_keys=True)[:2000]}")
