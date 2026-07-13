@@ -1404,3 +1404,44 @@ The production solver inferred the right high-level hidden contract
 source-level API verification for `storage.ListRequest`. This keeps the first
 50 aggregate at `33/50`; row 28 remains missing, now for a true official
 failure rather than native adapter rejection.
+
+## 2026-07-13 Parallel Failed-Row Sample After Mixed Go Probe Fix
+
+PR4 commit `390fc37` adds non-contiguous failed-row scheduling with
+`--sample-offsets`, so the official-order rows can be sharded as explicit
+failed-row indices instead of only contiguous ranges. The runner rejects
+conflicting `--sample-offset`/`--sample-offsets` usage and refuses more explicit
+offsets than available workers.
+
+A four-worker sample was then run against rows `2, 8, 12, 14` with production
+native solver bake, 20g task memory, persistent per-worker caches, clean
+official scoring only, and separate proxy ports. Prefix:
+`swe-bench-pro-prod-pr4-390-parallel4-failed-w{worker}-offset{offset}-count1`.
+
+| Row | Repo | Native rc | Official evidence | Clean native score | Native wall | Outcome |
+| --- | --- | ---: | --- | ---: | ---: | --- |
+| 2 | NodeBB/NodeBB | 2 | no | n/a | 638.4s | Native guardrail rejected the diff before official scoring. |
+| 8 | gravitational/teleport | 2 | no | n/a | 764.1s | Native guardrail rejected the diff before official scoring. |
+| 12 | gravitational/teleport | 0 | yes | 0.0 | 1894.4s | Reached official verifier and scored `0.0`. |
+| 14 | element-hq/element-web | 2 | no | n/a | 1092.4s | Native guardrail rejected the diff before official scoring. |
+
+Net score movement: none. The first-50 aggregate remains `33/50`
+production-native clean official passes.
+
+The infra result is useful: four explicit failed rows ran concurrently under
+20g task memory with no Docker OOM, and row 12 reached the official verifier.
+However, this batch should not be read as a solve-rate improvement. Rows 2, 8,
+and 14 still failed before official scoring because the final state contained
+stale path claims, stale patch/application evidence, or unresolved helper/API
+contract blockers. Row 12 scored `0.0` after official verification; it also had
+a manual no-diff/backend-only idle intervention before the wrapper resumed, so
+it is workflow diagnostic evidence rather than a fully clean autonomy sample.
+
+The general root cause is now consistent across the latest failed-row work:
+production multi-agent can launch, keep four rows active, and often produce
+source diffs, but terminal verification still trusts too much agent narrative
+and too little live repository state. The next solver-level work should make
+stale-claim cleanup, patch-application rebase, and declared API/interface
+verification mandatory before finalization. These are source-visible,
+no-leak checks; they do not require official expected tests or row-specific
+fix knowledge.
