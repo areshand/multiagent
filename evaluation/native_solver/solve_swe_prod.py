@@ -1699,6 +1699,15 @@ def status_records_selected_validation(current_status: dict[str, object]) -> boo
     return "helper-validation-passed" in evidence
 
 
+def blocked_status_recoverable_by_public_probe(current_status: dict[str, object]) -> bool:
+    if str(current_status.get("status", "")).lower() != "blocked":
+        return False
+    blockers = current_status.get("blockers")
+    if not isinstance(blockers, list) or not blockers:
+        return False
+    return not blockers_after_passing_public_probe([str(blocker) for blocker in blockers])
+
+
 def has_hard_scope_blocker(blockers: list[str]) -> bool:
     return any("[public-hard]" in blocker.lower() or "[official-hard]" in blocker.lower() for blocker in blockers)
 
@@ -3664,7 +3673,9 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 outcome = "recovered"
             else:
                 log("final cleanup recovery refused; blockers remain: " + "; ".join(final_blockers))
-        elif final_state != "blocked" and coverage_probe_commands(workdir, issue, final_diff):
+        elif (
+            final_state != "blocked" or blocked_status_recoverable_by_public_probe(final_status)
+        ) and coverage_probe_commands(workdir, issue, final_diff):
             probe_report, probe_passed = run_validation_coverage_probe(
                 workdir,
                 issue,
@@ -3672,9 +3683,11 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 ["final cleanup recovery found a source diff but no durable worker validation evidence"],
             )
             if probe_passed:
-                final_status_for_blockers = status_with_recovered_validation(
+                final_status_for_blockers = status_with_recovered_public_evidence(
                     final_status,
                     f"adapter public helper probe passed at final cleanup ({HELPER_PROBE_PATH})",
+                    issue,
+                    final_text,
                 )
                 final_blockers = [
                     *implementation_scope_blockers(issue, final_diff, final_status_for_blockers, task_metadata),

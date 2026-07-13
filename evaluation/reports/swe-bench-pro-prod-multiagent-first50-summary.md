@@ -1351,3 +1351,20 @@ branch as well as final cleanup: the blocker checks receive
 deciding whether to write a blocked marker. This is still no-leak and generic:
 it is derived from accepted/no-blocking verifier text and public adapter
 validation, not row ids, hidden tests, or official expected-test metadata.
+
+Focused smoke `swe-bench-pro-prod-pr4-a8aa-coverageevidence-offset28-r1` used
+commit `a8aa30c`. Native result: `rc=2`, `1717.5s`, no official verifier
+evidence and no score. This confirmed the helper-preservation blocker is fixed:
+`status.json` no longer contains the `context.flags` blocker. The remaining
+blocked status was validation-only:
+
+```text
+Go source changed, but status.json does not record a Go package validation command such as `go test ./affected/package`
+```
+
+The adapter diagnostics then ran public Go probes successfully, including
+`go test ./internal/server/evaluation ./internal/server/ofrep`,
+`go test ./internal/server/evaluation/...`, and `go test ./internal/server/...`.
+PR4 now treats a blocked status whose blockers are fully removable by a passing
+adapter public probe as recoverable at final cleanup. Hard blockers such as
+official/public API contract failures remain non-recoverable.

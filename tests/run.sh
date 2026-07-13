@@ -1101,6 +1101,17 @@ recovered_context_flags_status = solve_swe_prod.status_with_recovered_public_evi
     "ACCEPTED\n- No blocking findings.\n- Explicit `context.flags` behavior is preserved after source inspection.",
 )
 assert "helper-contract-preserved: context.flags" in recovered_context_flags_status["validation"], recovered_context_flags_status
+assert solve_swe_prod.blocked_status_recoverable_by_public_probe(
+    {
+        "status": "blocked",
+        "blockers": [
+            "Go source changed, but status.json does not record a Go package validation command such as `go test ./affected/package`"
+        ],
+    }
+)
+assert not solve_swe_prod.blocked_status_recoverable_by_public_probe(
+    {"status": "blocked", "blockers": ["[official-hard] public API contract missing"]}
+)
 
 stale_without_probe_blockers = solve_swe_prod.implementation_scope_blockers(
     "Normalize duplicate serialized vulnerability content into one source record.",
