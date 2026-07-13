@@ -1071,3 +1071,59 @@ compile contracts, and terminating with machine-readable evidence. The next
 general solver improvement should force source ownership checks before calling
 methods across interfaces and make compile-contract failures first-class
 verifier blockers before final status.
+
+## 2026-07-13 Parallel Failed-Row Rerun After Diagnostics
+
+All unresolved first-50 rows were rerun from PR4 commit `a86607d` with the
+production-native solver baked into each task image, 20g task memory,
+persistent per-row caches, clean official scoring only, and four concurrent
+row workers. Prefix:
+`swe-bench-pro-prod-pr4-a866-rerun4-offset{row}-r1`.
+
+The outer driver used `--ignore-errors`, so every subprocess returned outer
+`rc=0`; the table below reports the actual native runner exit and official
+score.
+
+| Row | Native rc | Official evidence | Clean native score | Native wall |
+| --- | ---: | --- | ---: | ---: |
+| 2 | 2 | no | n/a | 696.3s |
+| 8 | 2 | no | n/a | 183.2s |
+| 12 | 2 | no | n/a | 1168.9s |
+| 14 | 0 | yes | 0.0 | 781.3s |
+| 15 | 2 | no | n/a | 666.7s |
+| 16 | 2 | no | n/a | 1403.6s |
+| 17 | 2 | no | n/a | 514.6s |
+| 18 | 0 | yes | 0.0 | 582.1s |
+| 20 | 2 | no | n/a | 865.2s |
+| 27 | 2 | no | n/a | 526.8s |
+| 28 | 2 | no | n/a | 1694.6s |
+| 37 | 2 | no | n/a | 1355.6s |
+| 38 | 2 | no | n/a | 1251.3s |
+| 41 | 0 | yes | 0.0 | 871.3s |
+| 42 | 2 | no | n/a | 1352.1s |
+| 44 | 2 | no | n/a | 701.8s |
+| 48 | 2 | no | n/a | 798.8s |
+
+Net score movement: none. The first-50 aggregate remains `33/50`
+production-native clean official passes, still below the >70% target.
+
+Useful movement: rows 14 and 18 reached official verification in this rerun but
+scored `0.0`, and rows 44 and 48 no longer hit native timeout. However, most
+remaining rows still failed at the native gate with rejected diffs before
+official scoring. Row 28 again produced a real source diff rather than a fast
+empty-diff block, but validation rejected it for the same general source
+ownership issue:
+
+```text
+internal/server/evaluation/ofrep_bridge.go:25:26: s.store.ListFlags undefined
+```
+
+The root cause is now more specific than "parallelism" or "container infra":
+production multi-agent can keep workers active and produce diffs, but verifier
+and orchestration do not yet reliably force compile/API ownership checks before
+finalization. The next general change should make interface boundary validation
+explicit: when a patch calls a method through a field/interface, a verifier must
+trace the declared type and prove the method exists there, not merely in a
+nearby concrete server type. The same rule should generalize to package import
+contracts, generated-code/module-cache integrity, and visible-test failures
+that currently lead to native `rc=2` rather than clean blocked status.
