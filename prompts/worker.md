@@ -17,6 +17,8 @@ Also include:
 - Report progress and final status in this tmux window.
 - Do not coordinate directly with other workers unless the orchestrator instructs you.
 - Assignment details: assignment ID, branch, owned paths, task statement, and relevant contract ledger.
+- If assigned an orchestrator todo, include the todo ID, source finding ID,
+  exact verifier evidence, and done criteria in your final report.
 - Validation lease details when validation is expected: package/path, allowed
   command, owner, and commands that must not be duplicated.
 - If you discover another live worker or validation command is operating on the
@@ -189,6 +191,13 @@ Immediately re-read the current target files, rebase the edit onto the live tree
 rerun `git diff --name-only` and the affected validation, and report
 `validation-repair-needed:` if the live tree still lacks the intended companion
 edit.
+
+When repairing an orchestrator todo, completion requires a structured worker
+resolution report bound to that todo. Record the changed paths, validation
+commands with return codes, and why the original finding is resolved, preferably
+with `bin/subagent.sh resolution-create TODO_ID ...`. A plain "fixed" summary
+does not close the todo; it only tells the orchestrator/verifier there is
+evidence to recheck.
 
 Run only one expensive validation command per owned package at a time. Treat the
 orchestrator's validation lease as the authority for long compile/test commands.

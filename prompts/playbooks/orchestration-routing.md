@@ -10,6 +10,8 @@ multi-worker waves or competing explorations, load
 `prompts/playbooks/parallel-execution.md`. Before launching expensive compile
 or test commands in live packages, load
 `prompts/playbooks/validation-scheduling.md`.
+Before routing verifier failures or repair follow-ups, load
+`prompts/playbooks/finding-todo-loop.md`.
 
 ## Contract Scout Workflow
 
@@ -87,6 +89,10 @@ returncode=0` bound to the current `git diff`, plus per-language package markers
 such as `go-package-validation-passed:`. Do not treat behavior verifier prose as
 build evidence, and do not submit a patch until both build verification and
 behavior verification pass.
+Build verification failures are not eval-wrapper paperwork. Record them as
+blocking verifier findings, convert accepted findings into todos, and route
+repair workers from those todos. Behavior verifier hidden-contract failures use
+the same finding/todo/resolution/reverification path.
 
 Before spawning the verifier, load `prompts/playbooks/validation-scheduling.md`
 if the worker ran or is running expensive validation. Do not spawn the verifier
@@ -96,7 +102,9 @@ validation command exits, poll the worker/process list instead of starting a
 verifier that may duplicate the command.
 
 The orchestrator decides which findings become accepted follow-up; never pass
-raw verifier findings directly to the worker as orders.
+raw verifier findings directly to the worker as orders. Accepted blocking
+findings become todo queue items with done criteria, and a todo is retired only
+after a verifier accepts the worker's resolution evidence.
 
 ## Validation Failure Repair Workflow
 
@@ -152,7 +160,7 @@ and use its progress/status procedure.
 2. Spawn: create assignment metadata, load the right prompt module, start the agent, send the assignment.
 3. Monitor: use `bin/status.sh`, inspect busy/blocked/done states, update checkpoints.
 4. Coordinate: resolve blockers, prevent ownership conflicts, maintain validation leases, run scope guard when diff shape is risky, route verification, spawn independent follow-ups.
-5. Accept: run `assignment-check`, review verifier findings, decide accepted follow-up, finalize agents.
+5. Accept: run `assignment-check`, review verifier findings, close or reopen todo resolutions after reverification, run `bin/subagent.sh gate-check`, finalize agents.
 6. Report: summarize status, branches, commits, blockers, state paths, validation, and residual risk.
 
 ## Optional Playbooks
@@ -161,6 +169,7 @@ and use its progress/status procedure.
 - For intent checks, contract ledgers, and proxy/scaffold mismatch prevention, load `prompts/playbooks/intent-contract.md`.
 - For parallel fan-out, blocked-subtree routing, and exploration/exploitation balance, load `prompts/playbooks/parallel-execution.md`.
 - For expensive compile/test ownership and duplicate-validator prevention, load `prompts/playbooks/validation-scheduling.md`.
+- For structured verifier findings, repair todos, worker resolution evidence, and final gates, load `prompts/playbooks/finding-todo-loop.md`.
 - For worker, subagent, verifier, status, or checkpoint mechanics, load `prompts/playbooks/agent-spawning.md`.
 - For pre-implementation contract extraction, load `prompts/roles/contract-scout.md`.
 - For post-diff scope and blast-radius audits, load `prompts/roles/scope-guard.md`.

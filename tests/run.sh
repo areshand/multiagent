@@ -313,6 +313,8 @@ assert_file_contains "$ROOT/prompts/worker.md" "one expensive validation command
 assert_file_contains "$ROOT/prompts/worker.md" "validation lease"
 assert_file_contains "$ROOT/prompts/worker.md" "legitimate product or visible-test paths"
 assert_file_contains "$ROOT/prompts/worker.md" "validation-repair-needed:"
+assert_file_contains "$ROOT/prompts/worker.md" "structured worker"
+assert_file_contains "$ROOT/prompts/worker.md" "resolution-create"
 assert_file_contains "$ROOT/prompts/verifier.md" "Verifier Role Prompt"
 assert_file_contains "$ROOT/prompts/verifier.md" "Hidden Contract Verification"
 assert_file_contains "$ROOT/prompts/verifier.md" "unresolved risk"
@@ -324,6 +326,8 @@ assert_file_contains "$ROOT/prompts/verifier.md" "Do not rely on leaked evaluato
 assert_file_contains "$ROOT/prompts/verifier.md" "source-derived equivalence classes"
 assert_file_contains "$ROOT/prompts/verifier.md" "verify parity for each named path"
 assert_file_contains "$ROOT/prompts/verifier.md" "reject first-match-only fixes"
+assert_file_contains "$ROOT/prompts/verifier.md" "machine-readable verifier finding"
+assert_file_contains "$ROOT/prompts/verifier.md" "finding-create"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "Contract Scout Role Prompt"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "must-preserve"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "mismatch-risk"
@@ -353,11 +357,17 @@ assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "Validat
 assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "next-validation-owner"
 assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "Do not spawn a verifier"
 assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "repair-routing:"
+assert_file_contains "$ROOT/prompts/playbooks/finding-todo-loop.md" "Finding Todo Loop Playbook"
+assert_file_contains "$ROOT/prompts/playbooks/finding-todo-loop.md" "verifier writes structured findings"
+assert_file_contains "$ROOT/prompts/playbooks/finding-todo-loop.md" "resolution-create"
+assert_file_contains "$ROOT/prompts/playbooks/finding-todo-loop.md" "gate-check"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Agent Spawning Playbook"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Ponytail implementation discipline"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Ponytail over-engineering pass"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "hidden-contract probes"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" 'verifier suggests no follow-up'
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "todo-create"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "gate-check"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" 'WORKER_CLI="${WORKER_CLI:-claude}"'
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "Orchestration Routing Playbook"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "Contract Scout Workflow"
@@ -368,6 +378,8 @@ assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "Require
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "Safety Rules"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "parallel-execution.md"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "Validation Failure Repair Workflow"
+assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "finding-todo-loop.md"
+assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "Build verification failures are not eval-wrapper paperwork"
 assert_file_contains "$ROOT/prompts/playbooks/dag.md" "DAG Workflow Playbook"
 assert_file_contains "$ROOT/prompts/playbooks/recovery.md" "Recovery Playbook"
 assert_file_contains "$ROOT/prompts/playbooks/write-policy.md" "Write Policy Playbook"
@@ -390,6 +402,8 @@ assert_file_contains "$ROOT/README.md" 'WORKER_CLI`: worker CLI for manual worke
 assert_file_contains "$ROOT/README.md" 'VERIFIER_CLI`: verifier CLI, default `codex`'
 assert_file_contains "$ROOT/README.md" "Evaluation Framework"
 assert_file_contains "$ROOT/README.md" "Parallel DAG Discipline"
+assert_file_contains "$ROOT/README.md" "Structured Repair Loop"
+assert_file_contains "$ROOT/README.md" "finding-todo-loop.md"
 assert_file_contains "$ROOT/README.md" 'orchestration` adapter covers planning behavior'
 assert_file_contains "$ROOT/README.md" "evaluation/tasks"
 assert_file_contains "$ROOT/evaluation/README.md" "large-update-300"
@@ -2219,6 +2233,46 @@ checkpoint_show_output="$("$ROOT/bin/subagent.sh" checkpoint-show subagent-struc
 [[ "$checkpoint_show_output" == *"completed_step=implemented checkpoint metadata"* ]]
 [[ "$checkpoint_show_output" == *"idempotency=rerun checkpoint-update safely"* ]]
 assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/subagent-structured/checkpoint.env" "status=running"
+
+finding_output="$("$ROOT/bin/subagent.sh" finding-create build-go-ofrep --severity blocking --type compile_failure --summary "Changed Go packages do not compile" --affected internal/server/ofrep/evaluation.go,internal/server/evaluation/ofrep_bridge.go --evidence-json '{"command":"go test ./internal/server/ofrep ./internal/server/evaluation","returncode":1,"stderr_excerpt":"undefined: req.Request"}' --required-resolution "Final diff must compile with rc=0 for both changed Go packages.")"
+[[ "$finding_output" == $'finding created\tbuild-go-ofrep\tblocking\tcompile_failure' ]]
+assert_file_contains "$MULTIAGENT_STATE_DIR/findings/build-go-ofrep/finding.json" '"severity": "blocking"'
+assert_file_contains "$MULTIAGENT_STATE_DIR/findings/build-go-ofrep/finding.json" '"type": "compile_failure"'
+assert_file_contains "$MULTIAGENT_STATE_DIR/findings/build-go-ofrep/finding.json" '"internal/server/ofrep/evaluation.go"'
+
+todo_output="$("$ROOT/bin/subagent.sh" todo-create todo-017 --source-finding-id build-go-ofrep --task "Fix Go compile failure in changed packages." --context "Exact verifier evidence." --done-criteria "run go test ./internal/server/ofrep" --done-criteria "run go test ./internal/server/evaluation" --done-criteria "record returncode=0 after final diff")"
+[[ "$todo_output" == $'todo created\ttodo-017\tbuild-go-ofrep\topen' ]]
+assert_file_contains "$MULTIAGENT_STATE_DIR/todos/todo-017/todo.json" '"source_finding_id": "build-go-ofrep"'
+assert_file_contains "$MULTIAGENT_STATE_DIR/todos/todo-017/todo.json" '"status": "open"'
+
+todo_assign_output="$("$ROOT/bin/subagent.sh" todo-assign todo-017 worker-02-ofrep)"
+[[ "$todo_assign_output" == $'todo assigned\ttodo-017\tworker-02-ofrep' ]]
+assert_file_contains "$MULTIAGENT_STATE_DIR/todos/todo-017/todo.json" '"assigned_to": "worker-02-ofrep"'
+assert_file_contains "$MULTIAGENT_STATE_DIR/todos/todo-017/todo.json" '"status": "assigned"'
+
+if "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-assigned.out" 2>&1; then
+  echo "expected gate-check to reject an assigned todo" >&2
+  cat "$TMPDIR/gate-assigned.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/gate-assigned.out" $'reject\topen-blocking-todo\tfinding=build-go-ofrep\ttodo=todo-017\tstatus=assigned'
+
+resolution_output="$("$ROOT/bin/subagent.sh" resolution-create todo-017 --worker worker-02-ofrep --status resolved --changed internal/server/ofrep/evaluation.go,internal/server/evaluation/ofrep_bridge.go --validation-json '[{"cmd":"go test ./internal/server/ofrep","rc":0},{"cmd":"go test ./internal/server/evaluation","rc":0}]' --why "Both changed packages compile after final diff.")"
+[[ "$resolution_output" == $'resolution recorded\ttodo-017\tworker-02-ofrep\tresolved' ]]
+assert_file_contains "$MULTIAGENT_STATE_DIR/todos/todo-017/resolution.json" '"status": "resolved"'
+assert_file_contains "$MULTIAGENT_STATE_DIR/todos/todo-017/todo.json" '"status": "resolved"'
+
+if "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-resolved.out" 2>&1; then
+  echo "expected gate-check to reject a resolved but unverified todo" >&2
+  cat "$TMPDIR/gate-resolved.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/gate-resolved.out" $'reject\topen-blocking-todo\tfinding=build-go-ofrep\ttodo=todo-017\tstatus=resolved'
+
+todo_closed_output="$("$ROOT/bin/subagent.sh" todo-status todo-017 closed)"
+[[ "$todo_closed_output" == $'todo status\ttodo-017\tclosed' ]]
+gate_closed_output="$("$ROOT/bin/subagent.sh" gate-check)"
+[[ "$gate_closed_output" == $'accepted\tfinal-gate' ]]
 
 mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-structured"
 printf 'Final status: completed according to stale transcript text\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-structured/current.txt"

@@ -9,6 +9,7 @@ This project launches a tmux session with one `orchestrator` window. The orchest
 - **Flexible Configuration**: Environment-based setup for different project contexts
 - **State Persistence**: Durable subagent state management with transcript logging
 - **Assignment Checks**: Repo-local metadata and post-work acceptance checks for branch and file ownership
+- **Structured Repair Loop**: Verifier findings become queued todos, workers attach resolution evidence, and final gates require closure
 - **Parallel DAG Discipline**: Ready workers with disjoint ownership fan out in parallel and consolidate later
 
 ## Launch
@@ -82,6 +83,7 @@ role or workflow is needed:
 - `prompts/playbooks/intent-contract.md`
 - `prompts/playbooks/parallel-execution.md`
 - `prompts/playbooks/validation-scheduling.md`
+- `prompts/playbooks/finding-todo-loop.md`
 - `prompts/playbooks/agent-spawning.md`
 - `prompts/playbooks/orchestration-routing.md`
 - `prompts/playbooks/dag.md`
@@ -106,6 +108,11 @@ extraction to the contract scout when risk is material.
 
 `prompts/playbooks/parallel-execution.md` contains the fan-out, dependency, and
 exploration/exploitation policy for running independent work in parallel.
+
+`prompts/playbooks/finding-todo-loop.md` contains the generic structured repair
+loop: verifier findings, orchestrator todos, worker resolution reports,
+reverification, and `bin/subagent.sh gate-check`. Build verification failures
+are one instance of this loop, not special eval-only wrapper logic.
 
 `prompts/playbooks/orchestration-routing.md` contains the detailed role-routing
 workflow for contract scouts, scope guards, validation coordinators, worker

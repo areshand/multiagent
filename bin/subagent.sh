@@ -35,6 +35,16 @@ Usage:
   bin/subagent.sh worktree-create NAME [--branch BRANCH] [--path PATH]
   bin/subagent.sh worktree-show NAME
   bin/subagent.sh worktree-remove NAME [--force]
+  bin/subagent.sh finding-create FINDING_ID --severity blocking|nonblocking|warning --type TYPE --summary TEXT --evidence-json JSON --required-resolution TEXT [--affected PATH[,PATH...]]
+  bin/subagent.sh finding-show FINDING_ID
+  bin/subagent.sh finding-list [--severity SEVERITY] [--type TYPE]
+  bin/subagent.sh todo-create TODO_ID --source-finding-id FINDING_ID --task TEXT --done-criteria TEXT [--done-criteria TEXT ...] [--context TEXT | --context-file PATH] [--assigned-to NAME]
+  bin/subagent.sh todo-show TODO_ID
+  bin/subagent.sh todo-list [--status STATUS]
+  bin/subagent.sh todo-assign TODO_ID NAME
+  bin/subagent.sh todo-status TODO_ID open|assigned|resolved|reopened|closed
+  bin/subagent.sh resolution-create TODO_ID --worker NAME --status resolved|blocked --validation-json JSON --why TEXT [--changed PATH[,PATH...]]
+  bin/subagent.sh gate-check
   bin/subagent.sh poll NAME
   bin/subagent.sh inspect NAME [--lines N]
   bin/subagent.sh recover-plan
@@ -172,6 +182,26 @@ worktree_meta_file() {
   printf '%s/worktrees/%s.env\n' "$STATE_DIR" "$1"
 }
 
+finding_dir() {
+  printf '%s/findings/%s\n' "$STATE_DIR" "$1"
+}
+
+finding_meta_file() {
+  printf '%s/finding.env\n' "$(finding_dir "$1")"
+}
+
+todo_dir() {
+  printf '%s/todos/%s\n' "$STATE_DIR" "$1"
+}
+
+todo_meta_file() {
+  printf '%s/todo.env\n' "$(todo_dir "$1")"
+}
+
+todo_status_file() {
+  printf '%s/status\n' "$(todo_dir "$1")"
+}
+
 default_worktree_path() {
   printf '%s/worktrees/%s\n' "$STATE_DIR" "$1"
 }
@@ -218,6 +248,79 @@ reject_newline() {
   local label="$1"
   local value="$2"
   [[ "$value" != *$'\n'* ]] || die "$label may not contain newlines"
+}
+
+write_csv_lines() {
+  local csv="$1"
+  local file="$2"
+  local item trimmed
+  : >"$file"
+  [[ -n "$csv" ]] || return 0
+  IFS=',' read -ra items <<<"$csv"
+  for item in "${items[@]}"; do
+    trimmed="${item#"${item%%[![:space:]]*}"}"
+    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+    [[ -n "$trimmed" ]] || continue
+    reject_newline "csv item" "$trimmed"
+    grep -Fx -- "$trimmed" "$file" >/dev/null 2>&1 || printf '%s\n' "$trimmed" >>"$file"
+  done
+}
+
+set_env_key() {
+  local file="$1"
+  local key="$2"
+  local value="$3"
+  local tmp
+  reject_newline "$key" "$value"
+  tmp="$file.tmp.$$"
+  awk -F= -v key="$key" -v value="$value" '
+    $1 == key { print key "=" value; found=1; next }
+    { print }
+    END { if (!found) print key "=" value }
+  ' "$file" >"$tmp"
+  mv "$tmp" "$file"
+}
+
+read_env_value() {
+  local file="$1"
+  local key="$2"
+  [[ -f "$file" ]] || return 1
+  awk -F= -v key="$key" '$1 == key { sub("^[^=]*=", ""); print; found=1 } END { exit found ? 0 : 1 }' "$file"
+}
+
+read_finding_value() {
+  local finding_id="$1"
+  local key="$2"
+  read_env_value "$(finding_meta_file "$finding_id")" "$key"
+}
+
+read_todo_value() {
+  local todo_id="$1"
+  local key="$2"
+  read_env_value "$(todo_meta_file "$todo_id")" "$key"
+}
+
+get_todo_status() {
+  local todo_id="$1"
+  if [[ -f "$(todo_status_file "$todo_id")" ]]; then
+    tr -d '\n' <"$(todo_status_file "$todo_id")"
+  else
+    printf 'unknown\n'
+  fi
+}
+
+set_todo_status() {
+  local todo_id="$1"
+  local status="$2"
+  case "$status" in
+    open|assigned|resolved|reopened|closed)
+      ;;
+    *)
+      die "invalid todo status: $status"
+      ;;
+  esac
+  [[ -f "$(todo_meta_file "$todo_id")" ]] || die "no todo: $todo_id"
+  printf '%s\n' "$status" >"$(todo_status_file "$todo_id")"
 }
 
 set_assignment_status() {
@@ -1155,6 +1258,493 @@ kill_subagent() {
   printf 'killed %s\n' "$name"
 }
 
+write_finding_json() {
+  local finding_id="$1"
+  local dir
+  dir="$(finding_dir "$finding_id")"
+  require_cmd python3
+  python3 -c '
+import json
+import pathlib
+import sys
+root = pathlib.Path(sys.argv[1])
+meta = {}
+for line in (root / "finding.env").read_text().splitlines():
+    if "=" in line:
+        key, value = line.split("=", 1)
+        meta[key] = value
+affected_file = root / "affected-paths"
+affected = [line for line in affected_file.read_text().splitlines() if line] if affected_file.exists() else []
+with (root / "evidence.json").open() as fh:
+    evidence = json.load(fh)
+payload = {
+    "id": meta["finding_id"],
+    "severity": meta["severity"],
+    "type": meta["type"],
+    "summary": meta["summary"],
+    "affected_paths": affected,
+    "evidence": evidence,
+    "required_resolution": meta["required_resolution"],
+    "created_at": meta["created_at"],
+}
+(root / "finding.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+' "$dir"
+}
+
+write_todo_json() {
+  local todo_id="$1"
+  local dir
+  dir="$(todo_dir "$todo_id")"
+  require_cmd python3
+  python3 -c '
+import json
+import pathlib
+import sys
+root = pathlib.Path(sys.argv[1])
+status = sys.argv[2]
+meta = {}
+for line in (root / "todo.env").read_text().splitlines():
+    if "=" in line:
+        key, value = line.split("=", 1)
+        meta[key] = value
+done_file = root / "done-criteria"
+done_criteria = [line for line in done_file.read_text().splitlines() if line] if done_file.exists() else []
+context_file = root / "context.txt"
+context = context_file.read_text() if context_file.exists() else ""
+payload = {
+    "todo_id": meta["todo_id"],
+    "source_finding_id": meta["source_finding_id"],
+    "assigned_to": meta.get("assigned_to") or None,
+    "status": status,
+    "task": meta["task"],
+    "context": context,
+    "done_criteria": done_criteria,
+    "created_at": meta["created_at"],
+    "updated_at": meta.get("updated_at", meta["created_at"]),
+}
+(root / "todo.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+' "$dir" "$(get_todo_status "$todo_id")"
+}
+
+write_resolution_json() {
+  local todo_id="$1"
+  local dir
+  dir="$(todo_dir "$todo_id")"
+  require_cmd python3
+  python3 -c '
+import json
+import pathlib
+import sys
+root = pathlib.Path(sys.argv[1])
+meta = {}
+for line in (root / "resolution.env").read_text().splitlines():
+    if "=" in line:
+        key, value = line.split("=", 1)
+        meta[key] = value
+changed_file = root / "changed-paths"
+changed = [line for line in changed_file.read_text().splitlines() if line] if changed_file.exists() else []
+with (root / "validation.json").open() as fh:
+    validation = json.load(fh)
+payload = {
+    "todo_id": meta["todo_id"],
+    "status": meta["status"],
+    "worker": meta["worker"],
+    "changed_paths": changed,
+    "validation": validation,
+    "why_resolved": meta["why_resolved"],
+    "created_at": meta["created_at"],
+}
+(root / "resolution.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+' "$dir"
+}
+
+finding_create() {
+  local finding_id="${1:-}"
+  [[ -n "$finding_id" ]] || die "finding-create requires FINDING_ID"
+  validate_name "$finding_id"
+  shift
+
+  local severity="" type="" summary="" evidence_json="" required_resolution="" affected_csv=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --severity)
+        severity="${2:-}"
+        shift 2
+        ;;
+      --type)
+        type="${2:-}"
+        shift 2
+        ;;
+      --summary)
+        summary="${2:-}"
+        shift 2
+        ;;
+      --evidence-json)
+        evidence_json="${2:-}"
+        shift 2
+        ;;
+      --required-resolution)
+        required_resolution="${2:-}"
+        shift 2
+        ;;
+      --affected)
+        affected_csv="${2:-}"
+        shift 2
+        ;;
+      *)
+        die "unknown finding-create argument: $1"
+        ;;
+    esac
+  done
+
+  case "$severity" in
+    blocking|nonblocking|warning)
+      ;;
+    *)
+      die "invalid finding severity: $severity"
+      ;;
+  esac
+  [[ -n "$type" ]] || die "finding-create requires --type TYPE"
+  [[ -n "$summary" ]] || die "finding-create requires --summary TEXT"
+  [[ -n "$evidence_json" ]] || die "finding-create requires --evidence-json JSON"
+  [[ -n "$required_resolution" ]] || die "finding-create requires --required-resolution TEXT"
+  reject_newline "--type" "$type"
+  reject_newline "--summary" "$summary"
+  reject_newline "--required-resolution" "$required_resolution"
+
+  local dir
+  dir="$(finding_dir "$finding_id")"
+  [[ ! -e "$dir" ]] || die "finding already exists: $finding_id"
+  mkdir -p "$dir"
+  cat >"$(finding_meta_file "$finding_id")" <<EOF
+finding_id=$finding_id
+severity=$severity
+type=$type
+summary=$summary
+required_resolution=$required_resolution
+created_at=$(timestamp)
+root=$ROOT
+EOF
+  printf '%s\n' "$evidence_json" >"$dir/evidence.json"
+  write_csv_lines "$affected_csv" "$dir/affected-paths"
+  write_finding_json "$finding_id"
+  printf 'finding created\t%s\t%s\t%s\n' "$finding_id" "$severity" "$type"
+}
+
+finding_show() {
+  local finding_id="${1:-}"
+  [[ -n "$finding_id" ]] || die "finding-show requires FINDING_ID"
+  validate_name "$finding_id"
+  [[ -f "$(finding_dir "$finding_id")/finding.json" ]] || die "no finding: $finding_id"
+  cat "$(finding_dir "$finding_id")/finding.json"
+}
+
+finding_list() {
+  local severity_filter="" type_filter=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --severity)
+        severity_filter="${2:-}"
+        shift 2
+        ;;
+      --type)
+        type_filter="${2:-}"
+        shift 2
+        ;;
+      *)
+        die "unknown finding-list argument: $1"
+        ;;
+    esac
+  done
+
+  local base="$STATE_DIR/findings"
+  [[ -d "$base" ]] || return 0
+  local dir id severity type summary
+  for dir in "$base"/*; do
+    [[ -d "$dir" ]] || continue
+    id="$(basename "$dir")"
+    severity="$(read_finding_value "$id" severity || true)"
+    type="$(read_finding_value "$id" type || true)"
+    summary="$(read_finding_value "$id" summary || true)"
+    [[ -z "$severity_filter" || "$severity" == "$severity_filter" ]] || continue
+    [[ -z "$type_filter" || "$type" == "$type_filter" ]] || continue
+    printf '%s\t%s\t%s\t%s\n' "$id" "$severity" "$type" "$summary"
+  done
+}
+
+todo_create() {
+  local todo_id="${1:-}"
+  [[ -n "$todo_id" ]] || die "todo-create requires TODO_ID"
+  validate_name "$todo_id"
+  shift
+
+  local source_finding_id="" task="" context="" context_file="" assigned_to="" done_joined="" criterion
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --source-finding-id)
+        source_finding_id="${2:-}"
+        shift 2
+        ;;
+      --task)
+        task="${2:-}"
+        shift 2
+        ;;
+      --done-criteria)
+        criterion="${2:-}"
+        reject_newline "--done-criteria" "$criterion"
+        done_joined="${done_joined}${criterion}"$'\n'
+        shift 2
+        ;;
+      --context)
+        context="${2:-}"
+        shift 2
+        ;;
+      --context-file)
+        context_file="${2:-}"
+        shift 2
+        ;;
+      --assigned-to)
+        assigned_to="${2:-}"
+        shift 2
+        ;;
+      *)
+        die "unknown todo-create argument: $1"
+        ;;
+    esac
+  done
+
+  [[ -n "$source_finding_id" ]] || die "todo-create requires --source-finding-id FINDING_ID"
+  validate_name "$source_finding_id"
+  [[ -f "$(finding_meta_file "$source_finding_id")" ]] || die "no finding: $source_finding_id"
+  [[ -n "$task" ]] || die "todo-create requires --task TEXT"
+  [[ -n "$done_joined" ]] || die "todo-create requires at least one --done-criteria TEXT"
+  [[ -z "$context" || -z "$context_file" ]] || die "todo-create accepts only one of --context or --context-file"
+  [[ -z "$context_file" || -f "$context_file" ]] || die "context file not found: $context_file"
+  reject_newline "--task" "$task"
+  if [[ -n "$assigned_to" ]]; then
+    validate_name "$assigned_to"
+  fi
+
+  local dir status
+  dir="$(todo_dir "$todo_id")"
+  [[ ! -e "$dir" ]] || die "todo already exists: $todo_id"
+  mkdir -p "$dir"
+  status="open"
+  [[ -n "$assigned_to" ]] && status="assigned"
+  cat >"$(todo_meta_file "$todo_id")" <<EOF
+todo_id=$todo_id
+source_finding_id=$source_finding_id
+assigned_to=$assigned_to
+task=$task
+created_at=$(timestamp)
+updated_at=$(timestamp)
+root=$ROOT
+EOF
+  printf '%s' "$done_joined" >"$dir/done-criteria"
+  if [[ -n "$context_file" ]]; then
+    cp "$context_file" "$dir/context.txt"
+  else
+    printf '%s\n' "$context" >"$dir/context.txt"
+  fi
+  set_todo_status "$todo_id" "$status"
+  write_todo_json "$todo_id"
+  printf 'todo created\t%s\t%s\t%s\n' "$todo_id" "$source_finding_id" "$status"
+}
+
+todo_show() {
+  local todo_id="${1:-}"
+  [[ -n "$todo_id" ]] || die "todo-show requires TODO_ID"
+  validate_name "$todo_id"
+  [[ -f "$(todo_dir "$todo_id")/todo.json" ]] || die "no todo: $todo_id"
+  write_todo_json "$todo_id"
+  cat "$(todo_dir "$todo_id")/todo.json"
+}
+
+todo_list() {
+  local status_filter=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --status)
+        status_filter="${2:-}"
+        shift 2
+        ;;
+      *)
+        die "unknown todo-list argument: $1"
+        ;;
+    esac
+  done
+
+  local base="$STATE_DIR/todos"
+  [[ -d "$base" ]] || return 0
+  local dir id status source_finding_id assigned_to task
+  for dir in "$base"/*; do
+    [[ -d "$dir" ]] || continue
+    id="$(basename "$dir")"
+    status="$(get_todo_status "$id")"
+    [[ -z "$status_filter" || "$status" == "$status_filter" ]] || continue
+    source_finding_id="$(read_todo_value "$id" source_finding_id || true)"
+    assigned_to="$(read_todo_value "$id" assigned_to || true)"
+    task="$(read_todo_value "$id" task || true)"
+    printf '%s\t%s\t%s\t%s\t%s\n' "$id" "$status" "$source_finding_id" "${assigned_to:--}" "$task"
+  done
+}
+
+todo_assign() {
+  local todo_id="${1:-}"
+  local assigned_to="${2:-}"
+  [[ -n "$todo_id" && -n "$assigned_to" ]] || die "todo-assign requires TODO_ID NAME"
+  validate_name "$todo_id"
+  validate_name "$assigned_to"
+  [[ -f "$(todo_meta_file "$todo_id")" ]] || die "no todo: $todo_id"
+  set_env_key "$(todo_meta_file "$todo_id")" assigned_to "$assigned_to"
+  set_env_key "$(todo_meta_file "$todo_id")" updated_at "$(timestamp)"
+  set_todo_status "$todo_id" "assigned"
+  write_todo_json "$todo_id"
+  printf 'todo assigned\t%s\t%s\n' "$todo_id" "$assigned_to"
+}
+
+todo_status() {
+  local todo_id="${1:-}"
+  local status="${2:-}"
+  [[ -n "$todo_id" && -n "$status" ]] || die "todo-status requires TODO_ID STATUS"
+  validate_name "$todo_id"
+  [[ -f "$(todo_meta_file "$todo_id")" ]] || die "no todo: $todo_id"
+  case "$status" in
+    open|assigned|resolved|reopened|closed)
+      ;;
+    *)
+      die "invalid todo status: $status"
+      ;;
+  esac
+  set_env_key "$(todo_meta_file "$todo_id")" updated_at "$(timestamp)"
+  set_todo_status "$todo_id" "$status"
+  write_todo_json "$todo_id"
+  printf 'todo status\t%s\t%s\n' "$todo_id" "$status"
+}
+
+resolution_create() {
+  local todo_id="${1:-}"
+  [[ -n "$todo_id" ]] || die "resolution-create requires TODO_ID"
+  validate_name "$todo_id"
+  shift
+
+  local worker="" status="" validation_json="" why="" changed_csv=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --worker)
+        worker="${2:-}"
+        shift 2
+        ;;
+      --status)
+        status="${2:-}"
+        shift 2
+        ;;
+      --validation-json)
+        validation_json="${2:-}"
+        shift 2
+        ;;
+      --why)
+        why="${2:-}"
+        shift 2
+        ;;
+      --changed)
+        changed_csv="${2:-}"
+        shift 2
+        ;;
+      *)
+        die "unknown resolution-create argument: $1"
+        ;;
+    esac
+  done
+
+  [[ -f "$(todo_meta_file "$todo_id")" ]] || die "no todo: $todo_id"
+  [[ -n "$worker" ]] || die "resolution-create requires --worker NAME"
+  validate_name "$worker"
+  case "$status" in
+    resolved|blocked)
+      ;;
+    *)
+      die "invalid resolution status: $status"
+      ;;
+  esac
+  [[ -n "$validation_json" ]] || die "resolution-create requires --validation-json JSON"
+  [[ -n "$why" ]] || die "resolution-create requires --why TEXT"
+  reject_newline "--why" "$why"
+
+  local dir
+  dir="$(todo_dir "$todo_id")"
+  cat >"$dir/resolution.env" <<EOF
+todo_id=$todo_id
+status=$status
+worker=$worker
+why_resolved=$why
+created_at=$(timestamp)
+EOF
+  printf '%s\n' "$validation_json" >"$dir/validation.json"
+  write_csv_lines "$changed_csv" "$dir/changed-paths"
+  write_resolution_json "$todo_id"
+  if [[ "$status" == "resolved" ]]; then
+    set_todo_status "$todo_id" "resolved"
+  else
+    set_todo_status "$todo_id" "reopened"
+  fi
+  set_env_key "$(todo_meta_file "$todo_id")" updated_at "$(timestamp)"
+  write_todo_json "$todo_id"
+  printf 'resolution recorded\t%s\t%s\t%s\n' "$todo_id" "$worker" "$status"
+}
+
+gate_check() {
+  local failed=0
+  local findings_base="$STATE_DIR/findings"
+  local todos_base="$STATE_DIR/todos"
+  local dir finding_id severity todo_dir_path todo_id source status found_todo
+
+  if [[ -d "$findings_base" ]]; then
+    for dir in "$findings_base"/*; do
+      [[ -d "$dir" ]] || continue
+      finding_id="$(basename "$dir")"
+      severity="$(read_finding_value "$finding_id" severity || true)"
+      [[ "$severity" == "blocking" ]] || continue
+      found_todo=0
+      if [[ -d "$todos_base" ]]; then
+        for todo_dir_path in "$todos_base"/*; do
+          [[ -d "$todo_dir_path" ]] || continue
+          todo_id="$(basename "$todo_dir_path")"
+          source="$(read_todo_value "$todo_id" source_finding_id || true)"
+          [[ "$source" == "$finding_id" ]] || continue
+          found_todo=1
+          status="$(get_todo_status "$todo_id")"
+          if [[ "$status" != "closed" ]]; then
+            printf 'reject\topen-blocking-todo\tfinding=%s\ttodo=%s\tstatus=%s\n' "$finding_id" "$todo_id" "$status"
+            failed=1
+          fi
+        done
+      fi
+      if [[ "$found_todo" -eq 0 ]]; then
+        printf 'reject\tunqueued-blocking-finding\tfinding=%s\n' "$finding_id"
+        failed=1
+      fi
+    done
+  fi
+
+  if [[ -d "$todos_base" ]]; then
+    for todo_dir_path in "$todos_base"/*; do
+      [[ -d "$todo_dir_path" ]] || continue
+      todo_id="$(basename "$todo_dir_path")"
+      status="$(get_todo_status "$todo_id")"
+      if [[ "$status" != "closed" ]]; then
+        printf 'reject\topen-todo\ttodo=%s\tstatus=%s\n' "$todo_id" "$status"
+        failed=1
+      fi
+    done
+  fi
+
+  if [[ "$failed" -eq 0 ]]; then
+    printf 'accepted\tfinal-gate\n'
+  fi
+  return "$failed"
+}
+
 cmd="${1:-}"
 case "$cmd" in
   spawn)
@@ -1200,6 +1790,46 @@ case "$cmd" in
   worktree-remove)
     shift
     worktree_remove "$@"
+    ;;
+  finding-create)
+    shift
+    finding_create "$@"
+    ;;
+  finding-show)
+    shift
+    finding_show "$@"
+    ;;
+  finding-list)
+    shift
+    finding_list "$@"
+    ;;
+  todo-create)
+    shift
+    todo_create "$@"
+    ;;
+  todo-show)
+    shift
+    todo_show "$@"
+    ;;
+  todo-list)
+    shift
+    todo_list "$@"
+    ;;
+  todo-assign)
+    shift
+    todo_assign "$@"
+    ;;
+  todo-status)
+    shift
+    todo_status "$@"
+    ;;
+  resolution-create)
+    shift
+    resolution_create "$@"
+    ;;
+  gate-check)
+    shift
+    gate_check "$@"
     ;;
   poll)
     shift

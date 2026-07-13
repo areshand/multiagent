@@ -72,6 +72,9 @@ first instruction with worker name, assignment ID, branch, owned paths, relevant
 commit hash, task statement, contract ledger, and verifier iteration number.
 For tasks that used a contract scout, include the scout's contract ledger and
 validation plan as normative review input.
+Load `prompts/playbooks/finding-todo-loop.md` whenever the verifier may produce
+blocking repair work. Blocking verifier findings must be recorded as structured
+finding artifacts before the orchestrator turns them into bounded repair todos.
 
 ```bash
 SUBAGENT_CLI="$VERIFIER_CLI" bin/subagent.sh spawn verifier-01-task --instruction "FIRST_INSTRUCTION_TEXT"
@@ -96,7 +99,19 @@ The verifier module requires a verifier contract ledger, source-derived
 hidden-contract probes, assumption challenges, and the instruction to Run a
 Ponytail over-engineering pass.
 The orchestrator decides which findings become accepted follow-up; never pass
-raw verifier findings directly to the worker as orders.
+raw verifier findings directly to the worker as orders. Convert accepted
+blocking findings into `bin/subagent.sh todo-create ...` records with objective
+done criteria, assign workers from open todos, require worker resolution
+evidence, then close or reopen the todo only after verifier recheck.
+
+Before final acceptance, run:
+
+```bash
+bin/subagent.sh gate-check
+```
+
+Do not accept while required findings are unqueued or repair todos are open,
+assigned, resolved, or reopened.
 
 ## Progress And Status
 

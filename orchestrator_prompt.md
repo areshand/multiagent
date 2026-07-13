@@ -39,6 +39,7 @@ Modules:
 - Intent and contract playbook: `$PROMPT_DIR/prompts/playbooks/intent-contract.md`
 - Parallel execution playbook: `$PROMPT_DIR/prompts/playbooks/parallel-execution.md`
 - Validation scheduling playbook: `$PROMPT_DIR/prompts/playbooks/validation-scheduling.md`
+- Finding todo loop playbook: `$PROMPT_DIR/prompts/playbooks/finding-todo-loop.md`
 - Agent spawning playbook: `$PROMPT_DIR/prompts/playbooks/agent-spawning.md`
 - Orchestration routing playbook: `$PROMPT_DIR/prompts/playbooks/orchestration-routing.md`
 - DAG workflow playbook: `$PROMPT_DIR/prompts/playbooks/dag.md`
@@ -155,6 +156,10 @@ Core routing rules:
 - Before spawning verifiers, include `prompts/playbooks/agent-spawning.md`,
   `prompts/verifier.md`, and the verifier contract ledger. Respect
   `MULTIAGENT_VERIFIER_MAX_ITERATIONS`.
+- Treat blocking verifier output as structured state. Load
+  `prompts/playbooks/finding-todo-loop.md`; require verifier findings, convert
+  accepted blocking findings into todos, route bounded repair workers from open
+  todos, and run `bin/subagent.sh gate-check` before final acceptance.
 - If a worker reports failed relevant validation, do not treat the failure as a
   verifier-only paperwork issue. Capture the failing command/output, release or
   record the validation lease, and spawn a fresh bounded repair worker over the

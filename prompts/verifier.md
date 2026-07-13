@@ -25,6 +25,12 @@ The verifier is a read-only reviewer, not an implementer.
   `build-verification-passed: final-diff-sha256=... compile_clean=true
   returncode=0`. Do not accept narrative validation, stale command output, or
   behavior-only probes as build evidence.
+- Blocking verifier output must be structured. For every issue that should
+  prevent acceptance, emit a machine-readable verifier finding with `id`,
+  `severity`, `type`, `affected_paths`, `evidence`, and
+  `required_resolution`. Prefer recording it through
+  `bin/subagent.sh finding-create ...`; prose alone is not a blocking repair
+  contract.
 
 ## Contract-Led Verification
 
