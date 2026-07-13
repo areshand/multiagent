@@ -437,9 +437,12 @@ assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "validat
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "treated this command as insufficient because it did not execute real selected tests"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "production-native wrapper may run repository-visible validation"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "No-test compile checks"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "git diff --name-only"
 assert_file_contains "$ROOT/evaluation/README.md" "production-native progress watchdog"
 assert_file_contains "$ROOT/prompts/verifier.md" "source review plus"
 assert_file_contains "$ROOT/prompts/verifier.md" "old/stale expectation"
+assert_file_contains "$ROOT/prompts/verifier.md" "git diff --name-only"
+assert_file_contains "$ROOT/prompts/worker.md" "git diff --name-only"
 assert_file_contains "$ROOT/prompts/verifier.md" "replacement-probe-passed:"
 assert_file_contains "$ROOT/prompts/verifier.md" "multi-value-probe-passed:"
 assert_file_contains "$ROOT/prompts/verifier.md" "final-output-field="
@@ -1320,6 +1323,18 @@ with tempfile.TemporaryDirectory() as td:
     assert not solve_swe_prod.visible_validation_passed_in_text(noisy_text), noisy_text
     validation_evidence = solve_swe_prod.persisted_subagent_visible_validation_evidence(go_diff, runtime_root)
     assert "go test ./lib/service ./lib/kube/proxy" in validation_evidence, validation_evidence
+    (agent_dir / "last-message.txt").write_text(
+        "**Validation**\n"
+        "- Ran `go test ./internal/server/ofrep ./internal/server/evaluation`\n\n"
+        "Exact test output:\n"
+        "```text\n"
+        "ok      go.flipt.io/flipt/internal/server/ofrep (cached)\n"
+        "ok      go.flipt.io/flipt/internal/server/evaluation    0.151s\n"
+        "```\n",
+        encoding="utf-8",
+    )
+    structured_validation_evidence = solve_swe_prod.persisted_subagent_visible_validation_evidence(go_diff, runtime_root)
+    assert "go test ./internal/server/ofrep ./internal/server/evaluation" in structured_validation_evidence, structured_validation_evidence
     (agent_dir / "last-message.txt").write_text(
         "Updated source.\n\nValidation passed:\n`go test -run TestNonExistent ./lib/service`\n"
         "ok github.com/example/project/lib/service 0.111s [no tests to run]\n",

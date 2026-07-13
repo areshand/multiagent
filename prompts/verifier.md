@@ -194,6 +194,14 @@ enough for patches that touch structs, methods, helper state, or unexported
 interfaces. Treat `go test -run TestNonExistent`, `go test -run '^$'`,
 `[no test files]`, and `no tests to run` as compile sanity only, not as
 behavioral validation.
+Before accepting, cross-check every worker/verifier claim about changed files
+against `git diff --name-only`. If an agent says a mock, interface,
+compatibility wrapper, fixture, caller, or generated/source companion was
+updated, that path must appear in the final diff unless the agent proves it was
+already correct and unchanged. A validation claim is stale or false if the
+compile output says a claimed companion path is still missing a method, field,
+symbol, or interface implementation; reject with `validation-repair-needed:`
+and the exact missing path/symbol.
 If compile/test validation is already running in another live worker/verifier
 for the same package, do not start a duplicate command. Inspect the running
 command, wait for its result, or reject with a clear orchestration finding that

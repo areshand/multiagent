@@ -1041,6 +1041,57 @@ def validation_text_has_no_test_evidence(text: str) -> bool:
     )
 
 
+def validation_section_offsets(text: str) -> list[int]:
+    """Return likely validation-section starts from a worker report."""
+
+    text_lower = text.lower()
+    offsets: list[int] = []
+    for marker in ("validation passed:", "**validation**", "## validation", "### validation"):
+        start = 0
+        while True:
+            idx = text_lower.find(marker, start)
+            if idx < 0:
+                break
+            offsets.append(idx)
+            start = idx + len(marker)
+    return sorted(set(offsets))
+
+
+def validation_tail_has_required_command_and_pass(
+    validation_tail: str,
+    required_commands: tuple[str, ...],
+    *,
+    explicit_pass_marker: bool,
+) -> bool:
+    text = validation_tail.lower()
+    if not any(command in text for command in required_commands):
+        return False
+    if validation_text_has_no_test_evidence(text):
+        return False
+    if any(
+        bad in text
+        for bad in (
+            "validation failed",
+            "tests failed",
+            "go test failed",
+            "pytest failed",
+            "npm test failed",
+            "yarn test failed",
+            "traceback",
+        )
+    ):
+        return False
+    if "go test" in required_commands and "go test" not in text:
+        return False
+    if explicit_pass_marker:
+        return True
+    if re.search(r"(?m)^ok\s+\S+", validation_tail):
+        return True
+    if re.search(r"=+\s+[^=\n]*\bpassed\b[^=\n]*\s+=+", text):
+        return True
+    return bool(re.search(r"\b\d+\s+passed\b", text))
+
+
 def persisted_subagent_visible_validation_evidence(
     diff: str,
     runtime_root: Path = RUNTIME_ROOT,
@@ -1089,31 +1140,20 @@ def persisted_subagent_visible_validation_evidence(
             except OSError:
                 continue
             text = raw.lower()
-            marker = text.rfind("validation passed:")
-            if marker < 0:
+            markers = validation_section_offsets(raw)
+            if not markers:
                 continue
-            validation_tail = text[marker:]
-            if not any(command in validation_tail for command in required_commands):
-                continue
-            if validation_text_has_no_test_evidence(validation_tail):
-                continue
-            if any(
-                bad in validation_tail
-                for bad in (
-                    "validation failed",
-                    "tests failed",
-                    "go test failed",
-                    "pytest failed",
-                    "npm test failed",
-                    "yarn test failed",
-                    "traceback",
-                )
-            ):
-                continue
-            if "go test" in required_commands and "go test" not in validation_tail:
-                continue
-            excerpt = raw[marker: marker + 800].strip()
-            return f"persisted subagent {agent_dir.name} {name}: {excerpt}"
+            for marker in reversed(markers):
+                validation_tail = raw[marker:]
+                explicit_pass_marker = text[marker:].startswith("validation passed:")
+                if not validation_tail_has_required_command_and_pass(
+                    validation_tail,
+                    required_commands,
+                    explicit_pass_marker=explicit_pass_marker,
+                ):
+                    continue
+                excerpt = raw[marker: marker + 800].strip()
+                return f"persisted subagent {agent_dir.name} {name}: {excerpt}"
     return ""
 
 

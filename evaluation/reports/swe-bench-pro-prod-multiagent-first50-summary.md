@@ -1161,3 +1161,59 @@ is the right next expensive check because the expected effect is not that the
 old bad patch passes, but that production multi-agent either finds the correct
 source owner/contract or blocks earlier with a clean declared-type finding
 instead of producing another rejected compile-broken diff.
+
+## 2026-07-13 Row 28 Guardrail Smokes
+
+Focused smoke `swe-bench-pro-prod-pr4-e0aa-declaredtype-offset28-r1` used PR4
+commit `e0aa5f2`. Native result: `rc=2`, `1419.1s`, no official verifier
+evidence. The run did improve over the earlier `s.store.ListFlags undefined`
+failure: the final diff no longer called `ListFlags` through the undeclared
+`Storer` interface. A follow-up worker moved listing behind an explicit local
+type assertion and reported:
+
+```text
+go test ./internal/server/ofrep ./internal/server/evaluation
+ok go.flipt.io/flipt/internal/server/ofrep
+ok go.flipt.io/flipt/internal/server/evaluation
+```
+
+However, the wrapper still rejected the run before official scoring because the
+orchestrator/session ended in a rejected state and the durable validation
+recovery parser only recognized literal `Validation passed:` sections. PR4 now
+generalizes that parser to also accept structured `**Validation**` sections
+with concrete passing command output, while still rejecting no-test, failed, or
+traceback evidence.
+
+Focused smoke `swe-bench-pro-prod-pr4-validation-recovery-offset28-r1` used the
+structured-validation recovery change. Native result: `rc=2`, `1695.3s`, no
+official verifier evidence. This run proved the recovery parser worked, but the
+adapter public probe correctly rejected the diff as compile-broken:
+
+```text
+internal/server/evaluation/evaluation_store_mock.go:11:16:
+*evaluationStoreMock does not implement Storer (missing method ListFlags)
+```
+
+The root cause moved from declared receiver ownership to a verifier trust gap:
+worker/verifier text claimed `evaluation_store_mock.go` was updated, but the
+final `git diff --name-only` contained only:
+
+```text
+internal/server/evaluation/ofrep_bridge.go
+internal/server/evaluation/server.go
+internal/server/ofrep/evaluation.go
+internal/server/ofrep/server.go
+```
+
+So the native gate was right to refuse official scoring. The general learning
+is that verifier acceptance must not trust claimed changed files or claimed
+validation. It must compare claims against the actual final diff and treat
+compile output showing a claimed companion still missing a method, field,
+symbol, or interface implementation as `validation-repair-needed:`. PR4 now
+adds this claim-vs-diff rule to the worker prompt, verifier prompt, and
+container-side SWE autonomous appendix, with static tests.
+
+Net score movement: none. The first-50 aggregate remains `33/50`
+production-native clean official passes. The row 28 failure is now correctly
+classified as a real production multi-agent orchestration/verifier miss, not an
+EvalScope or Docker issue.

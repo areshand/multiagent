@@ -171,6 +171,13 @@ Verifier quality bar:
   formatting unless the issue explicitly requires those files.
 - Inspect `git status --short --untracked-files=all` and reject if a required
   source file is untracked rather than included in the patch.
+- Cross-check every claim about changed files against `git diff --name-only`.
+  If a worker or verifier says a mock, interface, compatibility wrapper,
+  fixture, caller, or generated/source companion was updated, that path must
+  appear in the final diff unless there is explicit source proof it was already
+  correct and unchanged. Treat compile output showing a claimed companion still
+  missing a method, field, symbol, or interface implementation as
+  `validation-repair-needed:` with the exact missing path/symbol.
 - Validate the worker's validation claim. If the worker only ran an unrelated
   smoke check, a single guessed case while a relevant test file was available,
   or no check due to a service that could be locally started, run/request the

@@ -141,6 +141,11 @@ files]`, `no tests to run`, or another no-test compile check as behavioral
 validation for a source repair. Those checks can support compile sanity only;
 completion still requires real affected package tests, a source-derived probe
 that exercises the changed behavior, or an explicit skip/blocker with evidence.
+Before reporting completion, run `git diff --name-only` and make sure every file
+you claim to have changed is actually present in the diff. If you claim a mock,
+interface, fixture, caller, compatibility wrapper, or source companion was
+updated but it is absent from the diff, either make the missing source edit or
+remove the claim and report the remaining compile/contract risk.
 
 Run only one expensive validation command per owned package at a time. Treat the
 orchestrator's validation lease as the authority for long compile/test commands.
