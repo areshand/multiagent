@@ -921,7 +921,50 @@ git diff --check
 perl -e 'alarm shift; exec @ARGV' 180 bash tests/run.sh
 ```
 
-Score movement: not measured yet. This is a general convergence and measurement
-integrity change; a follow-up failed-row rerun is still required to determine
-whether it converts any of the `rc=2` rejected diffs into clean official
-submissions.
+Score movement for the code change itself was not assumed. The failed-row rerun
+below measures whether it converted any `rc=2` rejected diffs into clean
+official submissions.
+
+## 2026-07-12 Resume Failed-Row Rerun
+
+All unresolved first-50 rows were rerun with the production-native solver bake
+from commit `dc543c1`, 20g task memory, persistent per-row caches, clean
+official scoring only, and up to four concurrent rows. Prefix:
+`swe-bench-pro-prod-pr4-resume-offset{row}-r1`.
+
+| Row | Native rc | Official evidence | Clean native score | Native wall |
+| --- | ---: | --- | ---: | ---: |
+| 2 | 2 | no | n/a | 1172.3s |
+| 8 | 2 | no | n/a | 727.8s |
+| 12 | 2 | no | n/a | 1465.3s |
+| 14 | 2 | no | n/a | 1217.7s |
+| 15 | 2 | no | n/a | 1541.2s |
+| 16 | 2 | no | n/a | 992.9s |
+| 17 | 2 | no | n/a | 210.7s |
+| 18 | 2 | no | n/a | 838.2s |
+| 20 | 2 | no | n/a | 743.8s |
+| 27 | 2 | no | n/a | 706.8s |
+| 28 | 2 | no | n/a | 165.9s |
+| 37 | 2 | no | n/a | 346.4s |
+| 38 | 1 | no | n/a | 3600.0s |
+| 41 | 0 | yes | 0.0 | 658.0s |
+| 42 | 2 | no | n/a | 248.2s |
+| 44 | 124 | no | n/a | 3515.8s |
+| 48 | 124 | no | n/a | 3519.2s |
+
+Net score movement: none. The first-50 aggregate remains `33/50`
+production-native clean official passes, still below the >70% target.
+
+The new production-orchestrator resume hook did not materially affect this
+batch because the dominant failures were not the narrow post-exit state it
+targets. Most rows exited `rc=2` from the native gate while still treated as
+normal active runs, rows 44 and 48 hit the native timeout, and row 38 ended
+with native `rc=1` at the timeout boundary. Row 41 reached official verification
+but scored `0.0`.
+
+This narrows the next general improvement target: fix active-run terminal
+discipline, not only post-exit recovery. The orchestrator needs a stronger
+in-run contract that periodically forces a real verifier/validation handoff and
+terminates with a machine-readable reason before the native timeout. Otherwise
+the wrapper sees an active solver until it exits or times out, so a post-exit
+resume hook is too late to improve resolve rate.
