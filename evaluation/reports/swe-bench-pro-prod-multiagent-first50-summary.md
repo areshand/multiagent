@@ -1569,3 +1569,20 @@ Updated surfaces:
 Validation passed: `python3 -m py_compile` on the native solver files,
 `bash -n tests/run.sh`, `git diff --check`, a focused source-symbol regression,
 and bounded `tests/run.sh`.
+
+Focused row 18 smoke
+`swe-bench-pro-prod-pr4-d0f-symbolmap-offset18-r1` used the production-native
+solver baked from PR4 commit `d0f911a`. Native result: `rc=2`, `463.1s`;
+official verifier evidence: `false`; clean native score: `n/a`.
+
+This is useful guardrail evidence, not a score improvement. The row no longer
+sent a wrong-package source-symbol patch to official scoring. The wrapper
+blocked because the final completion did not contain sufficient
+`source-symbol-map-passed:` evidence in `status.json` with exact package/path,
+changed symbols, and compile/caller/nearby-test proof. Verifier prose alone was
+not accepted as completion evidence.
+
+The remaining general gap is recovery, not just detection: when the wrapper
+catches a missing source-symbol map after a follow-up, the production
+orchestrator needs to repair the package localization or write exact final
+status evidence from source-derived checks before the row can be scored.
