@@ -1632,3 +1632,24 @@ prose is still not accepted as durable completion evidence.
 
 Validation passed: `python3 -m py_compile` on the native solver files,
 `bash -n tests/run.sh`, `git diff --check`, and bounded `tests/run.sh`.
+
+Focused row 18 smoke
+`swe-bench-pro-prod-pr4-ab95-symbolrecover-offset18-r1` used the
+production-native solver baked from PR4 commit `ab95f57`. Native result:
+`rc=2`, `420.8s`; official verifier evidence: `false`; clean native score:
+`n/a`.
+
+The recovery handoff improved the verifier behavior but did not produce a clean
+completion. The verifier now wrote natural-language `source-symbol-map-passed`
+evidence and `go test ./lib/client` passed, but the durable `status.json`
+remained blocked because the marker was not machine-readable: it lacked literal
+`package=`, `path=`, `added-symbol=`, and `compile=`/`caller=` key/value tokens.
+
+Follow-up prompt hardening now requires one single machine-readable
+`source-symbol-map-passed:` or `source-symbol-map-skip-justified:` line in the
+worker, verifier, autonomous appendix, final override, and source-symbol
+recovery handoff. Markdown prose such as
+``source-symbol-map-passed: `path` adds `symbol` in package `name``` is
+explicitly rejected in favor of literal key/value tokens. Validation passed
+again: `python3 -m py_compile`, `bash -n tests/run.sh`, `git diff --check`, and
+bounded `tests/run.sh`.

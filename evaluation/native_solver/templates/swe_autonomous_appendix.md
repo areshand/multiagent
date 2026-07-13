@@ -184,13 +184,19 @@ Verifier quality bar:
   missing a method, field, symbol, or interface implementation as
   `validation-repair-needed:` with the exact missing path/symbol.
 - If the final diff adds, removes, renames, or moves source symbols, write
-  `source-symbol-map-passed:` in final validation with `package=` or `path=`,
-  every `added-symbol=`, `removed-symbol=`, or `renamed-symbol=`, and
-  `nearby-test=`, `compile=`, `caller=`, or `callsite=` evidence. This map must
-  prove package placement and compatibility for visible callers/tests; do not
-  accept code placed in the wrong package or helper names removed while tests or
-  callers still reference them. Use `source-symbol-map-skip-justified:` only
-  with source evidence that no definition-level symbol contract changed.
+  one single machine-readable `source-symbol-map-passed:` line in final
+  validation with `package=` or `path=`, every `added-symbol=`,
+  `removed-symbol=`, or `renamed-symbol=`, and `nearby-test=`, `compile=`,
+  `caller=`, or `callsite=` evidence. This map must prove package placement and
+  compatibility for visible callers/tests; do not accept code placed in the
+  wrong package or helper names removed while tests or callers still reference
+  them. Do not write markdown prose such as
+  ``source-symbol-map-passed: `path` adds `symbol` in package `name```; use
+  literal key/value tokens such as
+  `source-symbol-map-passed: path=lib/client/bench.go package=client added-symbol=LinearBenchmark compile=go-test-lib-client`.
+  Use one single machine-readable `source-symbol-map-skip-justified:` line only
+  with `path=` or `package=` and source evidence that no definition-level symbol
+  contract changed.
 - Validate the worker's validation claim. If the worker only ran an unrelated
   smoke check, a single guessed case while a relevant test file was available,
   or no check due to a service that could be locally started, run/request the

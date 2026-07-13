@@ -204,13 +204,19 @@ symbol, or interface implementation; reject with `validation-repair-needed:`
 and the exact missing path/symbol.
 When the patch adds, removes, renames, or moves source symbols, require a
 source-symbol map before acceptance. The acceptance text must include
-`source-symbol-map-passed:` with `package=` or `path=`, each `added-symbol=`,
-`removed-symbol=`, or `renamed-symbol=`, and either `nearby-test=`,
-`compile=`, `caller=`, or `callsite=` evidence that the owning package and
-visible callers/tests use the same symbol contract. If no changed definition is
-contract-relevant, require `source-symbol-map-skip-justified:` with source
-evidence. Do not accept a patch that places the right idea in the wrong package
-or removes helper names still referenced by visible tests/callers.
+one single machine-readable line beginning `source-symbol-map-passed:` with
+`package=` or `path=`, each `added-symbol=`, `removed-symbol=`, or
+`renamed-symbol=`, and either `nearby-test=`, `compile=`, `caller=`, or
+`callsite=` evidence that the owning package and visible callers/tests use the
+same symbol contract. Do not write this marker as markdown prose such as
+``source-symbol-map-passed: `path` adds `symbol` in package `name```; it must
+use literal key/value tokens such as
+`source-symbol-map-passed: path=lib/client/bench.go package=client added-symbol=LinearBenchmark compile=go-test-lib-client`.
+If no changed definition is contract-relevant, require one single
+machine-readable `source-symbol-map-skip-justified:` line with `path=` or
+`package=` and source evidence. Do not accept a patch that places the right idea
+in the wrong package or removes helper names still referenced by visible
+tests/callers.
 If the transcript contains `apply_patch` stale-hunk, missing-context, or patch
 failure output, verify the live final diff rather than the intended patch text.
 Reject unless the target files were re-read, the edit was reapplied to the live
