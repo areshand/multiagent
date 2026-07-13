@@ -1482,3 +1482,53 @@ tests pass WebFinger happy-path and missing-local-user cases. The remaining
 official failures are hidden-contract misses around malformed or missing
 `resource` handling and guest `view:users` privilege checks. Score movement:
 none; the first-50 aggregate remains `33/50`.
+
+## 2026-07-13 Four-Way Failed-Row Rerun After Parser-Gate Fix
+
+After Docker memory was raised, another four-worker explicit failed-row batch
+was run on rows `15, 16, 17, 18` with the production-native solver baked from
+PR4 commit `d8167df`, 20g task memory, per-worker persistent caches, and clean
+official scoring only. Prefix:
+`swe-bench-pro-prod-pr4-d816-parallel4-failed-w{worker}-offset{offset}-count1`.
+
+| Row | Repo | Native rc | Official evidence | Clean native score | Native wall | Outcome |
+| --- | --- | ---: | --- | ---: | ---: | --- |
+| 15 | future-architect/vuls | 2 | no | n/a | 979.1s | Native guardrail rejected the diff before official scoring. |
+| 16 | internetarchive/openlibrary | 2 | no | n/a | 1109.6s | Native guardrail rejected the diff before official scoring. |
+| 17 | future-architect/vuls | 0 | yes | 0.0 | 1266.2s | Reached official verifier and scored `0.0`. |
+| 18 | gravitational/teleport | 0 | yes | 0.0 | 764.7s | Reached official verifier and scored `0.0`. |
+
+Net score movement: none. The first-50 aggregate remains `33/50`.
+
+The infrastructure result is positive: four production-native rows ran in
+parallel under 20g memory and two reached official scoring, so the 4-way path is
+usable. The result is not a solve-rate improvement.
+
+Failure notes:
+
+- Row 15 was rejected by the native wrapper after a Trivy/Vuls merge probe
+  failed to compile against the source-visible `DetectedVulnerability` API; a
+  later worker then hit a response-contract/tool-instruction confusion instead
+  of repairing the source-derived probe.
+- Row 16 again exposed inconsistent MARC multi-value evidence. Agents produced
+  promising source changes and some focused tests passed, but the final ledger
+  mixed incompatible product-facing cardinality claims, so the native wrapper
+  correctly refused to score it.
+- Row 17 reached official scoring, but official output failed
+  `TestIsOvalDefAffected` and also showed scanner package compile failures
+  from removed or renamed Alpine parser helpers such as
+  `parseApkInstalledList`, `parseApkIndex`, and `parseApkUpgradableList`.
+- Row 18 reached official scoring, but official parsing reported
+  `NO_TESTS_FOUND_OR_PARSING_ERROR`; stderr showed `lib/benchmark` tests could
+  not find `Config`, `Linear`, and `validateConfig`. The solver added linear
+  benchmark generator code under `lib/client/bench.go`, while the visible
+  hidden-contract shape expected package-level symbols in `lib/benchmark`.
+
+General lesson: parallelism is no longer the bottleneck for these rows. The
+remaining gap is source-level contract localization before editing: workers
+still infer the right broad theme but miss the package/API where official tests
+look, or they change helper names without proving compatibility with existing
+visible tests. The verifier should force a final source-symbol map for touched
+packages: every renamed/removed helper, every new exported symbol expected by
+nearby tests, and every final-output probe cardinality claim must be checked
+against the actual package that owns the contract.
