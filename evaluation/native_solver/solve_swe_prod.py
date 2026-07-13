@@ -26,6 +26,7 @@ try:
     from .swe_prod_guardrails import (
         changed_go_package_args,
         coverage_probe_commands,
+        helper_preservation_evidence,
         helper_scope_hints,
         implementation_scope_blockers,
         required_public_symbols,
@@ -34,6 +35,7 @@ except ImportError:  # pragma: no cover - direct script execution in task contai
     from swe_prod_guardrails import (
         changed_go_package_args,
         coverage_probe_commands,
+        helper_preservation_evidence,
         helper_scope_hints,
         implementation_scope_blockers,
         required_public_symbols,
@@ -2873,7 +2875,21 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                             diff,
                             ["final verifier accepted without status.json; adapter reran selected public validation before recovery"],
                         )
-                    scope_blockers = implementation_scope_blockers(issue, diff, {}, task_metadata)
+                    recovered_base = (
+                        f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})"
+                        if probe_passed
+                        else "final verifier accepted without status.json; adapter public helper probe did not pass"
+                    )
+                    recovered_validation = recovered_validation_text(
+                        task_metadata,
+                        text,
+                        recovered_base,
+                    )
+                    helper_evidence = helper_preservation_evidence(issue, text)
+                    if helper_evidence:
+                        recovered_validation += "; " + helper_evidence
+                    recovered_status = status_with_recovered_validation({}, recovered_validation)
+                    scope_blockers = implementation_scope_blockers(issue, diff, recovered_status, task_metadata)
                     if probe_passed:
                         blockers = blockers_after_passing_public_probe(scope_blockers)
                         if not blockers:
@@ -2882,11 +2898,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                                     {
                                         "status": "completed",
                                         "summary": "final verifier accepted source diff; adapter recovered missing status marker",
-                                        "validation": recovered_validation_text(
-                                            task_metadata,
-                                            text,
-                                            f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
-                                        ),
+                                        "validation": recovered_validation,
                                         "risk": "status marker was recovered by the benchmark wrapper",
                                     }
                                 ),
@@ -3514,6 +3526,13 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 validation_evidence_kind = "stale-visible"
         if (final_state != "blocked" or validation_evidence) and validation_evidence:
             final_status_for_blockers = status_with_recovered_validation(final_status, validation_evidence)
+            helper_evidence = helper_preservation_evidence(issue, final_text)
+            if helper_evidence:
+                final_status_for_blockers["validation"] = (
+                    str(final_status_for_blockers.get("validation", ""))
+                    + "; "
+                    + helper_evidence
+                )
             final_probe_blockers: list[str] = []
             if validation_evidence_kind != "stale-visible" and coverage_probe_commands(workdir, issue, final_diff):
                 probe_report, probe_passed = run_validation_coverage_probe(

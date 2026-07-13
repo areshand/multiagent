@@ -1068,6 +1068,32 @@ real_helper_blockers = solve_swe_prod.implementation_scope_blockers(
 )
 assert any("load_config_value" in blocker for blocker in real_helper_blockers), real_helper_blockers
 assert any("helper-layer validation" in blocker for blocker in real_helper_blockers), real_helper_blockers
+prompt_only_helper_evidence = solve_swe_prod.helper_preservation_evidence(
+    "Bulk evaluation should preserve `context.flags` behavior.",
+    "Task: preserve `context.flags` behavior before completing the fix.",
+)
+assert not prompt_only_helper_evidence, prompt_only_helper_evidence
+accepted_helper_evidence = solve_swe_prod.helper_preservation_evidence(
+    "Bulk evaluation should preserve `context.flags` behavior.",
+    "ACCEPTED\n- No blocking findings.\n- Explicit `context.flags` behavior is preserved after source inspection.",
+)
+assert "context.flags" in accepted_helper_evidence, accepted_helper_evidence
+context_flags_blockers = solve_swe_prod.implementation_scope_blockers(
+    "Bulk evaluation should preserve `context.flags` behavior.",
+    "diff --git a/internal/server/ofrep/evaluation.go b/internal/server/ofrep/evaluation.go\n"
+    "+if flagKeys, ok := evalContext[\"flags\"]; ok {\n"
+    "+    return strings.Split(flagKeys, \",\"), nil\n"
+    "+}\n",
+    {
+        "status": "completed",
+        "validation": (
+            "go test ./internal/server/ofrep ./internal/server/evaluation passed. "
+            "helper-validation-passed: adapter public helper probe. "
+            "helper-contract-preserved: context.flags"
+        ),
+    },
+)
+assert not any("context.flags" in blocker for blocker in context_flags_blockers), context_flags_blockers
 
 stale_without_probe_blockers = solve_swe_prod.implementation_scope_blockers(
     "Normalize duplicate serialized vulnerability content into one source record.",

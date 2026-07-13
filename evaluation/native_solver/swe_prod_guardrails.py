@@ -190,6 +190,49 @@ def implementation_scope_blockers(
     return blockers
 
 
+def helper_preservation_evidence(issue: str, text: str) -> str:
+    """Return no-leak evidence that named helper/interface contracts were preserved."""
+
+    if not text:
+        return ""
+    lower = text.lower()
+    if not any(marker in lower for marker in ("accepted", "no blocking finding", "no blocking findings", "contract-checked:")):
+        return ""
+
+    helpers: list[str] = []
+    for helper in _issue_named_helpers(issue):
+        helper_lower = helper.lower()
+        if helper_lower not in lower:
+            continue
+        if _helper_preservation_window_has_evidence(helper_lower, lower):
+            helpers.append(helper)
+
+    if not helpers:
+        return ""
+    return "helper-contract-preserved: " + ", ".join(helpers)
+
+
+def _helper_preservation_window_has_evidence(helper_lower: str, text_lower: str) -> bool:
+    for match in re.finditer(re.escape(helper_lower), text_lower):
+        start = max(0, match.start() - 500)
+        end = min(len(text_lower), match.end() + 500)
+        window = text_lower[start:end]
+        if any(
+            marker in window
+            for marker in (
+                "preserv",
+                "unchanged",
+                "contract-checked:",
+                "validated",
+                "validation passed",
+                "no blocking finding",
+                "no blocking findings",
+            )
+        ):
+            return True
+    return False
+
+
 def stale_visible_failure_justified(status_text: str) -> bool:
     """Return whether a reported visible-test failure has explicit no-leak replacement evidence."""
     text = status_text.lower()

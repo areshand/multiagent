@@ -1317,3 +1317,21 @@ native gate plus worker/verifier/SWE-template instructions: if `apply_patch` or
 another patch command reports stale hunk, missing context, or patch failure, the
 agent must re-read the live target file, rebase the edit onto current contents,
 rerun `git diff --name-only`, and rerun affected validation before completion.
+
+Focused smoke `swe-bench-pro-prod-pr4-750-stalepatch-offset28-r1` used commit
+`7504187`. Native result: `rc=2`, `1380.0s`, no official verifier evidence and
+no score. This run showed the stale-patch fix worked: the final diff was limited
+to the expected source files, worker validation passed
+`go test -count=1 ./internal/server/ofrep ./internal/server/evaluation`, the
+adapter public Go probes passed, and the verifier accepted with no blocking
+findings.
+
+The remaining failure was an adapter final-recovery false negative. The
+verifier explicitly stated that `context.flags` behavior was preserved, but
+the hard scope blocker still saw `context.flags` as unaccounted because final
+cleanup passed only durable validation text into `implementation_scope_blockers`
+and dropped verifier preservation evidence. PR4 now adds a generic no-leak
+helper preservation evidence path: accepted/no-blocking verifier text can
+contribute `helper-contract-preserved:` evidence for helper/interface names
+visible in the public issue, while prompt-only helper mentions still do not
+count.
