@@ -1234,6 +1234,7 @@ assert any("multi-value-probe-passed:" in blocker for blocker in multi_value_blo
 webfinger_route_blockers = solve_swe_prod.validation_coverage_blockers(
     "Add WebFinger support for local user profiles and include aliases and links in the JSON response.",
     "diff --git a/src/routes/well-known.js b/src/routes/well-known.js\n"
+    "+function parseResource(resource) { return { username: resource.split(':').pop() }; }\n"
     "+res.type('application/jrd+json').json({\n"
     "+  subject: `acct:${user.username}@${host}`,\n"
     "+  aliases: [profileUrl],\n"

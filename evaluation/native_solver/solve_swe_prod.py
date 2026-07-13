@@ -1523,8 +1523,9 @@ def validation_coverage_blockers(
                 "UI/keyboard interaction source changed, but validation only records static type/lint coverage; run or justify a nearby interaction test"
             )
 
-    parser_multi_value_issue = any(
-        marker in issue_and_diff
+    changed_paths = changed_paths_from_diff(diff)
+    parser_issue_context = any(
+        marker in issue_lower
         for marker in (
             "parser",
             "parse",
@@ -1535,7 +1536,25 @@ def validation_coverage_blockers(
             "exporter",
             "fixture",
         )
-    ) and bool(
+    )
+    parser_path_context = any(
+        marker in path.lower()
+        for path in changed_paths
+        for marker in (
+            "parser",
+            "parse",
+            "reader",
+            "decoder",
+            "serializer",
+            "import",
+            "export",
+            "fixture",
+            "marc",
+            "xml",
+            "binary",
+        )
+    )
+    parser_multi_value_issue = (parser_issue_context or parser_path_context) and bool(
         re.search(
             r"\b(all|every|complete|associated|linked|linkage|repeated|alternate|fallback-chain|multi-value|multiple)\b",
             issue_and_diff,
