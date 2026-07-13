@@ -1004,3 +1004,12 @@ Score movement: not measured yet. The expected near-term effect is fewer
 `rc=124`/timeout rows and clearer active-run blockers; a follow-up failed-row
 rerun is still required to determine whether the stronger terminal checkpoint
 improves clean official submissions.
+
+Focused smoke run `swe-bench-pro-prod-pr4-terminalcheck-offset44-r1` used
+aggressive terminal-deadline settings
+(`EVAL_TERMINAL_DEADLINE_REMAINING=3000`,
+`EVAL_TERMINAL_DEADLINE_GRACE=180`) to try to exercise the checkpoint on a row
+that previously timed out. The run did not reach the checkpoint: native exited
+`rc=2` after `100.0s`, with no official evidence and no score. This is not
+score evidence, but it shows row 44 is not deterministically a timeout; it can
+also fail early at the native gate before terminal-deadline control applies.
