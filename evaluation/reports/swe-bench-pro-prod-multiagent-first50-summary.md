@@ -834,3 +834,58 @@ run the real affected package tests, produce machine-checkable source-derived
 replacement evidence, or explicitly hand the diff to the wrapper's public probe
 before the orchestrator exits. No-test compile checks should not be treated as
 behavioral validation for source repairs.
+
+## 2026-07-12 No-Test Gate And Failed-Row Parallel Rerun
+
+PR4 now hardens the production-native SWE path against no-test validation
+evidence. The wrapper rejects `go test -run TestNonExistent`, `go test -run
+'^$'`, `[no test files]`, `no tests to run`, and similar compile-only checks as
+behavioral validation for Go source repairs unless the solver gives an explicit
+skip justification. The worker, verifier, and SWE appendix prompts now state the
+same rule, but the important change is machine enforcement in
+`solve_swe_prod.py`: persisted worker evidence, final status evidence, public
+probe acceptance, and Go coverage blockers all treat no-test evidence as
+insufficient.
+
+Validation added for this change asserts that no-test command output is rejected
+by `visible_validation_passed_in_text`, `validation_text_has_no_test_evidence`,
+`persisted_subagent_visible_validation_evidence`, and
+`validation_coverage_blockers`.
+
+After Docker Desktop memory was raised, all unresolved first-50 failed rows were
+rerun with production-native solver bake, 20g task memory, persistent caches,
+clean official scoring only, and up to four rows active at a time. The main
+batch prefix was `swe-bench-pro-prod-pr4-failed4d-offset{row}-r1`; row 37 used
+the targeted no-test-gate prefix
+`swe-bench-pro-prod-pr4-no-test-gate-offset37-r3`.
+
+| Row | Native rc | Official evidence | Clean native score | Wall time | Outcome |
+| --- | ---: | --- | ---: | ---: | --- |
+| 2 | 2 | no | n/a | 838.4s | Native rejected before official scoring. |
+| 8 | 2 | no | n/a | 1644.3s | Native rejected before official scoring. |
+| 12 | 2 | no | n/a | 766.2s | Native rejected before official scoring. |
+| 14 | 0 | yes | 0.0 | 725.7s | Clean native submission, official miss. |
+| 15 | 2 | no | n/a | 713.5s | Native rejected before official scoring. |
+| 16 | 2 | no | n/a | 1316.9s | Native rejected before official scoring. |
+| 17 | 2 | no | n/a | 1531.9s | Native rejected before official scoring. |
+| 18 | 0 | yes | 0.0 | 623.7s | Clean native submission, official miss. |
+| 20 | 2 | no | n/a | 928.8s | Native rejected before official scoring. |
+| 27 | 2 | no | n/a | 565.6s | Native rejected before official scoring. |
+| 28 | 2 | no | n/a | 1294.6s | Native rejected before official scoring. |
+| 37 | 2 | no | n/a | 1523.5s | No-test gate kept the Teleport diff unscored. |
+| 38 | 0 | yes | 0.0 | 840.3s | Clean native submission, official miss. |
+| 41 | 0 | yes | 0.0 | 860.3s | Clean native submission, official miss. |
+| 42 | 2 | no | n/a | 1825.2s | Native rejected before official scoring. |
+| 44 | 2 | no | n/a | 1271.7s | Native rejected before official scoring. |
+| 48 | 2 | no | n/a | 830.9s | Native rejected before official scoring. |
+
+Net score movement: none. The first-50 aggregate remains `33/50`
+production-native clean official passes, below the >70% target.
+
+This rerun confirms the current dominant gap is not Docker memory. With 20g
+memory and four-wide scheduling, the solver still either exits with unresolved
+native blockers or reaches official verification with incomplete fixes. The
+general improvement target remains validation ownership and repair convergence:
+the system needs to convert discovered candidate fixes into real affected-test
+evidence or explicitly block before completion, rather than relying on weak
+compile-only checks or stale fixture reconciliations.

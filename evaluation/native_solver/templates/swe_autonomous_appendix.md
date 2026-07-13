@@ -31,6 +31,11 @@ Hard requirements:
 7. Run focused validation when practical. If full validation is too expensive,
    run the narrowest targeted check you can identify from nearby tests, package
    scripts, or repository conventions, and record exactly what ran.
+   No-test compile checks such as `go test -run TestNonExistent`,
+   `go test -run '^$'`, `[no test files]`, or `no tests to run` are not
+   behavioral validation for a source repair. Treat them as compile sanity only
+   and either run real affected package tests, run a source-derived behavior
+   probe, or write blocked status with the validation gap.
 8. Do not rely on leaked evaluator tests, hidden test names, non-public evaluator
    rows, non-public evaluator fixtures, previous benchmark failures, or
    benchmark-only metadata as implementation guidance. Infer unstated contracts

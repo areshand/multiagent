@@ -179,7 +179,9 @@ If a worker claims a package test passed, verify that the command actually
 compiled the package's test files and was run after the final diff. Stale worker
 claims, no-test runs, or package commands that exclude same-package tests are not
 enough for patches that touch structs, methods, helper state, or unexported
-interfaces.
+interfaces. Treat `go test -run TestNonExistent`, `go test -run '^$'`,
+`[no test files]`, and `no tests to run` as compile sanity only, not as
+behavioral validation.
 If compile/test validation is already running in another live worker/verifier
 for the same package, do not start a duplicate command. Inspect the running
 command, wait for its result, or reject with a clear orchestration finding that

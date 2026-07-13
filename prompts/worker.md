@@ -126,6 +126,11 @@ For compiled languages, run or attempt a package compile check that includes
 test files for every touched package. If that check times out or cannot run,
 inspect test-referenced helper signatures manually and report the timeout as
 unresolved risk, not as validation success.
+Do not report `go test -run TestNonExistent`, `go test -run '^$'`, `[no test
+files]`, `no tests to run`, or another no-test compile check as behavioral
+validation for a source repair. Those checks can support compile sanity only;
+completion still requires real affected package tests, a source-derived probe
+that exercises the changed behavior, or an explicit skip/blocker with evidence.
 
 Run only one expensive validation command per owned package at a time. Treat the
 orchestrator's validation lease as the authority for long compile/test commands.

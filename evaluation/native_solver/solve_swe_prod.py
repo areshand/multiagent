@@ -990,7 +990,7 @@ def visible_validation_passed_in_text(text: str) -> bool:
     text_lower = text.lower()
     if not text_lower:
         return False
-    if any(marker in text_lower for marker in ("no tests ran", "0 tests", "0 passed")):
+    if validation_text_has_no_test_evidence(text_lower):
         return False
     summary_matches = list(
         re.finditer(
@@ -1019,6 +1019,24 @@ def visible_validation_passed_in_text(text: str) -> bool:
         and "failed" not in tail
         and "error:" not in tail
         and "traceback" not in tail
+    )
+
+
+def validation_text_has_no_test_evidence(text: str) -> bool:
+    text_lower = text.lower()
+    return any(
+        marker in text_lower
+        for marker in (
+            "no tests ran",
+            "no tests to run",
+            "0 tests",
+            "0 passed",
+            "[no test files]",
+            "[no tests to run]",
+            "warning: no tests to run",
+            "-run testnonexistent",
+            "-run '^$'",
+        )
     )
 
 
@@ -1075,6 +1093,8 @@ def persisted_subagent_visible_validation_evidence(
                 continue
             validation_tail = text[marker:]
             if not any(command in validation_tail for command in required_commands):
+                continue
+            if validation_text_has_no_test_evidence(validation_tail):
                 continue
             if any(
                 bad in validation_tail
@@ -1217,8 +1237,13 @@ def validation_coverage_blockers(
         go_probe_passed = (
             "helper-validation-passed:" in status_text
             or "return code: 0" in status_text and "go test" in status_text
-            or "go test" in status_text and any(marker in status_text for marker in (" passed", ": passed", "[no test files]"))
+            or "go test" in status_text and any(marker in status_text for marker in (" passed", ": passed"))
         )
+        if validation_text_has_no_test_evidence(status_text) and "go-validation-skip-justified:" not in status_text:
+            blockers.append(
+                "Go source changed, but validation only shows a no-test compile check such as `[no test files]`, "
+                "`no tests to run`, `-run TestNonExistent`, or `-run '^$'`; run real affected package tests or provide source-derived skip evidence"
+            )
         if not any(marker in status_text for marker in go_validation_markers):
             blockers.append(
                 "Go source changed, but status.json does not record a Go package validation command such as `go test ./affected/package`"
@@ -1438,7 +1463,8 @@ def run_validation_coverage_probe(workdir: Path, issue: str, diff: str, blockers
             output = (stdout + "\n" + stderr).strip()
             output = (output + "\n" if output else "") + f"adapter validation probe timed out after {exc.timeout} seconds"
         teardown_success = returncode != 0 and pytest_teardown_after_success(output)
-        if returncode != 0 and not teardown_success:
+        no_test_evidence = validation_text_has_no_test_evidence(f"{label}\n{output}")
+        if (returncode != 0 and not teardown_success) or no_test_evidence:
             passed = False
         sections.append(
             "\nCommand: "
@@ -1446,6 +1472,10 @@ def run_validation_coverage_probe(workdir: Path, issue: str, diff: str, blockers
             + f"\nReturn code: {returncode}\nOutput tail:\n"
             + output[-6000:]
         )
+        if no_test_evidence:
+            sections.append(
+                "\nAdapter note: treated this command as insufficient because it did not execute real selected tests."
+            )
         if teardown_success:
             sections.append(
                 "\nAdapter note: treated nonzero pytest rc as passed because pytest reported all selected "
@@ -1466,6 +1496,9 @@ def blockers_after_passing_public_probe(blockers: list[str]) -> list[str]:
     for blocker in blockers:
         lower = blocker.lower()
         if "[official-hard]" in lower:
+            remaining.append(blocker)
+            continue
+        if "no-test" in lower or "no tests" in lower or "[no test" in lower or "testnonexistent" in lower:
             remaining.append(blocker)
             continue
         if "go source changed" in lower and "validation" in lower:

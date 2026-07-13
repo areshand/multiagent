@@ -433,7 +433,10 @@ assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "No-diff
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_NO_DIFF_CHECKPOINT_AFTER"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_PROGRESS_REPAIR_ENABLED"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "progress watchdog spawned bounded repair worker"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "validation_text_has_no_test_evidence"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "treated this command as insufficient because it did not execute real selected tests"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "production-native wrapper may run repository-visible validation"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "No-test compile checks"
 assert_file_contains "$ROOT/evaluation/README.md" "production-native progress watchdog"
 assert_file_contains "$ROOT/prompts/verifier.md" "source review plus"
 assert_file_contains "$ROOT/prompts/verifier.md" "old/stale expectation"
@@ -446,9 +449,11 @@ assert_file_contains "$ROOT/prompts/verifier.md" "aggregate count"
 assert_file_contains "$ROOT/prompts/verifier.md" "visible inline golden expectations"
 assert_file_contains "$ROOT/prompts/verifier.md" "narrow root-cause"
 assert_file_contains "$ROOT/prompts/verifier.md" "compiled the package's test files"
+assert_file_contains "$ROOT/prompts/verifier.md" "go test -run TestNonExistent"
 assert_file_contains "$ROOT/prompts/verifier.md" "adapter-parity finding"
 assert_file_contains "$ROOT/prompts/verifier.md" "validation-repair-needed:"
 assert_file_contains "$ROOT/prompts/worker.md" "When you expand a parser/reader allowlist"
+assert_file_contains "$ROOT/prompts/worker.md" "no-test compile check"
 assert_file_contains "$ROOT/prompts/worker.md" "multi-value-probe-passed:"
 assert_file_contains "$ROOT/prompts/worker.md" "actual-output-count=N"
 assert_file_contains "$ROOT/prompts/worker.md" "multi-value-probe.txt"
@@ -1203,6 +1208,11 @@ assert not solve_swe_prod.visible_validation_passed_in_text(
     "================= 1 failed, 4 passed, 54 deselected in 0.06s ==================\n"
 )
 assert not solve_swe_prod.visible_validation_passed_in_text("pytest reported no tests ran")
+assert not solve_swe_prod.visible_validation_passed_in_text(
+    "Validation passed:\n`go test -run TestNonExistent ./lib/srv/db`\n"
+    "ok github.com/example/project/lib/srv/db 0.111s [no tests to run]\n"
+)
+assert solve_swe_prod.validation_text_has_no_test_evidence("go test -run '^$' ./pkg")
 
 with tempfile.TemporaryDirectory() as td:
     runtime_root = Path(td)
@@ -1217,6 +1227,13 @@ with tempfile.TemporaryDirectory() as td:
     assert not solve_swe_prod.visible_validation_passed_in_text(noisy_text), noisy_text
     validation_evidence = solve_swe_prod.persisted_subagent_visible_validation_evidence(go_diff, runtime_root)
     assert "go test ./lib/service ./lib/kube/proxy" in validation_evidence, validation_evidence
+    (agent_dir / "last-message.txt").write_text(
+        "Updated source.\n\nValidation passed:\n`go test -run TestNonExistent ./lib/service`\n"
+        "ok github.com/example/project/lib/service 0.111s [no tests to run]\n",
+        encoding="utf-8",
+    )
+    no_test_validation_evidence = solve_swe_prod.persisted_subagent_visible_validation_evidence(go_diff, runtime_root)
+    assert not no_test_validation_evidence, no_test_validation_evidence
     recovered_status = solve_swe_prod.status_with_recovered_validation(
         {
             "status": "blocked",
@@ -1231,6 +1248,16 @@ with tempfile.TemporaryDirectory() as td:
         recovered_status,
     )
     assert not any("Go source changed" in blocker for blocker in recovered_blockers), recovered_blockers
+    no_test_status_blockers = solve_swe_prod.validation_coverage_blockers(
+        "Kubernetes exec session recording should initialize async upload state.",
+        go_diff,
+        noisy_text,
+        {
+            "status": "completed",
+            "validation": "go test -run TestNonExistent ./lib/service returned ok [no tests to run]",
+        },
+    )
+    assert any("no-test compile check" in blocker for blocker in no_test_status_blockers), no_test_status_blockers
 
 with tempfile.TemporaryDirectory() as td:
     runtime_root = Path(td)
