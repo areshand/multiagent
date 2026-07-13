@@ -425,6 +425,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_fi
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "final-output-field="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "multi-value-probe.txt"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "source-symbol-map-passed:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "source-owner-ledger:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "owner-evidence="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "candidate-owner="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "one single machine-readable"
@@ -466,6 +467,7 @@ assert_file_contains "$ROOT/prompts/verifier.md" "final-output-field="
 assert_file_contains "$ROOT/prompts/verifier.md" "expected-output-count=N"
 assert_file_contains "$ROOT/prompts/verifier.md" "multi-value-probe.txt"
 assert_file_contains "$ROOT/prompts/verifier.md" "source-symbol-map-passed:"
+assert_file_contains "$ROOT/prompts/verifier.md" "source-owner-ledger:"
 assert_file_contains "$ROOT/prompts/verifier.md" "one single machine-readable"
 assert_file_contains "$ROOT/prompts/verifier.md" "owner-evidence="
 assert_file_contains "$ROOT/prompts/verifier.md" "candidate-owner="
@@ -1271,6 +1273,8 @@ source_symbol_map_owner_evidence_blockers = solve_swe_prod.implementation_scope_
     {
         "status": "completed",
         "validation": (
+            "source-owner-ledger: selected-owner=lib/benchmark candidate-owner=lib/benchmark "
+            "rejected-owner=lib/client-not-benchmark-owner validation-package=./lib/benchmark. "
             "go test ./lib/benchmark passed. "
             "source-symbol-map-passed: path=lib/benchmark/linear.go package=benchmark "
             "added-symbol=Linear added-symbol=NewLinearGenerator "
@@ -1280,7 +1284,24 @@ source_symbol_map_owner_evidence_blockers = solve_swe_prod.implementation_scope_
     },
 )
 assert not any("source-symbol-map-passed:" in blocker for blocker in source_symbol_map_owner_evidence_blockers), source_symbol_map_owner_evidence_blockers
+assert not any("source-owner-ledger:" in blocker for blocker in source_symbol_map_owner_evidence_blockers), source_symbol_map_owner_evidence_blockers
 assert not solve_swe_prod.source_symbol_map_blocker_present(source_symbol_map_owner_evidence_blockers), source_symbol_map_owner_evidence_blockers
+source_symbol_map_without_owner_ledger_blockers = solve_swe_prod.implementation_scope_blockers(
+    "Add a linear benchmark generator for benchmark tests.",
+    "diff --git a/lib/benchmark/linear.go b/lib/benchmark/linear.go\n"
+    "+type Linear struct { Step int }\n"
+    "+func NewLinearGenerator() {}\n",
+    {
+        "status": "completed",
+        "validation": (
+            "source-symbol-map-passed: path=lib/benchmark/linear.go package=benchmark "
+            "added-symbol=Linear added-symbol=NewLinearGenerator "
+            "owner-evidence=issue-term-benchmark-package "
+            "nearby-test=go test ./lib/benchmark compile=go test ./lib/benchmark caller=lib/benchmark"
+        ),
+    },
+)
+assert any("source-owner-ledger:" in blocker for blocker in source_symbol_map_without_owner_ledger_blockers), source_symbol_map_without_owner_ledger_blockers
 with tempfile.TemporaryDirectory() as source_owner_tmp:
     source_owner_repo = Path(source_owner_tmp)
     (source_owner_repo / "lib" / "client").mkdir(parents=True)
@@ -1294,6 +1315,8 @@ with tempfile.TemporaryDirectory() as source_owner_tmp:
         {
             "status": "completed",
             "validation": (
+                "source-owner-ledger: selected-owner=lib/client candidate-owner=lib/client "
+                "rejected-owner=tool-cli-not-source-owner validation-package=./lib/client. "
                 "source-symbol-map-passed: path=lib/client/bench.go package=client "
                 "added-symbol=LinearBenchmarkConfigGenerator owner-evidence=issue-terms-benchmark-generator "
                 "compile=go-test-lib-client"
@@ -1309,6 +1332,9 @@ with tempfile.TemporaryDirectory() as source_owner_tmp:
         {
             "status": "completed",
             "validation": (
+                "source-owner-ledger: selected-owner=lib/client candidate-owner=lib/client "
+                "candidate-owner=lib/benchmark rejected-owner=lib/benchmark-existing-api-not-edit-target "
+                "validation-package=./lib/client. "
                 "source-symbol-map-passed: path=lib/client/bench.go package=client "
                 "added-symbol=LinearBenchmarkConfigGenerator owner-evidence=compared-lib/benchmark-existing-api "
                 "candidate-owner=lib/benchmark compile=go-test-lib-client"

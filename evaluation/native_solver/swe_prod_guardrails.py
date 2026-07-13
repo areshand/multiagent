@@ -183,6 +183,12 @@ def implementation_scope_blockers(
             )
 
     symbol_changes = source_symbol_changes(diff)
+    if symbol_changes and not source_owner_ledger_has_evidence(status_text):
+        blockers.append(
+            "source symbol contracts changed, but status does not include `source-owner-ledger:` "
+            "with `selected-owner=`, at least one plausible `candidate-owner=`, rejected-owner "
+            "reasoning, and `validation-package=` before source-symbol acceptance"
+        )
     if symbol_changes and not source_symbol_map_has_evidence(status_text):
         blockers.append(
             "source symbol contracts changed, but status does not include `source-symbol-map-passed:` "
@@ -249,6 +255,39 @@ def source_symbol_owner_candidate_blockers(
         + ", ".join(unaccounted[:6])
         + "; compare these candidates in owner-evidence= or move the symbols before completion"
     ]
+
+
+def source_owner_ledger_has_evidence(status_text: str) -> bool:
+    text = status_text.lower()
+    if "source-owner-ledger-skip-justified:" in text:
+        has_owner = any(marker in text for marker in ("package=", "path=", "file=", "module="))
+        has_source_evidence = any(
+            marker in text
+            for marker in (
+                "source-evidence=",
+                "owner-evidence=",
+                "no source symbol",
+                "unchanged symbol",
+                "not a symbol",
+            )
+        )
+        return has_owner and has_source_evidence
+    if "source-owner-ledger:" not in text:
+        return False
+    has_selected = "selected-owner=" in text
+    has_candidate = "candidate-owner=" in text
+    has_validation = "validation-package=" in text
+    has_rejection = any(
+        marker in text
+        for marker in (
+            "rejected-owner=",
+            "rejected-candidate=",
+            "rejection=",
+            "not-owner=",
+            "reason=",
+        )
+    )
+    return has_selected and has_candidate and has_validation and has_rejection
 
 
 def helper_preservation_evidence(issue: str, text: str) -> str:

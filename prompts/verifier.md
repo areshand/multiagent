@@ -203,7 +203,10 @@ compile output says a claimed companion path is still missing a method, field,
 symbol, or interface implementation; reject with `validation-repair-needed:`
 and the exact missing path/symbol.
 When the patch adds, removes, renames, or moves source symbols, require a
-source-symbol map before acceptance. The acceptance text must include
+source-owner ledger and source-symbol map before acceptance. The acceptance
+text must include `source-owner-ledger:` with `selected-owner=...`, plausible
+`candidate-owner=...`, rejected-owner reasoning, and `validation-package=...`
+from public source/issue evidence. It must also include
 one single machine-readable line beginning `source-symbol-map-passed:` with
 `package=` or `path=`, each `added-symbol=`, `removed-symbol=`, or
 `renamed-symbol=`, `owner-evidence=` describing how plausible package/module

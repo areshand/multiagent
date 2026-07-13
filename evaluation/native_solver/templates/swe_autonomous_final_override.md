@@ -81,7 +81,10 @@ As orchestrator:
      command/output transcript to
      `/tmp/multiagent-prod-swe/multi-value-probe.txt`.
    - If the diff adds, removes, renames, or moves source symbols, the status
-     JSON `validation` field must include one single machine-readable
+     JSON `validation` field must include `source-owner-ledger:` with
+     `selected-owner=...`, plausible `candidate-owner=...`, rejected-owner
+     reasoning, and `validation-package=...` from public source/issue evidence.
+     It must also include one single machine-readable
      `source-symbol-map-passed:` line with `package=` or `path=`, each
      `added-symbol=`, `removed-symbol=`, or `renamed-symbol=`,
      `owner-evidence=` proving plausible source owners were compared from issue

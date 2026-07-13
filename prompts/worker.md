@@ -115,8 +115,11 @@ several output fields into one aggregate count. In SWE adapter runs, write the c
 trust a self-reported sentence.
 
 If your patch adds, removes, renames, or moves source symbols, include
-one single machine-readable `source-symbol-map-passed:` line in the final
-validation with exact `package=` or `path=`, each `added-symbol=`,
+`source-owner-ledger:` in the final validation with `selected-owner=...`,
+plausible `candidate-owner=...`, rejected-owner reasons, and
+`validation-package=...` from public source/issue evidence. Also include
+one single machine-readable `source-symbol-map-passed:` line with exact
+`package=` or `path=`, each `added-symbol=`,
 `removed-symbol=`, or `renamed-symbol=`, `owner-evidence=` proving you compared
 the plausible owning packages/modules from issue terms, imports, docs, callers,
 or nearby tests, `candidate-owner=` for any plausible issue-term package that

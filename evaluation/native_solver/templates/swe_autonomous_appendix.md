@@ -192,8 +192,11 @@ Verifier quality bar:
   missing a method, field, symbol, or interface implementation as
   `validation-repair-needed:` with the exact missing path/symbol.
 - If the final diff adds, removes, renames, or moves source symbols, write
-  one single machine-readable `source-symbol-map-passed:` line in final
-  validation with `package=` or `path=`, every `added-symbol=`,
+  `source-owner-ledger:` in final validation with `selected-owner=...`, every
+  plausible `candidate-owner=...`, rejected-owner reasons, and
+  `validation-package=...` from public source/issue evidence. Also write one
+  single machine-readable `source-symbol-map-passed:` line with `package=` or
+  `path=`, every `added-symbol=`,
   `removed-symbol=`, or `renamed-symbol=`, `owner-evidence=` proving plausible
   source owners were compared from issue terms, imports, docs, callers, or
   nearby tests, `candidate-owner=` for any plausible issue-term package that was
