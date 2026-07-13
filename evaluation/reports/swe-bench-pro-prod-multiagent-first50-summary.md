@@ -1217,3 +1217,46 @@ Net score movement: none. The first-50 aggregate remains `33/50`
 production-native clean official passes. The row 28 failure is now correctly
 classified as a real production multi-agent orchestration/verifier miss, not an
 EvalScope or Docker issue.
+
+## 2026-07-13 Claim-vs-Diff and Terminal Handoff Follow-Up
+
+Focused smoke `swe-bench-pro-prod-pr4-claimdiff-offset28-r1` used the
+claim-vs-diff guardrail. Native result: `rc=1`, `3600.0s`, no official verifier
+evidence and no score. The useful movement is that the old missing
+`Storer.ListFlags` owner error did not repeat, and the solver repeatedly
+materialized an untracked companion source file for the missing evaluation mock
+contract. The final diff still did not converge to a terminal status, and
+EvalScope refused to score the rejected active-run diff.
+
+The new general bottleneck is therefore terminal convergence/ownership
+handoff, not Docker or official verifier setup. The adapter saw a non-empty
+source diff and repeated early scope warnings, but it preserved active
+orchestrator ownership until the outer timeout killed the command before a
+machine-readable `/tmp/multiagent-prod-swe/status.json` was written.
+
+PR4 now adds two general fixes:
+
+- The baked native launcher explicitly passes `EVAL_PROD_MULTIAGENT_TIMEOUT`
+  to `solve_swe.py`, and the native runner reserves 600s by default
+  (`EVAL_NATIVE_SOLVER_TIMEOUT_RESERVE`) so the production solver can finalize
+  before EvalScope's outer timeout.
+- The terminal deadline now defaults to 900s remaining and can force one
+  no-leak production-orchestrator resume (`EVAL_TERMINAL_FORCE_RESUME=1`) when
+  a live tmux run has a non-empty source diff but still has not written
+  completed/blocked status after the deadline grace. This replaces the active
+  tmux session with a bounded production resume over the current diff and
+  public/source blockers; it does not use row ids, hidden tests, selected
+  official tests, scores, or previous evaluator outcomes.
+
+Validation for this change:
+
+```text
+python3 -m py_compile evaluation/native_solver/solve_swe_prod.py evaluation/evalscope_multiagent_native_runner.py
+bash -n tests/run.sh
+git diff --check
+perl -e 'alarm shift; exec @ARGV' 180 bash tests/run.sh
+```
+
+Score movement: not measured yet after the terminal-handoff change. A focused
+row 28 rerun is the next expensive check; the expected effect is a clean native
+terminal outcome, not necessarily an official pass.

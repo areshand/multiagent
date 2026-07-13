@@ -1200,6 +1200,112 @@ def status_with_recovered_validation(
     return recovered
 
 
+SOURCE_CLAIM_EXTENSIONS = (
+    ".go",
+    ".py",
+    ".pyi",
+    ".pyx",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".rs",
+    ".java",
+    ".kt",
+    ".scala",
+    ".c",
+    ".cc",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".rb",
+    ".php",
+    ".swift",
+    ".m",
+    ".mm",
+)
+
+
+def changed_paths_from_diff(diff: str) -> set[str]:
+    paths: set[str] = set()
+    for line in diff.splitlines():
+        if not line.startswith("diff --git a/") or " b/" not in line:
+            continue
+        before_b, after_b = line.split(" b/", 1)
+        old_path = before_b.removeprefix("diff --git a/")
+        new_path = after_b.split("\t", 1)[0].strip()
+        for path in (old_path, new_path):
+            if path and path != "/dev/null":
+                paths.add(path)
+    return paths
+
+
+def claimed_changed_source_paths(text: str) -> set[str]:
+    claimed: set[str] = set()
+    in_changed_section = False
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        lower = line.lower()
+        if not line:
+            in_changed_section = False
+            continue
+        if re.match(r"^[#*_ -]*(changed|modified|updated)\s+(source\s+)?files\s*:", lower):
+            in_changed_section = True
+        elif re.match(r"^[#*_ -]*(changes|source changes)\s*:", lower):
+            in_changed_section = True
+        elif not line.startswith(("-", "*")) and not lower.startswith(("changed", "modified", "updated", "added")):
+            in_changed_section = False
+
+        if any(
+            marker in lower
+            for marker in (
+                "inspected ",
+                "reviewed ",
+                "evidence:",
+                "before the repair",
+                "already correct",
+                "already unchanged",
+                "unchanged",
+                "no change",
+            )
+        ):
+            continue
+        for match in re.finditer(r"`([^`\s]+)`", line):
+            path = match.group(1)
+            clean = path.strip().strip(".,:;")
+            if clean.endswith(SOURCE_CLAIM_EXTENSIONS):
+                context = lower[max(0, match.start() - 80) : match.end() + 80]
+                has_nearby_change_verb = any(
+                    re.search(pattern, context)
+                    for pattern in (
+                        r"\bchanged\b",
+                        r"\bmodified\b",
+                        r"\bupdated\b",
+                        r"\badded\b",
+                        r"\bremoved\b",
+                        r"\bimplemented\b",
+                        r"\bfixed\b",
+                    )
+                )
+                if in_changed_section or has_nearby_change_verb:
+                    claimed.add(clean.removeprefix("./"))
+    return claimed
+
+
+def claimed_changed_path_blockers(diff: str, text: str) -> list[str]:
+    changed = changed_paths_from_diff(diff)
+    if not changed:
+        return []
+    claimed = claimed_changed_source_paths(text)
+    missing = sorted(path for path in claimed if path not in changed)
+    if not missing:
+        return []
+    return [
+        "agent claimed changed source paths are absent from final git diff; "
+        f"make the missing edits or remove the stale claim before acceptance: {', '.join(missing[:8])}"
+    ]
+
+
 def validation_coverage_blockers(
     issue: str,
     diff: str,
@@ -1216,6 +1322,7 @@ def validation_coverage_blockers(
     status_text = json.dumps(current_status, sort_keys=True).lower()
     official_contract_satisfied = official_expected_tests_satisfied_by_text(metadata or {}, text)
     blockers: list[str] = [] if official_contract_satisfied else official_expected_test_blockers(metadata or {}, current_status)
+    blockers.extend(claimed_changed_path_blockers(diff, f"{text}\n{json.dumps(current_status, sort_keys=True)}"))
 
     uses_data_helper = any(
         marker in diff_lower
@@ -2088,8 +2195,9 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     progress_repair_enabled = env_truthy("EVAL_PROGRESS_REPAIR_ENABLED", True)
     progress_repair_after = int(os.environ.get("EVAL_PROGRESS_REPAIR_AFTER", "1200"))
     progress_repair_min_stall = int(os.environ.get("EVAL_PROGRESS_REPAIR_MIN_STALL", "240"))
-    terminal_deadline_remaining = int(os.environ.get("EVAL_TERMINAL_DEADLINE_REMAINING", "600"))
+    terminal_deadline_remaining = int(os.environ.get("EVAL_TERMINAL_DEADLINE_REMAINING", "900"))
     terminal_deadline_grace = int(os.environ.get("EVAL_TERMINAL_DEADLINE_GRACE", "300"))
+    terminal_force_resume_enabled = env_truthy("EVAL_TERMINAL_FORCE_RESUME", True)
     no_diff_blocked_retry_limit = int(os.environ.get("EVAL_NO_DIFF_BLOCKED_RETRY_LIMIT", "1"))
     adapter_helper_worker_limit = int(os.environ.get("EVAL_ADAPTER_HELPER_WORKER_LIMIT", "1"))
     orchestrator_resume_limit = int(os.environ.get("EVAL_ORCHESTRATOR_RESUME_LIMIT", "1"))
@@ -2133,6 +2241,8 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
         diff: str,
         blockers: list[str],
         probe_report: str,
+        *,
+        force_live_handoff: bool = False,
     ) -> bool:
         nonlocal orchestrator_resume_attempts
         nonlocal coverage_followup_at
@@ -2148,9 +2258,11 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 f"{reason}: limit {orchestrator_resume_limit} already reached"
             )
             return False
-        if has_live_agent_process():
+        if has_live_agent_process() and not force_live_handoff:
             log(f"production orchestrator resume skipped for {reason}: live agent process still exists")
             return False
+        if force_live_handoff:
+            log(f"production orchestrator forcing terminal handoff for {reason}: replacing active tmux session")
         orchestrator_resume_attempts += 1
         source_hints = helper_scope_hints(workdir, issue, diff, blockers)
         resume_prompt = write_orchestrator_resume_prompt(
@@ -2485,12 +2597,55 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         *implementation_scope_blockers(issue, diff, {}, task_metadata),
                         *validation_coverage_blockers(issue, diff, text, {}, task_metadata),
                     ]
+                    deadline_probe_report = ""
                     if coverage_probe_satisfied:
                         deadline_blockers = blockers_after_passing_public_probe(deadline_blockers)
                     if not deadline_blockers:
                         deadline_blockers = [
                             "terminal deadline expired without completed/blocked status after orchestrator checkpoint; wrapper cannot accept an active-run diff without terminal verifier/status"
                         ]
+                    remaining_after_grace = int(deadline - time.monotonic())
+                    if (
+                        terminal_force_resume_enabled
+                        and diff.strip()
+                        and orchestrator_resume_attempts < orchestrator_resume_limit
+                        and remaining_after_grace > 240
+                    ):
+                        if coverage_probe_commands(workdir, issue, diff):
+                            deadline_probe_report, deadline_probe_passed = run_validation_coverage_probe(
+                                workdir,
+                                issue,
+                                diff,
+                                deadline_blockers
+                                or [
+                                    "terminal handoff ran adapter-selected public validation before replacing a non-converged orchestrator"
+                                ],
+                            )
+                            if deadline_probe_passed:
+                                coverage_probe_satisfied = True
+                                deadline_blockers = blockers_after_passing_public_probe(
+                                    implementation_scope_blockers(issue, diff, {}, task_metadata)
+                                )
+                            elif not deadline_blockers:
+                                deadline_blockers = [
+                                    f"terminal handoff adapter-selected public validation failed; inspect {HELPER_PROBE_PATH}"
+                                ]
+                        handoff_blockers = [
+                            *deadline_blockers,
+                            "Terminal handoff: the active production orchestrator did not write completed/blocked status after the deadline checkpoint. Continue from the current /app diff, preserve correct work, run or attempt source-visible validation, then write status.json.",
+                        ]
+                        if relaunch_orchestrator_for_blockers(
+                            "terminal deadline expired with active no-status diff",
+                            diff,
+                            handoff_blockers,
+                            deadline_probe_report,
+                            force_live_handoff=True,
+                        ):
+                            terminal_deadline_sent = False
+                            terminal_deadline_at = None
+                            last_capture = 0.0
+                            time.sleep(5)
+                            continue
                     STATUS_PATH.write_text(
                         json.dumps(
                             {

@@ -503,6 +503,8 @@ assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "/
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "helper-validation-probe.txt"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "git diff --stat HEAD --"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "diagnostics_tail"
+assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "solver_internal_timeout"
+assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "EVAL_NATIVE_SOLVER_TIMEOUT_RESERVE"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "Never gate production solving on official expected-test metadata"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "public solver inputs"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "solver metadata is public-only"
@@ -561,6 +563,13 @@ sys.modules["evalscope.utils.logger"] = SimpleNamespace(
 )
 from evaluation import evalscope_multiagent_native_runner
 from evaluation import swe_bench_pro_scaffold_parity
+
+assert evalscope_multiagent_native_runner.solver_internal_timeout(3600) == 3000
+os.environ["EVAL_NATIVE_SOLVER_TIMEOUT_RESERVE"] = "900"
+try:
+    assert evalscope_multiagent_native_runner.solver_internal_timeout(3600) == 2700
+finally:
+    os.environ.pop("EVAL_NATIVE_SOLVER_TIMEOUT_RESERVE", None)
 
 captured_tmux_messages = []
 original_run = solve_swe_prod.run
@@ -703,6 +712,9 @@ assert "launch_production_session" in solver_source and "resume=True" in solver_
 )
 assert "EVAL_TERMINAL_DEADLINE_REMAINING" in solver_source and "EVAL_TERMINAL_DEADLINE_GRACE" in solver_source, (
     "active native runs need a terminal deadline checkpoint before timeout"
+)
+assert "EVAL_TERMINAL_FORCE_RESUME" in solver_source and "force_live_handoff=True" in solver_source, (
+    "active no-status terminal deadlines should hand off once to the production orchestrator before outer timeout"
 )
 assert "EVAL_NO_DIFF_BLOCKED_RETRY_LIMIT" in solver_source and "blocked with no materialized source diff" in solver_source, (
     "blocked no-diff worker outcomes should get one production-orchestrator retry"
@@ -1309,6 +1321,26 @@ assert not solve_swe_prod.visible_validation_passed_in_text(
     "ok github.com/example/project/lib/srv/db 0.111s [no tests to run]\n"
 )
 assert solve_swe_prod.validation_text_has_no_test_evidence("go test -run '^$' ./pkg")
+
+claim_diff = (
+    "diff --git a/internal/server/evaluation/server.go b/internal/server/evaluation/server.go\n"
+    "+type Storer interface { ListFlags() }\n"
+)
+claim_text = (
+    "Evidence:\n"
+    "- `internal/storage/storage.go` declares the existing storage signature.\n"
+    "Changes:\n"
+    "- Added the same method to `internal/server/evaluation/evaluation_store_mock.go` so tests compile.\n"
+)
+claim_blockers = solve_swe_prod.claimed_changed_path_blockers(claim_diff, claim_text)
+assert claim_blockers and "evaluation_store_mock.go" in claim_blockers[0], claim_blockers
+assert "internal/storage/storage.go" not in claim_blockers[0], claim_blockers
+claim_text_with_diff = claim_text + "Changed source files:\n- `internal/server/evaluation/server.go`\n"
+claim_diff_with_mock = claim_diff + (
+    "diff --git a/internal/server/evaluation/evaluation_store_mock.go b/internal/server/evaluation/evaluation_store_mock.go\n"
+    "+func (m *evaluationStoreMock) ListFlags() {}\n"
+)
+assert not solve_swe_prod.claimed_changed_path_blockers(claim_diff_with_mock, claim_text_with_diff)
 
 with tempfile.TemporaryDirectory() as td:
     runtime_root = Path(td)

@@ -55,6 +55,10 @@ set -euo pipefail
 
 prompt_file="${EVAL_TASK_PROMPT_FILE:-/tmp/evalscope-native-multiagent-prompt.txt}"
 workdir="${EVAL_TASK_WORKDIR:-/app}"
+timeout_args=()
+if [[ -n "${EVAL_PROD_MULTIAGENT_TIMEOUT:-}" ]]; then
+  timeout_args=(--timeout "$EVAL_PROD_MULTIAGENT_TIMEOUT")
+fi
 cd "$workdir"
 
 if [[ -x /opt/multiagent/solve_swe.sh ]]; then
@@ -62,7 +66,7 @@ if [[ -x /opt/multiagent/solve_swe.sh ]]; then
 fi
 
 if [[ -f /opt/multiagent/solve_swe.py ]]; then
-  exec python3 /opt/multiagent/solve_swe.py "$prompt_file"
+  exec python3 /opt/multiagent/solve_swe.py "$prompt_file" "${timeout_args[@]}"
 fi
 
 if command -v multiagent-solve-swe >/dev/null 2>&1; then
@@ -88,6 +92,12 @@ If this image uses another entrypoint, pass --native-solver-command explicitly.
 EOF
 exit 127
 """
+
+
+def solver_internal_timeout(agent_timeout: float) -> int:
+    reserve = int(os.environ.get("EVAL_NATIVE_SOLVER_TIMEOUT_RESERVE", "600"))
+    reserve = max(90, min(reserve, int(agent_timeout) - 300))
+    return max(300, int(agent_timeout) - reserve)
 
 
 @register_runner("multiagent-native")
@@ -169,7 +179,7 @@ class MultiagentNativeRunner(AgentRunner):
             "EVAL_TASK_METADATA_FILE": _METADATA_FILE,
             "EVAL_TASK_WORKDIR": self._working_dir,
             "EVAL_NATIVE_SOLVER_MODEL": self._model_name,
-            "EVAL_PROD_MULTIAGENT_TIMEOUT": str(max(300, int(task.timeout) - 90)),
+            "EVAL_PROD_MULTIAGENT_TIMEOUT": str(solver_internal_timeout(task.timeout)),
             "IS_SANDBOX": "1",
         }
         if self._codex_auth_json:
