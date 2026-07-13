@@ -129,6 +129,11 @@ literal key/value tokens such as
 If no definition-level symbol contract changed, include one single
 machine-readable `source-symbol-map-skip-justified:` line with `path=` or
 `package=` and source evidence.
+If your first instruction does not include a `source-owner-ledger:` with
+`selected-owner=...`, plausible `candidate-owner=...`, rejected-owner reasons,
+and `validation-package=...`, do read-only owner discovery before editing source
+symbols and report the missing ledger instead of choosing by proximity to the
+first matching type.
 
 For UI/component tasks, classify the request before editing. If the issue asks
 for additive public surface such as a story, export, example, or named symbol,

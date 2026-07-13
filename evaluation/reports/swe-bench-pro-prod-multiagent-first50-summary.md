@@ -1005,6 +1005,33 @@ just stronger at final acceptance: new API tasks should enumerate candidate
 packages/modules from issue terms, file names, package declarations, and import
 paths before the first edit, then assign the worker to the selected owner path.
 
+Follow-up PR4 changes add that pre-edit source owner discovery artifact. The
+production wrapper now writes `/tmp/multiagent-prod-swe/source-owner-candidates.md`
+from public issue text and repository source paths before the orchestrator
+starts. For source-symbol tasks, worker/scout instructions require a
+`source-owner-ledger:` containing `selected-owner=...`, all plausible
+`candidate-owner=...`, rejected-owner reasons, and `validation-package=...`
+before the first implementation edit. The generated candidates include direct
+path/package/file matches and prospective owner paths under visible source
+roots such as `lib/<issue-term>`; these are routing candidates only, not hidden
+test hints.
+
+Focused row 18 smoke `swe-bench-pro-prod-pr4-preowner-offset18-r1` used this
+pre-edit owner artifact. Native result: `rc=2`, `705.3s`; official verifier
+evidence: `false`; clean native score: `n/a`. The run still selected
+`lib/client/bench.go`, but the wrapper kept the wrong diff unscored because the
+durable status did not contain a valid source-symbol map. This confirms the
+current remaining gap is orchestration compliance: the artifact exists, but the
+orchestrator/workers did not yet treat the `source-owner-ledger:` as a hard
+pre-edit step.
+
+PR4 now also preserves `source-owner-candidates.md` in native failure
+diagnostics and EvalScope rejected-run artifacts, and the source-symbol resume
+handoff explicitly tells the production orchestrator to read that file and
+repair the `source-owner-ledger:` before spawning another implementation
+worker. This improves auditability for future failed rows and makes the next
+repair loop more targeted without leaking evaluator metadata.
+
 The new production-orchestrator resume hook did not materially affect this
 batch because the dominant failures were not the narrow post-exit state it
 targets. Most rows exited `rc=2` from the native gate while still treated as

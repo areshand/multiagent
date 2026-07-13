@@ -115,6 +115,12 @@ renamed symbols, visible callers/tests that reference them, and the command or
 source comparison that proves package placement. The final status should include
 `source-symbol-map-passed:` with that evidence, or
 `source-symbol-map-skip-justified:` when the diff does not change definitions.
+Also produce a `source-owner-ledger:` before implementation: include
+`selected-owner=...`, all plausible `candidate-owner=...` entries from issue
+terms, file/package names, imports, docs, callers, and nearby tests,
+`rejected-owner=...` reasons, and `validation-package=...`. If no owner is
+clearly selected, say so and route more read-only discovery instead of letting a
+worker choose the first nearby type.
 
 For parser, serializer, importer/exporter, fixture-backed transformation, or
 data-shape tasks, route validation through the real production entrypoint and

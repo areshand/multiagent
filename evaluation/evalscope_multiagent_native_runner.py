@@ -266,6 +266,7 @@ copy_file_tail() {{
   fi
 }}
 copy_file_tail status.json /tmp/multiagent-prod-swe/status.json 12000
+copy_file_tail source-owner-candidates /tmp/multiagent-prod-swe/source-owner-candidates.md 12000
 copy_file_tail helper-validation-probe /tmp/multiagent-prod-swe/helper-validation-probe.txt 12000
 copy_file_tail stale-visible-reconciliation /tmp/multiagent-prod-swe/stale-visible-reconciliation.txt 8000
 copy_file_tail multi-value-probe /tmp/multiagent-prod-swe/multi-value-probe.txt 8000

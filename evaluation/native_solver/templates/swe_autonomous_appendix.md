@@ -142,6 +142,14 @@ Worker quality bar:
 - Treat symbols referenced by issue text, visible tests, docs, source callers,
   public APIs, schemas, or runtime boundaries as compatibility contracts,
   including package-private or unexported helpers in same-package tests.
+- Before spawning the first worker for a task that may add, remove, rename, or
+  move source symbols, use the generated source owner candidates and write a
+  `source-owner-ledger:` into the worker instruction. Include
+  `selected-owner=...`, every plausible `candidate-owner=...`, rejected-owner
+  reasons, and `validation-package=...`. If the selected owner is not clear
+  from issue terms, file/package names, imports, docs, callers, or nearby tests,
+  spawn a read-only contract scout before implementation rather than letting a
+  worker choose by proximity to the first matching type.
 - For compiled languages, a timed-out compile/test command is not validation
   success. If a package compile check cannot complete, inspect test-referenced
   helper signatures and record timeout risk.

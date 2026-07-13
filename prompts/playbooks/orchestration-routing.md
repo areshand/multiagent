@@ -25,6 +25,12 @@ SUBAGENT_CLI="$VERIFIER_CLI" bin/subagent.sh spawn contract-scout-01-task --inst
 Paste the scout's compact contract ledger, must-preserve list, validation plan,
 and mismatch risks into worker and verifier first instructions. If the scout
 finds a fundamental mismatch, surface it before spawning implementation.
+When a task may add, remove, rename, or move source symbols, the worker first
+instruction must include `source-owner-ledger:` with `selected-owner=...`, all
+plausible `candidate-owner=...`, rejected-owner reasons, and
+`validation-package=...`. If the orchestrator cannot fill this ledger from the
+generated source owner candidates and public source evidence, spawn the
+contract scout before implementation.
 
 ## Scope Guard Workflow
 

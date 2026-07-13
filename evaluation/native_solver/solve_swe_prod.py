@@ -50,6 +50,7 @@ HELPER_PROBE_PATH = RUNTIME_ROOT / "helper-validation-probe.txt"
 MULTI_VALUE_PROBE_PATH = RUNTIME_ROOT / "multi-value-probe.txt"
 STALE_VISIBLE_RECONCILIATION_PATH = RUNTIME_ROOT / "stale-visible-reconciliation.txt"
 CONTRACT_LEDGER_PATH = RUNTIME_ROOT / "contract-ledger.md"
+SOURCE_OWNER_CANDIDATES_PATH = RUNTIME_ROOT / "source-owner-candidates.md"
 TASK_METADATA_PATH = Path(os.environ.get("EVAL_TASK_METADATA_FILE", "/tmp/evalscope-native-multiagent-metadata.json"))
 CODEX_WRAPPER = RUNTIME_ROOT / "codex-bridge"
 CODEX_HOME = Path(os.environ.get("CODEX_HOME", "/root/.codex-multiagent-prod"))
@@ -527,6 +528,150 @@ def _walk_source_dirs(workdir: Path, *, max_dirs: int = 500) -> list[str]:
     return dirs
 
 
+def source_owner_issue_terms(issue: str) -> list[str]:
+    stop = {
+        "add",
+        "adds",
+        "added",
+        "change",
+        "changed",
+        "fix",
+        "test",
+        "tests",
+        "should",
+        "would",
+        "could",
+        "when",
+        "with",
+        "from",
+        "into",
+        "this",
+        "that",
+        "have",
+        "make",
+        "new",
+        "old",
+        "public",
+        "private",
+        "config",
+        "configuration",
+        "generator",
+        "linear",
+    }
+    terms: set[str] = set()
+    for token in re.findall(r"\b[a-z][a-z0-9_-]{3,}\b", issue.lower()):
+        token = token.replace("_", "-")
+        if token in stop or token.endswith("ing"):
+            continue
+        terms.add(token)
+        if token.endswith("s") and len(token) > 4:
+            terms.add(token[:-1])
+    return sorted(terms)
+
+
+def source_owner_term_variants(term: str) -> set[str]:
+    variants = {term}
+    if term.endswith("s") and len(term) > 4:
+        variants.add(term[:-1])
+    else:
+        variants.add(term + "s")
+    if term == "benchmark":
+        variants.update({"bench", "benches"})
+    return variants
+
+
+def source_owner_path_matches(path_text: str, term: str) -> bool:
+    parts = [part for part in re.split(r"[/_.-]+", path_text.lower()) if part]
+    return any(part in source_owner_term_variants(term) for part in parts)
+
+
+def source_owner_discovery(workdir: Path, issue: str) -> str:
+    terms = source_owner_issue_terms(issue)
+    lines = [
+        "# Source Owner Candidates",
+        "",
+        "This file is generated from public issue text and repository source paths only.",
+        "It is a pre-edit routing aid, not hidden-test guidance.",
+        "",
+    ]
+    if not terms:
+        lines.append("No strong issue terms were extracted. Run read-only source owner discovery before adding new symbols.")
+        SOURCE_OWNER_CANDIDATES_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return "\n".join(lines)
+
+    rows: list[tuple[int, str, str]] = []
+    source_suffixes = {".go", ".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".rs", ".java", ".kt", ".rb", ".php"}
+    ignored_parts = {".git", "vendor", "node_modules", "dist", "build", "target", "__pycache__"}
+
+    for rel in _walk_source_dirs(workdir, max_dirs=700):
+        rel_lower = rel.lower()
+        reasons = [f"dir-term={term}" for term in terms if source_owner_path_matches(rel_lower, term)]
+        if reasons:
+            has_source = any(any((workdir / rel).glob(f"*{suffix}")) for suffix in source_suffixes)
+            rows.append((30 + len(reasons), rel, ",".join(reasons) + (",source-files" if has_source else ",dir-only")))
+
+    scanned = 0
+    for path in sorted(workdir.rglob("*")):
+        if scanned >= 1200:
+            break
+        if not path.is_file() or path.suffix not in source_suffixes:
+            continue
+        rel = path.relative_to(workdir).as_posix()
+        if any(part in ignored_parts or part.startswith(".cache") for part in Path(rel).parts):
+            continue
+        scanned += 1
+        rel_lower = rel.lower()
+        reasons = [f"path-term={term}" for term in terms if source_owner_path_matches(rel_lower, term)]
+        try:
+            head = path.read_text(encoding="utf-8", errors="replace")[:6000].lower()
+        except OSError:
+            head = ""
+        for term in terms:
+            for variant in source_owner_term_variants(term):
+                if re.search(rf"\bpackage\s+{re.escape(variant)}\b", head):
+                    reasons.append(f"package-term={term}")
+                    break
+                if re.search(rf"\b(type|func|class|interface)\s+\w*{re.escape(variant)}\w*", head):
+                    reasons.append(f"symbol-term={term}")
+                    break
+        if reasons:
+            rows.append((10 + len(reasons), rel, ",".join(sorted(set(reasons)))))
+
+    source_roots = [root for root in ("lib", "pkg", "internal", "src", "packages") if (workdir / root).is_dir()]
+    for root in source_roots[:3]:
+        for term in terms[:8]:
+            if term in {"client", "server", "model", "metadata", "config"}:
+                continue
+            rows.append((5, f"{root}/{term}", f"prospective-owner-from-issue-term={term}"))
+
+    dedup: dict[str, tuple[int, str]] = {}
+    for score, path, reason in rows:
+        old = dedup.get(path)
+        if not old or score > old[0]:
+            dedup[path] = (score, reason)
+    ranked = sorted(((score, path, reason) for path, (score, reason) in dedup.items()), key=lambda item: (-item[0], item[1]))[:24]
+
+    lines.append("Extracted issue terms: " + ", ".join(terms))
+    lines.append("")
+    if ranked:
+        lines.append("Candidate owners:")
+        for score, path, reason in ranked:
+            lines.append(f"- candidate-owner={path} score={score} reason={reason}")
+    else:
+        lines.append("No source owner candidates found from issue terms.")
+    lines.extend(
+        [
+            "",
+            "Pre-edit rule:",
+            "- Before the first worker adds, removes, renames, or moves source symbols, write a `source-owner-ledger:` in the worker instruction.",
+            "- The ledger must include `selected-owner=...`, every plausible `candidate-owner=...` considered, `rejected-owner=...` reasons, and `validation-package=...`.",
+            "- If no listed owner is clearly correct, spawn a read-only contract scout instead of letting a worker choose by proximity to the first matching type.",
+        ]
+    )
+    SOURCE_OWNER_CANDIDATES_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return "\n".join(lines)
+
+
 def repo_discovery_snapshot(workdir: Path, issue: str) -> str:
     """Build a compact, public-source-only orientation note for the orchestrator."""
     sections: list[str] = ["\n## Repository Discovery Snapshot\n"]
@@ -612,6 +757,14 @@ def repo_discovery_snapshot(workdir: Path, issue: str) -> str:
             "Python repo detected. Prefer the nearest pytest module/package and inspect import paths before adding new public APIs."
         )
 
+    sections.append("\n## Source Owner Pre-Edit Discovery\n")
+    sections.append(
+        f"The adapter wrote source owner candidates to `{SOURCE_OWNER_CANDIDATES_PATH}`. "
+        "Before spawning any worker that may add, remove, rename, or move source symbols, paste a `source-owner-ledger:` "
+        "into that worker's first instruction with `selected-owner=...`, all plausible `candidate-owner=...`, rejected-owner reasons, "
+        "and `validation-package=...`. If ownership is not clear, spawn a read-only contract scout before implementation."
+    )
+    sections.append(source_owner_discovery(workdir, issue))
     return "\n".join(sections) + "\n"
 
 
@@ -890,6 +1043,11 @@ def emit_failure_diagnostics(session: str, *, limit: int = 24000) -> None:
             sections.append("status.json:\n" + STATUS_PATH.read_text(encoding="utf-8", errors="replace")[-4000:])
         except OSError as exc:
             sections.append(f"status.json: unreadable: {exc}")
+    if SOURCE_OWNER_CANDIDATES_PATH.exists():
+        try:
+            sections.append("source-owner-candidates.md:\n" + SOURCE_OWNER_CANDIDATES_PATH.read_text(encoding="utf-8", errors="replace")[-6000:])
+        except OSError as exc:
+            sections.append(f"source-owner-candidates.md: unreadable: {exc}")
 
     windows = run(["tmux", "list-windows", "-t", session, "-F", "#W"], timeout=10)
     if windows.returncode == 0 and windows.stdout.strip():
@@ -1752,7 +1910,9 @@ def source_symbol_map_resume_instructions(blockers: list[str]) -> str:
         "\n\n### Source-Symbol Map Recovery Requirement\n\n"
         "The current blocker is a source-symbol map blocker. This is a public/source evidence requirement, "
         "not hidden-test guidance. Before writing completed status, inspect the live `git diff --name-only`, "
-        "changed package/module declarations, changed symbol definitions, visible callers, and nearby tests. "
+        f"`{SOURCE_OWNER_CANDIDATES_PATH}`, changed package/module declarations, changed symbol definitions, visible callers, and nearby tests. "
+        "Write or repair a `source-owner-ledger:` with `selected-owner=...`, every plausible `candidate-owner=...`, rejected-owner reasons, "
+        "and `validation-package=...` before sending another implementation worker. "
         "If the diff adds, removes, renames, or moves source symbols, the final `/tmp/multiagent-prod-swe/status.json` "
         "must contain one single machine-readable `source-symbol-map-passed:` line naming the owning `package=` or "
         "`path=`, each `added-symbol=`, `removed-symbol=`, or `renamed-symbol=`, `owner-evidence=` proving plausible "

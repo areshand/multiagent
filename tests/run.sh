@@ -413,6 +413,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_ap
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "source-symbol-map-passed:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "owner-evidence="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "candidate-owner="
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "source-owner-ledger:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "one single machine-readable"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "removed-symbol="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "stale-visible-reconciliation.txt"
@@ -447,6 +448,8 @@ assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_PR
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "progress watchdog spawned bounded repair worker"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "validation_text_has_no_test_evidence"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "treated this command as insufficient because it did not execute real selected tests"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "source-owner-candidates.md"
+assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "source-owner-candidates"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "production-native wrapper may run repository-visible validation"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "No-test compile checks"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "git diff --name-only"
@@ -487,6 +490,7 @@ assert_file_contains "$ROOT/prompts/worker.md" "source-symbol-map-passed:"
 assert_file_contains "$ROOT/prompts/worker.md" "one single machine-readable"
 assert_file_contains "$ROOT/prompts/worker.md" "owner-evidence="
 assert_file_contains "$ROOT/prompts/worker.md" "candidate-owner="
+assert_file_contains "$ROOT/prompts/worker.md" "source-owner-ledger:"
 assert_file_contains "$ROOT/prompts/worker.md" "callsite="
 assert_file_contains "$ROOT/prompts/worker.md" "aggregate count"
 assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "multi-value-probe-passed:"
@@ -502,6 +506,8 @@ assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "aggregate counts"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "declared-type ownership risk"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-symbol map contract"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-symbol-map-passed:"
+assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-owner-ledger:"
+assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "source-owner-ledger:"
 assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "declared-type ownership risk"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "declared receiver"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "declared type at that call site"
@@ -1311,6 +1317,21 @@ with tempfile.TemporaryDirectory() as source_owner_tmp:
         {"_solver_workdir": str(source_owner_repo)},
     )
     assert not any("lib/benchmark" in blocker for blocker in compared_owner_blockers), compared_owner_blockers
+with tempfile.TemporaryDirectory() as preedit_owner_tmp:
+    preedit_repo = Path(preedit_owner_tmp)
+    (preedit_repo / "lib" / "client").mkdir(parents=True)
+    (preedit_repo / "lib" / "client" / "bench.go").write_text(
+        "package client\n\ntype Benchmark struct{}\n",
+        encoding="utf-8",
+    )
+    preedit_discovery = solve_swe_prod.source_owner_discovery(
+        preedit_repo,
+        "Add a linear benchmark generator for benchmark tests.",
+    )
+    assert "source-owner-ledger:" in preedit_discovery, preedit_discovery
+    assert "candidate-owner=lib/client/bench.go" in preedit_discovery, preedit_discovery
+    assert "candidate-owner=lib/benchmark" in preedit_discovery, preedit_discovery
+    assert "prospective-owner-from-issue-term=benchmark" in preedit_discovery, preedit_discovery
 removed_symbol_map_blockers = solve_swe_prod.implementation_scope_blockers(
     "Preserve Alpine package parser compatibility while adding source package support.",
     "diff --git a/scanner/alpine.go b/scanner/alpine.go\n"
