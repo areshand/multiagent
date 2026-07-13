@@ -592,6 +592,38 @@ assert "concrete discovery gap" in no_diff_message, no_diff_message
 for forbidden in ("FAIL_TO_PASS", "PASS_TO_PASS", "test_patch", "selected_test_files_to_run"):
     assert forbidden not in no_diff_message, no_diff_message
 
+with tempfile.TemporaryDirectory() as td:
+    runtime_root = Path(td) / "runtime"
+    runtime_root.mkdir()
+    original_runtime_root = solve_swe_prod.RUNTIME_ROOT
+    original_ledger_path = solve_swe_prod.CONTRACT_LEDGER_PATH
+    try:
+        solve_swe_prod.RUNTIME_ROOT = runtime_root
+        solve_swe_prod.CONTRACT_LEDGER_PATH = runtime_root / "contract-ledger.md"
+        solve_swe_prod.CONTRACT_LEDGER_PATH.write_text("public issue/source invariant only\n", encoding="utf-8")
+        base_prompt = runtime_root / "base-prompt.md"
+        base_prompt.write_text("Base orchestrator prompt\n", encoding="utf-8")
+        resume_prompt = solve_swe_prod.write_orchestrator_resume_prompt(
+            base_prompt,
+            attempt=1,
+            reason="orchestrator exited with unverified source diff",
+            issue="The public API should preserve caller ordering.",
+            diff="diff --git a/src/service.py b/src/service.py\n+def fixed():\n+    return True\n",
+            blockers=["adapter-selected public validation failed; inspect helper-validation-probe.txt"],
+            probe_report="pytest -q tests/test_service.py failed",
+            source_hints=["src/service.py"],
+        )
+        resume_text = resume_prompt.read_text(encoding="utf-8")
+        assert "Production Native Resume Handoff" in resume_text, resume_text
+        assert "not a new benchmark hint" in resume_text, resume_text
+        assert "src/service.py" in resume_text, resume_text
+        assert "pytest -q tests/test_service.py failed" in resume_text, resume_text
+        for forbidden in ("FAIL_TO_PASS", "PASS_TO_PASS", "test_patch", "selected_test_files_to_run", "official failure"):
+            assert forbidden not in resume_text, resume_text
+    finally:
+        solve_swe_prod.RUNTIME_ROOT = original_runtime_root
+        solve_swe_prod.CONTRACT_LEDGER_PATH = original_ledger_path
+
 captured_worker_commands = []
 try:
     def fake_worker_run(args, **_kwargs):
@@ -623,6 +655,12 @@ for forbidden in ("FAIL_TO_PASS", "PASS_TO_PASS", "test_patch", "selected_test_f
     assert forbidden not in spawn_instruction, spawn_instruction
 
 solver_source = (root / "evaluation/native_solver/solve_swe_prod.py").read_text(encoding="utf-8")
+assert 'adapter_helper_repair_allowed("progress watchdog stale diff")' in solver_source, (
+    "progress watchdog must not spawn source-editing adapter helpers by default"
+)
+assert "launch_production_session" in solver_source and "resume=True" in solver_source and "--resume" in solver_source, (
+    "unverified diffs should be recoverable by relaunching the production orchestrator"
+)
 multi_value_section = re.search(
     r"parser_multi_value_diff = any\(\s*marker in diff_lower\s*for marker in \((?P<markers>.*?)\)\s*\)",
     solver_source,

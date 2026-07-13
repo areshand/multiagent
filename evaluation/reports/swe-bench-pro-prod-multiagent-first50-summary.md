@@ -889,3 +889,39 @@ general improvement target remains validation ownership and repair convergence:
 the system needs to convert discovered candidate fixes into real affected-test
 evidence or explicitly block before completion, rather than relying on weak
 compile-only checks or stale fixture reconciliations.
+
+## 2026-07-12 Production-Orchestrator Resume
+
+PR4 now adds a bounded production-native resume path for the dominant rejected
+diff failure mode. When the wrapper has a non-empty `/app` source diff, no live
+agent process, and generic public/source blockers, it can relaunch the same
+production `launch.sh --resume` orchestrator instead of either blocking
+immediately or relying on the adapter helper as the default source editor.
+
+The resume handoff is written to a new autonomous prompt file under the runtime
+directory. It includes only public/source evidence: the issue excerpt, current
+diff excerpt, generic adapter/verifier blockers, source-derived ownership
+candidates, durable contract ledger excerpt, and public validation probe output.
+It explicitly excludes row identity, hidden tests, selected official tests, test
+patches, benchmark scores, and prior evaluator outcomes.
+
+Default behavior was also tightened: the progress watchdog no longer launches a
+source-editing adapter helper unless `EVAL_ADAPTER_HELPER_MODE=repair` or the
+explicit source-edit opt-in is set. In ordinary production-capability runs, the
+system now prefers orchestrator follow-up or full production-orchestrator
+resume. This keeps the measured solver closer to the intended product
+multi-agent loop.
+
+Validation run for this change:
+
+```text
+python3 -m py_compile evaluation/native_solver/solve_swe_prod.py evaluation/native_solver/swe_prod_guardrails.py evaluation/evalscope_multiagent_native_runner.py
+bash -n tests/run.sh
+git diff --check
+perl -e 'alarm shift; exec @ARGV' 180 bash tests/run.sh
+```
+
+Score movement: not measured yet. This is a general convergence and measurement
+integrity change; a follow-up failed-row rerun is still required to determine
+whether it converts any of the `rc=2` rejected diffs into clean official
+submissions.

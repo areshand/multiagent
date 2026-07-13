@@ -1644,6 +1644,62 @@ def send_orchestrator_no_diff_checkpoint(
     send_tmux_literal(session, message)
 
 
+def write_orchestrator_resume_prompt(
+    base_prompt: Path,
+    *,
+    attempt: int,
+    reason: str,
+    issue: str,
+    diff: str,
+    blockers: list[str],
+    probe_report: str,
+    source_hints: list[str],
+) -> Path:
+    """Write a production-orchestrator resume prompt from public/source evidence."""
+
+    prompt_text = base_prompt.read_text(encoding="utf-8")
+    blockers_text = "\n".join(f"- {blocker}" for blocker in blockers) or "- No specific blocker was generated."
+    hints_text = ", ".join(source_hints) if source_hints else "none auto-detected; use read-only source discovery"
+    probe_excerpt = probe_report[-5000:] if probe_report else "No adapter public validation probe output."
+    diff_excerpt = diff[-7000:] if diff else "No current source diff."
+    resume_prompt = RUNTIME_ROOT / f"orchestrator-autonomous-prompt-resume-{attempt:02d}.md"
+    resume_prompt.write_text(
+        prompt_text
+        + "\n\n## Production Native Resume Handoff\n\n"
+        + "The previous production multi-agent run stopped before producing a trustworthy terminal status. "
+        + "This is a resume of the same task and current `/app` working tree, not a new benchmark hint. "
+        + "Do not revert the current source diff merely because this is a resume. Inspect it, preserve correct work, "
+        + "and repair or block based only on legitimate public/source evidence.\n\n"
+        + "No-leak rule: this handoff intentionally contains no row identity, hidden tests, selected official tests, "
+        + "test patch, benchmark score, or prior evaluator outcome. Do not use leaked evaluator rows or benchmark-only "
+        + "metadata as implementation guidance.\n\n"
+        + f"Resume attempt: {attempt}\n\n"
+        + f"Resume reason: {reason}\n\n"
+        + "Generic adapter/verifier blockers:\n"
+        + blockers_text
+        + "\n\n"
+        + f"Source-derived ownership candidates: {hints_text}\n\n"
+        + f"Durable contract ledger: `{CONTRACT_LEDGER_PATH}`. Preserve every ledger item. Ledger excerpt:\n"
+        + contract_ledger_excerpt()
+        + "\n\n"
+        + "Adapter public validation probe output tail:\n"
+        + probe_excerpt
+        + "\n\n"
+        + "Current issue text excerpt:\n"
+        + issue[:3500]
+        + "\n\n"
+        + "Current `/app` diff excerpt for orientation only:\n"
+        + diff_excerpt
+        + "\n\n"
+        + "Resume task: run the normal orchestrator loop. Spawn one bounded source worker if the blockers require code "
+        + "changes, then one verifier over the resulting diff. Run or attempt relevant visible validation from source "
+        + "evidence. Write completed status only when the source-visible blockers are resolved and validation evidence is "
+        + "not just a no-test compile check; otherwise write blocked status with the concrete public/source reason.\n",
+        encoding="utf-8",
+    )
+    return resume_prompt
+
+
 def benchmark_specific_recovery_enabled(issue: str, blockers: list[str], diff: str) -> bool:
     """Deprecated compatibility hook.
 
@@ -1889,19 +1945,29 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
         }
     )
 
-    launch_tail = ""
-    for attempt in range(1, 3):
-        log(f"launching production multiagent session={session} root={workdir} repo={repo_root} attempt={attempt}")
-        launch = run([str(repo_root / "launch.sh"), "--session", session, "--root", str(workdir), "--no-attach"], env=env, timeout=120)
-        launch_tail = ((launch.stderr or "") + "\n" + (launch.stdout or "")).strip()[-4000:]
-        if launch.returncode != 0:
-            raise RuntimeError(f"production multiagent launch failed: {launch_tail}")
-        time.sleep(2)
-        if tmux_has_session(session):
-            break
-        log(f"launch attempt {attempt} exited without a live tmux session")
-        run(["tmux", "kill-session", "-t", session], timeout=10)
-    else:
+    def launch_production_session(*, resume: bool, label: str) -> tuple[bool, str]:
+        launch_tail = ""
+        launch_args = [str(repo_root / "launch.sh"), "--session", session, "--root", str(workdir), "--no-attach"]
+        if resume:
+            launch_args.append("--resume")
+        for attempt in range(1, 3):
+            log(
+                f"launching production multiagent session={session} root={workdir} "
+                f"repo={repo_root} mode={'resume' if resume else 'clean'} label={label} attempt={attempt}"
+            )
+            launch = run(launch_args, env=env, timeout=120)
+            launch_tail = ((launch.stderr or "") + "\n" + (launch.stdout or "")).strip()[-4000:]
+            if launch.returncode != 0:
+                raise RuntimeError(f"production multiagent launch failed: {launch_tail}")
+            time.sleep(2)
+            if tmux_has_session(session):
+                return True, launch_tail
+            log(f"launch attempt {attempt} exited without a live tmux session")
+            run(["tmux", "kill-session", "-t", session], timeout=10)
+        return False, launch_tail
+
+    launched, launch_tail = launch_production_session(resume=False, label="initial")
+    if not launched:
         STATUS_PATH.write_text(
             json.dumps({"status": "blocked", "reason": f"multiagent launch exited without live tmux session: {launch_tail[-1000:]}"}),
             encoding="utf-8",
@@ -1938,6 +2004,8 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     progress_repair_after = int(os.environ.get("EVAL_PROGRESS_REPAIR_AFTER", "1200"))
     progress_repair_min_stall = int(os.environ.get("EVAL_PROGRESS_REPAIR_MIN_STALL", "240"))
     adapter_helper_worker_limit = int(os.environ.get("EVAL_ADAPTER_HELPER_WORKER_LIMIT", "1"))
+    orchestrator_resume_limit = int(os.environ.get("EVAL_ORCHESTRATOR_RESUME_LIMIT", "1"))
+    orchestrator_resume_attempts = 0
     adapter_helper_mode = os.environ.get("EVAL_ADAPTER_HELPER_MODE", "advisory").strip().lower()
     adapter_helper_source_edit_opt_in = os.environ.get("EVAL_ADAPTER_HELPER_ALLOW_SOURCE_EDITS", "").strip().lower() in {
         "1",
@@ -1971,6 +2039,80 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     adapter_helper_grace_seconds = int(os.environ.get("EVAL_ADAPTER_HELPER_GRACE_SECONDS", "600"))
     exit_code = 0
     outcome = "timeout"
+
+    def relaunch_orchestrator_for_blockers(
+        reason: str,
+        diff: str,
+        blockers: list[str],
+        probe_report: str,
+    ) -> bool:
+        nonlocal orchestrator_resume_attempts
+        nonlocal coverage_followup_at
+        nonlocal last_capture
+        nonlocal missing_session_captures
+        nonlocal convergence_start
+        nonlocal last_diff_digest
+        nonlocal last_diff_changed_at
+
+        if orchestrator_resume_attempts >= orchestrator_resume_limit:
+            log(
+                "production orchestrator resume skipped for "
+                f"{reason}: limit {orchestrator_resume_limit} already reached"
+            )
+            return False
+        if has_live_agent_process():
+            log(f"production orchestrator resume skipped for {reason}: live agent process still exists")
+            return False
+        orchestrator_resume_attempts += 1
+        source_hints = helper_scope_hints(workdir, issue, diff, blockers)
+        resume_prompt = write_orchestrator_resume_prompt(
+            autonomous_prompt,
+            attempt=orchestrator_resume_attempts,
+            reason=reason,
+            issue=issue,
+            diff=diff,
+            blockers=blockers,
+            probe_report=probe_report,
+            source_hints=source_hints,
+        )
+        try:
+            STATUS_PATH.unlink(missing_ok=True)
+        except OSError as exc:
+            log(f"could not remove terminal marker before production orchestrator resume: {exc}")
+        if tmux_has_session(session):
+            capture_session(session)
+            run(["tmux", "kill-session", "-t", session], timeout=30)
+        env["MULTIAGENT_PROMPT"] = str(resume_prompt)
+        env["MULTIAGENT_RESUME"] = "1"
+        launched_resume, launch_tail = launch_production_session(
+            resume=True,
+            label=f"resume-{orchestrator_resume_attempts}",
+        )
+        if not launched_resume:
+            STATUS_PATH.write_text(
+                json.dumps(
+                    {
+                        "status": "blocked",
+                        "reason": "production orchestrator resume failed to create a live tmux session",
+                        "blockers": blockers,
+                        "launch_tail": launch_tail[-1000:],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            log("blocked marker: production orchestrator resume failed to create a live tmux session")
+            return False
+        coverage_followup_at = time.monotonic()
+        last_capture = 0.0
+        missing_session_captures = 0
+        convergence_start = time.monotonic()
+        last_diff_digest = hashlib.sha256(diff.encode("utf-8", errors="replace")).hexdigest() if diff else ""
+        last_diff_changed_at = convergence_start
+        log(
+            "production orchestrator resume launched "
+            f"attempt={orchestrator_resume_attempts} reason={reason} prompt={resume_prompt}"
+        )
+        return True
     try:
         while time.monotonic() < deadline:
             try:
@@ -1995,6 +2137,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 scope_blockers = implementation_scope_blockers(issue, diff, current_status, task_metadata)
                 coverage_blockers = validation_coverage_blockers(issue, diff, text, current_status, task_metadata)
                 blockers = [*scope_blockers, *coverage_blockers]
+                probe_report = ""
                 if coverage_probe_satisfied:
                     blockers = blockers_after_passing_public_probe(blockers)
                     scope_blockers = blockers
@@ -2109,6 +2252,14 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         last_capture = 0.0
                         time.sleep(5)
                         continue
+                if blockers and relaunch_orchestrator_for_blockers(
+                    "completion marker rejected by public/source validation",
+                    diff,
+                    blockers,
+                    probe_report,
+                ):
+                    time.sleep(5)
+                    continue
                 if blockers and has_hard_scope_blocker(blockers):
                     log(f"hard public scope blockers remain after follow-ups; refusing to submit known-bad patch: {'; '.join(blockers)}")
                     current_status = {
@@ -2216,8 +2367,8 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         blockers = blockers_after_passing_public_probe(blockers)
                         scope_blockers = blockers
                         coverage_blockers = []
+                    probe_report = ""
                     if blockers and coverage_followups_sent < coverage_followup_limit and tmux_has_session(session):
-                        probe_report = ""
                         if coverage_blockers or coverage_probe_commands(workdir, issue, diff):
                             probe_report, probe_passed = run_validation_coverage_probe(workdir, issue, diff, coverage_blockers)
                         else:
@@ -2264,6 +2415,14 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                             last_capture = 0.0
                             time.sleep(5)
                             continue
+                    if blockers and relaunch_orchestrator_for_blockers(
+                        "recovered completion rejected by public/source validation",
+                        diff,
+                        blockers,
+                        probe_report,
+                    ):
+                        time.sleep(5)
+                        continue
                     if blockers and has_hard_scope_blocker(blockers):
                         log(f"hard public scope blockers remain after follow-ups; refusing recovered accepted patch: {'; '.join(blockers)}")
                         STATUS_PATH.write_text(
@@ -2400,6 +2559,14 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         last_capture = 0.0
                         time.sleep(5)
                         continue
+                    if blockers and relaunch_orchestrator_for_blockers(
+                        "final verifier accepted before public/source validation passed",
+                        diff,
+                        blockers,
+                        probe_report,
+                    ):
+                        time.sleep(5)
+                        continue
                     coverage_gate_unresolved = True
                     STATUS_PATH.write_text(
                         json.dumps(
@@ -2489,33 +2656,42 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                             ]
                     progress_repair_sent = True
                     if blockers and adapter_helper_workers_spawned < adapter_helper_worker_limit:
-                        adapter_helper_workers_spawned += 1
-                        try:
-                            helper_worker = spawn_adapter_helper_worker(
-                                repo_root,
-                                workdir,
-                                env,
-                                issue,
-                                diff,
-                                [
-                                    *blockers,
-                                    "Progress watchdog intervention: the same non-empty source diff has not converged to accepted validation/status. Continue from the current /app diff, fix the source-visible blockers, and do not broaden scope.",
-                                ],
-                                helper_scope_hints(workdir, issue, diff, blockers),
-                                adapter_helper_workers_spawned,
-                                probe_report,
-                                launch_reason="the production-native progress watchdog",
-                            )
-                            log(f"progress watchdog spawned bounded repair worker: {helper_worker}")
-                            adapter_helper_last_spawn_at = time.monotonic()
-                            adapter_helper_reprobe_done = False
-                            adapter_helper_last_probe_digest = None
-                            coverage_followup_at = time.monotonic()
-                            last_capture = 0.0
-                            time.sleep(5)
-                            continue
-                        except Exception as exc:
-                            log(f"progress watchdog repair worker spawn failed: {exc}")
+                        if adapter_helper_repair_allowed("progress watchdog stale diff"):
+                            adapter_helper_workers_spawned += 1
+                            try:
+                                helper_worker = spawn_adapter_helper_worker(
+                                    repo_root,
+                                    workdir,
+                                    env,
+                                    issue,
+                                    diff,
+                                    [
+                                        *blockers,
+                                        "Progress watchdog intervention: the same non-empty source diff has not converged to accepted validation/status. Continue from the current /app diff, fix the source-visible blockers, and do not broaden scope.",
+                                    ],
+                                    helper_scope_hints(workdir, issue, diff, blockers),
+                                    adapter_helper_workers_spawned,
+                                    probe_report,
+                                    launch_reason="the production-native progress watchdog",
+                                )
+                                log(f"progress watchdog spawned bounded repair worker: {helper_worker}")
+                                adapter_helper_last_spawn_at = time.monotonic()
+                                adapter_helper_reprobe_done = False
+                                adapter_helper_last_probe_digest = None
+                                coverage_followup_at = time.monotonic()
+                                last_capture = 0.0
+                                time.sleep(5)
+                                continue
+                            except Exception as exc:
+                                log(f"progress watchdog repair worker spawn failed: {exc}")
+                    if blockers and not has_live_agent_process() and relaunch_orchestrator_for_blockers(
+                        "progress watchdog found stale source diff with no live agent",
+                        diff,
+                        blockers,
+                        probe_report,
+                    ):
+                        time.sleep(5)
+                        continue
                     if blockers:
                         send_orchestrator_followup(session, blockers, probe_report, helper_scope_hints(workdir, issue, diff, blockers))
                         log("progress watchdog sent hard follow-up after stale diff: " + "; ".join(blockers))
@@ -2606,6 +2782,14 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                             continue
                         except Exception as exc:
                             log(f"adapter recovery worker spawn failed after unverified orchestrator-exit diff: {exc}")
+                    if blockers and relaunch_orchestrator_for_blockers(
+                        "orchestrator exited with unverified source diff",
+                        diff,
+                        blockers,
+                        probe_report,
+                    ):
+                        time.sleep(5)
+                        continue
                     if blockers:
                         coverage_gate_unresolved = True
                         STATUS_PATH.write_text(
@@ -2803,6 +2987,14 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                             )
                             last_capture = 0.0
                             time.sleep(10)
+                            continue
+                        if blockers and relaunch_orchestrator_for_blockers(
+                            "orchestrator exited after unresolved coverage follow-up",
+                            diff,
+                            blockers,
+                            probe_report,
+                        ):
+                            time.sleep(5)
                             continue
                         coverage_gate_unresolved = True
                         STATUS_PATH.write_text(
