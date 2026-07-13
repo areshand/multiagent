@@ -426,6 +426,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_fi
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "multi-value-probe.txt"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "source-symbol-map-passed:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "source-owner-ledger:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "go-package-validation-passed:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "owner-evidence="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "candidate-owner="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "one single machine-readable"
@@ -468,6 +469,7 @@ assert_file_contains "$ROOT/prompts/verifier.md" "expected-output-count=N"
 assert_file_contains "$ROOT/prompts/verifier.md" "multi-value-probe.txt"
 assert_file_contains "$ROOT/prompts/verifier.md" "source-symbol-map-passed:"
 assert_file_contains "$ROOT/prompts/verifier.md" "source-owner-ledger:"
+assert_file_contains "$ROOT/prompts/verifier.md" "go-package-validation-passed:"
 assert_file_contains "$ROOT/prompts/verifier.md" "one single machine-readable"
 assert_file_contains "$ROOT/prompts/verifier.md" "owner-evidence="
 assert_file_contains "$ROOT/prompts/verifier.md" "candidate-owner="
@@ -490,6 +492,7 @@ assert_file_contains "$ROOT/prompts/worker.md" "actual-output-count=N"
 assert_file_contains "$ROOT/prompts/worker.md" "multi-value-probe.txt"
 assert_file_contains "$ROOT/prompts/worker.md" "source-symbol-map-passed:"
 assert_file_contains "$ROOT/prompts/worker.md" "one single machine-readable"
+assert_file_contains "$ROOT/prompts/worker.md" "go-package-validation-passed:"
 assert_file_contains "$ROOT/prompts/worker.md" "owner-evidence="
 assert_file_contains "$ROOT/prompts/worker.md" "candidate-owner="
 assert_file_contains "$ROOT/prompts/worker.md" "source-owner-ledger:"
@@ -1148,6 +1151,46 @@ assert solve_swe_prod.blocked_status_recoverable_by_public_probe(
 assert not solve_swe_prod.blocked_status_recoverable_by_public_probe(
     {"status": "blocked", "blockers": ["[official-hard] public API contract missing"]}
 )
+go_two_pkg_diff = (
+    "diff --git a/lib/a/foo.go b/lib/a/foo.go\n+func Foo() {}\n"
+    "diff --git a/lib/b/bar.go b/lib/b/bar.go\n+func Bar() {}\n"
+)
+go_partial_pkg_blockers = solve_swe_prod.validation_coverage_blockers(
+    "Go packages should compile after changing request handling.",
+    go_two_pkg_diff,
+    "",
+    {
+        "status": "completed",
+        "validation": "go-package-validation-passed: package=./lib/a command='go test ./lib/a' returncode=0",
+    },
+)
+assert any("./lib/b" in blocker for blocker in go_partial_pkg_blockers), go_partial_pkg_blockers
+go_all_pkg_blockers = solve_swe_prod.validation_coverage_blockers(
+    "Go packages should compile after changing request handling.",
+    go_two_pkg_diff,
+    "",
+    {
+        "status": "completed",
+        "validation": (
+            "go-package-validation-passed: package=./lib/a command='go test ./lib/a' returncode=0. "
+            "go-package-validation-passed: package=./lib/b command='go test ./lib/b' returncode=0."
+        ),
+    },
+)
+assert not any("affected package compile/test success" in blocker for blocker in go_all_pkg_blockers), go_all_pkg_blockers
+go_compile_failure_blockers = solve_swe_prod.validation_coverage_blockers(
+    "Go package should compile after storage request changes.",
+    "diff --git a/internal/store/list.go b/internal/store/list.go\n+func List() { _ = req.Request }\n",
+    "",
+    {
+        "status": "completed",
+        "validation": (
+            "Command: go test ./internal/store\nReturn code: 1\n"
+            "Output tail: req.Request undefined (type *storage.ListRequest has no field or method Request)\nFAIL"
+        ),
+    },
+)
+assert any("compile/build failure evidence" in blocker for blocker in go_compile_failure_blockers), go_compile_failure_blockers
 
 stale_without_probe_blockers = solve_swe_prod.implementation_scope_blockers(
     "Normalize duplicate serialized vulnerability content into one source record.",

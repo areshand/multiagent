@@ -159,6 +159,14 @@ Worker quality bar:
   Prove the method exists on that declared type, not only on a nearby concrete
   implementation. For Go, this means checking the struct/interface field type
   such as `Storer` before calling a method through `s.store`.
+- For Go patches, derive affected packages from `git diff --name-only` and run
+  `go test ./affected/package` or a broader command that covers every changed
+  non-test `.go` package after the final diff. Final validation must include
+  `go-package-validation-passed: package=... command=... returncode=0` for each
+  changed package, or the full command transcript proving return code 0 for
+  every changed package. One passing package does not clear another changed
+  package. Treat `undefined:`, `has no field or method`, `build failed`, `FAIL`,
+  or any nonzero return code as blocking.
 - Trace one layer below changed feature code into helper APIs when the issue
   mentions keys, fallback sources, expired records, parsers, serializers,
   adapters, persistence, or missing data.

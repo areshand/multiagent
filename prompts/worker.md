@@ -150,6 +150,13 @@ For compiled languages, run or attempt a package compile check that includes
 test files for every touched package. If that check times out or cannot run,
 inspect test-referenced helper signatures manually and report the timeout as
 unresolved risk, not as validation success.
+For Go changes, derive changed packages from `git diff --name-only` and run
+`go test ./affected/package` or a broader command covering every changed
+non-test `.go` package after the final diff. In final validation, include
+`go-package-validation-passed: package=... command=... returncode=0` for each
+changed package. Do not let one `ok` package stand in for another changed
+package; any `undefined:`, `has no field or method`, `build failed`, `FAIL`, or
+nonzero return code is `validation-repair-needed:`.
 Before reporting completion, audit every new or changed method/function call
 through a receiver, field, interface, protocol, trait, or adapter. Prove the
 method exists on the declared static type used at the call site, not only on a

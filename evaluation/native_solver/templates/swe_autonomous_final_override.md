@@ -72,6 +72,15 @@ As orchestrator:
      `/tmp/multiagent-prod-swe/stale-visible-reconciliation.txt` with the same
      exact markers so the eval wrapper can machine-check the decision after
      final cleanup.
+   - If the final diff changes Go source, derive affected packages from
+     `git diff --name-only` and prove every changed non-test `.go` package
+     compiles/tests after the final diff. Include
+     `go-package-validation-passed: package=... command=... returncode=0` for
+     each changed package, or the full `go test` command transcript showing
+     return code 0 and covering every changed package. One passing package does
+     not clear another changed package. Treat `undefined:`,
+     `has no field or method`, `build failed`, `FAIL`, or any nonzero return
+     code as blocking.
    - If parser/reader linked, alternate, repeated, complete, or multi-value
      behavior changed, the status JSON `validation` field must include exact
      `multi-value-probe-passed:` or `multi-value-probe-skip-justified:`. For a

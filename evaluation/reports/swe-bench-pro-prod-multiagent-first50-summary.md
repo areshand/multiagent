@@ -996,6 +996,23 @@ owner candidate, normalizes `*config*` tokens to `config`, and filters generic
 harness words from owner term extraction. This is still no-leak: it uses only
 the public task text and repository source paths.
 
+Follow-up verifier hardening from a later Go failure: the verifier/gate was
+still too narrative-driven. It could accept a patch after seeing one passing Go
+package while another changed package still had compile errors such as a
+non-existent field or method. PR4 now derives changed Go packages from
+`git diff --name-only` and requires post-final-diff compile/test evidence for
+every changed non-test `.go` package. Accepted evidence must either be a full
+`go test` transcript covering each changed package with return code 0, or a
+machine-readable marker:
+
+```text
+go-package-validation-passed: package=... command=... returncode=0
+```
+
+The gate treats `undefined:`, `undefined method`, `undefined field`,
+`has no field or method`, `build failed`, `FAIL`, and nonzero return codes as
+blocking. One `ok` package no longer clears a different changed package.
+
 ## 2026-07-13 Source Owner Evidence Hardening
 
 Focused row 18 smoke

@@ -26,6 +26,7 @@ try:
     from .swe_prod_guardrails import (
         changed_go_package_args,
         coverage_probe_commands,
+        failed_validation_return_code,
         helper_preservation_evidence,
         helper_scope_hints,
         implementation_scope_blockers,
@@ -35,6 +36,7 @@ except ImportError:  # pragma: no cover - direct script execution in task contai
     from swe_prod_guardrails import (
         changed_go_package_args,
         coverage_probe_commands,
+        failed_validation_return_code,
         helper_preservation_evidence,
         helper_scope_hints,
         implementation_scope_blockers,
@@ -1640,10 +1642,18 @@ def validation_coverage_blockers(
         for line in diff.splitlines()
     )
     if touches_go_source:
+        go_evidence_text = status_text
+        if "helper-validation-passed:" in status_text and HELPER_PROBE_PATH.exists():
+            try:
+                go_evidence_text += "\n" + HELPER_PROBE_PATH.read_text(encoding="utf-8", errors="replace").lower()
+            except OSError:
+                pass
+        go_packages = changed_go_package_args(diff)
         go_validation_markers = (
             "go test",
             "go-validation-passed:",
             "go-validation-skip-justified:",
+            "go-package-validation-passed:",
             "adapter public validation probe",
         )
         missing_tool_markers = (
@@ -1654,20 +1664,37 @@ def validation_coverage_blockers(
             "go is not installed",
         )
         go_probe_passed = (
-            "helper-validation-passed:" in status_text
-            or "return code: 0" in status_text and "go test" in status_text
-            or "go test" in status_text and any(marker in status_text for marker in (" passed", ": passed"))
+            "helper-validation-passed:" in status_text and all(
+                go_package_validation_has_evidence(go_evidence_text, package) for package in go_packages
+            )
+            or "return code: 0" in go_evidence_text and "go test" in go_evidence_text
+            or "go test" in go_evidence_text and any(marker in go_evidence_text for marker in (" passed", ": passed"))
         )
+        if go_compile_failure_present(go_evidence_text):
+            blockers.append(
+                "Go validation contains compile/build failure evidence such as `undefined:`, "
+                "`has no field or method`, `build failed`, `FAIL`, or a nonzero return code; fix it before completion"
+            )
         if validation_text_has_no_test_evidence(status_text) and "go-validation-skip-justified:" not in status_text:
             blockers.append(
                 "Go source changed, but validation only shows a no-test compile check such as `[no test files]`, "
                 "`no tests to run`, `-run TestNonExistent`, or `-run '^$'`; run real affected package tests or provide source-derived skip evidence"
             )
-        if not any(marker in status_text for marker in go_validation_markers):
+        missing_go_packages = [
+            package for package in go_packages if not go_package_validation_has_evidence(go_evidence_text, package)
+        ]
+        if missing_go_packages:
+            blockers.append(
+                "Go source changed, but final validation does not prove affected package compile/test success for: "
+                + ", ".join(missing_go_packages)
+                + "; run `go test ./affected/package` for every changed Go package after the final diff and record "
+                "`go-package-validation-passed: package=... command=... returncode=0` or the full command transcript"
+            )
+        elif not any(marker in go_evidence_text for marker in go_validation_markers):
             blockers.append(
                 "Go source changed, but status.json does not record a Go package validation command such as `go test ./affected/package`"
             )
-        if any(marker in status_text for marker in missing_tool_markers) and not go_probe_passed:
+        if any(marker in go_evidence_text for marker in missing_tool_markers) and not go_probe_passed:
             blockers.append(
                 "Go source changed, but validation reported the Go toolchain was unavailable; retry with explicit Go paths before accepting"
             )
@@ -1802,6 +1829,63 @@ def validation_coverage_blockers(
             )
 
     return blockers
+
+
+def go_compile_failure_present(text: str) -> bool:
+    lower = text.lower()
+    if failed_validation_return_code(lower):
+        return True
+    return any(
+        marker in lower
+        for marker in (
+            "undefined:",
+            "undefined method",
+            "undefined field",
+            "has no field or method",
+            "build failed",
+            "setup failed",
+            "\\tfail\\t",
+            "\tfail\t",
+            " fail\t",
+            " fail ",
+            "fail:",
+        )
+    )
+
+
+def go_package_validation_has_evidence(text: str, package: str) -> bool:
+    lower = text.lower().replace("\\n", "\n")
+    package_lower = package.lower()
+    package_markers = {package_lower}
+    if package_lower.startswith("./"):
+        package_markers.add(package_lower[2:])
+    if package_lower == ".":
+        package_markers.add("./...")
+
+    if "go-package-validation-passed:" in lower:
+        for match in re.finditer("go-package-validation-passed:", lower):
+            window = lower[match.start() : match.start() + 500]
+            if any(f"package={marker}" in window for marker in package_markers) and any(
+                ok in window for ok in ("returncode=0", "return-code=0", "rc=0", "passed")
+            ):
+                return True
+
+    for marker in package_markers:
+        for match in re.finditer(re.escape(marker), lower):
+            start = max(0, match.start() - 250)
+            end = min(len(lower), match.end() + 500)
+            window = lower[start:end]
+            if "go test" not in window:
+                continue
+            if validation_text_has_no_test_evidence(window) and "go-validation-skip-justified:" not in window:
+                continue
+            if any(ok in window for ok in ("return code: 0", "returncode=0", "exit code: 0", "rc=0", " passed", ": passed")):
+                return True
+            if re.search(r"\bok\b[^\n]*" + re.escape(marker), window) or re.search(
+                re.escape(marker) + r"[^\n]*\bok\b", window
+            ):
+                return True
+    return False
 
 
 

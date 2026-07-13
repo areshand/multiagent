@@ -194,6 +194,14 @@ enough for patches that touch structs, methods, helper state, or unexported
 interfaces. Treat `go test -run TestNonExistent`, `go test -run '^$'`,
 `[no test files]`, and `no tests to run` as compile sanity only, not as
 behavioral validation.
+For Go patches, derive affected packages from `git diff --name-only` and require
+post-final-diff compile/test evidence for every changed non-test `.go` package.
+Run `go test ./affected/package` or a broader command that includes every
+changed package, require return code 0, and record
+`go-package-validation-passed: package=... command=... returncode=0` for each
+package. One `ok` package does not clear a different changed package. Treat
+`undefined:`, `undefined method`, `undefined field`, `has no field or method`,
+`build failed`, `FAIL`, or any nonzero return code as blocking.
 Before accepting, cross-check every worker/verifier claim about changed files
 against `git diff --name-only`. If an agent says a mock, interface,
 compatibility wrapper, fixture, caller, or generated/source companion was
