@@ -1094,6 +1094,13 @@ context_flags_blockers = solve_swe_prod.implementation_scope_blockers(
     },
 )
 assert not any("context.flags" in blocker for blocker in context_flags_blockers), context_flags_blockers
+recovered_context_flags_status = solve_swe_prod.status_with_recovered_public_evidence(
+    {},
+    "helper-validation-passed: adapter public helper probe",
+    "Bulk evaluation should preserve `context.flags` behavior.",
+    "ACCEPTED\n- No blocking findings.\n- Explicit `context.flags` behavior is preserved after source inspection.",
+)
+assert "helper-contract-preserved: context.flags" in recovered_context_flags_status["validation"], recovered_context_flags_status
 
 stale_without_probe_blockers = solve_swe_prod.implementation_scope_blockers(
     "Normalize duplicate serialized vulnerability content into one source record.",

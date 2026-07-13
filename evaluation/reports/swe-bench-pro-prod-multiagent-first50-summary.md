@@ -1335,3 +1335,19 @@ helper preservation evidence path: accepted/no-blocking verifier text can
 contribute `helper-contract-preserved:` evidence for helper/interface names
 visible in the public issue, while prompt-only helper mentions still do not
 count.
+
+Focused smoke `swe-bench-pro-prod-pr4-245-helperpres-offset28-r1` used commit
+`24578ff`. Native result: `rc=2`, `1215.7s`, no official verifier evidence and
+no score. The run confirmed the helper-preservation evidence extractor itself
+works, but exposed that the coverage-follow-up branch still recomputed hard
+scope blockers with empty status after the adapter public probe passed. The
+diagnostics showed the verifier accepted the patch, `context.flags` preservation
+was explicitly stated, and the adapter public Go probes passed, yet `status.json`
+was written with the same stale `context.flags` blocker.
+
+PR4 now wires recovered public evidence through the coverage-follow-up recovery
+branch as well as final cleanup: the blocker checks receive
+`helper-validation-passed:` plus `helper-contract-preserved:` evidence before
+deciding whether to write a blocked marker. This is still no-leak and generic:
+it is derived from accepted/no-blocking verifier text and public adapter
+validation, not row ids, hidden tests, or official expected-test metadata.

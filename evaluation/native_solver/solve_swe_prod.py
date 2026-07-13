@@ -1202,6 +1202,25 @@ def status_with_recovered_validation(
     return recovered
 
 
+def recovered_validation_with_helper_evidence(issue: str, text: str, validation_evidence: str) -> str:
+    helper_evidence = helper_preservation_evidence(issue, text)
+    if helper_evidence:
+        return validation_evidence + "; " + helper_evidence
+    return validation_evidence
+
+
+def status_with_recovered_public_evidence(
+    current_status: dict[str, object],
+    validation_evidence: str,
+    issue: str,
+    text: str,
+) -> dict[str, object]:
+    return status_with_recovered_validation(
+        current_status,
+        recovered_validation_with_helper_evidence(issue, text, validation_evidence),
+    )
+
+
 SOURCE_CLAIM_EXTENSIONS = (
     ".go",
     ".py",
@@ -2885,9 +2904,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         text,
                         recovered_base,
                     )
-                    helper_evidence = helper_preservation_evidence(issue, text)
-                    if helper_evidence:
-                        recovered_validation += "; " + helper_evidence
+                    recovered_validation = recovered_validation_with_helper_evidence(issue, text, recovered_validation)
                     recovered_status = status_with_recovered_validation({}, recovered_validation)
                     scope_blockers = implementation_scope_blockers(issue, diff, recovered_status, task_metadata)
                     if probe_passed:
@@ -3134,8 +3151,20 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                     and not coverage_followup_at
                 ):
                     diff = git_diff(workdir)
-                    scope_blockers = implementation_scope_blockers(issue, diff, {}, task_metadata)
-                    coverage_blockers = validation_coverage_blockers(issue, diff, text, {}, task_metadata)
+                    coverage_status_for_blockers = status_with_recovered_public_evidence(
+                        {},
+                        "captured coverage-follow-up verifier/worker text",
+                        issue,
+                        text,
+                    )
+                    scope_blockers = implementation_scope_blockers(issue, diff, coverage_status_for_blockers, task_metadata)
+                    coverage_blockers = validation_coverage_blockers(
+                        issue,
+                        diff,
+                        text,
+                        coverage_status_for_blockers,
+                        task_metadata,
+                    )
                     blockers = [*scope_blockers, *coverage_blockers]
                     probe_report = ""
                     if coverage_probe_commands(workdir, issue, diff):
@@ -3204,18 +3233,23 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         exit_code = 2
                         outcome = "blocked"
                         break
+                    recovered_base = (
+                        f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})"
+                        if coverage_probe_satisfied
+                        else "no adapter-selected public validation command was available; implementation blockers were clean"
+                    )
                     STATUS_PATH.write_text(
                         json.dumps(
                             {
                                 "status": "completed",
                                 "summary": "orchestrator exited with a source diff; adapter recovered missing status marker",
-                                "validation": recovered_validation_text(
-                                    task_metadata,
+                                "validation": recovered_validation_with_helper_evidence(
+                                    issue,
                                     text,
-                                    (
-                                        f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})"
-                                        if coverage_probe_satisfied
-                                        else "no adapter-selected public validation command was available; implementation blockers were clean"
+                                    recovered_validation_text(
+                                        task_metadata,
+                                        text,
+                                        recovered_base,
                                     ),
                                 ),
                                 "risk": "completion marker recovered by benchmark wrapper after orchestrator exit without status.json",
@@ -3231,8 +3265,20 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                     or (diff_bytes > 0 and not has_live_agent_process())
                 ):
                     diff = git_diff(workdir)
-                    scope_blockers = implementation_scope_blockers(issue, diff, {}, task_metadata)
-                    coverage_blockers = validation_coverage_blockers(issue, diff, text, {}, task_metadata)
+                    coverage_status_for_blockers = status_with_recovered_public_evidence(
+                        {},
+                        "captured coverage-follow-up verifier/worker text",
+                        issue,
+                        text,
+                    )
+                    scope_blockers = implementation_scope_blockers(issue, diff, coverage_status_for_blockers, task_metadata)
+                    coverage_blockers = validation_coverage_blockers(
+                        issue,
+                        diff,
+                        text,
+                        coverage_status_for_blockers,
+                        task_metadata,
+                    )
                     blockers = [*scope_blockers, *coverage_blockers]
                     if coverage_probe_satisfied:
                         blockers = blockers_after_passing_public_probe(blockers)
@@ -3250,7 +3296,18 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         if probe_passed:
                             coverage_probe_satisfied = True
                             latest_diff = git_diff(workdir)
-                            scope_blockers = implementation_scope_blockers(issue, latest_diff, {}, task_metadata)
+                            latest_status_for_blockers = status_with_recovered_public_evidence(
+                                {},
+                                f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
+                                issue,
+                                text,
+                            )
+                            scope_blockers = implementation_scope_blockers(
+                                issue,
+                                latest_diff,
+                                latest_status_for_blockers,
+                                task_metadata,
+                            )
                             blockers = blockers_after_passing_public_probe(scope_blockers)
                         else:
                             blockers = [
@@ -3270,7 +3327,18 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         if probe_passed:
                             coverage_probe_satisfied = True
                             latest_diff = git_diff(workdir)
-                            scope_blockers = implementation_scope_blockers(issue, latest_diff, {}, task_metadata)
+                            latest_status_for_blockers = status_with_recovered_public_evidence(
+                                {},
+                                f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
+                                issue,
+                                text,
+                            )
+                            scope_blockers = implementation_scope_blockers(
+                                issue,
+                                latest_diff,
+                                latest_status_for_blockers,
+                                task_metadata,
+                            )
                             blockers = blockers_after_passing_public_probe(scope_blockers)
                             if not blockers and latest_diff.strip():
                                 STATUS_PATH.write_text(
@@ -3278,10 +3346,14 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                                         {
                                             "status": "completed",
                                             "summary": "orchestrator exited after adapter public validation; preserving current source diff",
-                                            "validation": recovered_validation_text(
-                                                task_metadata,
+                                            "validation": recovered_validation_with_helper_evidence(
+                                                issue,
                                                 text,
-                                                f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
+                                                recovered_validation_text(
+                                                    task_metadata,
+                                                    text,
+                                                    f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
+                                                ),
                                             ),
                                             "risk": "completion marker recovered by benchmark wrapper after orchestrator exit",
                                         }
@@ -3346,7 +3418,18 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                                 if probe_passed:
                                     coverage_probe_satisfied = True
                                     latest_diff = git_diff(workdir)
-                                    latest_blockers = implementation_scope_blockers(issue, latest_diff, {}, task_metadata)
+                                    latest_status_for_blockers = status_with_recovered_public_evidence(
+                                        {},
+                                        f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
+                                        issue,
+                                        text,
+                                    )
+                                    latest_blockers = implementation_scope_blockers(
+                                        issue,
+                                        latest_diff,
+                                        latest_status_for_blockers,
+                                        task_metadata,
+                                    )
                                     latest_blockers = blockers_after_passing_public_probe(latest_blockers)
                                     if not latest_blockers and latest_diff.strip():
                                         STATUS_PATH.write_text(
@@ -3354,10 +3437,14 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                                                 {
                                                     "status": "completed",
                                                     "summary": "adapter recovery worker fixed public contract; preserving current source diff",
-                                                    "validation": recovered_validation_text(
-                                                        task_metadata,
+                                                    "validation": recovered_validation_with_helper_evidence(
+                                                        issue,
                                                         text,
-                                                        f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
+                                                        recovered_validation_text(
+                                                            task_metadata,
+                                                            text,
+                                                            f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
+                                                        ),
                                                     ),
                                                     "risk": "completion marker recovered by benchmark wrapper after adapter helper fix",
                                                 }
@@ -3432,10 +3519,14 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                                 {
                                     "status": "completed",
                                     "summary": "orchestrator exited after adapter helper validation; preserving current source diff",
-                                    "validation": recovered_validation_text(
-                                        task_metadata,
+                                    "validation": recovered_validation_with_helper_evidence(
+                                        issue,
                                         text,
-                                        f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
+                                        recovered_validation_text(
+                                            task_metadata,
+                                            text,
+                                            f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
+                                        ),
                                     ),
                                     "risk": "completion marker recovered by benchmark wrapper after orchestrator exit",
                                 }
@@ -3525,14 +3616,12 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
             if validation_evidence:
                 validation_evidence_kind = "stale-visible"
         if (final_state != "blocked" or validation_evidence) and validation_evidence:
-            final_status_for_blockers = status_with_recovered_validation(final_status, validation_evidence)
-            helper_evidence = helper_preservation_evidence(issue, final_text)
-            if helper_evidence:
-                final_status_for_blockers["validation"] = (
-                    str(final_status_for_blockers.get("validation", ""))
-                    + "; "
-                    + helper_evidence
-                )
+            final_status_for_blockers = status_with_recovered_public_evidence(
+                final_status,
+                validation_evidence,
+                issue,
+                final_text,
+            )
             final_probe_blockers: list[str] = []
             if validation_evidence_kind != "stale-visible" and coverage_probe_commands(workdir, issue, final_diff):
                 probe_report, probe_passed = run_validation_coverage_probe(
