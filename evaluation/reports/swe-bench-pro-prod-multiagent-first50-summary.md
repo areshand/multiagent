@@ -1653,3 +1653,31 @@ recovery handoff. Markdown prose such as
 explicitly rejected in favor of literal key/value tokens. Validation passed
 again: `python3 -m py_compile`, `bash -n tests/run.sh`, `git diff --check`, and
 bounded `tests/run.sh`.
+
+Focused row 18 smoke
+`swe-bench-pro-prod-pr4-5928-symbolmarker-offset18-r1` used the
+production-native solver baked from PR4 commit `5928a0f`. Native result:
+`rc=0`, `628.7s`; official verifier evidence: `true`; clean native score:
+`0.0`.
+
+This confirms the source-symbol recovery path is now operational: the final
+status contained a machine-readable marker,
+`source-symbol-map-passed: path=lib/client/bench.go package=client
+added-symbol=LinearBenchmark,(*LinearBenchmark).Next
+compile=go_test_./lib/client_passed caller=source-reviewed
+nearby-test=go_test_./lib/client`, and the wrapper submitted the patch to the
+official verifier.
+
+The remaining row 18 failure is therefore a solve-quality miss, not an eval
+infra miss. The production agents inferred the wrong source ownership surface:
+they added `LinearBenchmark` under `lib/client`, while official verification
+compiled hidden tests under `lib/benchmark` that expected package-local symbols
+`Config`, `Linear`, and `validateConfig`. The general lesson is to strengthen
+source ownership inference for new exported/source-visible APIs: before adding
+new symbols, the verifier should trace issue vocabulary, package-local tests,
+callers, and package names to decide where the contract is expected to live,
+and it should prefer compiling the package that owns the task concept rather
+than only the package where the first plausible adjacent type was found.
+
+Net score movement: none. The first-50 aggregate remains `33/50`
+production-native clean official passes, still below the >70% target.
