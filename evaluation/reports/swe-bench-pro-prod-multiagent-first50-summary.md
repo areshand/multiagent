@@ -1013,3 +1013,61 @@ that previously timed out. The run did not reach the checkpoint: native exited
 `rc=2` after `100.0s`, with no official evidence and no score. This is not
 score evidence, but it shows row 44 is not deterministically a timeout; it can
 also fail early at the native gate before terminal-deadline control applies.
+
+## 2026-07-13 Rejection Diagnostics and No-Diff Retry
+
+PR4 now preserves richer rejection diagnostics before EvalScope deletes a task
+container. For native timeouts or nonzero native exits, the runner captures the
+production status file, helper/public validation probes, stale-visible and
+multi-value probes, native stdout/stderr tails, `git status`, `git diff --stat`,
+`git diff --check`, and the final source diff tail. These diagnostics are
+attached to the rejected runner error and metrics. This does not score rejected
+diffs; it makes `rc=2` failure causes auditable after the sandbox is gone.
+
+Focused smoke run `swe-bench-pro-prod-pr4-diagnostics-offset28-r1` demonstrated
+the value of the new diagnostics. Row 28 exited `rc=2` after `89.8s` with no
+official evidence because production status was:
+
+```text
+Worker completed without leaving a non-empty source diff in /app.
+```
+
+The captured `git status` and diff sections were empty. The root cause for this
+row was therefore not an official verifier failure; it was an orchestrator
+terminal-state failure where a worker reported completion without materializing
+a source patch.
+
+PR4 also adds one bounded production-orchestrator retry for that specific
+general failure mode. If the production status is blocked because there is no
+materialized source diff, the wrapper relaunches the same production
+orchestrator with a no-leak prompt to restart from issue/source evidence and
+produce the narrowest source implementation before blocking again. The retry is
+bounded by `EVAL_NO_DIFF_BLOCKED_RETRY_LIMIT` and does not use benchmark
+metadata, hidden tests, selected evaluator tests, scores, or prior official
+outcomes.
+
+Focused smoke run `swe-bench-pro-prod-pr4-nodiffretry-offset28-r1` shows the
+retry changed behavior but did not create a pass. Row 28 no longer failed as a
+fast empty-diff block; it ran for `900.4s` and produced a real source diff in:
+
+```text
+internal/server/evaluation/ofrep_bridge.go
+internal/server/ofrep/evaluation.go
+internal/server/ofrep/server.go
+```
+
+The native gate still rejected the diff before official scoring because it did
+not compile:
+
+```text
+s.store.ListFlags undefined (type Storer has no field or method ListFlags)
+```
+
+Net score movement: none. The first-50 aggregate remains `33/50`
+production-native clean official passes. The learning is that a meaningful
+share of remaining `rc=2` failures are not verifier-score failures yet; they
+are production orchestration failures around materializing a patch, validating
+compile contracts, and terminating with machine-readable evidence. The next
+general solver improvement should force source ownership checks before calling
+methods across interfaces and make compile-contract failures first-class
+verifier blockers before final status.

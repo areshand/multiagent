@@ -2036,6 +2036,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     progress_repair_sent = False
     terminal_deadline_sent = False
     terminal_deadline_at: float | None = None
+    no_diff_blocked_retries = 0
     convergence_start = time.monotonic()
     last_diff_digest = ""
     last_diff_changed_at = convergence_start
@@ -2048,6 +2049,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     progress_repair_min_stall = int(os.environ.get("EVAL_PROGRESS_REPAIR_MIN_STALL", "240"))
     terminal_deadline_remaining = int(os.environ.get("EVAL_TERMINAL_DEADLINE_REMAINING", "600"))
     terminal_deadline_grace = int(os.environ.get("EVAL_TERMINAL_DEADLINE_GRACE", "300"))
+    no_diff_blocked_retry_limit = int(os.environ.get("EVAL_NO_DIFF_BLOCKED_RETRY_LIMIT", "1"))
     adapter_helper_worker_limit = int(os.environ.get("EVAL_ADAPTER_HELPER_WORKER_LIMIT", "1"))
     orchestrator_resume_limit = int(os.environ.get("EVAL_ORCHESTRATOR_RESUME_LIMIT", "1"))
     orchestrator_resume_attempts = 0
@@ -2332,6 +2334,35 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 outcome = "completed"
                 break
             if state == "blocked":
+                diff = git_diff(workdir)
+                reason_text = json.dumps(current_status, sort_keys=True).lower()
+                no_diff_blocked = (
+                    not diff.strip()
+                    and (
+                        "no final source diff" in reason_text
+                        or "non-empty source diff" in reason_text
+                        or "no materialized source diff" in reason_text
+                        or "no source diff" in reason_text
+                    )
+                )
+                if (
+                    no_diff_blocked
+                    and no_diff_blocked_retries < no_diff_blocked_retry_limit
+                    and int(deadline - time.monotonic()) > 300
+                ):
+                    no_diff_blocked_retries += 1
+                    blockers = [
+                        "production orchestrator wrote blocked status after a worker completed without a materialized source diff; restart from issue/source evidence and choose the narrowest implementation path before blocking again"
+                    ]
+                    if relaunch_orchestrator_for_blockers(
+                        "blocked with no materialized source diff",
+                        diff,
+                        blockers,
+                        "",
+                    ):
+                        log(f"no-diff blocked retry launched attempt={no_diff_blocked_retries}")
+                        time.sleep(5)
+                        continue
                 log(f"blocked marker: {json.dumps(current_status, sort_keys=True)[:2000]}")
                 exit_code = 2
                 outcome = "blocked"

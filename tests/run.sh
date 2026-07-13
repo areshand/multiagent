@@ -487,6 +487,11 @@ assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "_
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" '"fail_to_pass"'
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" '"test_patch"'
 assert_file_not_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "_enrich_metadata_with_official_contract(dict(task.metadata"
+assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "_collect_rejection_diagnostics"
+assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "/tmp/multiagent-prod-swe/status.json"
+assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "helper-validation-probe.txt"
+assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "git diff --stat HEAD --"
+assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "diagnostics_tail"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "Never gate production solving on official expected-test metadata"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "public solver inputs"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "solver metadata is public-only"
@@ -687,6 +692,9 @@ assert "launch_production_session" in solver_source and "resume=True" in solver_
 )
 assert "EVAL_TERMINAL_DEADLINE_REMAINING" in solver_source and "EVAL_TERMINAL_DEADLINE_GRACE" in solver_source, (
     "active native runs need a terminal deadline checkpoint before timeout"
+)
+assert "EVAL_NO_DIFF_BLOCKED_RETRY_LIMIT" in solver_source and "blocked with no materialized source diff" in solver_source, (
+    "blocked no-diff worker outcomes should get one production-orchestrator retry"
 )
 multi_value_section = re.search(
     r"parser_multi_value_diff = any\(\s*marker in diff_lower\s*for marker in \((?P<markers>.*?)\)\s*\)",

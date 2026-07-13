@@ -32,6 +32,7 @@ _PROMPT_FILE = "/tmp/evalscope-native-multiagent-prompt.txt"
 _METADATA_FILE = "/tmp/evalscope-native-multiagent-metadata.json"
 _STDOUT_FILE = "/tmp/evalscope-native-multiagent-stdout.log"
 _STDERR_FILE = "/tmp/evalscope-native-multiagent-stderr.log"
+_DIAGNOSTICS_FILE = "/tmp/evalscope-native-multiagent-diagnostics.txt"
 _DEFAULT_SOLVER_COMMAND = "/tmp/evalscope-native-multiagent-solver.sh"
 _PUBLIC_METADATA_KEYS = {
     "language",
@@ -200,14 +201,18 @@ class MultiagentNativeRunner(AgentRunner):
         stderr = await env.exec(["bash", "-lc", f"tail -c 4000 {shlex.quote(_STDERR_FILE)} 2>/dev/null || true"])
         stdout_tail = (stdout.stdout or "")[-4000:]
         stderr_tail = (stderr.stdout or "")[-4000:]
+        diagnostics = ""
         if result.timed_out:
+            diagnostics = await self._collect_rejection_diagnostics(env)
             if not self._score_timed_out_diff:
                 raise RunnerTimeoutError(
-                    f"multiagent-native timed out after {task.timeout}s; refusing to score an unfinished git diff"
+                    "multiagent-native timed out after "
+                    f"{task.timeout}s; refusing to score an unfinished git diff\n{diagnostics[-8000:]}"
                 )
             logger.warning(f"multiagent-native timed out after {task.timeout}s; scoring current git diff by explicit config")
         elif result.returncode != 0:
-            tail = (stderr_tail + "\n" + stdout_tail).strip()[-2000:]
+            diagnostics = await self._collect_rejection_diagnostics(env)
+            tail = (stderr_tail + "\n" + stdout_tail + "\n" + diagnostics).strip()[-12000:]
             if not self._score_failed_diff:
                 raise RuntimeError(
                     f"multiagent-native exited with code {result.returncode}; refusing to score rejected git diff: {tail}"
@@ -222,8 +227,55 @@ class MultiagentNativeRunner(AgentRunner):
                 "returncode": result.returncode,
                 "timed_out": result.timed_out,
                 "stderr_tail": stderr_tail,
+                "diagnostics_tail": diagnostics[-4000:],
             },
         )
+
+    async def _collect_rejection_diagnostics(self, env: AgentEnvironment) -> str:
+        """Collect public/source diagnostics before EvalScope deletes the task container."""
+
+        workdir = shlex.quote(self._working_dir)
+        diagnostics_file = shlex.quote(_DIAGNOSTICS_FILE)
+        script = f"""
+set +e
+cd {workdir} 2>/dev/null || true
+out={diagnostics_file}
+: > "$out"
+section() {{
+  printf '\\n===== %s =====\\n' "$1" >> "$out"
+}}
+copy_file_tail() {{
+  label="$1"
+  path="$2"
+  bytes="$3"
+  section "$label"
+  if [ -f "$path" ]; then
+    tail -c "$bytes" "$path" >> "$out" 2>&1
+  else
+    printf 'missing: %s\\n' "$path" >> "$out"
+  fi
+}}
+copy_file_tail status.json /tmp/multiagent-prod-swe/status.json 12000
+copy_file_tail helper-validation-probe /tmp/multiagent-prod-swe/helper-validation-probe.txt 12000
+copy_file_tail stale-visible-reconciliation /tmp/multiagent-prod-swe/stale-visible-reconciliation.txt 8000
+copy_file_tail multi-value-probe /tmp/multiagent-prod-swe/multi-value-probe.txt 8000
+copy_file_tail failure-diagnostics /tmp/multiagent-prod-swe/failure-diagnostics.txt 20000
+copy_file_tail native-stdout {_STDOUT_FILE} 8000
+copy_file_tail native-stderr {_STDERR_FILE} 8000
+section git-status
+git status --short >> "$out" 2>&1
+section git-diff-name-only
+git diff --name-only HEAD -- >> "$out" 2>&1
+section git-diff-stat
+git diff --stat HEAD -- >> "$out" 2>&1
+section git-diff-check
+git diff --check HEAD -- >> "$out" 2>&1
+section git-diff-tail
+git diff HEAD -- | tail -c 30000 >> "$out" 2>&1
+tail -c 60000 "$out" 2>/dev/null || true
+"""
+        result = await env.exec(["bash", "-lc", script], timeout=90)
+        return ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
 
     async def _write_file(self, env: AgentEnvironment, path: str, content: str) -> None:
         encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
