@@ -406,7 +406,11 @@ assignment_create() {
         shift 2
         ;;
       --owned)
-        owned_csv="${2:-}"
+        if [[ -n "$owned_csv" ]]; then
+          owned_csv="$owned_csv,${2:-}"
+        else
+          owned_csv="${2:-}"
+        fi
         shift 2
         ;;
       --status)

@@ -67,7 +67,7 @@ Benchmark spawning path:
 
   ```bash
   cd /opt/multiagent
-  bin/subagent.sh assignment-create worker-01-fix --assignment-id SWE-001 --branch benchmark --owned RELATIVE_SOURCE_PATH
+  bin/subagent.sh assignment-create worker-01-fix --assignment-id SWE-001 --branch benchmark --owned RELATIVE_SOURCE_PATH[,RELATIVE_SOURCE_PATH...]
   bin/subagent.sh spawn worker-01-fix --instruction "You are a worker agent launched by the orchestrator. Work in /app only. Report progress and final status here. Task: ..."
   ```
 

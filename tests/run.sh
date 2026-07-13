@@ -2200,6 +2200,11 @@ assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/status" "assigned"
 assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/owned-paths" "README.md"
 assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/owned-paths" "src"
 
+assignment_repeated_owned_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create worker-repeated-owned --assignment-id docs-002 --branch worker/docs --owned README.md --owned src)"
+[[ "$assignment_repeated_owned_output" == $'assignment created\tworker-repeated-owned\tdocs-002\tworker/docs' ]]
+assert_file_contains "$ASSIGN_STATE/assignments/worker-repeated-owned/owned-paths" "README.md"
+assert_file_contains "$ASSIGN_STATE/assignments/worker-repeated-owned/owned-paths" "src"
+
 assignment_show_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-show worker-docs)"
 [[ "$assignment_show_output" == *"agent_name=worker-docs"* ]]
 [[ "$assignment_show_output" == *"status=assigned"* ]]
