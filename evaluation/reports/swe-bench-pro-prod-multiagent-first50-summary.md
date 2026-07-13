@@ -1291,3 +1291,29 @@ adapter blockers, and verifier instructions, using the same public/source-only
 rules as the terminal handoff. This is not row-specific: it applies to any
 verifier-discovered request boundary, middleware, declared type, package API,
 or validation repair finding.
+
+Focused smoke `swe-bench-pro-prod-pr4-837-verifierhandoff-offset28-r1` used
+commit `837d574`. Native result: `rc=2`, `1187.7s`, no official verifier
+evidence and no score. The handoff changed the attempted repair path, but the
+run still failed natively. The final adapter public probe showed the old
+companion-interface compile failure again:
+
+```text
+internal/server/evaluation/evaluation_store_mock.go:
+*evaluationStoreMock does not implement Storer (missing method ListFlags)
+```
+
+The new root cause is stale patch execution. A worker attempted a patch that
+failed with:
+
+```text
+apply_patch: could not find hunk context in internal/server/ofrep/evaluation.go
+```
+
+but the active run continued from the intended patch text as though it had been
+applied. The final diff therefore omitted a required companion update and stayed
+compile-broken. PR4 now adds a general stale-patch-application blocker in the
+native gate plus worker/verifier/SWE-template instructions: if `apply_patch` or
+another patch command reports stale hunk, missing context, or patch failure, the
+agent must re-read the live target file, rebase the edit onto current contents,
+rerun `git diff --name-only`, and rerun affected validation before completion.

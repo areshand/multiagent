@@ -202,6 +202,10 @@ already correct and unchanged. A validation claim is stale or false if the
 compile output says a claimed companion path is still missing a method, field,
 symbol, or interface implementation; reject with `validation-repair-needed:`
 and the exact missing path/symbol.
+If the transcript contains `apply_patch` stale-hunk, missing-context, or patch
+failure output, verify the live final diff rather than the intended patch text.
+Reject unless the target files were re-read, the edit was reapplied to the live
+tree, and post-reapply validation covers the affected package.
 If compile/test validation is already running in another live worker/verifier
 for the same package, do not start a duplicate command. Inspect the running
 command, wait for its result, or reject with a clear orchestration finding that

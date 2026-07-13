@@ -422,6 +422,8 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_fi
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "per affected output collection"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "run a convergence"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "long planning loop"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "stale hunk"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "stale-hunk"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Inline golden expectations"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "nearest visible"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "narrow root-cause"
@@ -442,6 +444,8 @@ assert_file_contains "$ROOT/evaluation/README.md" "production-native progress wa
 assert_file_contains "$ROOT/prompts/verifier.md" "source review plus"
 assert_file_contains "$ROOT/prompts/verifier.md" "old/stale expectation"
 assert_file_contains "$ROOT/prompts/verifier.md" "git diff --name-only"
+assert_file_contains "$ROOT/prompts/worker.md" "stale hunk"
+assert_file_contains "$ROOT/prompts/verifier.md" "stale-hunk"
 assert_file_contains "$ROOT/prompts/worker.md" "git diff --name-only"
 assert_file_contains "$ROOT/prompts/verifier.md" "replacement-probe-passed:"
 assert_file_contains "$ROOT/prompts/verifier.md" "multi-value-probe-passed:"
@@ -718,6 +722,9 @@ assert "EVAL_TERMINAL_FORCE_RESUME" in solver_source and "force_live_handoff=Tru
 )
 assert "verifier_exact_followup_available" in solver_source and "Verifier exact-follow-up handoff" in solver_source, (
     "verifier findings with exact public follow-up instructions should get one production repair handoff"
+)
+assert "stale_patch_application_blockers" in solver_source and "could not find hunk context" in solver_source, (
+    "stale patch application failures should be machine-gated before acceptance"
 )
 assert "EVAL_NO_DIFF_BLOCKED_RETRY_LIMIT" in solver_source and "blocked with no materialized source diff" in solver_source, (
     "blocked no-diff worker outcomes should get one production-orchestrator retry"
@@ -1350,6 +1357,11 @@ assert solve_swe_prod.verifier_exact_followup_available(
 assert not solve_swe_prod.verifier_exact_followup_available(
     "Findings: reviewed source files and no blocker remains"
 )
+stale_patch_blockers = solve_swe_prod.stale_patch_application_blockers(
+    "apply_patch: could not find hunk context in internal/server/ofrep/evaluation.go"
+)
+assert stale_patch_blockers and "re-read the current target files" in stale_patch_blockers[0], stale_patch_blockers
+assert not solve_swe_prod.stale_patch_application_blockers("apply_patch completed successfully")
 
 with tempfile.TemporaryDirectory() as td:
     runtime_root = Path(td)

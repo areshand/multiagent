@@ -1306,6 +1306,23 @@ def claimed_changed_path_blockers(diff: str, text: str) -> list[str]:
     ]
 
 
+def stale_patch_application_blockers(text: str) -> list[str]:
+    lower = (text or "").lower()
+    stale_patch_markers = (
+        "apply_patch: could not find hunk context",
+        "apply_patch: expected hunk header",
+        "patch failed",
+        "hunk failed",
+        "could not apply patch",
+        "failed to apply patch",
+    )
+    if not any(marker in lower for marker in stale_patch_markers):
+        return []
+    return [
+        "worker attempted a stale patch that did not apply cleanly; re-read the current target files, rebase the edit onto the live tree, rerun affected validation, and do not claim completion from an unapplied patch plan"
+    ]
+
+
 def validation_coverage_blockers(
     issue: str,
     diff: str,
@@ -1323,6 +1340,7 @@ def validation_coverage_blockers(
     official_contract_satisfied = official_expected_tests_satisfied_by_text(metadata or {}, text)
     blockers: list[str] = [] if official_contract_satisfied else official_expected_test_blockers(metadata or {}, current_status)
     blockers.extend(claimed_changed_path_blockers(diff, f"{text}\n{json.dumps(current_status, sort_keys=True)}"))
+    blockers.extend(stale_patch_application_blockers(text))
 
     uses_data_helper = any(
         marker in diff_lower

@@ -146,6 +146,12 @@ you claim to have changed is actually present in the diff. If you claim a mock,
 interface, fixture, caller, compatibility wrapper, or source companion was
 updated but it is absent from the diff, either make the missing source edit or
 remove the claim and report the remaining compile/contract risk.
+If `apply_patch` or another patch command reports a stale hunk, missing context,
+or patch failure, do not continue from the intended patch text as if it applied.
+Immediately re-read the current target files, rebase the edit onto the live tree,
+rerun `git diff --name-only` and the affected validation, and report
+`validation-repair-needed:` if the live tree still lacks the intended companion
+edit.
 
 Run only one expensive validation command per owned package at a time. Treat the
 orchestrator's validation lease as the authority for long compile/test commands.

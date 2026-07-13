@@ -100,7 +100,11 @@ As orchestrator:
    task/source evidence, spawn exactly one bounded implementation worker over
    those paths, or write blocked status with the concrete discovery gap. Do not
    keep spawning read-only scouts over the same question.
-13. If the task cannot be completed through worker plus verifier orchestration,
+13. If a worker reports an `apply_patch` stale-hunk, missing-context, or patch
+   failure, treat the intended patch as not applied. Re-read the live target
+   file, rebase the edit onto current contents, and rerun affected validation
+   before final status.
+14. If the task cannot be completed through worker plus verifier orchestration,
    write blocked status JSON with the exact reason instead of producing a
    natural-language final answer.
 

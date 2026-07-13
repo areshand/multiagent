@@ -113,6 +113,11 @@ Benchmark spawning path:
   continue the orchestration loop.
 - `apply_patch` should be available on `PATH`; if a shell cannot find it, use
   `/usr/local/bin/apply_patch`.
+- If `apply_patch` reports a stale hunk, missing context, or patch failure, do
+  not continue from the intended patch text as if it changed `/app`. Re-read the
+  current target files, rebase the edit onto the live tree, rerun
+  `git diff --name-only`, and rerun or reassign the affected validation before
+  any completion marker.
 
 Worker quality bar:
 
