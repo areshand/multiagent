@@ -428,6 +428,10 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_ap
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "owner-evidence="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "candidate-owner="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "source-owner-ledger:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "finding-create"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "todo-create"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "resolution-create"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "gate-check"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "one single machine-readable"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "removed-symbol="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "stale-visible-reconciliation.txt"
@@ -441,6 +445,10 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_fi
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "source-symbol-map-passed:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "source-owner-ledger:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "go-package-validation-passed:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "finding-create"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "todo-create"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "resolution-create"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "gate-check"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "owner-evidence="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "candidate-owner="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "one single machine-readable"
@@ -654,6 +662,9 @@ convergence_message = literal_messages[0]
 assert "Convergence checkpoint" in convergence_message, convergence_message
 assert "spawn/read one verifier" in convergence_message, convergence_message
 assert "source-derived probe failed" in convergence_message, convergence_message
+assert "finding-create adapter-convergence-001" in convergence_message, convergence_message
+assert "todo-create todo-adapter-convergence-001" in convergence_message, convergence_message
+assert "gate-check" in convergence_message, convergence_message
 assert "src/service.py" in convergence_message, convergence_message
 for forbidden in ("FAIL_TO_PASS", "PASS_TO_PASS", "test_patch", "selected_test_files_to_run"):
     assert forbidden not in convergence_message, convergence_message
@@ -697,6 +708,9 @@ assert "Terminal deadline checkpoint" in terminal_message, terminal_message
 assert "write completed status" in terminal_message, terminal_message
 assert "write blocked status" in terminal_message, terminal_message
 assert "No-test compile checks are not behavioral validation" in terminal_message, terminal_message
+assert "finding-create adapter-terminal-deadline-001" in terminal_message, terminal_message
+assert "todo-create todo-adapter-terminal-deadline-001" in terminal_message, terminal_message
+assert "gate-check" in terminal_message, terminal_message
 assert "src/service.py" in terminal_message, terminal_message
 for forbidden in ("FAIL_TO_PASS", "PASS_TO_PASS", "test_patch", "selected_test_files_to_run", "official failure", "selected official"):
     assert forbidden not in terminal_message, terminal_message
@@ -725,6 +739,9 @@ with tempfile.TemporaryDirectory() as td:
         resume_text = resume_prompt.read_text(encoding="utf-8")
         assert "Production Native Resume Handoff" in resume_text, resume_text
         assert "not a new benchmark hint" in resume_text, resume_text
+        assert "finding-create adapter-resume-01" in resume_text, resume_text
+        assert "todo-create todo-adapter-resume-01" in resume_text, resume_text
+        assert "gate-check" in resume_text, resume_text
         assert "src/service.py" in resume_text, resume_text
         assert "pytest -q tests/test_service.py failed" in resume_text, resume_text
         for forbidden in ("FAIL_TO_PASS", "PASS_TO_PASS", "test_patch", "selected_test_files_to_run", "official failure"):
@@ -755,6 +772,11 @@ try:
 finally:
     solve_swe_prod.run = original_run
 assert worker_name == "worker-adapter-helper-01", worker_name
+assignment_commands = [args for args in captured_worker_commands if "assignment-create" in args]
+assert assignment_commands, captured_worker_commands
+assert "--role" in assignment_commands[-1], assignment_commands[-1]
+role_index = assignment_commands[-1].index("--role")
+assert assignment_commands[-1][role_index + 1] == "exploitation", assignment_commands[-1]
 spawn_commands = [args for args in captured_worker_commands if "spawn" in args]
 assert spawn_commands, captured_worker_commands
 spawn_instruction = spawn_commands[-1][-1]

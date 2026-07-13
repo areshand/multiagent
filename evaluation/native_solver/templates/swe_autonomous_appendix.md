@@ -105,6 +105,14 @@ Benchmark spawning path:
   table, spawn a fresh bounded repair worker over the implicated source paths,
   and require the follow-up to rerun the same command or a narrower
   source-derived equivalent before final verification.
+- Treat every blocking verifier or adapter issue as structured repair state,
+  not prose memory. Record the issue with `bin/subagent.sh finding-create`,
+  convert accepted blocking findings to `bin/subagent.sh todo-create` items with
+  objective done criteria, require the worker to attach
+  `bin/subagent.sh resolution-create` evidence, and close the todo only after a
+  verifier rechecks the original finding. Run `bin/subagent.sh gate-check`
+  before writing completed status; any open, assigned, resolved, or reopened
+  todo blocks completion.
 - If worker/verifier spawning fails, record the exact blocker in status JSON
   only after retrying once with a fresh, differently named bounded worker or
   verifier.
@@ -318,14 +326,16 @@ Required orchestration loop:
 4. Spawn one read-only verifier with bounded ownership over the same source
    files.
 5. If the verifier reports blocking findings, run one bounded worker follow-up
-   using the verifier's exact findings, then run a second verifier pass.
+   using the verifier's exact findings. Record those findings as structured
+   finding/todo state, require worker resolution evidence, then run a second
+   verifier pass before closing the todo.
 6. If worker or verifier output contains a relevant failed validation command,
    run a bounded repair worker before treating the patch as complete. Source
    review, compile-only validation, or a synthetic helper probe is not enough
    while the nearest visible fixture/package/component command still fails.
 7. Before writing completed status, confirm the verifier accepted or only
-   non-blocking risk remains, validation is accounted for, and `/app` has a
-   non-empty source diff.
+   non-blocking risk remains, validation is accounted for, `/app` has a
+   non-empty source diff, and `bin/subagent.sh gate-check` accepts.
 
 For this benchmark, prefer instructing workers to leave final source changes
 uncommitted in `/app`. The official scorer reads a patch, not a git commit, and

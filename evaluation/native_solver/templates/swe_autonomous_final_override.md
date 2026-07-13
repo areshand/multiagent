@@ -113,9 +113,17 @@ As orchestrator:
      Use one single machine-readable `source-symbol-map-skip-justified:` line
      only when it includes `path=` or `package=` and source evidence proving no
      definition-level symbol contract changed.
-10. Completion requires both accepted source state in `/app` and
+10. Before writing completed status, run the structured repair gate. Any
+   blocking verifier or adapter issue must be recorded with
+   `bin/subagent.sh finding-create`, converted into a `bin/subagent.sh
+   todo-create` repair item, resolved by a worker with `bin/subagent.sh
+   resolution-create` evidence, and closed only after verifier recheck. Run
+   `bin/subagent.sh gate-check`; if it rejects an unqueued finding or an open,
+   assigned, resolved, or reopened todo, route repair or write blocked status
+   instead of completed status.
+11. Completion requires both accepted source state in `/app` and
    `/tmp/multiagent-prod-swe/status.json`.
-11. If the run has a non-empty source diff but no accepted verifier/status
+12. If the run has a non-empty source diff but no accepted verifier/status
    path after a long worker loop, stop broad exploration and run a convergence
    checkpoint: inspect the current diff, identify the remaining source-visible
    contract risk, and choose exactly one next action: read-only verifier,
@@ -128,16 +136,16 @@ As orchestrator:
    one bounded progress-repair worker over source-derived ownership paths. Treat
    that worker as authoritative for the named blockers; do not restart broad
    planning unless it reports a concrete source-visible discovery gap.
-12. If a long planning loop has produced no `/app` source diff, stop broad
+13. If a long planning loop has produced no `/app` source diff, stop broad
    exploration. Choose the narrowest likely source paths from legitimate
    task/source evidence, spawn exactly one bounded implementation worker over
    those paths, or write blocked status with the concrete discovery gap. Do not
    keep spawning read-only scouts over the same question.
-13. If a worker reports an `apply_patch` stale-hunk, missing-context, or patch
+14. If a worker reports an `apply_patch` stale-hunk, missing-context, or patch
    failure, treat the intended patch as not applied. Re-read the live target
    file, rebase the edit onto current contents, and rerun affected validation
    before final status.
-14. If the task cannot be completed through worker plus verifier orchestration,
+15. If the task cannot be completed through worker plus verifier orchestration,
    write blocked status JSON with the exact reason instead of producing a
    natural-language final answer.
 
