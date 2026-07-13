@@ -260,6 +260,7 @@ def contract_ledger_text(issue: str, metadata: dict[str, object] | None = None) 
             "Completion rules:",
             "- Do not remove, rename, or omit a required public symbol while fixing another issue.",
             "- Preserve names, arity, parameter order, return shape, and package placement for any symbol referenced by visible tests, source callers, docs, public APIs, schemas, or runtime boundaries, including package-private helpers.",
+            "- For any new or changed call through a receiver, field, interface, protocol, trait, generated client/model, or adapter, prove the method exists on the declared type at that call site, not merely on a nearby concrete implementation.",
             "- Visible-test success does not override this ledger; workers must preserve these invariants and verifiers must reject contradictions.",
             "- Literal expected values, command argv, serialized outputs, error text, and ordered lists from legitimate task/source evidence are normative; workers and verifiers must probe that exact shape when practical.",
             "- Hidden contracts must be inferred from user intent, issue text, visible tests, docs, source compatibility behavior, public APIs, data schemas, and runtime behavior.",

@@ -126,6 +126,16 @@ For compiled languages, run or attempt a package compile check that includes
 test files for every touched package. If that check times out or cannot run,
 inspect test-referenced helper signatures manually and report the timeout as
 unresolved risk, not as validation success.
+Before reporting completion, audit every new or changed method/function call
+through a receiver, field, interface, protocol, trait, or adapter. Prove the
+method exists on the declared static type used at the call site, not only on a
+nearby concrete implementation. In Go this means checking the field/interface
+type, e.g. do not call a method on `s.store` unless that method is declared by
+the `Storer` interface or the field's concrete type. In TypeScript, Python, and
+Rust, apply the same declared-type check to interfaces, protocols, generated
+model descriptors, and traits. If you cannot run the compile/type check, report
+`validation-repair-needed:` with the receiver type, method name, and implicated
+source path.
 Do not report `go test -run TestNonExistent`, `go test -run '^$'`, `[no test
 files]`, `no tests to run`, or another no-test compile check as behavioral
 validation for a source repair. Those checks can support compile sanity only;

@@ -449,11 +449,15 @@ assert_file_contains "$ROOT/prompts/verifier.md" "aggregate count"
 assert_file_contains "$ROOT/prompts/verifier.md" "visible inline golden expectations"
 assert_file_contains "$ROOT/prompts/verifier.md" "narrow root-cause"
 assert_file_contains "$ROOT/prompts/verifier.md" "compiled the package's test files"
+assert_file_contains "$ROOT/prompts/verifier.md" "declared static type"
+assert_file_contains "$ROOT/prompts/verifier.md" "has no field or method"
 assert_file_contains "$ROOT/prompts/verifier.md" "go test -run TestNonExistent"
 assert_file_contains "$ROOT/prompts/verifier.md" "adapter-parity finding"
 assert_file_contains "$ROOT/prompts/verifier.md" "validation-repair-needed:"
 assert_file_contains "$ROOT/prompts/worker.md" "When you expand a parser/reader allowlist"
 assert_file_contains "$ROOT/prompts/worker.md" "no-test compile check"
+assert_file_contains "$ROOT/prompts/worker.md" "declared static type"
+assert_file_contains "$ROOT/prompts/worker.md" "validation-repair-needed:"
 assert_file_contains "$ROOT/prompts/worker.md" "multi-value-probe-passed:"
 assert_file_contains "$ROOT/prompts/worker.md" "actual-output-count=N"
 assert_file_contains "$ROOT/prompts/worker.md" "multi-value-probe.txt"
@@ -468,6 +472,10 @@ assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "multi-value-probe-
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "final-output-field="
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "multi-value-probe.txt"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "aggregate counts"
+assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "declared-type ownership risk"
+assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "declared-type ownership risk"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "declared receiver"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "declared type at that call site"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "visible tests"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "real production entrypoint"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "overreach boundary"
@@ -1086,6 +1094,18 @@ compile_error_blockers = solve_swe_prod.implementation_scope_blockers(
     },
 )
 assert any("compile-error evidence" in blocker for blocker in compile_error_blockers), compile_error_blockers
+declared_type_compile_blockers = solve_swe_prod.implementation_scope_blockers(
+    "Bulk evaluation should list all flags when the request omits an explicit flag list.",
+    "diff --git a/internal/server/evaluation/ofrep_bridge.go b/internal/server/evaluation/ofrep_bridge.go\n+func (s *Server) OFREPListFlags(ctx context.Context, namespace string) ([]string, error) { return s.store.ListFlags(ctx, nil) }\n",
+    {
+        "status": "completed",
+        "validation": (
+            "go test ./internal/server/evaluation failed: "
+            "s.store.ListFlags undefined (type Storer has no field or method ListFlags)"
+        ),
+    },
+)
+assert any("compile-error evidence" in blocker for blocker in declared_type_compile_blockers), declared_type_compile_blockers
 validation_repair_needed_blockers = solve_swe_prod.implementation_scope_blockers(
     "Parser output should preserve author contribution shape.",
     "diff --git a/openlibrary/catalog/marc/parse.py b/openlibrary/catalog/marc/parse.py\n+def read_authors(record):\n+    return []\n",

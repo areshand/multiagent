@@ -1127,3 +1127,37 @@ trace the declared type and prove the method exists there, not merely in a
 nearby concrete server type. The same rule should generalize to package import
 contracts, generated-code/module-cache integrity, and visible-test failures
 that currently lead to native `rc=2` rather than clean blocked status.
+
+## 2026-07-13 Declared-Type Ownership Guardrail
+
+PR4 now applies that row-28 learning as a general multi-agent rule, not as a
+row-specific fix. Worker, verifier, contract-scout, acceptance-scout, the SWE
+autonomous appendix, and the durable SWE contract ledger now require declared
+receiver/type ownership checks before completion. If a patch adds or changes a
+method/function call through a receiver, field, interface, protocol, trait,
+generated client/model, or adapter, the agent must prove the method exists on
+the declared type at the call site, not merely on a nearby concrete
+implementation.
+
+The native guardrail also treats compile/type evidence such as `undefined
+method`, `undefined field`, or `has no field or method` as blocking
+compile-error evidence. This directly covers the row 28 class:
+
+```text
+s.store.ListFlags undefined (type Storer has no field or method ListFlags)
+```
+
+Validation run for this change:
+
+```text
+python3 -m py_compile evaluation/native_solver/solve_swe_prod.py evaluation/native_solver/swe_prod_guardrails.py evaluation/evalscope_multiagent_native_runner.py
+bash -n tests/run.sh
+git diff --check
+perl -e 'alarm shift; exec @ARGV' 180 bash tests/run.sh
+```
+
+Score movement: not measured yet after this guardrail. A focused row 28 rerun
+is the right next expensive check because the expected effect is not that the
+old bad patch passes, but that production multi-agent either finds the correct
+source owner/contract or blocks earlier with a clean declared-type finding
+instead of producing another rejected compile-broken diff.

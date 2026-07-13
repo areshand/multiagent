@@ -104,6 +104,11 @@ as out of scope unless the source evidence directly connects that behavior to
 the failure. The validation plan must name the nearest package/test compile that
 includes same-package tests when structs, methods, helper state, or unexported
 interfaces are touched.
+If the likely fix adds or changes calls through a receiver, field, interface,
+protocol, trait, generated client/model, or adapter, include a declared-type ownership risk
+in the ledger. The validation plan must name either the
+compile/type command that proves the call site or the source files where the
+declared receiver type and method provider are defined.
 
 For parser, serializer, importer/exporter, fixture-backed transformation, or
 data-shape tasks, route validation through the real production entrypoint and

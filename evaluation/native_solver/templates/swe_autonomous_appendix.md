@@ -140,6 +140,12 @@ Worker quality bar:
 - For compiled languages, a timed-out compile/test command is not validation
   success. If a package compile check cannot complete, inspect test-referenced
   helper signatures and record timeout risk.
+- Before accepting or reporting completion, trace every new or changed
+  method/function call through the declared receiver, field, interface,
+  protocol, trait, generated client/model, or adapter type at the call site.
+  Prove the method exists on that declared type, not only on a nearby concrete
+  implementation. For Go, this means checking the struct/interface field type
+  such as `Storer` before calling a method through `s.store`.
 - Trace one layer below changed feature code into helper APIs when the issue
   mentions keys, fallback sources, expired records, parsers, serializers,
   adapters, persistence, or missing data.
@@ -178,6 +184,11 @@ Verifier quality bar:
   - source-derived equivalence classes
   - likely edge cases with source evidence
   - probes run or source comparisons made
+- For every new or changed call through a receiver, field, interface, protocol,
+  trait, generated client/model, or adapter, verify declared-type ownership:
+  name the call site receiver type and prove the method exists on that declared
+  type. Reject a patch that only proves the method exists on a nearby concrete
+  implementation.
   - unresolved risk
 - Classify probes as normative only when derived from issue text, visible tests,
   docs, source compatibility behavior, public APIs, data schemas, or runtime

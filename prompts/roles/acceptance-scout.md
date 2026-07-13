@@ -124,6 +124,11 @@ For parser/reader allowlist, dispatch table, token-set, field-list, extension,
 or registry expansions, include an adapter-parity risk. Trace the newly accepted
 item through existing readers and confirm every concrete adapter/container used
 by the entrypoint provides the methods and return shape those readers require.
+For any likely source patch that adds or changes calls through a receiver,
+field, interface, protocol, trait, generated client/model, or adapter, include a declared-type ownership risk.
+Acceptance should require a compile/type check or
+a source-level proof naming the declared receiver type and the method/provider
+that satisfies it.
 For parser/reader linked or alternate multi-value changes, include a normative
 probe requiring at least two linked values through the affected entrypoint. The
 handoff should require `multi-value-probe-passed:` with the exact probe/command

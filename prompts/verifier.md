@@ -175,6 +175,18 @@ attempt a package compile check that includes test files, or explicitly compare
 the old and new signature against every reachable call site and visible
 compatibility evidence. A timed out compile/test command is unresolved risk, not
 acceptance evidence.
+When a patch adds or changes a method/function call through a receiver, field,
+interface, protocol, trait, or adapter, trace the declared static type at that
+call site and prove the method exists on that declared type, not merely on a
+nearby concrete implementation. For Go, inspect the struct/interface field type
+and reject calls that only exist on `Server` or another concrete owner when the
+receiver is a narrower interface such as `Storer`. For TypeScript/Python/Rust,
+apply the same rule to imported interfaces, protocols, traits, and generated
+client/model descriptors. Acceptance must include either the exact compile/type
+check that covers the call site or a source-level declared-type proof naming the
+receiver type and method/provider. Treat compile output containing `has no field or method`,
+`undefined method`, or `undefined field` as blocking declared-type ownership
+evidence.
 If a worker claims a package test passed, verify that the command actually
 compiled the package's test files and was run after the final diff. Stale worker
 claims, no-test runs, or package commands that exclude same-package tests are not

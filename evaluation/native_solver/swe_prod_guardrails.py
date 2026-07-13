@@ -131,7 +131,17 @@ def implementation_scope_blockers(
             "reported validation includes a nonzero focused validation return code; rerun/fix it before completion "
             "or justify the stale visible expectation with replacement-probe evidence"
         )
-    if any(marker in status_text for marker in ("undefined:", "does not compile", "compile error")):
+    if any(
+        marker in status_text
+        for marker in (
+            "undefined:",
+            "undefined method",
+            "undefined field",
+            "has no field or method",
+            "does not compile",
+            "compile error",
+        )
+    ):
         blockers.append("reported validation contains compile-error evidence; resolve it before completion")
     elif any(marker in status_text for marker in ("failed", "failing")) and not stale_visible_failure_justified(status_text):
         blockers.append(
