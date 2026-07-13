@@ -200,6 +200,14 @@ def implementation_scope_blockers(
         if workdir:
             blockers.extend(source_symbol_owner_candidate_blockers(workdir, issue, diff, current_status))
 
+    if dependency_contract_changed(diff) and not constructor_dependency_has_evidence(status_text):
+        blockers.append(
+            "dependency/provider contract changed, but status does not include `constructor-dependency-checked:` "
+            "with constructor/factory, production wiring, mock/fake, and caller/API compatibility evidence. "
+            "Do not accept optional type assertions, bridge/store/interface changes, or fallback providers without "
+            "proving the owning constructor and visible call sites remain compatible."
+        )
+
     if any(marker in issue_lower for marker in ("resend", "re-send", "retry", "throttle", "expiry", "expired", "ttl")):
         if not any(marker in status_text for marker in ("resend-gate-checked:", "throttle", "ttl", "expiry")):
             blockers.append(
@@ -257,6 +265,103 @@ def source_symbol_owner_candidate_blockers(
         + ", ".join(unaccounted[:6])
         + "; compare these candidates in owner-evidence= or move the symbols before completion"
     ]
+
+
+def dependency_contract_changed(diff: str) -> bool:
+    """Detect general dependency/provider contract changes in added source lines."""
+
+    added_lines = [
+        line[1:].strip().lower()
+        for line in diff.splitlines()
+        if line.startswith("+") and not line.startswith("+++")
+    ]
+    if not added_lines:
+        return False
+    added = "\n".join(added_lines)
+    dependency_terms = (
+        "store",
+        "storer",
+        "bridge",
+        "adapter",
+        "provider",
+        "client",
+        "repo",
+        "repository",
+        "service",
+        "gateway",
+        "factory",
+    )
+    if re.search(r"\btype\s+[a-z0-9_]*(store|storer|bridge|adapter|provider|client|repo|repository|service|gateway)[a-z0-9_]*\s+interface\b", added):
+        return True
+    if re.search(r"\bfunc\s+new[a-z0-9_]*\s*\([^)]*(store|storer|bridge|adapter|provider|client|repo|repository|service|gateway)", added):
+        return True
+    if re.search(r"\bnew[a-z0-9_]*\s*\([^)]*(store|storer|bridge|adapter|provider|client|repo|repository|service|gateway)", added):
+        return True
+    if ".(" in added and any(term in added for term in dependency_terms):
+        return True
+    if any(
+        re.search(r"\b" + re.escape(term) + r"\s*[:=]\s*", added)
+        for term in dependency_terms
+    ):
+        return True
+    if any(
+        re.search(r"\b" + re.escape(term) + r"\.[a-z_][a-z0-9_]*\s*\(", added)
+        for term in dependency_terms
+    ):
+        return True
+    if "fallback" in added and any(term in added for term in dependency_terms):
+        return True
+    return False
+
+
+def constructor_dependency_has_evidence(status_text: str) -> bool:
+    text = status_text.lower()
+    if "constructor-dependency-checked:" not in text:
+        return False
+    has_constructor = any(
+        marker in text
+        for marker in (
+            "constructor=",
+            "constructor-path=",
+            "factory=",
+            "factory-path=",
+            "new=",
+            "new-path=",
+        )
+    )
+    has_wiring = any(
+        marker in text
+        for marker in (
+            "wiring=",
+            "wiring-path=",
+            "production-wiring=",
+            "production-wiring-path=",
+            "cmd-wiring=",
+        )
+    )
+    has_mock = any(
+        marker in text
+        for marker in (
+            "mock=",
+            "mock-path=",
+            "fake=",
+            "fake-path=",
+            "testdouble=",
+            "test-double=",
+        )
+    )
+    has_callsite = any(
+        marker in text
+        for marker in (
+            "caller=",
+            "callsite=",
+            "api-compatible=",
+            "api-shape=",
+            "compile=",
+            "returncode=0",
+        )
+    )
+    return has_constructor and has_wiring and has_mock and has_callsite
 
 
 def source_owner_ledger_has_evidence(status_text: str) -> bool:

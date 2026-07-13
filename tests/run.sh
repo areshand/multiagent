@@ -1564,6 +1564,64 @@ source_symbol_map_owner_evidence_blockers = solve_swe_prod.implementation_scope_
 assert not any("source-symbol-map-passed:" in blocker for blocker in source_symbol_map_owner_evidence_blockers), source_symbol_map_owner_evidence_blockers
 assert not any("source-owner-ledger:" in blocker for blocker in source_symbol_map_owner_evidence_blockers), source_symbol_map_owner_evidence_blockers
 assert not solve_swe_prod.source_symbol_map_blocker_present(source_symbol_map_owner_evidence_blockers), source_symbol_map_owner_evidence_blockers
+dependency_contract_diff = (
+    "diff --git a/internal/server/ofrep/evaluation.go b/internal/server/ofrep/evaluation.go\n"
+    "+type flagLister interface { ListFlags(ctx context.Context, namespace string) ([]string, error) }\n"
+    "+lister, ok := s.bridge.(flagLister)\n"
+    "+keys, err := lister.ListFlags(ctx, namespaceKey)\n"
+    "diff --git a/internal/server/evaluation/server.go b/internal/server/evaluation/server.go\n"
+    "+type Storer interface { ListFlags(ctx context.Context, req *storage.ListRequest[storage.NamespaceRequest]) (storage.ResultSet[*flipt.Flag], error) }\n"
+)
+dependency_contract_blockers = solve_swe_prod.implementation_scope_blockers(
+    "Bulk evaluation should list all flags when an explicit flag list is omitted.",
+    dependency_contract_diff,
+    {
+        "status": "completed",
+        "validation": (
+            "source-owner-ledger: selected-owner=internal/server/ofrep candidate-owner=internal/server/ofrep "
+            "candidate-owner=internal/server/evaluation rejected-owner=evaluation-bridge-helper validation-package=./internal/server/ofrep. "
+            "source-symbol-map-passed: path=internal/server/ofrep/evaluation.go package=ofrep "
+            "added-symbol=flagLister owner-evidence=bulk-endpoint-owner candidate-owner=internal/server/evaluation "
+            "callsite=EvaluateBulk compile=go-test-ofrep"
+        ),
+    },
+)
+assert any("constructor-dependency-checked:" in blocker for blocker in dependency_contract_blockers), dependency_contract_blockers
+weak_dependency_contract_blockers = solve_swe_prod.implementation_scope_blockers(
+    "Bulk evaluation should list all flags when an explicit flag list is omitted.",
+    dependency_contract_diff,
+    {
+        "status": "completed",
+        "validation": (
+            "source-owner-ledger: selected-owner=internal/server/ofrep candidate-owner=internal/server/ofrep "
+            "candidate-owner=internal/server/evaluation rejected-owner=evaluation-bridge-helper validation-package=./internal/server/ofrep. "
+            "source-symbol-map-passed: path=internal/server/ofrep/evaluation.go package=ofrep "
+            "added-symbol=flagLister owner-evidence=bulk-endpoint-owner candidate-owner=internal/server/evaluation "
+            "callsite=EvaluateBulk compile=go-test-ofrep. "
+            "constructor-dependency-checked: constructor=internal/server/ofrep/server.go wiring=internal/cmd/grpc.go "
+            "api-compatible=all-visible-callers compile=go-test-ofrep"
+        ),
+    },
+)
+assert any("constructor-dependency-checked:" in blocker for blocker in weak_dependency_contract_blockers), weak_dependency_contract_blockers
+full_dependency_contract_blockers = solve_swe_prod.implementation_scope_blockers(
+    "Bulk evaluation should list all flags when an explicit flag list is omitted.",
+    dependency_contract_diff,
+    {
+        "status": "completed",
+        "validation": (
+            "source-owner-ledger: selected-owner=internal/server/ofrep candidate-owner=internal/server/ofrep "
+            "candidate-owner=internal/server/evaluation rejected-owner=evaluation-bridge-helper validation-package=./internal/server/ofrep. "
+            "source-symbol-map-passed: path=internal/server/ofrep/evaluation.go package=ofrep "
+            "added-symbol=flagLister owner-evidence=bulk-endpoint-owner candidate-owner=internal/server/evaluation "
+            "callsite=EvaluateBulk compile=go-test-ofrep. "
+            "constructor-dependency-checked: constructor=internal/server/ofrep/server.go "
+            "wiring=internal/cmd/grpc.go mock=internal/common/store_mock.go "
+            "callsite=internal/server/ofrep/evaluation_test.go api-compatible=all-visible-callers compile=go-test-ofrep returncode=0"
+        ),
+    },
+)
+assert not any("constructor-dependency-checked:" in blocker for blocker in full_dependency_contract_blockers), full_dependency_contract_blockers
 source_symbol_map_without_owner_ledger_blockers = solve_swe_prod.implementation_scope_blockers(
     "Add a linear benchmark generator for benchmark tests.",
     "diff --git a/lib/benchmark/linear.go b/lib/benchmark/linear.go\n"
