@@ -1586,3 +1586,30 @@ The remaining general gap is recovery, not just detection: when the wrapper
 catches a missing source-symbol map after a follow-up, the production
 orchestrator needs to repair the package localization or write exact final
 status evidence from source-derived checks before the row can be scored.
+
+## 2026-07-13 Four-Way Source-Symbol Guardrail Rerun
+
+Rows `15, 16, 17, 18` were rerun with the production-native solver baked from
+PR4 commit `d271051`, 20g task memory, four parallel workers, persistent caches,
+and clean official scoring only. Prefix:
+`swe-bench-pro-prod-pr4-d271-symbolmap4-w{worker}-offset{row}-count1`.
+
+| Row | Repo | Native rc | Official evidence | Clean native score | Native wall | Outcome |
+| --- | --- | ---: | --- | ---: | ---: | --- |
+| 15 | future-architect/vuls | 2 | no | n/a | 752.5s | Native guardrail rejected a Trivy converter diff before official scoring. |
+| 16 | internetarchive/openlibrary | 2 | no | n/a | 1284.3s | Visible MARC parser tests passed, but final source-symbol/multi-value evidence was missing or stale. |
+| 17 | future-architect/vuls | 2 | no | n/a | 2315.7s | Native guardrail rejected an Alpine scanner/source-package diff before official scoring. |
+| 18 | gravitational/teleport | 2 | no | n/a | 627.6s | Native guardrail rejected a wrong-package benchmark helper diff before official scoring. |
+
+Net score movement: none. The first-50 aggregate remains `33/50`.
+
+This rerun is a detection improvement but not a solve-rate improvement. The new
+guardrail consistently prevented weak or wrong source-symbol submissions from
+becoming official `0.0` rows. The repeated failure mode is now sharper: workers
+can produce plausible source diffs and sometimes pass visible package tests, but
+the production orchestrator still exits without durable final `status.json`
+evidence such as `source-symbol-map-passed: package=... added-symbol=...
+compile=... caller=...` or a justified skip. The next useful change should be a
+bounded production-orchestrator recovery path for this exact blocker class,
+keeping the no-leak invariant and requiring the final status marker rather than
+accepting verifier prose.
