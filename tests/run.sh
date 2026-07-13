@@ -716,6 +716,9 @@ assert "EVAL_TERMINAL_DEADLINE_REMAINING" in solver_source and "EVAL_TERMINAL_DE
 assert "EVAL_TERMINAL_FORCE_RESUME" in solver_source and "force_live_handoff=True" in solver_source, (
     "active no-status terminal deadlines should hand off once to the production orchestrator before outer timeout"
 )
+assert "verifier_exact_followup_available" in solver_source and "Verifier exact-follow-up handoff" in solver_source, (
+    "verifier findings with exact public follow-up instructions should get one production repair handoff"
+)
 assert "EVAL_NO_DIFF_BLOCKED_RETRY_LIMIT" in solver_source and "blocked with no materialized source diff" in solver_source, (
     "blocked no-diff worker outcomes should get one production-orchestrator retry"
 )
@@ -1341,6 +1344,12 @@ claim_diff_with_mock = claim_diff + (
     "+func (m *evaluationStoreMock) ListFlags() {}\n"
 )
 assert not solve_swe_prod.claimed_changed_path_blockers(claim_diff_with_mock, claim_text_with_diff)
+assert solve_swe_prod.verifier_exact_followup_available(
+    "BLOCKING FINDINGS with exact follow-up instructions: update middleware validation and rerun go test ./pkg"
+)
+assert not solve_swe_prod.verifier_exact_followup_available(
+    "Findings: reviewed source files and no blocker remains"
+)
 
 with tempfile.TemporaryDirectory() as td:
     runtime_root = Path(td)

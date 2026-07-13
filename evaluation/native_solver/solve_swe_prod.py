@@ -2007,6 +2007,15 @@ def orchestrator_exited_without_status(text: str) -> bool:
     )
 
 
+def verifier_exact_followup_available(text: str) -> bool:
+    lower = (text or "").lower()
+    return (
+        "blocking findings with exact follow-up instructions" in lower
+        or "exact follow-up instructions:" in lower
+        or "blocking findings:" in lower and "rerun" in lower
+    )
+
+
 def has_live_agent_process() -> bool:
     result = run(
         ["ps", "-ef"],
@@ -3347,11 +3356,28 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                             last_capture = 0.0
                             time.sleep(10)
                             continue
+                        force_verifier_handoff = (
+                            terminal_force_resume_enabled
+                            and verifier_exact_followup_available(text)
+                            and int(deadline - time.monotonic()) > 240
+                        )
                         if blockers and relaunch_orchestrator_for_blockers(
-                            "orchestrator exited after unresolved coverage follow-up",
+                            "orchestrator exited after unresolved verifier follow-up"
+                            if force_verifier_handoff
+                            else "orchestrator exited after unresolved coverage follow-up",
                             diff,
-                            blockers,
+                            [
+                                *blockers,
+                                *(
+                                    [
+                                        "Verifier exact-follow-up handoff: a verifier produced concrete public/source repair instructions, but the active run did not apply them before exiting. Continue from the current /app diff, apply or disprove those verifier findings from source, rerun the implicated visible validation, then write status.json."
+                                    ]
+                                    if force_verifier_handoff
+                                    else []
+                                ),
+                            ],
                             probe_report,
+                            force_live_handoff=force_verifier_handoff,
                         ):
                             time.sleep(5)
                             continue

@@ -1260,3 +1260,34 @@ perl -e 'alarm shift; exec @ARGV' 180 bash tests/run.sh
 Score movement: not measured yet after the terminal-handoff change. A focused
 row 28 rerun is the next expensive check; the expected effect is a clean native
 terminal outcome, not necessarily an official pass.
+
+Focused smoke `swe-bench-pro-prod-pr4-f724-terminalhandoff-offset28-r1` used
+commit `f7246da`. Native result: `rc=2`, `1115.2s`, no official verifier
+evidence and no score. This was an improvement over the prior `3600.0s` active
+timeout: the run terminated inside the native gate, produced a smaller real
+source diff, and the adapter public Go probes passed.
+
+The remaining blocker was a real hidden-contract risk caught by the verifier,
+not a container problem:
+
+```text
+Blocking: /ofrep/v1/evaluate/flags likely still rejects missing context.flags
+before EvaluateBulk runs. Existing internal/server/ofrep/middleware_test.go
+expects INVALID_CONTEXT with "flags were not provided in context", and the
+patch did not change middleware validation.
+```
+
+This shows the verifier is now finding the right source boundary: service-level
+fallback is insufficient when request middleware still enforces the old
+contract. The orchestration miss is follow-through. A verifier produced exact
+public/source repair instructions, but the active run exited into a native
+block instead of forcing one more bounded production repair over those
+instructions while budget remained.
+
+PR4 now adds a general verifier exact-follow-up handoff. If captured verifier
+text contains blocking findings with exact follow-up instructions, the wrapper
+can force one no-leak production-orchestrator resume over the current diff,
+adapter blockers, and verifier instructions, using the same public/source-only
+rules as the terminal handoff. This is not row-specific: it applies to any
+verifier-discovered request boundary, middleware, declared type, package API,
+or validation repair finding.
