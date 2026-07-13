@@ -1613,3 +1613,22 @@ compile=... caller=...` or a justified skip. The next useful change should be a
 bounded production-orchestrator recovery path for this exact blocker class,
 keeping the no-leak invariant and requiring the final status marker rather than
 accepting verifier prose.
+
+## 2026-07-13 Source-Symbol Recovery Handoff
+
+PR4 now adds that bounded recovery path. When the production wrapper sees a
+source-symbol map blocker after the normal resume budget is exhausted, it allows
+one extra production-orchestrator resume controlled by
+`EVAL_SOURCE_SYMBOL_RESUME_LIMIT` (default `1`). The handoff remains no-leak:
+it contains only the public issue text, current source diff, adapter blockers,
+visible validation probe output, and source-derived ownership hints.
+
+The resume prompt now includes an explicit source-symbol recovery requirement:
+the final `status.json` must contain `source-symbol-map-passed:` with exact
+`package=` or `path=`, each changed symbol, and `compile=`, `nearby-test=`,
+`caller=`, or `callsite=` proof; or it must contain
+`source-symbol-map-skip-justified:` with exact source evidence. Worker/verifier
+prose is still not accepted as durable completion evidence.
+
+Validation passed: `python3 -m py_compile` on the native solver files,
+`bash -n tests/run.sh`, `git diff --check`, and bounded `tests/run.sh`.

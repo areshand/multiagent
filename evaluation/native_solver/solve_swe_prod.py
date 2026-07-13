@@ -1736,6 +1736,33 @@ def blockers_after_passing_public_probe(blockers: list[str]) -> list[str]:
     return remaining
 
 
+def source_symbol_map_blocker_present(blockers: list[str]) -> bool:
+    text = "\n".join(str(blocker).lower() for blocker in blockers)
+    return (
+        "source symbol contracts changed" in text
+        or "source-symbol-map-passed:" in text
+        or "source-symbol-map-skip-justified:" in text
+    )
+
+
+def source_symbol_map_resume_instructions(blockers: list[str]) -> str:
+    if not source_symbol_map_blocker_present(blockers):
+        return ""
+    return (
+        "\n\n### Source-Symbol Map Recovery Requirement\n\n"
+        "The current blocker is a source-symbol map blocker. This is a public/source evidence requirement, "
+        "not hidden-test guidance. Before writing completed status, inspect the live `git diff --name-only`, "
+        "changed package/module declarations, changed symbol definitions, visible callers, and nearby tests. "
+        "If the diff adds, removes, renames, or moves source symbols, the final `/tmp/multiagent-prod-swe/status.json` "
+        "must contain a literal `source-symbol-map-passed:` marker naming the owning `package=` or `path=`, each "
+        "`added-symbol=`, `removed-symbol=`, or `renamed-symbol=`, and at least one source-derived compatibility "
+        "proof such as `compile=`, `nearby-test=`, `caller=`, or `callsite=`. If no source-symbol contract changed, "
+        "write `source-symbol-map-skip-justified:` with the exact `path=` or `package=` and source evidence. "
+        "Verifier prose, worker summaries, and passing no-test compile checks are not sufficient; the durable final "
+        "`status.json` is the acceptance surface."
+    )
+
+
 def status_records_selected_validation(current_status: dict[str, object]) -> bool:
     evidence = json.dumps(current_status, sort_keys=True).lower()
     return "helper-validation-passed" in evidence
@@ -1813,6 +1840,8 @@ def send_orchestrator_followup(session: str, blockers: list[str], probe_report: 
         + "\n"
         + " If any finding is an implementation-scope blocker, spawn a new bounded source worker with these implicated source paths in --owned; do not only rerun the original feature worker. "
         + "Do not use tmux send-keys to send implementation instructions to a completed worker pane; create a fresh assignment and `bin/subagent.sh spawn` a new worker process. "
+        + source_symbol_map_resume_instructions(blockers)
+        + " "
         + f"The adapter ran public helper validation and wrote details to {HELPER_PROBE_PATH}. "
         + "Probe output tail:\n"
         + probe_excerpt
@@ -1986,6 +2015,7 @@ def write_orchestrator_resume_prompt(
         + f"Resume reason: {reason}\n\n"
         + "Generic adapter/verifier blockers:\n"
         + blockers_text
+        + source_symbol_map_resume_instructions(blockers)
         + "\n\n"
         + f"Source-derived ownership candidates: {hints_text}\n\n"
         + f"Durable contract ledger: `{CONTRACT_LEDGER_PATH}`. Preserve every ledger item. Ledger excerpt:\n"
@@ -2331,6 +2361,8 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     adapter_helper_worker_limit = int(os.environ.get("EVAL_ADAPTER_HELPER_WORKER_LIMIT", "1"))
     orchestrator_resume_limit = int(os.environ.get("EVAL_ORCHESTRATOR_RESUME_LIMIT", "1"))
     orchestrator_resume_attempts = 0
+    source_symbol_resume_limit = int(os.environ.get("EVAL_SOURCE_SYMBOL_RESUME_LIMIT", "1"))
+    source_symbol_resume_attempts = 0
     adapter_helper_mode = os.environ.get("EVAL_ADAPTER_HELPER_MODE", "advisory").strip().lower()
     adapter_helper_source_edit_opt_in = os.environ.get("EVAL_ADAPTER_HELPER_ALLOW_SOURCE_EDITS", "").strip().lower() in {
         "1",
@@ -2374,6 +2406,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
         force_live_handoff: bool = False,
     ) -> bool:
         nonlocal orchestrator_resume_attempts
+        nonlocal source_symbol_resume_attempts
         nonlocal coverage_followup_at
         nonlocal last_capture
         nonlocal missing_session_captures
@@ -2381,22 +2414,38 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
         nonlocal last_diff_digest
         nonlocal last_diff_changed_at
 
+        use_source_symbol_extra_resume = False
         if orchestrator_resume_attempts >= orchestrator_resume_limit:
-            log(
-                "production orchestrator resume skipped for "
-                f"{reason}: limit {orchestrator_resume_limit} already reached"
-            )
-            return False
+            if (
+                source_symbol_map_blocker_present(blockers)
+                and source_symbol_resume_attempts < source_symbol_resume_limit
+            ):
+                use_source_symbol_extra_resume = True
+            else:
+                log(
+                    "production orchestrator resume skipped for "
+                    f"{reason}: limit {orchestrator_resume_limit} already reached"
+                )
+                return False
         if has_live_agent_process() and not force_live_handoff:
             log(f"production orchestrator resume skipped for {reason}: live agent process still exists")
             return False
         if force_live_handoff:
             log(f"production orchestrator forcing terminal handoff for {reason}: replacing active tmux session")
-        orchestrator_resume_attempts += 1
+        if use_source_symbol_extra_resume:
+            log(
+                "production orchestrator source-symbol resume using extra bounded attempt "
+                f"{source_symbol_resume_attempts + 1}/{source_symbol_resume_limit} for {reason}"
+            )
+            source_symbol_resume_attempts += 1
+            resume_attempt = orchestrator_resume_attempts + source_symbol_resume_attempts
+        else:
+            orchestrator_resume_attempts += 1
+            resume_attempt = orchestrator_resume_attempts
         source_hints = helper_scope_hints(workdir, issue, diff, blockers)
         resume_prompt = write_orchestrator_resume_prompt(
             autonomous_prompt,
-            attempt=orchestrator_resume_attempts,
+            attempt=resume_attempt,
             reason=reason,
             issue=issue,
             diff=diff,
@@ -2439,7 +2488,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
         last_diff_changed_at = convergence_start
         log(
             "production orchestrator resume launched "
-            f"attempt={orchestrator_resume_attempts} reason={reason} prompt={resume_prompt}"
+            f"attempt={resume_attempt} reason={reason} prompt={resume_prompt}"
         )
         return True
     try:

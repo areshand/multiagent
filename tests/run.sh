@@ -733,6 +733,9 @@ assert "EVAL_TERMINAL_FORCE_RESUME" in solver_source and "force_live_handoff=Tru
 assert "verifier_exact_followup_available" in solver_source and "Verifier exact-follow-up handoff" in solver_source, (
     "verifier findings with exact public follow-up instructions should get one production repair handoff"
 )
+assert "EVAL_SOURCE_SYMBOL_RESUME_LIMIT" in solver_source and "source_symbol_map_resume_instructions" in solver_source, (
+    "source-symbol blockers should get one bounded production-orchestrator recovery handoff with exact status marker instructions"
+)
 assert "stale_patch_application_blockers" in solver_source and "could not find hunk context" in solver_source, (
     "stale patch application failures should be machine-gated before acceptance"
 )
@@ -1224,6 +1227,8 @@ source_symbol_map_blockers = solve_swe_prod.implementation_scope_blockers(
     },
 )
 assert any("source-symbol-map-passed:" in blocker for blocker in source_symbol_map_blockers), source_symbol_map_blockers
+assert solve_swe_prod.source_symbol_map_blocker_present(source_symbol_map_blockers), source_symbol_map_blockers
+assert "source-symbol-map-passed:" in solve_swe_prod.source_symbol_map_resume_instructions(source_symbol_map_blockers)
 source_symbol_map_evidence_blockers = solve_swe_prod.implementation_scope_blockers(
     "Add a linear benchmark generator for benchmark tests.",
     "diff --git a/lib/client/bench.go b/lib/client/bench.go\n"
@@ -1240,6 +1245,7 @@ source_symbol_map_evidence_blockers = solve_swe_prod.implementation_scope_blocke
     },
 )
 assert not any("source-symbol-map-passed:" in blocker for blocker in source_symbol_map_evidence_blockers), source_symbol_map_evidence_blockers
+assert not solve_swe_prod.source_symbol_map_blocker_present(source_symbol_map_evidence_blockers), source_symbol_map_evidence_blockers
 removed_symbol_map_blockers = solve_swe_prod.implementation_scope_blockers(
     "Preserve Alpine package parser compatibility while adding source package support.",
     "diff --git a/scanner/alpine.go b/scanner/alpine.go\n"
