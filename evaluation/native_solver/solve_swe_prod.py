@@ -2120,7 +2120,12 @@ def run_validation_coverage_probe(workdir: Path, issue: str, diff: str, blockers
     for command in commands:
         label = " ".join(command)
         try:
-            result = run(command, cwd=workdir, timeout=env_positive_int("EVAL_VALIDATION_PROBE_TIMEOUT", 300))
+            result = run(
+                command,
+                cwd=workdir,
+                env=validation_probe_env(command),
+                timeout=env_positive_int("EVAL_VALIDATION_PROBE_TIMEOUT", 900),
+            )
             returncode = result.returncode
             output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
         except subprocess.TimeoutExpired as exc:
@@ -2175,6 +2180,15 @@ def run_validation_coverage_probe(workdir: Path, issue: str, diff: str, blockers
     if not passed:
         log("adapter public validation probe failed output tail:\n" + report[-4000:])
     return report, passed
+
+
+def validation_probe_env(command: list[str]) -> dict[str, str] | None:
+    if command[:2] != ["go", "test"]:
+        return None
+    env = os.environ.copy()
+    env["GOCACHE"] = ensure_cache_dir(RUNTIME_ROOT / "go-build-cache-adapter")
+    env["GOMODCACHE"] = ensure_cache_dir(RUNTIME_ROOT / "go-mod-cache-adapter")
+    return env
 
 
 def blockers_after_passing_public_probe(blockers: list[str]) -> list[str]:
@@ -2752,8 +2766,8 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
             "MULTIAGENT_CODEX_EXEC": os.environ.get("MULTIAGENT_CODEX_EXEC", "1"),
             "MULTIAGENT_EXTRA_PATH": str(RUNTIME_ROOT),
             "PATH": ":".join(part for part in path_parts if part),
-            "GOCACHE": os.environ.get("GOCACHE", ensure_cache_dir(RUNTIME_ROOT / "go-build-cache")),
-            "GOMODCACHE": os.environ.get("GOMODCACHE", ensure_cache_dir(RUNTIME_ROOT / "go-mod-cache")),
+            "GOCACHE": ensure_cache_dir(RUNTIME_ROOT / "go-build-cache"),
+            "GOMODCACHE": ensure_cache_dir(RUNTIME_ROOT / "go-mod-cache"),
             "MULTIAGENT_READY_ATTEMPTS": os.environ.get("MULTIAGENT_READY_ATTEMPTS", "80"),
             "MULTIAGENT_READY_DELAY": os.environ.get("MULTIAGENT_READY_DELAY", "1"),
         }
