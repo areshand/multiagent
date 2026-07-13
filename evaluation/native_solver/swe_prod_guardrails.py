@@ -233,6 +233,7 @@ def source_symbol_owner_candidate_blockers(
     }
     changed_dirs = {path for path in changed_dirs if path}
     changed_text = " ".join(changed_dirs).lower()
+    symbol_text = " ".join(source_symbol_changes(diff))
     candidates = _source_owner_candidate_dirs(workdir, issue_terms)
     unaccounted: list[str] = []
     for candidate in candidates:
@@ -245,7 +246,8 @@ def source_symbol_owner_candidate_blockers(
         # edited package. If the edited path already carries the term, the normal
         # source-symbol map and package validation rules are enough.
         candidate_terms = [term for term in issue_terms if _path_has_exact_term(candidate_lower, term)]
-        if candidate_terms and not any(term in changed_text for term in candidate_terms):
+        symbol_relevant_terms = [term for term in candidate_terms if _term_appears_in_source_symbol(symbol_text, term)]
+        if symbol_relevant_terms and not any(term in changed_text for term in symbol_relevant_terms):
             unaccounted.append(candidate)
 
     if not unaccounted:
@@ -405,6 +407,37 @@ def _path_has_exact_term(path_text: str, term: str) -> bool:
     else:
         variants.add(term + "s")
     return any(part in variants for part in parts)
+
+
+def _term_appears_in_source_symbol(symbol_text: str, term: str) -> bool:
+    if not symbol_text:
+        return False
+    variants = {term}
+    if term.endswith("s") and len(term) > 4:
+        variants.add(term[:-1])
+    else:
+        variants.add(term + "s")
+    symbol_parts = [part for part in re.split(r"[^A-Za-z0-9]+", symbol_text) if part]
+    expanded_parts: set[str] = set()
+    for part in symbol_parts:
+        expanded_parts.add(part)
+        expanded_parts.update(split_identifier_terms(part))
+    return any(variant in expanded_parts for variant in variants)
+
+
+def split_identifier_terms(identifier: str) -> set[str]:
+    """Split snake/kebab/camel identifiers into searchable lowercase terms."""
+
+    terms: set[str] = set()
+    for chunk in re.split(r"[_\-.]+", identifier):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        terms.add(chunk.lower())
+        for part in re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?=[A-Z]|$)|\d+", chunk):
+            if part:
+                terms.add(part.lower())
+    return terms
 
 
 def _same_or_nested_path(candidate: str, changed: str) -> bool:

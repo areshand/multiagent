@@ -1424,10 +1424,14 @@ assert any("source-owner-ledger:" in blocker for blocker in source_symbol_map_wi
 with tempfile.TemporaryDirectory() as adapter_symbol_tmp:
     adapter_repo = Path(adapter_symbol_tmp)
     (adapter_repo / "internal" / "server" / "ofrep").mkdir(parents=True)
+    (adapter_repo / "errors").mkdir(parents=True)
+    (adapter_repo / "examples" / "audit" / "webhook").mkdir(parents=True)
     (adapter_repo / "internal" / "server" / "ofrep" / "server.go").write_text(
         "package ofrep\n\ntype flagLister interface {}\nfunc (s *Server) bulkFlagKeys() {}\n",
         encoding="utf-8",
     )
+    (adapter_repo / "errors" / "errors.go").write_text("package errors\n", encoding="utf-8")
+    (adapter_repo / "examples" / "audit" / "webhook" / "main.go").write_text("package main\n", encoding="utf-8")
     adapter_symbol_diff = (
         "diff --git a/internal/server/ofrep/server.go b/internal/server/ofrep/server.go\n"
         "+type flagLister interface {}\n"
@@ -1438,7 +1442,7 @@ with tempfile.TemporaryDirectory() as adapter_symbol_tmp:
     assert "source-symbol-map-passed:" in adapter_symbol_evidence, adapter_symbol_evidence
     assert "added-symbol=flagLister" in adapter_symbol_evidence, adapter_symbol_evidence
     adapter_symbol_blockers = solve_swe_prod.implementation_scope_blockers(
-        "OFREP bulk evaluation should list flags when context flags are missing.",
+        "OFREP bulk evaluation should list flags when context flags are missing; examples mention errors.",
         adapter_symbol_diff,
         {
             "status": "completed",
@@ -1448,6 +1452,7 @@ with tempfile.TemporaryDirectory() as adapter_symbol_tmp:
     )
     assert not any("source-symbol-map-passed:" in blocker for blocker in adapter_symbol_blockers), adapter_symbol_blockers
     assert not any("source-owner-ledger:" in blocker for blocker in adapter_symbol_blockers), adapter_symbol_blockers
+    assert not any("errors" in blocker or "examples" in blocker for blocker in adapter_symbol_blockers), adapter_symbol_blockers
 with tempfile.TemporaryDirectory() as source_owner_tmp:
     source_owner_repo = Path(source_owner_tmp)
     (source_owner_repo / "lib" / "client").mkdir(parents=True)
