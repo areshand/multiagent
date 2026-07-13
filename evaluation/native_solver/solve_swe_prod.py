@@ -1534,8 +1534,6 @@ def validation_coverage_blockers(
             "importer",
             "exporter",
             "fixture",
-            "record",
-            "records",
         )
     ) and bool(
         re.search(

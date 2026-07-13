@@ -1231,6 +1231,21 @@ multi_value_blockers = solve_swe_prod.validation_coverage_blockers(
     },
 )
 assert any("multi-value-probe-passed:" in blocker for blocker in multi_value_blockers), multi_value_blockers
+webfinger_route_blockers = solve_swe_prod.validation_coverage_blockers(
+    "Add WebFinger support for local user profiles and include aliases and links in the JSON response.",
+    "diff --git a/src/routes/well-known.js b/src/routes/well-known.js\n"
+    "+res.type('application/jrd+json').json({\n"
+    "+  subject: `acct:${user.username}@${host}`,\n"
+    "+  aliases: [profileUrl],\n"
+    "+  links: [{ rel: 'http://webfinger.net/rel/profile-page', href: profileUrl }],\n"
+    "+});\n",
+    "",
+    {
+        "status": "completed",
+        "validation": "node route-smoke.js passed",
+    },
+)
+assert not any("multi-value-probe-passed:" in blocker for blocker in webfinger_route_blockers), webfinger_route_blockers
 multi_value_probe_blockers = solve_swe_prod.validation_coverage_blockers(
     "Record parser should preserve complete alternate linked fields.",
     "diff --git a/records/decoder/decode.py b/records/decoder/decode.py\n"
