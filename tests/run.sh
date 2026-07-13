@@ -1350,6 +1350,26 @@ with tempfile.TemporaryDirectory() as preedit_owner_tmp:
         "package client\n\ntype Benchmark struct{}\n",
         encoding="utf-8",
     )
+    explicit_owner_issue = (
+        "Add linear benchmark generator for progressive request rate configurations.\n"
+        "New file: `lib/benchmark/linear.go`\n"
+        "Path: `lib/benchmark/linear.go`\n"
+        "Name: `Linear`\n"
+        "Name: `validateConfig`\n"
+        "The command status output is not the owner."
+    )
+    explicit_terms = solve_swe_prod.source_owner_issue_terms(explicit_owner_issue)
+    assert "linear" in explicit_terms, explicit_terms
+    assert "generator" in explicit_terms, explicit_terms
+    assert "config" in explicit_terms, explicit_terms
+    assert "command" not in explicit_terms, explicit_terms
+    assert "status" not in explicit_terms, explicit_terms
+    explicit_paths = solve_swe_prod.source_owner_issue_paths(explicit_owner_issue)
+    assert explicit_paths == ["lib/benchmark/linear.go"], explicit_paths
+    explicit_discovery = solve_swe_prod.source_owner_discovery(preedit_repo, explicit_owner_issue)
+    assert "Explicit source paths from issue: lib/benchmark/linear.go" in explicit_discovery, explicit_discovery
+    assert "candidate-owner=lib/benchmark/linear.go score=100 reason=issue-explicit-source-path" in explicit_discovery, explicit_discovery
+    assert "candidate-owner=lib/benchmark score=95 reason=issue-explicit-source-path-parent=lib/benchmark/linear.go" in explicit_discovery, explicit_discovery
     preedit_discovery = solve_swe_prod.source_owner_discovery(
         preedit_repo,
         "Add a linear benchmark generator for benchmark tests.",

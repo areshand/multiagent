@@ -553,10 +553,33 @@ def source_owner_issue_terms(issue: str) -> list[str]:
         "old",
         "public",
         "private",
-        "config",
-        "configuration",
-        "generator",
-        "linear",
+        "description",
+        "requirement",
+        "requirements",
+        "interface",
+        "interfaces",
+        "introduced",
+        "golden",
+        "patch",
+        "file",
+        "files",
+        "path",
+        "paths",
+        "input",
+        "inputs",
+        "output",
+        "outputs",
+        "name",
+        "type",
+        "command",
+        "commands",
+        "status",
+        "work",
+        "task",
+        "source",
+        "code",
+        "user",
+        "users",
     }
     terms: set[str] = set()
     for token in re.findall(r"\b[a-z][a-z0-9_-]{3,}\b", issue.lower()):
@@ -566,7 +589,24 @@ def source_owner_issue_terms(issue: str) -> list[str]:
         terms.add(token)
         if token.endswith("s") and len(token) > 4:
             terms.add(token[:-1])
+        if "config" in token:
+            terms.add("config")
     return sorted(terms)
+
+
+def source_owner_issue_paths(issue: str) -> list[str]:
+    candidates: set[str] = set()
+    source_suffixes = (".go", ".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".rs", ".java", ".kt", ".rb", ".php")
+    path_patterns = [
+        r"\b(?:Path|New file|File):\s*`?([A-Za-z0-9_./-]+\.(?:go|pyi?|jsx?|tsx?|rs|java|kt|rb|php))`?",
+        r"`([A-Za-z0-9_./-]+/[A-Za-z0-9_./-]+\.(?:go|pyi?|jsx?|tsx?|rs|java|kt|rb|php))`",
+    ]
+    for pattern in path_patterns:
+        for match in re.findall(pattern, issue, flags=re.IGNORECASE):
+            path = match.strip().strip("`.,:;")
+            if not path.startswith("/") and ".." not in Path(path).parts and path.endswith(source_suffixes):
+                candidates.add(path)
+    return sorted(candidates)
 
 
 def source_owner_term_variants(term: str) -> set[str]:
@@ -587,6 +627,7 @@ def source_owner_path_matches(path_text: str, term: str) -> bool:
 
 def source_owner_discovery(workdir: Path, issue: str) -> str:
     terms = source_owner_issue_terms(issue)
+    issue_paths = source_owner_issue_paths(issue)
     lines = [
         "# Source Owner Candidates",
         "",
@@ -594,7 +635,7 @@ def source_owner_discovery(workdir: Path, issue: str) -> str:
         "It is a pre-edit routing aid, not hidden-test guidance.",
         "",
     ]
-    if not terms:
+    if not terms and not issue_paths:
         lines.append("No strong issue terms were extracted. Run read-only source owner discovery before adding new symbols.")
         SOURCE_OWNER_CANDIDATES_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return "\n".join(lines)
@@ -602,6 +643,12 @@ def source_owner_discovery(workdir: Path, issue: str) -> str:
     rows: list[tuple[int, str, str]] = []
     source_suffixes = {".go", ".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".rs", ".java", ".kt", ".rb", ".php"}
     ignored_parts = {".git", "vendor", "node_modules", "dist", "build", "target", "__pycache__"}
+
+    for issue_path in issue_paths:
+        rows.append((100, issue_path, "issue-explicit-source-path"))
+        parent = str(Path(issue_path).parent).replace(".", "").strip("/")
+        if parent:
+            rows.append((95, parent, f"issue-explicit-source-path-parent={issue_path}"))
 
     for rel in _walk_source_dirs(workdir, max_dirs=700):
         rel_lower = rel.lower()
@@ -651,6 +698,8 @@ def source_owner_discovery(workdir: Path, issue: str) -> str:
             dedup[path] = (score, reason)
     ranked = sorted(((score, path, reason) for path, (score, reason) in dedup.items()), key=lambda item: (-item[0], item[1]))[:24]
 
+    if issue_paths:
+        lines.append("Explicit source paths from issue: " + ", ".join(issue_paths))
     lines.append("Extracted issue terms: " + ", ".join(terms))
     lines.append("")
     if ranked:

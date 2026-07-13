@@ -955,6 +955,47 @@ official scoring only, and up to four concurrent rows. Prefix:
 Net score movement: none. The first-50 aggregate remains `33/50`
 production-native clean official passes, still below the >70% target.
 
+## 2026-07-13 Source-Owner Ledger Gate
+
+PR4 now makes the source-owner ledger a machine-enforced acceptance
+requirement instead of prompt-only guidance. If the final diff adds, removes,
+renames, or moves source symbols, `implementation_scope_blockers` rejects final
+status unless it contains `source-owner-ledger:` with `selected-owner=...`, at
+least one plausible `candidate-owner=...`, rejected-owner reasoning, and
+`validation-package=...`. This is checked before accepting
+`source-symbol-map-passed:` evidence.
+
+Focused row 18 smoke
+`swe-bench-pro-prod-pr4-ledgergate-offset18-r1` used the production-native
+solver baked from PR4 commit `d2d26ac`. Native result: `rc=2`, `1063.9s`;
+official verifier evidence: `false`; clean native score: `n/a`.
+
+This was the intended measurement-integrity outcome, not a solve-rate win. The
+solver again produced a `lib/client/bench.go` implementation, but the wrapper
+refused to score the rejected diff because durable `status.json` did not
+contain acceptable source-owner/source-symbol evidence. A verifier pane wrote
+an `ACCEPTED` message with:
+
+```text
+source-owner-ledger: selected-owner=lib/client candidate-owner=tool/tsh ...
+validation-package=./lib/client
+```
+
+but that line still lacked rejected-owner reasoning and did not account for the
+explicit benchmark owner surface. The native guardrail therefore blocked the
+run before official scoring. The first-50 aggregate remains `33/50`.
+
+The run also exposed a general owner-discovery weakness: extracted owner terms
+were polluted by benchmark harness/instruction words such as `command`,
+`status`, `file`, `path`, `task`, and `tool`, while important API/domain terms
+such as `linear`, `generator`, and `config` were filtered out or not normalized.
+PR4 now prioritizes explicit public issue source paths such as
+`Path: lib/benchmark/linear.go` and `New file: lib/benchmark/linear.go` as
+high-confidence owner candidates, adds their parent directory as a package
+owner candidate, normalizes `*config*` tokens to `config`, and filters generic
+harness words from owner term extraction. This is still no-leak: it uses only
+the public task text and repository source paths.
+
 ## 2026-07-13 Source Owner Evidence Hardening
 
 Focused row 18 smoke
