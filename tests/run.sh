@@ -1607,6 +1607,30 @@ parallel_cmd = swe_bench_pro_run_parallel_shards.build_worker_command(
 )
 assert "--memory-limit" in parallel_cmd and "16g" in parallel_cmd, parallel_cmd
 assert "--cpu-limit" in parallel_cmd and "2" in parallel_cmd, parallel_cmd
+
+parallel_offsets_dry_run = subprocess.check_output(
+    [
+        sys.executable,
+        "-m",
+        "evaluation.swe_bench_pro_run_parallel_shards",
+        "--no-refresh-before",
+        "--no-refresh-after",
+        "--dry-run",
+        "--workers",
+        "4",
+        "--shard-size",
+        "1",
+        "--sample-offsets",
+        "2,8,12,14",
+        "--report-prefix-template",
+        "failed-w{worker}-offset{offset}-count{count}",
+    ],
+    cwd=root,
+    text=True,
+)
+for expected_offset in ("2", "8", "12", "14"):
+    assert f"--sample-offset {expected_offset} " in parallel_offsets_dry_run, parallel_offsets_dry_run
+assert "--sample-offset 3 " not in parallel_offsets_dry_run, parallel_offsets_dry_run
 PY
 python3 -m evaluation.cli --list >"$TMPDIR/evaluation-list.out"
 assert_file_contains "$TMPDIR/evaluation-list.out" "ponytail"

@@ -26,6 +26,19 @@ def run_checked(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True)
 
 
+def parse_sample_offsets(raw: str) -> list[int]:
+    offsets: list[int] = []
+    for part in raw.split(","):
+        stripped = part.strip()
+        if not stripped:
+            continue
+        offset = int(stripped)
+        if offset < 0:
+            raise ValueError("--sample-offsets entries must be >= 0")
+        offsets.append(offset)
+    return offsets
+
+
 def refresh_aggregate(args: argparse.Namespace) -> None:
     cmd = [
         sys.executable,
@@ -148,6 +161,7 @@ def main() -> int:
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--shard-size", type=int, default=1)
     parser.add_argument("--sample-offset", type=int, help="first official index; default uses aggregate first missing")
+    parser.add_argument("--sample-offsets", help="comma-separated official indices for non-contiguous shard workers")
     parser.add_argument("--evalscope-path", type=Path)
     parser.add_argument("--swe-bench-pro-repo-path", type=Path, default=Path("/private/tmp/SWE-bench_Pro-os-complete"))
     parser.add_argument("--agent-framework", default="multiagent-native", choices=["multiagent-native", "codex-devnull", "codex", "noop"])
@@ -190,21 +204,33 @@ def main() -> int:
         parser.error("--shard-size must be >= 1")
 
     first_offset = args.sample_offset
+    explicit_offsets = parse_sample_offsets(args.sample_offsets or "")
+    if explicit_offsets and args.sample_offset is not None:
+        parser.error("--sample-offset and --sample-offsets are mutually exclusive")
+    if explicit_offsets and len(explicit_offsets) > args.workers:
+        parser.error("--sample-offsets cannot contain more entries than --workers")
     if not args.no_refresh_before:
         refresh_aggregate(args)
-    if first_offset is None:
-        aggregate = load_json(args.aggregate_json)
-        suggested = aggregate.get("suggested_next_shard") or {}
-        first_offset = int(suggested.get("sample_offset", aggregate.get("first_missing_index", 0)))
+    if explicit_offsets:
+        worker_offsets = explicit_offsets
+    else:
+        if first_offset is None:
+            aggregate = load_json(args.aggregate_json)
+            suggested = aggregate.get("suggested_next_shard") or {}
+            first_offset = int(suggested.get("sample_offset", aggregate.get("first_missing_index", 0)))
+        worker_offsets = [int(first_offset) + worker_index * args.shard_size for worker_index in range(args.workers)]
+
+    if not worker_offsets:
+        raise SystemExit("no worker offsets selected")
 
     commands = [
         build_worker_command(
             args,
-            offset=int(first_offset) + worker_index * args.shard_size,
+            offset=offset,
             count=args.shard_size,
             worker_index=worker_index,
         )
-        for worker_index in range(args.workers)
+        for worker_index, offset in enumerate(worker_offsets)
     ]
     for command in commands:
         print(shlex.join(command))

@@ -1368,3 +1368,39 @@ The adapter diagnostics then ran public Go probes successfully, including
 PR4 now treats a blocked status whose blockers are fully removable by a passing
 adapter public probe as recoverable at final cleanup. Hard blockers such as
 official/public API contract failures remain non-recoverable.
+
+Focused smoke `swe-bench-pro-prod-pr4-f6e-validationrecover-offset28-r1` used
+commit `f6e888b`. Native result: `rc=2`, `1856.7s`, no official verifier
+evidence and no score. This showed the final-cleanup recovery branch was now
+reachable, but the adapter public probe still false-blocked mixed Go suite
+output. The command included real passing package results such as
+`ok go.flipt.io/flipt/internal/server/ofrep (cached)`, while sibling packages
+reported `[no test files]`; the old classifier treated any no-test package in
+the aggregate output as proof that no real selected tests ran.
+
+PR4 now classifies adapter-selected Go probes at the aggregate-command level:
+explicit empty selectors such as `-run '^$'` and all-`[no tests to run]` output
+remain blockers, but broad `go test ./...` output is accepted when at least one
+`ok <package>` line shows a real package test result. This is a general eval
+infra fix, not row-specific knowledge.
+
+Focused smoke `swe-bench-pro-prod-pr4-84a-mixedgoprobe-offset28-r1` used commit
+`84a278c`. Native result: `rc=0`, `1122.3s`; official verifier evidence:
+`true`; focused official score: `0.0`. This is the first row 28 rerun in this
+sequence where the production-native multi-agent patch cleanly passed the
+adapter and reached official scoring.
+
+The remaining row 28 failure is now solver patch quality, not evaluation
+plumbing. The official verifier applied the patch cleanly but the produced Go
+change was compile-broken:
+
+```text
+internal/server/evaluation/ofrep_bridge.go:100:7:
+req.Request undefined (type *storage.ListRequest[storage.NamespaceRequest] has no field or method Request)
+```
+
+The production solver inferred the right high-level hidden contract
+(missing-`context.flags` bulk evaluation should enumerate flags), but it failed
+source-level API verification for `storage.ListRequest`. This keeps the first
+50 aggregate at `33/50`; row 28 remains missing, now for a true official
+failure rather than native adapter rejection.
