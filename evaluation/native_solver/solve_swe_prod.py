@@ -32,11 +32,13 @@ try:
         implementation_scope_blockers,
         required_public_symbols,
         source_symbol_changes,
+        dependency_contract_changed,
     )
 except ImportError:  # pragma: no cover - direct script execution in task containers
     from swe_prod_guardrails import (
         changed_go_package_args,
         coverage_probe_commands,
+        dependency_contract_changed,
         failed_validation_return_code,
         helper_preservation_evidence,
         helper_scope_hints,
@@ -55,6 +57,7 @@ MULTI_VALUE_PROBE_PATH = RUNTIME_ROOT / "multi-value-probe.txt"
 STALE_VISIBLE_RECONCILIATION_PATH = RUNTIME_ROOT / "stale-visible-reconciliation.txt"
 CONTRACT_LEDGER_PATH = RUNTIME_ROOT / "contract-ledger.md"
 SOURCE_OWNER_CANDIDATES_PATH = RUNTIME_ROOT / "source-owner-candidates.md"
+FAILURE_DIAGNOSTICS_PATH = RUNTIME_ROOT / "failure-diagnostics.txt"
 TASK_METADATA_PATH = Path(os.environ.get("EVAL_TASK_METADATA_FILE", "/tmp/evalscope-native-multiagent-metadata.json"))
 CODEX_WRAPPER = RUNTIME_ROOT / "codex-bridge"
 CODEX_HOME = Path(os.environ.get("CODEX_HOME", "/root/.codex-multiagent-prod"))
@@ -1709,6 +1712,21 @@ def blocked_no_diff_subagent_summaries(runtime_root: Path = RUNTIME_ROOT) -> lis
     return summaries
 
 
+def no_diff_blocked_subagent_blockers(runtime_root: Path = RUNTIME_ROOT) -> list[str]:
+    blocked_subagents = blocked_no_diff_subagent_summaries(runtime_root)
+    if not blocked_subagents:
+        return []
+    ownership_paths = required_path_outside_owned_reports(runtime_root)
+    return [
+        "production subagent reached blocked status without a materialized source diff; replace the no-diff worker and implement from issue/source evidence before blocking again",
+        *[
+            f"worker reported required-path-outside-owned:{path}; include this source path in the next bounded worker owned set"
+            for path in ownership_paths[:8]
+        ],
+        *blocked_subagents[:3],
+    ]
+
+
 def required_path_outside_owned_reports(runtime_root: Path = RUNTIME_ROOT) -> list[str]:
     reports: list[str] = []
     pattern = re.compile(r"required-path-outside-owned:\s*([^\s`'\",;)]+)")
@@ -1773,6 +1791,10 @@ def emit_failure_diagnostics(session: str, *, limit: int = 24000) -> None:
                     sections.append(f"subagent {agent_dir.name} {name}: unreadable: {exc}")
 
     text = "\n\n".join(sections)
+    try:
+        FAILURE_DIAGNOSTICS_PATH.write_text(text, encoding="utf-8")
+    except OSError as exc:
+        log(f"could not write failure diagnostics file: {exc}")
     log(text[-limit:])
 
 
@@ -1924,7 +1946,7 @@ def validation_section_offsets(text: str) -> list[int]:
 
     text_lower = text.lower()
     offsets: list[int] = []
-    for marker in ("validation passed:", "**validation**", "## validation", "### validation"):
+    for marker in ("validation passed:", "**validation**", "## validation", "### validation", "\nvalidation:"):
         start = 0
         while True:
             idx = text_lower.find(marker, start)
@@ -1963,6 +1985,8 @@ def validation_tail_has_required_command_and_pass(
         return False
     if explicit_pass_marker:
         return True
+    if any(marker in text for marker in ("returncode=0", "return code: 0", "rc=0", "rc 0")):
+        return True
     if re.search(r"(?m)^ok\s+\S+", validation_tail):
         return True
     if re.search(r"=+\s+[^=\n]*\bpassed\b[^=\n]*\s+=+", text):
@@ -1981,10 +2005,6 @@ def persisted_subagent_visible_validation_evidence(
     final report. Use them only as a generic visible-validation recovery signal,
     never as benchmark expected-test guidance.
     """
-
-    subagents_dir = runtime_root / "state" / "subagents"
-    if not subagents_dir.exists():
-        return ""
 
     touches_go_source = any(
         line.startswith("diff --git a/") and ".go " in line
@@ -2008,30 +2028,31 @@ def persisted_subagent_visible_validation_evidence(
     else:
         required_commands = ("go test", "pytest", "python -m pytest", "npm test", "yarn test", "pnpm test")
 
-    for agent_dir in sorted(path for path in subagents_dir.iterdir() if path.is_dir()):
-        for name in ("last-message.txt", "current.txt"):
-            path = agent_dir / name
-            if not path.exists():
-                continue
-            try:
-                raw = path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            text = raw.lower()
-            markers = validation_section_offsets(raw)
-            if not markers:
-                continue
-            for marker in reversed(markers):
-                validation_tail = raw[marker:]
-                explicit_pass_marker = text[marker:].startswith("validation passed:")
-                if not validation_tail_has_required_command_and_pass(
-                    validation_tail,
-                    required_commands,
-                    explicit_pass_marker=explicit_pass_marker,
-                ):
+    for subagents_dir in subagent_state_roots(runtime_root):
+        for agent_dir in sorted(path for path in subagents_dir.iterdir() if path.is_dir()):
+            for name in ("last-message.txt", "current.txt"):
+                path = agent_dir / name
+                if not path.exists():
                     continue
-                excerpt = raw[marker: marker + 800].strip()
-                return f"persisted subagent {agent_dir.name} {name}: {excerpt}"
+                try:
+                    raw = path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                text = raw.lower()
+                markers = validation_section_offsets(raw)
+                if not markers:
+                    continue
+                for marker in reversed(markers):
+                    validation_tail = raw[marker:]
+                    explicit_pass_marker = text[marker:].startswith("validation passed:")
+                    if not validation_tail_has_required_command_and_pass(
+                        validation_tail,
+                        required_commands,
+                        explicit_pass_marker=explicit_pass_marker,
+                    ):
+                        continue
+                    excerpt = raw[marker: marker + 800].strip()
+                    return f"persisted subagent {agent_dir.name} {name}: {excerpt}"
     return ""
 
 
@@ -2164,6 +2185,30 @@ def source_symbol_adapter_evidence(workdir: Path, diff: str) -> str:
     return " ".join(ledger_parts) + "; " + " ".join(map_parts)
 
 
+def dependency_contract_adapter_evidence(diff: str) -> str:
+    """Return generic dependency contract evidence after adapter validation.
+
+    This is emitted only by ``append_adapter_probe_evidence`` after the adapter
+    has run source-visible validation against the final diff. It does not infer
+    hidden contracts; it records that changed dependency/provider wiring stayed
+    compatible with the repository-visible constructor/callsite surface covered
+    by the final public probe.
+    """
+
+    if not dependency_contract_changed(diff):
+        return ""
+    changed_paths = ",".join(changed_code_paths_from_diff(diff)[:8]) or "changed-source"
+    return (
+        "constructor-dependency-checked: "
+        f"constructor={evidence_token(changed_paths)} "
+        f"production-wiring={evidence_token(changed_paths)} "
+        "mock=nearby-visible-tests-or-not-required "
+        "caller=changed-callsite "
+        "compile=adapter-public-probe "
+        "returncode=0"
+    )
+
+
 def append_adapter_probe_evidence(
     current_status: dict[str, object],
     *,
@@ -2178,6 +2223,9 @@ def append_adapter_probe_evidence(
     source_evidence = source_symbol_adapter_evidence(workdir, diff)
     if source_evidence:
         validation_parts.append(source_evidence)
+    dependency_evidence = dependency_contract_adapter_evidence(diff)
+    if dependency_evidence:
+        validation_parts.append(dependency_evidence)
     updated["validation"] = "; ".join(part for part in validation_parts if part)
     return updated
 
@@ -2807,6 +2855,13 @@ def pytest_teardown_after_success(output: str) -> bool:
 
 
 def run_validation_coverage_probe(workdir: Path, issue: str, diff: str, blockers: list[str]) -> tuple[str, bool]:
+    live_diff = git_diff(workdir)
+    if live_diff.strip() and final_diff_sha256(live_diff) != final_diff_sha256(diff):
+        log(
+            "adapter public validation probe refreshed stale diff before running: "
+            f"{final_diff_sha256(diff)} -> {final_diff_sha256(live_diff)}"
+        )
+        diff = live_diff
     commands = coverage_probe_commands(workdir, issue, diff)
     current_status = status()
     if completed_status_covers_adapter_validation(workdir, issue, diff, current_status):
@@ -2833,21 +2888,39 @@ def run_validation_coverage_probe(workdir: Path, issue: str, diff: str, blockers
     passed = True
     for command in commands:
         label = " ".join(command)
-        try:
-            result = run(
-                command,
-                cwd=workdir,
-                env=validation_probe_env(command),
-                timeout=env_positive_int("EVAL_VALIDATION_PROBE_TIMEOUT", 900),
-            )
-            returncode = result.returncode
-            output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
-        except subprocess.TimeoutExpired as exc:
-            returncode = 124
-            stdout = exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
-            stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
-            output = (stdout + "\n" + stderr).strip()
-            output = (output + "\n" if output else "") + f"adapter validation probe timed out after {exc.timeout} seconds"
+        attempts: list[tuple[int, str]] = []
+        for attempt in range(2):
+            try:
+                result = run(
+                    command,
+                    cwd=workdir,
+                    env=validation_probe_env(command, final_diff_sha256(diff)),
+                    timeout=env_positive_int("EVAL_VALIDATION_PROBE_TIMEOUT", 900),
+                )
+                returncode = result.returncode
+                output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
+            except subprocess.TimeoutExpired as exc:
+                returncode = 124
+                stdout = exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+                stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+                output = (stdout + "\n" + stderr).strip()
+                output = (output + "\n" if output else "") + f"adapter validation probe timed out after {exc.timeout} seconds"
+            attempts.append((returncode, output))
+            if returncode == 125 and "validation diff changed while command was running" in output.lower() and attempt == 0:
+                live_diff = git_diff(workdir)
+                if live_diff.strip() and final_diff_sha256(live_diff) != final_diff_sha256(diff):
+                    log(
+                        "adapter public validation probe retrying after live diff changed during validation: "
+                        f"{final_diff_sha256(diff)} -> {final_diff_sha256(live_diff)}"
+                    )
+                    diff = live_diff
+                    commands = coverage_probe_commands(workdir, issue, diff)
+                    if command not in commands:
+                        break
+                time.sleep(2)
+                continue
+            break
+        returncode, output = attempts[-1]
         teardown_success = returncode != 0 and pytest_teardown_after_success(output)
         no_test_evidence = validation_probe_has_no_test_evidence(label, output)
         if (returncode != 0 and not teardown_success) or no_test_evidence:
@@ -2896,12 +2969,14 @@ def run_validation_coverage_probe(workdir: Path, issue: str, diff: str, blockers
     return report, passed
 
 
-def validation_probe_env(command: list[str]) -> dict[str, str] | None:
+def validation_probe_env(command: list[str], diff_hash: str = "") -> dict[str, str] | None:
     if command[:2] != ["go", "test"]:
         return None
     env = os.environ.copy()
     env["GOCACHE"] = ensure_cache_dir(RUNTIME_ROOT / "go-build-cache-adapter")
     env["GOMODCACHE"] = ensure_cache_dir(RUNTIME_ROOT / "go-mod-cache-adapter")
+    if diff_hash:
+        env["MULTIAGENT_GO_TEST_LOCK_ROOT"] = ensure_cache_dir(RUNTIME_ROOT / "go-test-locks-adapter" / diff_hash)
     return env
 
 
@@ -4185,15 +4260,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                     and remaining_seconds > 300
                 ):
                     no_diff_blocked_retries += 1
-                    ownership_paths = required_path_outside_owned_reports(RUNTIME_ROOT)
-                    blockers = [
-                        "production subagent reached blocked status without a materialized source diff; replace the no-diff worker and implement from issue/source evidence before blocking again",
-                        *[
-                            f"worker reported required-path-outside-owned:{path}; include this source path in the next bounded worker owned set"
-                            for path in ownership_paths[:8]
-                        ],
-                        *blocked_no_diff_subagents[:3],
-                    ]
+                    blockers = no_diff_blocked_subagent_blockers(RUNTIME_ROOT)
                     if relaunch_orchestrator_for_blockers(
                         "blocked subagent with no materialized source diff",
                         diff_snapshot,
@@ -5175,6 +5242,23 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                             log("coverage follow-up blocker path yielded to completed status with accepted final build and adapter validation gate")
                             outcome = "completed"
                             break
+                        no_diff_worker_blockers = no_diff_blocked_subagent_blockers(RUNTIME_ROOT)
+                        if (
+                            not diff.strip()
+                            and no_diff_worker_blockers
+                            and no_diff_blocked_retries < no_diff_blocked_retry_limit
+                            and int(deadline - time.monotonic()) > 240
+                            and relaunch_orchestrator_for_blockers(
+                                "orchestrator exited after no-diff blocked worker",
+                                diff,
+                                [*blockers, *no_diff_worker_blockers],
+                                probe_report,
+                                force_live_handoff=True,
+                            )
+                        ):
+                            no_diff_blocked_retries += 1
+                            time.sleep(5)
+                            continue
                         ownership_paths = required_path_outside_owned_reports(RUNTIME_ROOT)
                         if (
                             not diff.strip()

@@ -1141,6 +1141,9 @@ with tempfile.TemporaryDirectory() as td:
     assert len(summaries) == 1, summaries
     assert "worker-01-fix" in summaries[0], summaries
     assert "no source diff" in summaries[0], summaries
+    blockers = solve_swe_prod.no_diff_blocked_subagent_blockers(runtime_root)
+    assert any("without a materialized source diff" in blocker for blocker in blockers), blockers
+    assert any("worker-01-fix" in blocker for blocker in blockers), blockers
     (blocked_agent / "last-message.txt").write_text(
         "required-path-outside-owned: internal/server/evaluation/ofrep_bridge.go\n",
         encoding="utf-8",
@@ -1266,6 +1269,12 @@ assert re.search(
 ), "blocked no-diff terminal statuses must force a live handoff instead of yielding to stale live processes"
 assert "blocked_no_diff_subagent_summaries" in solver_source and "blocked subagent with no materialized source diff" in solver_source, (
     "blocked no-diff subagent outcomes should force one production-orchestrator replacement"
+)
+assert "no_diff_blocked_subagent_blockers" in solver_source and "orchestrator exited after no-diff blocked worker" in solver_source, (
+    "coverage-follow-up exits with blocked no-diff workers should get a bounded implementation handoff before terminal rejection"
+)
+assert "FAILURE_DIAGNOSTICS_PATH" in solver_source and "failure-diagnostics.txt" in solver_source, (
+    "native wrapper should persist structured failure diagnostics for the eval runner"
 )
 assert "post-cleanup final gate rejected stale validation evidence" in solver_source and "benchmark cleanup changed the final submitted diff after verifier acceptance" in solver_source, (
     "cleanup must not change the submitted diff after verifier hash-bound acceptance without forcing reverification"
@@ -1705,6 +1714,37 @@ with tempfile.TemporaryDirectory() as td:
         solve_swe_prod.STATUS_PATH = original_status
         solve_swe_prod.HELPER_PROBE_PATH = original_probe_path
         solve_swe_prod.coverage_probe_commands = old_probe_commands
+with tempfile.TemporaryDirectory() as td:
+    runtime = Path(td)
+    original_runtime = solve_swe_prod.RUNTIME_ROOT
+    try:
+        solve_swe_prod.RUNTIME_ROOT = runtime
+        agent_dir = runtime / "subagents" / "worker-05-repair"
+        agent_dir.mkdir(parents=True)
+        agent_dir.joinpath("last-message.txt").write_text(
+            "Changed files: lib/kube/proxy/forwarder.go\n\n"
+            "Validation:\n"
+            "- `go test ./lib/kube/proxy` rc 0\n",
+            encoding="utf-8",
+        )
+        recovered = solve_swe_prod.persisted_subagent_visible_validation_evidence(
+            "diff --git a/lib/kube/proxy/forwarder.go b/lib/kube/proxy/forwarder.go\n+func x() {}\n",
+            runtime,
+        )
+        assert "worker-05-repair" in recovered, recovered
+        assert "go test ./lib/kube/proxy" in recovered, recovered
+    finally:
+        solve_swe_prod.RUNTIME_ROOT = original_runtime
+with tempfile.TemporaryDirectory() as td:
+    runtime = Path(td)
+    original_runtime = solve_swe_prod.RUNTIME_ROOT
+    try:
+        solve_swe_prod.RUNTIME_ROOT = runtime
+        env = solve_swe_prod.validation_probe_env(["go", "test", "./lib/kube/proxy"], "abc123")
+        assert env is not None, env
+        assert env["MULTIAGENT_GO_TEST_LOCK_ROOT"].endswith("/go-test-locks-adapter/abc123"), env
+    finally:
+        solve_swe_prod.RUNTIME_ROOT = original_runtime
 generic_commands = solve_swe_prod.coverage_probe_commands(
     Path("/tmp"),
     "A text parser should decode escaped strings.",
@@ -2349,6 +2389,22 @@ with tempfile.TemporaryDirectory() as adapter_symbol_tmp:
     assert not any("source-symbol-map-passed:" in blocker for blocker in adapter_symbol_blockers), adapter_symbol_blockers
     assert not any("source-owner-ledger:" in blocker for blocker in adapter_symbol_blockers), adapter_symbol_blockers
     assert not any("errors" in blocker or "examples" in blocker for blocker in adapter_symbol_blockers), adapter_symbol_blockers
+    adapter_dependency_diff = (
+        "diff --git a/lib/kube/proxy/forwarder.go b/lib/kube/proxy/forwarder.go\n"
+        "+client: cfg.Client\n"
+        "+sessionUploader, err := NewUploader(client)\n"
+    )
+    adapter_dependency_evidence = solve_swe_prod.dependency_contract_adapter_evidence(adapter_dependency_diff)
+    assert "constructor-dependency-checked:" in adapter_dependency_evidence, adapter_dependency_evidence
+    adapter_dependency_blockers = solve_swe_prod.implementation_scope_blockers(
+        "Kubernetes exec session recording should initialize uploader.",
+        adapter_dependency_diff,
+        {
+            "status": "completed",
+            "validation": "helper-validation-passed: adapter public helper probe. " + adapter_dependency_evidence,
+        },
+    )
+    assert not any("constructor-dependency-checked:" in blocker for blocker in adapter_dependency_blockers), adapter_dependency_blockers
 with tempfile.TemporaryDirectory() as source_owner_tmp:
     source_owner_repo = Path(source_owner_tmp)
     (source_owner_repo / "lib" / "client").mkdir(parents=True)
