@@ -1604,6 +1604,24 @@ weak_dependency_contract_blockers = solve_swe_prod.implementation_scope_blockers
     },
 )
 assert any("constructor-dependency-checked:" in blocker for blocker in weak_dependency_contract_blockers), weak_dependency_contract_blockers
+ambiguous_dependency_contract_blockers = solve_swe_prod.implementation_scope_blockers(
+    "Bulk evaluation should list all flags when an explicit flag list is omitted.",
+    dependency_contract_diff,
+    {
+        "status": "completed",
+        "validation": (
+            "source-owner-ledger: selected-owner=internal/server/ofrep candidate-owner=internal/server/ofrep "
+            "candidate-owner=internal/server/evaluation rejected-owner=evaluation-bridge-helper validation-package=./internal/server/ofrep. "
+            "source-symbol-map-passed: path=internal/server/ofrep/evaluation.go package=ofrep "
+            "added-symbol=flagLister owner-evidence=bulk-endpoint-owner candidate-owner=internal/server/evaluation "
+            "callsite=EvaluateBulk compile=go-test-ofrep. "
+            "constructor-dependency-checked: constructor=internal/server/ofrep/server.go "
+            "wiring=internal/cmd/grpc.go mock-fake=ambiguous-unchanged-provider "
+            "api-compatible=all-visible-callers compile=go-test-ofrep"
+        ),
+    },
+)
+assert any("constructor-dependency-checked:" in blocker for blocker in ambiguous_dependency_contract_blockers), ambiguous_dependency_contract_blockers
 full_dependency_contract_blockers = solve_swe_prod.implementation_scope_blockers(
     "Bulk evaluation should list all flags when an explicit flag list is omitted.",
     dependency_contract_diff,
@@ -2482,6 +2500,20 @@ resolution_output="$("$ROOT/bin/subagent.sh" resolution-create todo-017 --worker
 [[ "$resolution_output" == $'resolution recorded\ttodo-017\tworker-02-ofrep\tresolved' ]]
 assert_file_contains "$MULTIAGENT_STATE_DIR/todos/todo-017/resolution.json" '"status": "resolved"'
 assert_file_contains "$MULTIAGENT_STATE_DIR/todos/todo-017/todo.json" '"status": "resolved"'
+
+if "$ROOT/bin/subagent.sh" todo-close todo-017 --verified-by verifier-01-ofrep --recheck-json '{"accepted":true,"finding_rechecked":"unrelated-finding","commands":[{"cmd":"go test ./internal/server/ofrep","rc":0},{"cmd":"go test ./internal/server/evaluation","rc":0}],"final_diff_hash":"abc123"}' >"$TMPDIR/todo-close-wrong-finding.out" 2>&1; then
+  echo "expected todo-close to reject verifier closure for the wrong finding" >&2
+  cat "$TMPDIR/todo-close-wrong-finding.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/todo-close-wrong-finding.out" "must name source finding build-go-ofrep"
+
+if "$ROOT/bin/subagent.sh" todo-close todo-017 --verified-by verifier-01-ofrep --recheck-json '{"accepted":true,"finding_rechecked":"build-go-ofrep","commands":[{"cmd":"go test ./internal/server/ofrep","rc":0}],"final_diff_hash":"abc123"}' >"$TMPDIR/todo-close-partial-recheck.out" 2>&1; then
+  echo "expected todo-close to reject verifier closure missing worker validation command evidence" >&2
+  cat "$TMPDIR/todo-close-partial-recheck.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/todo-close-partial-recheck.out" "must cover worker validation command"
 
 if "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-resolved.out" 2>&1; then
   echo "expected gate-check to reject a resolved but unverified todo" >&2

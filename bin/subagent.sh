@@ -1505,6 +1505,50 @@ for idx, item in enumerate(commands):
 ' "$recheck_json"
 }
 
+validate_closure_matches_todo() {
+  local todo_id="$1"
+  local source_finding_id="$2"
+  local resolution_json="$3"
+  local recheck_json="$4"
+  require_cmd python3
+  python3 -c '
+import json
+import sys
+
+todo_id = sys.argv[1]
+source_finding_id = sys.argv[2]
+resolution = json.loads(sys.argv[3])
+recheck = json.loads(sys.argv[4])
+
+finding_keys = [
+    str(recheck.get(key, "")).strip()
+    for key in ("finding_rechecked", "source_finding_id")
+    if str(recheck.get(key, "")).strip()
+]
+if source_finding_id not in finding_keys:
+    raise SystemExit(
+        f"recheck JSON for todo {todo_id} must name source finding {source_finding_id}"
+    )
+
+resolution_commands = {
+    str(item.get("cmd", "")).strip()
+    for item in resolution.get("validation", [])
+    if isinstance(item, dict) and str(item.get("cmd", "")).strip() and int(item.get("rc", 0)) == 0
+}
+recheck_commands = {
+    str(item.get("cmd", "")).strip()
+    for item in recheck.get("commands", [])
+    if isinstance(item, dict) and str(item.get("cmd", "")).strip() and int(item.get("rc", 1)) == 0
+}
+missing = sorted(resolution_commands - recheck_commands)
+if missing:
+    joined = ", ".join(missing)
+    raise SystemExit(
+        f"recheck JSON for todo {todo_id} must cover worker validation command(s): {joined}"
+    )
+' "$todo_id" "$source_finding_id" "$resolution_json" "$recheck_json"
+}
+
 finding_create() {
   local finding_id="${1:-}"
   [[ -n "$finding_id" ]] || die "finding-create requires FINDING_ID"
@@ -1880,6 +1924,7 @@ todo_close() {
   local source_finding_id dir
   source_finding_id="$(read_todo_value "$todo_id" source_finding_id)"
   dir="$(todo_dir "$todo_id")"
+  validate_closure_matches_todo "$todo_id" "$source_finding_id" "$(cat "$dir/resolution.json")" "$recheck_json"
   cat >"$dir/closure.env" <<EOF
 todo_id=$todo_id
 source_finding_id=$source_finding_id
@@ -1926,6 +1971,27 @@ if resolution.get("todo_id") != todo_id or resolution.get("status") != "resolved
 recheck = closure.get("recheck")
 if closure.get("todo_id") != todo_id or not isinstance(recheck, dict) or recheck.get("accepted") is not True:
     print(f"reject\tclosed-todo-invalid-closure\ttodo={todo_id}")
+    raise SystemExit(1)
+source_finding_id = closure.get("source_finding_id")
+if source_finding_id not in {
+    str(recheck.get("finding_rechecked", "")).strip(),
+    str(recheck.get("source_finding_id", "")).strip(),
+}:
+    print(f"reject\tclosed-todo-recheck-mismatch\ttodo={todo_id}\tfinding={source_finding_id}")
+    raise SystemExit(1)
+resolution_commands = {
+    str(item.get("cmd", "")).strip()
+    for item in resolution.get("validation", [])
+    if isinstance(item, dict) and str(item.get("cmd", "")).strip() and int(item.get("rc", 0)) == 0
+}
+recheck_commands = {
+    str(item.get("cmd", "")).strip()
+    for item in recheck.get("commands", [])
+    if isinstance(item, dict) and str(item.get("cmd", "")).strip() and int(item.get("rc", 1)) == 0
+}
+missing = sorted(resolution_commands - recheck_commands)
+if missing:
+    print(f"reject\tclosed-todo-recheck-missing-worker-command\ttodo={todo_id}\tcmd={missing[0]}")
     raise SystemExit(1)
 ' "$dir" "$todo_id"
 }

@@ -318,50 +318,54 @@ def constructor_dependency_has_evidence(status_text: str) -> bool:
     text = status_text.lower()
     if "constructor-dependency-checked:" not in text:
         return False
-    has_constructor = any(
-        marker in text
-        for marker in (
+    has_constructor = _has_evidence_key(
+        text,
+        (
             "constructor=",
             "constructor-path=",
             "factory=",
             "factory-path=",
             "new=",
             "new-path=",
-        )
+        ),
     )
-    has_wiring = any(
-        marker in text
-        for marker in (
+    has_wiring = _has_evidence_key(
+        text,
+        (
             "wiring=",
             "wiring-path=",
             "production-wiring=",
             "production-wiring-path=",
             "cmd-wiring=",
-        )
+        ),
     )
-    has_mock = any(
-        marker in text
-        for marker in (
+    has_mock = _has_evidence_key(
+        text,
+        (
             "mock=",
             "mock-path=",
             "fake=",
             "fake-path=",
             "testdouble=",
             "test-double=",
-        )
+        ),
     )
-    has_callsite = any(
-        marker in text
-        for marker in (
+    has_callsite = _has_evidence_key(
+        text,
+        (
             "caller=",
             "callsite=",
             "api-compatible=",
             "api-shape=",
             "compile=",
             "returncode=0",
-        )
+        ),
     )
     return has_constructor and has_wiring and has_mock and has_callsite
+
+
+def _has_evidence_key(text: str, keys: tuple[str, ...]) -> bool:
+    return any(re.search(r"(?:^|[\s{,;])" + re.escape(key), text) for key in keys)
 
 
 def source_owner_ledger_has_evidence(status_text: str) -> bool:
