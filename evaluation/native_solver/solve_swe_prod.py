@@ -2298,6 +2298,62 @@ def no_diff_blocked_subagent_blockers(runtime_root: Path = RUNTIME_ROOT) -> list
     ]
 
 
+def active_repair_subagent_summaries(runtime_root: Path = RUNTIME_ROOT) -> list[str]:
+    """Return active implementation workers that should not be cut off early."""
+
+    summaries: list[str] = []
+    active_statuses = {"starting", "running", "restoring"}
+    for subagents_dir in subagent_state_roots(runtime_root):
+        for agent_dir in sorted(path for path in subagents_dir.iterdir() if path.is_dir()):
+            agent_name = agent_dir.name
+            lower_name = agent_name.lower()
+            if "worker" not in lower_name or "scout" in lower_name or "verifier" in lower_name:
+                continue
+            status_file = agent_dir / "status"
+            if not status_file.exists():
+                continue
+            try:
+                status = status_file.read_text(encoding="utf-8", errors="replace").strip().lower()
+            except OSError:
+                continue
+            if status not in active_statuses:
+                continue
+            snippets: list[str] = []
+            for name in ("last-message.txt", "current.txt"):
+                path = agent_dir / name
+                if not path.exists():
+                    continue
+                try:
+                    text = " ".join(path.read_text(encoding="utf-8", errors="replace")[-1000:].split())
+                except OSError:
+                    continue
+                if text:
+                    snippets.append(text)
+            owned = agent_owned_paths(agent_name, runtime_root)
+            summary = f"{agent_name} status={status}"
+            if owned:
+                summary += " owned=" + ",".join(owned[:6])
+            if snippets:
+                summary += ": " + snippets[0][:1000]
+            summaries.append(summary)
+    return summaries
+
+
+def unresolved_repair_state_exists(runtime_root: Path = RUNTIME_ROOT) -> bool:
+    for state_dir in (runtime_root, runtime_root / "state"):
+        todos_base = state_dir / "todos"
+        if not todos_base.exists():
+            continue
+        for status_file in todos_base.glob("*/status"):
+            try:
+                status = status_file.read_text(encoding="utf-8", errors="replace").strip().lower()
+            except OSError:
+                continue
+            if status in {"open", "assigned", "resolved", "reopened"}:
+                return True
+    return False
+
+
 def required_path_outside_owned_reports(runtime_root: Path = RUNTIME_ROOT) -> list[str]:
     reports: list[str] = []
     pattern = re.compile(r"required-path-outside-owned:\s*([^\s`'\",;)]+)")
@@ -5195,6 +5251,20 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                             "terminal deadline expired without completed/blocked status after orchestrator checkpoint; wrapper cannot accept an active-run diff without terminal verifier/status"
                         ]
                     remaining_after_grace = int(deadline - time.monotonic())
+                    active_repair_workers = active_repair_subagent_summaries(RUNTIME_ROOT)
+                    if (
+                        active_repair_workers
+                        and unresolved_repair_state_exists(RUNTIME_ROOT)
+                        and remaining_after_grace > 180
+                    ):
+                        log(
+                            "terminal deadline grace extended because active repair worker(s) are still running: "
+                            + "; ".join(active_repair_workers[:3])
+                        )
+                        terminal_deadline_at = time.monotonic()
+                        last_capture = 0.0
+                        time.sleep(10)
+                        continue
                     if (
                         terminal_force_resume_enabled
                         and diff.strip()
@@ -6291,6 +6361,21 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                     diff = git_diff(workdir)
                     blockers = validation_coverage_blockers(issue, diff, text, current_status, task_metadata)
                     if blockers:
+                        active_repair_workers = active_repair_subagent_summaries(RUNTIME_ROOT)
+                        remaining_after_followup = int(deadline - time.monotonic())
+                        if (
+                            active_repair_workers
+                            and unresolved_repair_state_exists(RUNTIME_ROOT)
+                            and remaining_after_followup > 180
+                        ):
+                            log(
+                                "coverage follow-up timeout extended because active repair worker(s) are still running: "
+                                + "; ".join(active_repair_workers[:3])
+                            )
+                            coverage_followup_at = time.monotonic()
+                            last_capture = 0.0
+                            time.sleep(10)
+                            continue
                         coverage_gate_unresolved = True
                         STATUS_PATH.write_text(
                             json.dumps(

@@ -1238,6 +1238,29 @@ with tempfile.TemporaryDirectory() as td:
     assert "lib/service/service.go" in inferred_paths, inferred_paths
     inferred_blockers = solve_swe_prod.no_diff_blocked_subagent_blockers(runtime_root)
     assert any("required-path-outside-owned:lib/service/service.go" in blocker for blocker in inferred_blockers), inferred_blockers
+    active_agent = runtime_root / "state" / "subagents" / "worker-04-forwarder-contracts"
+    active_agent.mkdir(parents=True)
+    (active_agent / "status").write_text("running\n", encoding="utf-8")
+    (active_agent / "current.txt").write_text(
+        "Fixing verifier findings for request context and CSR cache behavior.\n",
+        encoding="utf-8",
+    )
+    active_assignment_dir = runtime_root / "state" / "assignments" / "worker-04-forwarder-contracts"
+    active_assignment_dir.mkdir(parents=True)
+    (active_assignment_dir / "owned-paths").write_text(
+        "lib/kube/proxy/forwarder.go\n"
+        "lib/service/service.go\n",
+        encoding="utf-8",
+    )
+    active_todo = runtime_root / "state" / "todos" / "todo-forwarder-audit-request-context"
+    active_todo.mkdir(parents=True)
+    (active_todo / "status").write_text("resolved\n", encoding="utf-8")
+    active_summaries = solve_swe_prod.active_repair_subagent_summaries(runtime_root)
+    assert len(active_summaries) == 1, active_summaries
+    assert "worker-04-forwarder-contracts status=running" in active_summaries[0], active_summaries
+    assert "owned=lib/kube/proxy/forwarder.go,lib/service/service.go" in active_summaries[0], active_summaries
+    assert "request context and CSR cache behavior" in active_summaries[0], active_summaries
+    assert solve_swe_prod.unresolved_repair_state_exists(runtime_root)
     verifier_agent = runtime_root / "subagents" / "verifier-01-fix"
     verifier_agent.mkdir(parents=True)
     go_diff = (
@@ -1378,6 +1401,15 @@ assert "no_diff_blocked_subagent_blockers" in solver_source and "orchestrator ex
 )
 assert "ownership-boundary no-diff recovery" in solver_source and "adapter helper worker spawned after ownership-boundary no-diff worker" in solver_source, (
     "ownership-boundary no-diff workers should get a direct bounded helper handoff, not only an orchestrator nudge"
+)
+assert "active_repair_subagent_summaries" in solver_source and "unresolved_repair_state_exists" in solver_source, (
+    "active structured repair workers should be detected before terminal local rejection"
+)
+assert "coverage follow-up timeout extended because active repair worker" in solver_source, (
+    "coverage follow-up timeouts should not reject while a structured repair worker is actively fixing verifier findings"
+)
+assert "terminal deadline grace extended because active repair worker" in solver_source, (
+    "terminal deadline grace should not reject while a structured repair worker is actively fixing verifier findings"
 )
 assert "FAILURE_DIAGNOSTICS_PATH" in solver_source and "failure-diagnostics.txt" in solver_source, (
     "native wrapper should persist structured failure diagnostics for the eval runner"
