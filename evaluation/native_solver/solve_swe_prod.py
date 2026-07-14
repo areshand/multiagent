@@ -4040,59 +4040,29 @@ def send_tmux_literal(session: str, message: str) -> None:
 
 def structured_repair_state_instructions(
     *,
-    finding_id: str,
-    todo_id: str,
-    finding_type: str,
     summary: str,
     blockers: list[str],
     source_hints: list[str],
 ) -> str:
-    """Return no-leak commands for recording verifier/adapter repair work."""
+    """Return no-leak verifier-first routing for adapter evidence gaps.
 
-    affected = ",".join(source_hints[:8]) if source_hints else ""
-    evidence = json.dumps(
-        {
-            "source": "public-source-adapter-check",
-            "source_evidence": "; ".join(blockers),
-            "blockers": blockers,
-            "affected_path_hints": source_hints[:8],
-        },
-        sort_keys=True,
-    )
-    required_resolution = (
-        "Verifier must recheck the final diff against these public/source blockers, "
-        "and close the todo only after objective validation evidence is attached."
-    )
-    command = (
-        "cd /opt/multiagent\n"
-        f"bin/subagent.sh finding-create {shlex.quote(finding_id)} "
-        "--severity blocking "
-        f"--type {shlex.quote(finding_type)} "
-        f"--summary {shlex.quote(summary)} "
-        f"--evidence-json {shlex.quote(evidence)} "
-        f"--required-resolution {shlex.quote(required_resolution)}"
-    )
-    if affected:
-        command += f" --affected {shlex.quote(affected)}"
-    command += (
-        "\n"
-        f"bin/subagent.sh todo-create {shlex.quote(todo_id)} "
-        f"--source-finding-id {shlex.quote(finding_id)} "
-        f"--task {shlex.quote(summary)} "
-        f"--context {shlex.quote('; '.join(blockers)[:1200])} "
-        "--done-criteria 'spawn a bounded repair worker over implicated source paths' "
-        "--done-criteria 'worker records resolution-create with changed paths and command return codes' "
-        "--done-criteria 'verifier closes todo only after blockers are resolved'\n"
-        "# After worker resolution and verifier recheck, run:\n"
-        f"bin/subagent.sh todo-close {shlex.quote(todo_id)} --verified-by VERIFIER_NAME --recheck-json '<accepted verifier JSON>'\n"
-        "bin/subagent.sh gate-check"
-    )
+    Adapter checks can prove that acceptance evidence is missing, but they are
+    not semantic verifiers and must not manufacture source-repair todos. A fresh
+    verifier first decides whether the diff is acceptable or needs source work.
+    """
+
+    blocker_text = "; ".join(blockers)[:1800] or summary
+    hint_text = ", ".join(source_hints[:8]) or "derive exact paths from the live diff"
     return (
-        "Record the blocker as structured repair state before routing work. "
-        "`resolved` is not accepted until a verifier closes the todo:\n"
-        "```bash\n"
-        + command
-        + "\n```"
+        "Treat this adapter result as a verification handoff, not a confirmed source finding. "
+        "Do not create an adapter-authored finding/todo merely because acceptance evidence is missing. "
+        "Spawn one fresh read-only verifier over the exact live final diff and give it these public/source blockers: "
+        f"{blocker_text}. Candidate paths: {hint_text}. "
+        "If the verifier returns ACCEPTED with the exact final diff hash, rerun gate-check; no worker resolution is required. "
+        "If and only if the verifier confirms a semantic source defect, the verifier must record finding-create evidence, "
+        "the orchestrator must create a todo from that finding, a bounded worker must call resolution-create TODO_ID "
+        "--worker NAME --status resolved|blocked --validation-json JSON --why TEXT, and a later verifier must close it. "
+        "Never call resolution-create for an evidence-only handoff or for a todo that no worker repaired."
     )
 
 
@@ -4117,9 +4087,6 @@ def send_orchestrator_followup(session: str, blockers: list[str], probe_report: 
         + source_symbol_map_resume_instructions(blockers)
         + " "
         + structured_repair_state_instructions(
-            finding_id="adapter-completion-rejected-001",
-            todo_id="todo-adapter-completion-rejected-001",
-            finding_type="validation_gap",
             summary="Repair adapter rejected completion marker using public/source evidence.",
             blockers=blockers,
             source_hints=source_hints,
@@ -4159,9 +4126,6 @@ def send_orchestrator_scope_warning(session: str, blockers: list[str], source_hi
         + " If a worker is still running, let it finish, then spawn a bounded source follow-up with the implicated source paths in --owned. "
         + "If the worker has already exited, do not send implementation text to its tmux pane; create a fresh assignment and spawn a new worker process. "
         + structured_repair_state_instructions(
-            finding_id="adapter-early-scope-001",
-            todo_id="todo-adapter-early-scope-001",
-            finding_type="scope_gap",
             summary="Resolve early public-contract scope blockers in current source diff.",
             blockers=blockers,
             source_hints=source_hints,
@@ -4203,9 +4167,6 @@ def send_orchestrator_convergence_review(
         + hint_text
         + f" Durable contract ledger: {CONTRACT_LEDGER_PATH}. Preserve every ledger item. "
         + structured_repair_state_instructions(
-            finding_id="adapter-convergence-001",
-            todo_id="todo-adapter-convergence-001",
-            finding_type="terminal_state_gap",
             summary="Converge non-empty source diff to verifier-checked status.",
             blockers=["non-empty source diff has no valid completion status"],
             source_hints=source_hints,
@@ -4284,9 +4245,6 @@ def send_orchestrator_terminal_deadline(
         + contract_ledger_excerpt()
         + "\n"
         + structured_repair_state_instructions(
-            finding_id="adapter-terminal-deadline-001",
-            todo_id="todo-adapter-terminal-deadline-001",
-            finding_type="terminal_state_gap",
             summary="Resolve terminal deadline blockers and write trusted status.",
             blockers=blockers or ["terminal deadline requires completed or blocked status"],
             source_hints=source_hints,
@@ -4335,9 +4293,6 @@ def write_orchestrator_resume_prompt(
         + source_symbol_map_resume_instructions(blockers)
         + "\n\n"
         + structured_repair_state_instructions(
-            finding_id=f"adapter-resume-{attempt:02d}",
-            todo_id=f"todo-adapter-resume-{attempt:02d}",
-            finding_type="resume_repair",
             summary="Resume production run by resolving public/source blockers.",
             blockers=blockers,
             source_hints=source_hints,

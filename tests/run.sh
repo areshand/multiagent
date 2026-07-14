@@ -871,7 +871,6 @@ python3 - "$ROOT" <<'PY'
 import os
 import json
 import re
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -990,8 +989,9 @@ convergence_message = literal_messages[0]
 assert "Convergence checkpoint" in convergence_message, convergence_message
 assert "spawn/read one verifier" in convergence_message, convergence_message
 assert "source-derived probe failed" in convergence_message, convergence_message
-assert "finding-create adapter-convergence-001" in convergence_message, convergence_message
-assert "todo-create todo-adapter-convergence-001" in convergence_message, convergence_message
+assert "verification handoff" in convergence_message, convergence_message
+assert "Do not create an adapter-authored finding/todo" in convergence_message, convergence_message
+assert "If and only if the verifier confirms a semantic source defect" in convergence_message, convergence_message
 assert "gate-check" in convergence_message, convergence_message
 assert "src/service.py" in convergence_message, convergence_message
 for forbidden in ("FAIL_TO_PASS", "PASS_TO_PASS", "test_patch", "selected_test_files_to_run"):
@@ -1040,8 +1040,8 @@ assert "Terminal deadline checkpoint" in terminal_message, terminal_message
 assert "write completed status" in terminal_message, terminal_message
 assert "write blocked status" in terminal_message, terminal_message
 assert "No-test compile checks are not behavioral validation" in terminal_message, terminal_message
-assert "finding-create adapter-terminal-deadline-001" in terminal_message, terminal_message
-assert "todo-create todo-adapter-terminal-deadline-001" in terminal_message, terminal_message
+assert "verification handoff" in terminal_message, terminal_message
+assert "Do not create an adapter-authored finding/todo" in terminal_message, terminal_message
 assert "gate-check" in terminal_message, terminal_message
 assert "src/service.py" in terminal_message, terminal_message
 for forbidden in ("FAIL_TO_PASS", "PASS_TO_PASS", "test_patch", "selected_test_files_to_run", "official failure", "selected official"):
@@ -1071,36 +1071,13 @@ with tempfile.TemporaryDirectory() as td:
         resume_text = resume_prompt.read_text(encoding="utf-8")
         assert "Production Native Resume Handoff" in resume_text, resume_text
         assert "not a new benchmark hint" in resume_text, resume_text
-        assert "finding-create adapter-resume-01" in resume_text, resume_text
-        assert "todo-create todo-adapter-resume-01" in resume_text, resume_text
+        assert "verification handoff" in resume_text, resume_text
+        assert "Do not create an adapter-authored finding/todo" in resume_text, resume_text
+        assert "If and only if the verifier confirms a semantic source defect" in resume_text, resume_text
+        assert "finding-create adapter-resume-01" not in resume_text, resume_text
         assert "gate-check" in resume_text, resume_text
         assert "src/service.py" in resume_text, resume_text
         assert "pytest -q tests/test_service.py failed" in resume_text, resume_text
-        finding_line = next(
-            line.strip()
-            for line in resume_text.splitlines()
-            if line.strip().startswith("bin/subagent.sh finding-create adapter-resume-01")
-        )
-        finding_argv = shlex.split(finding_line)
-        evidence_index = finding_argv.index("--evidence-json") + 1
-        finding_evidence = json.loads(finding_argv[evidence_index])
-        assert finding_evidence["source_evidence"], finding_evidence
-        finding_argv[0] = str(root / "bin" / "subagent.sh")
-        repair_state = runtime_root / "repair-state"
-        repair_env = {
-            **os.environ,
-            "MULTIAGENT_ROOT": str(runtime_root),
-            "MULTIAGENT_STATE_DIR": str(repair_state),
-        }
-        finding_result = subprocess.run(
-            finding_argv,
-            env=repair_env,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        assert finding_result.returncode == 0, finding_result.stderr
-        assert (repair_state / "findings" / "adapter-resume-01" / "finding.json").exists()
         for forbidden in ("FAIL_TO_PASS", "PASS_TO_PASS", "test_patch", "selected_test_files_to_run", "official failure"):
             assert forbidden not in resume_text, resume_text
     finally:
