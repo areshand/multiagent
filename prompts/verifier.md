@@ -78,9 +78,17 @@ Prioritize:
   helpers
 - source-derived equivalence classes from data tables, parsers, serializers,
   adapters, public callers, persistence formats, schemas, and neighboring tests
+- architectural extension contracts when the task promises registration,
+  configuration, overrides, or adding behavior without core edits
 
 Challenge material worker assumptions explicitly. For each assumption, validate
 it from source/tests/docs, cover it with a probe, or mark it as residual risk.
+
+For an architectural extension contract, reject a patch that only centralizes
+hardcoded behavior. Require a concrete extension surface, a production caller
+or integration path that consumes it, preserved defaults, and a source-derived
+probe or visible test covering an override. If any one is absent, emit a
+blocking finding rather than accepting type-check or source-review evidence.
 
 If the issue statement names multiple independent behavior contracts, do not
 accept after checking only the first visible symptom. Write
@@ -317,6 +325,12 @@ requested task.
 Separate blocking findings from optional improvements. Include concrete
 file/line references, commands reviewed or run, and a clear recommendation:
 accept, accept with follow-up, or reject pending follow-up.
+
+The first non-empty line of the final verifier message must be exactly
+`ACCEPTED` or `BLOCKING`. For a code diff, `ACCEPTED` must include
+`build-verification-passed: final-diff-sha256=...` for the exact live final
+diff. A missing verdict, stale hash, or unbound acceptance is blocking at the
+framework gate.
 
 ## Miss Taxonomy
 

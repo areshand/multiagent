@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_ROOT="$SCRIPT_DIR"
 ROOT="${MULTIAGENT_ROOT:-$DEFAULT_ROOT}"
 PROMPT_FILE="${MULTIAGENT_PROMPT:-$SCRIPT_DIR/orchestrator_prompt.md}"
+PROMPT_MODULE_ROOT="${MULTIAGENT_PROMPT_MODULE_ROOT:-$SCRIPT_DIR}"
 CODEX_BIN="${CODEX_BIN:-codex}"
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 ORCHESTRATOR_CLI="${ORCHESTRATOR_CLI:-codex}"
@@ -35,6 +36,8 @@ Environment:
   MULTIAGENT_WRITE_POLICY Repo write policy, default: $MULTIAGENT_ROOT/docs/write-policy.paths
   MULTIAGENT_VERIFIER_MAX_ITERATIONS Verifier follow-up loop cap, default: 3
   MULTIAGENT_PROMPT   Orchestrator prompt, default: <launcher directory>/orchestrator_prompt.md
+  MULTIAGENT_PROMPT_MODULE_ROOT Directory containing prompts/, default: launcher directory
+  MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER Require accepted verifier evidence for the exact source diff, default: 1
   ORCHESTRATOR_CLI  Orchestrator CLI, default: codex
   WORKER_CLI        Worker CLI, default: claude
   SUBAGENT_CLI      Named subagent CLI, default: $WORKER_CLI
@@ -170,6 +173,8 @@ export MULTIAGENT_SESSION="$SESSION"
 export MULTIAGENT_ROOT="$ROOT"
 export MULTIAGENT_RESUME="$RESUME"
 export MULTIAGENT_PROMPT="$PROMPT_FILE"
+export MULTIAGENT_PROMPT_MODULE_ROOT="$PROMPT_MODULE_ROOT"
+export MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER="${MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER:-1}"
 export MULTIAGENT_STATE_DIR="$STATE_DIR"
 export MULTIAGENT_WRITE_POLICY="$POLICY_FILE"
 export MULTIAGENT_VERIFIER_MAX_ITERATIONS="$VERIFIER_MAX_ITERATIONS"
@@ -199,6 +204,8 @@ ORCHESTRATOR_BOOTSTRAP_SCRIPT="$STATE_DIR/orchestrator-bootstrap.sh"
   printf 'export MULTIAGENT_ROOT=%q\n' "$ROOT"
   printf 'export MULTIAGENT_RESUME=%q\n' "$RESUME"
   printf 'export MULTIAGENT_PROMPT=%q\n' "$PROMPT_FILE"
+  printf 'export MULTIAGENT_PROMPT_MODULE_ROOT=%q\n' "$PROMPT_MODULE_ROOT"
+  printf 'export MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=%q\n' "${MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER:-1}"
   printf 'export MULTIAGENT_STATE_DIR=%q\n' "$STATE_DIR"
   printf 'export MULTIAGENT_WRITE_POLICY=%q\n' "$POLICY_FILE"
   printf 'export MULTIAGENT_VERIFIER_MAX_ITERATIONS=%q\n' "$VERIFIER_MAX_ITERATIONS"

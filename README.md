@@ -113,7 +113,15 @@ exploration/exploitation policy for running independent work in parallel.
 loop: verifier findings, orchestrator todos, worker resolution reports,
 verifier closure through `bin/subagent.sh todo-close`, and
 `bin/subagent.sh gate-check`. Build verification failures are one instance of
-this loop, not special eval-only wrapper logic.
+this loop, not special eval-only wrapper logic. The final gate also reads the
+latest durable verifier verdict: a `BLOCKING` result cannot be bypassed by an
+empty finding store or a contradictory completion narrative. A later verifier
+must recheck the repaired diff and return `ACCEPTED`. A newer verifier artifact
+without either verdict is an incomplete recheck and also blocks acceptance.
+For a non-empty source diff, the accepted verifier message must contain the
+exact current `final-diff-sha256`; closed todo rechecks are audited against that
+same hash. This is enabled by default through
+`MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1`.
 
 `prompts/playbooks/orchestration-routing.md` contains the detailed role-routing
 workflow for contract scouts, scope guards, validation coordinators, worker

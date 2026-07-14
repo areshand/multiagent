@@ -172,6 +172,7 @@ export ORCHESTRATOR_CLI="codex"
 export WORKER_CLI="claude"
 export SUBAGENT_CLI="claude"
 export VERIFIER_CLI="codex"
+export MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=0
 
 printf 'orchestrator\n' >"$MOCK_TMUX_WINDOWS"
 printf 'Claude prompt ready\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"
@@ -389,6 +390,66 @@ assert_file_contains "$TMPDIR/gate-mutated-finding.out" "closed-todo-source-find
 cp "$TMPDIR/build-go-ofrep.finding.json" "$REPAIR_STATE/findings/build-go-ofrep/finding.json"
 MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-restored-finding.out"
 assert_file_contains "$TMPDIR/gate-restored-finding.out" "accepted"
+
+VERIFIER_VERDICT_STATE="$TMPDIR/verifier-verdict-state"
+mkdir -p "$VERIFIER_VERDICT_STATE/subagents/worker-01-fix" "$VERIFIER_VERDICT_STATE/subagents/verifier-01-fix"
+printf 'BLOCKING\nworker text must not control the final gate\n' >"$VERIFIER_VERDICT_STATE/subagents/worker-01-fix/last-message.txt"
+printf 'BLOCKING\nsource contract remains unsatisfied\n' >"$VERIFIER_VERDICT_STATE/subagents/verifier-01-fix/last-message.txt"
+if MULTIAGENT_STATE_DIR="$VERIFIER_VERDICT_STATE" "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-verifier-blocking.out" 2>&1; then
+  echo "expected latest blocking verifier verdict to fail gate-check" >&2
+  cat "$TMPDIR/gate-verifier-blocking.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/gate-verifier-blocking.out" $'reject\tlatest-verifier-blocking\tverifier=verifier-01-fix'
+mkdir -p "$VERIFIER_VERDICT_STATE/subagents/verifier-02-fix"
+printf 'ACCEPTED\nfinal diff rechecked after repair\n' >"$VERIFIER_VERDICT_STATE/subagents/verifier-02-fix/last-message.txt"
+python3 - "$VERIFIER_VERDICT_STATE/subagents/verifier-01-fix/last-message.txt" "$VERIFIER_VERDICT_STATE/subagents/verifier-02-fix/last-message.txt" <<'PY'
+import os
+import sys
+
+os.utime(sys.argv[1], ns=(1_000_000_000, 1_000_000_000))
+os.utime(sys.argv[2], ns=(2_000_000_000, 2_000_000_000))
+PY
+MULTIAGENT_STATE_DIR="$VERIFIER_VERDICT_STATE" "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-verifier-accepted.out"
+assert_file_contains "$TMPDIR/gate-verifier-accepted.out" "accepted"
+mkdir -p "$VERIFIER_VERDICT_STATE/subagents/verifier-03-fix"
+printf 'Verifier process exited before a final recommendation.\n' >"$VERIFIER_VERDICT_STATE/subagents/verifier-03-fix/last-message.txt"
+python3 - "$VERIFIER_VERDICT_STATE/subagents/verifier-03-fix/last-message.txt" <<'PY'
+import os
+import sys
+
+os.utime(sys.argv[1], ns=(3_000_000_000, 3_000_000_000))
+PY
+if MULTIAGENT_STATE_DIR="$VERIFIER_VERDICT_STATE" "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-verifier-missing.out" 2>&1; then
+  echo "expected newest verifier artifact without a verdict to fail gate-check" >&2
+  cat "$TMPDIR/gate-verifier-missing.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/gate-verifier-missing.out" $'reject\tlatest-verifier-missing-verdict\tverifier=verifier-03-fix'
+
+HASH_GATE_ROOT="$TMPDIR/hash-gate-root"
+HASH_GATE_STATE="$TMPDIR/hash-gate-state"
+mkdir -p "$HASH_GATE_ROOT" "$HASH_GATE_STATE/subagents/verifier-01-hash"
+git -C "$HASH_GATE_ROOT" init -q
+git -C "$HASH_GATE_ROOT" config user.email test@example.com
+git -C "$HASH_GATE_ROOT" config user.name Test
+printf 'before\n' >"$HASH_GATE_ROOT/source.txt"
+git -C "$HASH_GATE_ROOT" add source.txt
+git -C "$HASH_GATE_ROOT" commit -qm initial
+printf 'after\n' >"$HASH_GATE_ROOT/source.txt"
+printf 'ACCEPTED\nsource reviewed without hash binding\n' >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
+if MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
+  "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-verifier-unbound-hash.out" 2>&1; then
+  echo "expected verifier acceptance without the current final diff hash to fail gate-check" >&2
+  cat "$TMPDIR/gate-verifier-unbound-hash.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/gate-verifier-unbound-hash.out" $'reject\tlatest-verifier-final-diff-hash-mismatch'
+HASH_GATE_DIFF_SHA="$(git -C "$HASH_GATE_ROOT" diff --binary --ignore-submodules=all | shasum -a 256 | awk '{print $1}')"
+printf 'ACCEPTED\nbuild-verification-passed: final-diff-sha256=%s compile_clean=true returncode=0\n' "$HASH_GATE_DIFF_SHA" >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
+MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
+  "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-verifier-bound-hash.out"
+assert_file_contains "$TMPDIR/gate-verifier-bound-hash.out" "accepted"
 
 LEGACY_RESOLUTION_STATE="$TMPDIR/legacy-resolution-state"
 mkdir -p "$LEGACY_RESOLUTION_STATE"
@@ -628,82 +689,25 @@ assert_file_contains "$ROOT/evaluation/README.md" "Low-signal orchestration case
 assert_file_contains "$ROOT/evaluation/README.md" "EVAL_VALIDATION_PROBE_TIMEOUT"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "Return generic source-derived blockers without benchmark answer leakage"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "hidden-test-shaped commands"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "One active validator per package/path"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "validation lease table"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "validation-run"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "validation-lease-acquire"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Do not spawn a verifier while a worker still owns"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Fixture/testdata"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "unresolved parity gaps are blocking"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Reject first-match-only fixes"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "replacement probe asserts the new exact output shape"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "replacement-probe-passed:"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "stale-visible-failure-justified:"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "multi-value-probe-passed:"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "final-output-field="
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "expected-output-count=N"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "multi-value-probe.txt"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "source-symbol-map-passed:"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "struct field diffs"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "owner-evidence="
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "candidate-owner="
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "source-owner-ledger:"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "worker attempted validation command"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "normally limit yourself to three focused read-only"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Do not write blocked status merely because a read-count limit was consumed"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" 'invoke the `apply_patch` executable from that shell'
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" 'JSON object with a `cmd` string'
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Do not finish with only a checklist"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "constructor-dependency-checked:"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "provider-capability-checked:"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "required-path-outside-owned:"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "ownership blocker"
+assert_file_contains "$ROOT/orchestrator_prompt.md" "MULTIAGENT_PROMPT_MODULE_ROOT"
+assert_file_contains "$ROOT/launch.sh" "MULTIAGENT_PROMPT_MODULE_ROOT"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" '"MULTIAGENT_PROMPT_MODULE_ROOT": str(repo_root)'
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "production prompt modules"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Do not rely on leaked evaluator tests"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "architectural contract"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "issue-coverage-ledger:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "finding-create"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "todo-create"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "resolution-create"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "todo-close"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "gate-check"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "one single machine-readable"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "removed-symbol="
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "stale-visible-reconciliation.txt"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "aggregate count"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "machine-gated evidence markers"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "replacement-probe-passed:"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "stale-visible-failure-justified:"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "multi-value-probe-passed:"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "final-output-field="
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "multi-value-probe.txt"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "source-symbol-map-passed:"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "struct field diffs"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "source-owner-ledger:"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "worker attempted validation command"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "constructor-dependency-checked:"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "provider-capability-checked:"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "required-path-outside-owned:"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "ownership blocker"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "go-package-validation-passed:"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "finding-create"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "todo-create"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "resolution-create"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "todo-close"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "gate-check"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "owner-evidence="
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "candidate-owner="
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "one single machine-readable"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "renamed-symbol="
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "stale-visible-reconciliation.txt"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "per affected output collection"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "run a convergence"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "long planning loop"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "unresolved no-diff failure"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "explicit edit-or-block instruction"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "stale hunk"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "stale-hunk"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Inline golden expectations"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "nearest visible"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "narrow root-cause"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "same-package tests"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "fresh bounded repair worker"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "build-verification-passed:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "go-package-validation-passed:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "status.json"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "Post-Task Authority Fence"
+appendix_bytes="$(wc -c < "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md")"
+override_bytes="$(wc -c < "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md")"
+if (( appendix_bytes > 10000 || override_bytes > 1500 )); then
+  echo "benchmark prompt overlays exceed compactness budget: appendix=$appendix_bytes override=$override_bytes" >&2
+  exit 1
+fi
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "Convergence checkpoint"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_CONVERGENCE_FOLLOWUP_AFTER"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "No-diff planning checkpoint"
@@ -717,8 +721,6 @@ assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "go-mod-
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "\"GOMODCACHE\": ensure_cache_dir(RUNTIME_ROOT / \"go-mod-cache\")"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_VALIDATION_PROBE_TIMEOUT\", 900"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "source-owner-candidates"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "production-native wrapper may run repository-visible validation"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "No-test compile checks"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "git diff --name-only"
 assert_file_contains "$ROOT/evaluation/README.md" "production-native progress watchdog"
 assert_file_contains "$ROOT/prompts/verifier.md" "source review plus"
@@ -800,15 +802,6 @@ assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "most on
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "live worker remains no-diff after a planning checkpoint"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "active generic scout block"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "assignment-status NAME failed"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "same-owned-path replacement is allowed at"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "live worker remains no-diff after a planning checkpoint"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "active generic worker already running"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "assignment-status NAME failed"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "must treat that as"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "That one fresh replacement is the retry budget"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "live worker remains no-diff after a planning checkpoint"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "active generic scout block"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "assignment-status NAME failed"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-symbol map contract"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-symbol-map-passed:"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-owner-ledger:"
@@ -821,7 +814,6 @@ assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "source-
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "prompts/roles/build-verifier.md"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "build-verification-passed:"
 assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "declared-type ownership risk"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "declared receiver"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "declared type at that call site"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "visible tests"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "real production entrypoint"
@@ -840,7 +832,6 @@ assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "verifie
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_VERIFIER_INFRA_RESUME_LIMIT"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "stale-visible-reconciliation-passed:"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "STALE_VISIBLE_RECONCILIATION_PATH"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Do not rely on leaked evaluator tests"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "must not inject benchmark-row-specific probes"
 assert_file_contains "$ROOT/evaluation/README.md" "adapter helper defaults to advisory mode"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "_public_solver_metadata(dict(task.metadata or {}))"
@@ -880,6 +871,7 @@ python3 - "$ROOT" <<'PY'
 import os
 import json
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -894,6 +886,58 @@ from evaluation import swe_bench_pro_scaffold_parity
 from evaluation.swe_bench_pro_on_demand import OnDemandImageManager
 from evaluation import swe_bench_pro_run_parallel_shards
 from evaluation import swe_bench_pro_run_next_shard
+
+with tempfile.TemporaryDirectory() as td:
+    prompt_test_root = Path(td)
+    repo_root = prompt_test_root / "multiagent"
+    workdir = prompt_test_root / "app"
+    runtime_root = prompt_test_root / "runtime"
+    repo_root.mkdir()
+    workdir.mkdir()
+    runtime_root.mkdir()
+    (repo_root / "orchestrator_prompt.md").write_text(
+        "Base orchestrator prompt with $MULTIAGENT_PROMPT_MODULE_ROOT/prompts.\n",
+        encoding="utf-8",
+    )
+    (workdir / "package.json").write_text("{}\n", encoding="utf-8")
+    original_runtime_root = solve_swe_prod.RUNTIME_ROOT
+    original_contract_ledger_path = solve_swe_prod.CONTRACT_LEDGER_PATH
+    original_owner_candidates_path = solve_swe_prod.SOURCE_OWNER_CANDIDATES_PATH
+    try:
+        solve_swe_prod.RUNTIME_ROOT = runtime_root
+        solve_swe_prod.CONTRACT_LEDGER_PATH = runtime_root / "contract-ledger.md"
+        solve_swe_prod.SOURCE_OWNER_CANDIDATES_PATH = runtime_root / "source-owner-candidates.md"
+        public_issue = "Centralize behavior and allow callers to register overrides without editing core logic."
+        prompt_path = solve_swe_prod.make_prompt(repo_root, workdir, public_issue, {})
+        prompt_text = prompt_path.read_text(encoding="utf-8")
+        assert prompt_text.count(public_issue) == 1, prompt_text
+        assert len(prompt_text.encode("utf-8")) < 10000, len(prompt_text.encode("utf-8"))
+        assert "Durable contract ledger:" in prompt_text, prompt_text
+        assert "# SWE Bench Pro Contract Ledger" not in prompt_text, prompt_text
+        assert solve_swe_prod.CONTRACT_LEDGER_PATH.exists()
+        assert solve_swe_prod.SOURCE_OWNER_CANDIDATES_PATH.exists()
+    finally:
+        solve_swe_prod.RUNTIME_ROOT = original_runtime_root
+        solve_swe_prod.CONTRACT_LEDGER_PATH = original_contract_ledger_path
+        solve_swe_prod.SOURCE_OWNER_CANDIDATES_PATH = original_owner_candidates_path
+
+with tempfile.TemporaryDirectory() as td:
+    lifecycle_root = Path(td)
+    captures = lifecycle_root / "captures"
+    captures.mkdir(parents=True)
+    (captures / "worker-01-fix.txt").write_text(
+        "[multiagent codex exec exited rc=0]\n",
+        encoding="utf-8",
+    )
+    assert not solve_swe_prod.orchestrator_exited_without_status(
+        "[multiagent codex exec exited rc=0]",
+        lifecycle_root,
+    )
+    (captures / "orchestrator.txt").write_text(
+        "[multiagent codex exec exited rc=0]\n",
+        encoding="utf-8",
+    )
+    assert solve_swe_prod.orchestrator_exited_without_status("", lifecycle_root)
 
 evalscope = SimpleNamespace()
 sys.modules.setdefault("evalscope", evalscope)
@@ -1032,6 +1076,31 @@ with tempfile.TemporaryDirectory() as td:
         assert "gate-check" in resume_text, resume_text
         assert "src/service.py" in resume_text, resume_text
         assert "pytest -q tests/test_service.py failed" in resume_text, resume_text
+        finding_line = next(
+            line.strip()
+            for line in resume_text.splitlines()
+            if line.strip().startswith("bin/subagent.sh finding-create adapter-resume-01")
+        )
+        finding_argv = shlex.split(finding_line)
+        evidence_index = finding_argv.index("--evidence-json") + 1
+        finding_evidence = json.loads(finding_argv[evidence_index])
+        assert finding_evidence["source_evidence"], finding_evidence
+        finding_argv[0] = str(root / "bin" / "subagent.sh")
+        repair_state = runtime_root / "repair-state"
+        repair_env = {
+            **os.environ,
+            "MULTIAGENT_ROOT": str(runtime_root),
+            "MULTIAGENT_STATE_DIR": str(repair_state),
+        }
+        finding_result = subprocess.run(
+            finding_argv,
+            env=repair_env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert finding_result.returncode == 0, finding_result.stderr
+        assert (repair_state / "findings" / "adapter-resume-01" / "finding.json").exists()
         for forbidden in ("FAIL_TO_PASS", "PASS_TO_PASS", "test_patch", "selected_test_files_to_run", "official failure"):
             assert forbidden not in resume_text, resume_text
     finally:

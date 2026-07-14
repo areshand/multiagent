@@ -24,7 +24,7 @@ Keep this core prompt small. Load detailed instructions only when that role or
 workflow is needed. Resolve module paths relative to this prompt:
 
 ```bash
-PROMPT_DIR="$(cd "$(dirname "$MULTIAGENT_PROMPT")" && pwd -P)"
+PROMPT_DIR="${MULTIAGENT_PROMPT_MODULE_ROOT:-$(cd "$(dirname "$MULTIAGENT_PROMPT")" && pwd -P)}"
 ```
 
 Modules:

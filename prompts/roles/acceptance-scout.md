@@ -96,6 +96,9 @@ Report a compact ledger with:
   exploratory stress checks, with the evidence source for each normative probe
 - mismatch risks: any scaffold, proxy, weaker smoke, or partial route that
   could look done but fail the real acceptance target
+- extension surface: when the task promises registration, configuration,
+  overrides, or adding behavior without core edits, name the concrete API,
+  production integration path, preserved defaults, and override probe
 
 If a visible test, issue text, docs, source, or user message shows assignment
 targets, treat those targets as normative. For example, `id, name := helper(x)`
@@ -107,6 +110,10 @@ Do not make an invented edge case stricter than the task contract. If a probe
 assertion goes beyond user intent, issue text, visible tests, docs, source
 compatibility behavior, public APIs, data schemas, or runtime behavior, label it
 exploratory and do not use it as a hard gate without additional evidence.
+
+Do not treat a centralized hardcoded table as proof of extensibility. The
+acceptance ledger must distinguish code organization from caller-controlled
+extension behavior and make missing production wiring a blocking risk.
 
 For parser, decoder, sanitizer, or replacement tasks, treat invalid and
 incomplete input expectations as first-class acceptance rows when source or

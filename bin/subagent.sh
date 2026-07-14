@@ -11,6 +11,7 @@ WORKER_CLI="${WORKER_CLI:-claude}"
 SUBAGENT_CLI="${SUBAGENT_CLI:-$WORKER_CLI}"
 VERIFIER_CLI="${VERIFIER_CLI:-codex}"
 MULTIAGENT_HELPER="${MULTIAGENT_HELPER:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")}"
+MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER="${MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER:-1}"
 if [[ -n "${MULTIAGENT_EXTRA_PATH:-}" ]]; then
   PATH="$MULTIAGENT_EXTRA_PATH:$PATH"
   export PATH
@@ -2340,6 +2341,7 @@ EOF
 
 audit_closed_todo() {
   local todo_id="$1"
+  local expected_final_diff_hash="${2:-}"
   local dir source_finding_id source_finding_hash current_finding_hash
   dir="$(todo_dir "$todo_id")"
   source_finding_id="$(read_todo_value "$todo_id" source_finding_id || true)"
@@ -2373,6 +2375,7 @@ import sys
 root = pathlib.Path(sys.argv[1])
 todo_id = sys.argv[2]
 expected_finding_hash = sys.argv[3]
+expected_final_diff_hash = sys.argv[4]
 try:
     resolution = json.loads((root / "resolution.json").read_text())
     closure = json.loads((root / "closure.json").read_text())
@@ -2388,6 +2391,9 @@ if closure.get("todo_id") != todo_id or not isinstance(recheck, dict) or recheck
     raise SystemExit(1)
 if closure.get("source_finding_hash") != expected_finding_hash:
     print(f"reject\tclosed-todo-closure-finding-hash-mismatch\ttodo={todo_id}")
+    raise SystemExit(1)
+if expected_final_diff_hash and str(recheck.get("final_diff_hash", "")).lower() != expected_final_diff_hash.lower():
+    print(f"reject\tclosed-todo-final-diff-hash-mismatch\ttodo={todo_id}")
     raise SystemExit(1)
 source_finding_id = closure.get("source_finding_id")
 if source_finding_id not in {
@@ -2410,7 +2416,7 @@ missing = sorted(resolution_commands - recheck_commands)
 if missing:
     print(f"reject\tclosed-todo-recheck-missing-worker-command\ttodo={todo_id}\tcmd={missing[0]}")
     raise SystemExit(1)
-' "$dir" "$todo_id" "$source_finding_hash"
+' "$dir" "$todo_id" "$source_finding_hash" "$expected_final_diff_hash"
   validate_required_commands_covered "$todo_id" "closed todo resolution" "$(cat "$dir/resolution.json")" || return 1
   validate_required_commands_covered "$todo_id" "closed todo verifier recheck" "$(cat "$dir/recheck.json")" || return 1
 }
@@ -2778,11 +2784,109 @@ PY
   return "$rc"
 }
 
+current_final_diff_sha256() {
+  [[ "$MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER" == "1" ]] || return 0
+  require_cmd python3
+  python3 - "$ROOT" "${MULTIAGENT_START_HEAD:-}" <<'PY'
+import hashlib
+import pathlib
+import subprocess
+import sys
+
+root = pathlib.Path(sys.argv[1])
+start_head = sys.argv[2]
+if not root.is_dir():
+    raise SystemExit(0)
+command = ["git", "diff", "--binary", "--ignore-submodules=all"]
+if start_head:
+    command.append(start_head)
+result = subprocess.run(command, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+if result.returncode == 0 and result.stdout.strip():
+    print(hashlib.sha256(result.stdout).hexdigest())
+PY
+}
+
+verifier_evidence_matches_hash() {
+  local evidence_path="$1"
+  local expected_hash="$2"
+  require_cmd python3
+  python3 - "$evidence_path" "$expected_hash" <<'PY'
+import pathlib
+import re
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").lower()
+expected = sys.argv[2].lower()
+compact = re.sub(r"\s+", "", text)
+accepted = (
+    f"final-diff-sha256={expected}" in text
+    or f'"final_diff_hash":"{expected}"' in compact
+)
+raise SystemExit(0 if accepted else 1)
+PY
+}
+
+latest_verifier_verdict() {
+  local subagents_base="$STATE_DIR/subagents"
+  [[ -d "$subagents_base" ]] || return 0
+  require_cmd python3
+  python3 - "$subagents_base" <<'PY'
+import pathlib
+import re
+import sys
+
+base = pathlib.Path(sys.argv[1])
+candidates = []
+for path in base.glob("*/last-message.txt"):
+    name = path.parent.name.lower()
+    if "verifier" not in name and "review" not in name:
+        continue
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        mtime = path.stat().st_mtime_ns
+    except OSError:
+        continue
+    verdict = "MISSING"
+    for line in text.splitlines()[:80]:
+        if not line.strip():
+            continue
+        match = re.fullmatch(r"\s*(ACCEPTED|BLOCKING)\s*", line, re.IGNORECASE)
+        if match:
+            verdict = match.group(1).upper()
+        break
+    candidates.append((mtime, path.parent.name, verdict, path))
+
+if candidates:
+    _, name, verdict, path = max(candidates, key=lambda item: (item[0], str(item[3])))
+    print(f"{verdict}\t{name}\t{path}")
+PY
+}
+
 gate_check() {
   local failed=0
   local findings_base="$STATE_DIR/findings"
   local todos_base="$STATE_DIR/todos"
   local dir finding_id severity todo_dir_path todo_id source status found_todo
+  local verifier_verdict verdict verifier_name verifier_evidence final_diff_hash
+
+  final_diff_hash="$(current_final_diff_sha256)"
+  verifier_verdict="$(latest_verifier_verdict)"
+  if [[ -n "$verifier_verdict" ]]; then
+    IFS=$'\t' read -r verdict verifier_name verifier_evidence <<<"$verifier_verdict"
+    if [[ "$verdict" == "BLOCKING" ]]; then
+      printf 'reject\tlatest-verifier-blocking\tverifier=%s\tevidence=%s\n' "$verifier_name" "$verifier_evidence"
+      failed=1
+    elif [[ "$verdict" == "MISSING" ]]; then
+      printf 'reject\tlatest-verifier-missing-verdict\tverifier=%s\tevidence=%s\n' "$verifier_name" "$verifier_evidence"
+      failed=1
+    elif [[ -n "$final_diff_hash" ]] && ! verifier_evidence_matches_hash "$verifier_evidence" "$final_diff_hash"; then
+      printf 'reject\tlatest-verifier-final-diff-hash-mismatch\tverifier=%s\texpected=%s\tevidence=%s\n' "$verifier_name" "$final_diff_hash" "$verifier_evidence"
+      failed=1
+    fi
+  elif [[ -n "$final_diff_hash" ]]; then
+    printf 'reject\tmissing-verifier-acceptance\texpected=%s\n' "$final_diff_hash"
+    failed=1
+  fi
 
   if [[ -d "$findings_base" ]]; then
     for dir in "$findings_base"/*; do
@@ -2820,7 +2924,7 @@ gate_check() {
       if [[ "$status" != "closed" ]]; then
         printf 'reject\topen-todo\ttodo=%s\tstatus=%s\n' "$todo_id" "$status"
         failed=1
-      elif ! audit_closed_todo "$todo_id"; then
+      elif ! audit_closed_todo "$todo_id" "$final_diff_hash"; then
         failed=1
       fi
     done

@@ -19,13 +19,13 @@ A blocking verifier issue must be machine-readable. It must identify the issue,
 severity, affected paths, evidence, and the required resolution. Use:
 
 ```bash
-bin/subagent.sh finding-create build-go-ofrep \
+bin/subagent.sh finding-create build-go-feature \
   --severity blocking \
   --type compile_failure \
   --summary "Changed Go packages do not compile" \
-  --affected internal/server/ofrep/evaluation.go,internal/server/evaluation/ofrep_bridge.go \
-  --evidence-json '{"command":"go test ./internal/server/ofrep ./internal/server/evaluation","returncode":1,"stderr_excerpt":"undefined: req.Request"}' \
-  --required-resolution "Final diff must compile with rc=0 for both changed Go packages."
+  --affected internal/feature/handler.go,internal/feature/bridge.go \
+  --evidence-json '{"command":"go test ./internal/feature","returncode":1,"stderr_excerpt":"undefined: request.Config"}' \
+  --required-resolution "Final diff must compile with rc=0 for the changed Go package."
 ```
 
 The verifier may still include human-readable analysis, but any blocking issue
@@ -48,11 +48,10 @@ creates a todo for each accepted blocking finding:
 
 ```bash
 bin/subagent.sh todo-create todo-017 \
-  --source-finding-id build-go-ofrep \
-  --task "Fix Go compile failure in OFREP/evaluation changed packages." \
+  --source-finding-id build-go-feature \
+  --task "Fix the compile failure in the changed Go package." \
   --context "Exact verifier evidence and relevant contract ledger." \
-  --done-criteria "run go test ./internal/server/ofrep" \
-  --done-criteria "run go test ./internal/server/evaluation" \
+  --done-criteria "run go test ./internal/feature" \
   --done-criteria "record returncode=0 after final diff"
 ```
 
@@ -73,11 +72,11 @@ A worker assigned a todo must record resolution evidence, not only a sentence:
 
 ```bash
 "${MULTIAGENT_HELPER:-/opt/multiagent/bin/subagent.sh}" resolution-create todo-017 \
-  --worker worker-02-ofrep-build \
+  --worker worker-02-feature-build \
   --status resolved \
-  --changed internal/server/ofrep/evaluation.go,internal/server/evaluation/ofrep_bridge.go \
-  --validation-json '[{"cmd":"go test ./internal/server/ofrep","rc":0},{"cmd":"go test ./internal/server/evaluation","rc":0}]' \
-  --why "The missing interface contract is implemented and both changed packages compile."
+  --changed internal/feature/handler.go,internal/feature/bridge.go \
+  --validation-json '[{"cmd":"go test ./internal/feature","rc":0}]' \
+  --why "The missing interface contract is implemented and the changed package compiles."
 ```
 
 Use the helper path from `MULTIAGENT_HELPER` when present. If a worker is running
@@ -96,8 +95,8 @@ recheck evidence:
 
 ```bash
 bin/subagent.sh todo-close todo-017 \
-  --verified-by verifier-01-ofrep-build \
-  --recheck-json '{"accepted":true,"finding_rechecked":"build-go-ofrep","commands":[{"cmd":"go test ./internal/server/ofrep","rc":0},{"cmd":"go test ./internal/server/evaluation","rc":0}],"final_diff_hash":"..."}' \
+  --verified-by verifier-01-feature-build \
+  --recheck-json '{"accepted":true,"finding_rechecked":"build-go-feature","commands":[{"cmd":"go test ./internal/feature","rc":0}],"final_diff_hash":"..."}' \
   --notes "Verifier rechecked the original finding after worker resolution."
 ```
 
@@ -120,6 +119,17 @@ it lacks worker resolution evidence, verifier closure evidence, source-finding
 binding/hash consistency, or required-command coverage. For code patches, build
 verification is one required finding/todo class; behavior and hidden-contract
 findings use the same loop.
+
+`gate-check` also rejects when the latest durable `verifier-*` or `review-*`
+last message starts with `BLOCKING`. This is a fail-safe for protocol errors: a
+verifier that reports a blocker but fails to call `finding-create` cannot be
+silently ignored merely because the structured store is empty. Persist the
+finding/todo, repair it, and obtain a later `ACCEPTED` verifier recheck.
+A newer verifier last message without either `BLOCKING` or `ACCEPTED` is also
+rejected as an incomplete recheck; do not fall back to an older acceptance.
+When the target repository has a non-empty source diff, `ACCEPTED` and every
+closed todo recheck must name the exact current `final-diff-sha256`. The gate
+computes the live hash and rejects stale or unbound evidence.
 
 ## Verifier Infrastructure Failures
 

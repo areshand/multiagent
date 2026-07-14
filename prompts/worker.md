@@ -71,6 +71,11 @@ Also include:
 - List the assumptions your solution depends on and how you checked them.
 - Identify edge cases, invariants, compatibility constraints, and forbidden shortcuts.
 - If your path only validates a proxy, scaffold, or partial behavior, stop and report the mismatch.
+- If the task promises extensibility, registration, configuration, overrides,
+  or adding behavior without editing core logic, implement and verify that
+  architectural contract. Moving hardcoded cases into one table is not enough.
+  Identify the public/internal extension surface, its production integration
+  path, and a source-derived probe showing both default and overridden behavior.
 - When the task or provided test excerpt includes a literal expected value,
   command argv, serialized output, error text, or ordered list, treat that
   exact shape as part of the contract. Preserve order and punctuation unless
@@ -117,6 +122,11 @@ Before adding code, climb this ladder and stop at the first rung that works:
 Do not add unrequested abstractions, dependencies, configuration, factories,
 wrappers, or boilerplate. Prefer deletion over addition and boring code over
 clever code.
+
+An abstraction is requested when the task explicitly requires callers to add,
+register, configure, or override behavior without changing core logic. In that
+case, do not collapse the requirement into another hardcoded branch or constant;
+build the smallest repository-consistent extension point and wire a real caller.
 
 Do not simplify away trust-boundary validation, data-loss handling, security
 measures, accessibility basics, real-world calibration, or explicit user scope.

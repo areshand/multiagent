@@ -81,6 +81,13 @@ verifier handoff should require `issue-coverage-ledger:` with each item mapped
 to implementation evidence, already-satisfied source evidence, or a blocking
 todo.
 
+When the task says behavior must be extensible, configurable, registered,
+overridden, or addable without core edits, record an architectural extension
+contract. Name the smallest repository-consistent extension surface, its
+production integration/caller path, default compatibility, and a probe that
+changes behavior through the extension surface rather than by editing core
+logic. Centralized hardcoding does not satisfy this contract.
+
 When the task asks for all, every, complete, associated, linked, repeated,
 alternate, fallback-chain, or multi-value behavior, include a completeness
 contract: workers and verifiers must check more than one matching value and must
