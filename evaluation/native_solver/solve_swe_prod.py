@@ -6222,6 +6222,35 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                             no_diff_blocked_retries += 1
                             time.sleep(5)
                             continue
+                        active_no_diff_workers = active_repair_subagent_summaries(RUNTIME_ROOT)
+                        if (
+                            not diff.strip()
+                            and active_no_diff_workers
+                            and no_diff_blocked_retries < no_diff_blocked_retry_limit
+                            and int(deadline - time.monotonic()) > 240
+                            and relaunch_orchestrator_for_blockers(
+                                "orchestrator exited while implementation worker remained active with no source diff",
+                                diff,
+                                [
+                                    *blockers,
+                                    "coverage follow-up ended with a live implementation worker and no materialized source diff; reattach to the worker state or spawn a replacement implementation worker over the same source ownership hints",
+                                    "the next worker must either produce a narrow source diff or write a structured blocking todo/finding with the exact source/API blocker; do not exit with only scout notes",
+                                    *[
+                                        f"active no-diff worker:{summary}"
+                                        for summary in active_no_diff_workers[:3]
+                                    ],
+                                ],
+                                probe_report,
+                                force_live_handoff=True,
+                            )
+                        ):
+                            no_diff_blocked_retries += 1
+                            log(
+                                "active no-diff worker handoff launched after coverage-followup orchestrator exit: "
+                                + "; ".join(active_no_diff_workers[:3])
+                            )
+                            time.sleep(5)
+                            continue
                         ownership_paths = list(
                             dict.fromkeys(
                                 [

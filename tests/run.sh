@@ -1411,6 +1411,12 @@ assert "coverage follow-up timeout extended because active repair worker" in sol
 assert "terminal deadline grace extended because active repair worker" in solver_source, (
     "terminal deadline grace should not reject while a structured repair worker is actively fixing verifier findings"
 )
+assert "orchestrator exited while implementation worker remained active with no source diff" in solver_source, (
+    "coverage-follow-up exits must hand off orphaned active implementation workers before local no-diff rejection"
+)
+assert "active no-diff worker handoff launched after coverage-followup orchestrator exit" in solver_source, (
+    "orphaned active no-diff workers should be visible in diagnostics and bounded by the no-diff retry budget"
+)
 assert "FAILURE_DIAGNOSTICS_PATH" in solver_source and "failure-diagnostics.txt" in solver_source, (
     "native wrapper should persist structured failure diagnostics for the eval runner"
 )
