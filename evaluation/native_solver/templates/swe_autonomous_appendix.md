@@ -112,6 +112,11 @@ Benchmark spawning path:
   table, spawn a fresh bounded repair worker over the implicated source paths,
   and require the follow-up to rerun the same command or a narrower
   source-derived equivalent before final verification.
+- If a worker reports `required-path-outside-owned:` or otherwise names an exact
+  source path needed outside its assignment, record that as a blocking finding
+  or todo input. The next repair worker must include those exact paths in
+  `--owned` plus any still-needed previous owned paths; do not respawn the same
+  owned set after an ownership blocker.
 - Treat every blocking verifier or adapter issue as structured repair state,
   not prose memory. Record the issue with `bin/subagent.sh finding-create`,
   convert accepted blocking findings to `bin/subagent.sh todo-create` items with

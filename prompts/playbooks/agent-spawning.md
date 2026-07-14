@@ -105,6 +105,12 @@ done criteria, assign workers from open todos, require worker resolution
 evidence, then close the todo with `bin/subagent.sh todo-close ...` only after
 verifier recheck. `resolved` is a handoff state, not acceptance.
 
+When a worker says `required-path-outside-owned:` or names a required path
+outside its assignment, the next todo/worker must own that exact path. Preserve
+the relevant previous owned paths if they still contain the active diff or call
+site. Never spawn a replacement worker with the same owned path set after an
+ownership blocker.
+
 Before final acceptance, run:
 
 ```bash

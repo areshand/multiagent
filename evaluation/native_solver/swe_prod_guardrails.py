@@ -756,6 +756,10 @@ def helper_scope_hints(workdir: Path, issue: str, diff: str, blockers: list[str]
         if relative and relative not in hints and (workdir / relative).exists():
             hints.append(relative)
 
+    for path in explicit_source_paths_from_text(workdir, "\n".join(blockers)):
+        if not _is_test_path(path):
+            add_existing(path)
+
     for path in _changed_paths(diff):
         if not path or _is_test_path(path):
             continue
@@ -786,6 +790,25 @@ def helper_scope_hints(workdir: Path, issue: str, diff: str, blockers: list[str]
             add_existing(relative)
 
     return hints[:12]
+
+
+def explicit_source_paths_from_text(workdir: Path, text: str) -> list[str]:
+    """Extract existing repository source paths explicitly named in blocker text."""
+
+    source_suffixes = ("go", "py", "pyi", "js", "jsx", "ts", "tsx", "rs", "java", "kt", "rb", "php")
+    candidates: list[str] = []
+    pattern = re.compile(
+        r"(?<![\w./-])((?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+"
+        r"(?:\.(?:" + "|".join(source_suffixes) + r"))?)(?![\w./-])"
+    )
+    for match in pattern.finditer(text):
+        raw = match.group(1).strip("`'\".,:;()[]{}")
+        if not raw or raw.startswith(("/", "../")) or ".." in Path(raw).parts:
+            continue
+        path = workdir / raw
+        if path.exists() and raw not in candidates:
+            candidates.append(raw)
+    return candidates[:16]
 
 
 def deprecated_noop_probe_command() -> list[str]:

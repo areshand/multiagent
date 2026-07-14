@@ -107,6 +107,12 @@ findings become todo queue items with done criteria, and a todo is retired only
 through `bin/subagent.sh todo-close ...` after a verifier accepts the worker's
 resolution evidence.
 
+If a worker reports `required-path-outside-owned:` or otherwise names an exact
+source path needed outside its owned paths, treat that as a blocking finding/todo
+input. The next repair assignment must include those exact paths in `--owned`
+plus any still-needed prior owned paths. Do not respawn a worker with the same
+owned set after an ownership blocker.
+
 ## Validation Failure Repair Workflow
 
 Use this workflow when a worker or verifier reports that a relevant visible

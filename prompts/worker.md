@@ -19,6 +19,9 @@ Also include:
 - Assignment details: assignment ID, branch, owned paths, task statement, and relevant contract ledger.
 - If assigned an orchestrator todo, include the todo ID, source finding ID,
   exact verifier evidence, and done criteria in your final report.
+- If the fix requires a path outside your owned paths, stop and report
+  `required-path-outside-owned:` with the exact repository-relative path(s), why
+  each path owns the missing contract, and the next bounded assignment needed.
 - Validation lease details when validation is expected: package/path, allowed
   command, owner, and commands that must not be duplicated.
 - If you discover another live worker or validation command is operating on the

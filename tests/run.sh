@@ -511,6 +511,8 @@ assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" 'verifier sugge
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "todo-create"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "todo-close"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "gate-check"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "required-path-outside-owned:"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "ownership blocker"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" 'WORKER_CLI="${WORKER_CLI:-claude}"'
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "Orchestration Routing Playbook"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "Contract Scout Workflow"
@@ -523,6 +525,8 @@ assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "paralle
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "Validation Failure Repair Workflow"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "finding-todo-loop.md"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "todo-close"
+assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "required-path-outside-owned:"
+assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "ownership blocker"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "Build verification failures are not eval-wrapper paperwork"
 assert_file_contains "$ROOT/prompts/playbooks/dag.md" "DAG Workflow Playbook"
 assert_file_contains "$ROOT/prompts/playbooks/recovery.md" "Recovery Playbook"
@@ -579,6 +583,8 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_ap
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "source-owner-ledger:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "constructor-dependency-checked:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "provider-capability-checked:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "required-path-outside-owned:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "ownership blocker"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "finding-create"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "todo-create"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "resolution-create"
@@ -598,6 +604,8 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_fi
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "source-owner-ledger:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "constructor-dependency-checked:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "provider-capability-checked:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "required-path-outside-owned:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "ownership blocker"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "go-package-validation-passed:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "finding-create"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "todo-create"
@@ -680,6 +688,7 @@ assert_file_contains "$ROOT/prompts/worker.md" "candidate-owner="
 assert_file_contains "$ROOT/prompts/worker.md" "source-owner-ledger:"
 assert_file_contains "$ROOT/prompts/worker.md" "constructor-dependency-checked:"
 assert_file_contains "$ROOT/prompts/worker.md" "provider-capability-checked:"
+assert_file_contains "$ROOT/prompts/worker.md" "required-path-outside-owned:"
 assert_file_contains "$ROOT/prompts/worker.md" "callsite="
 assert_file_contains "$ROOT/prompts/worker.md" "aggregate count"
 assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "multi-value-probe-passed:"
@@ -1020,6 +1029,44 @@ assert "production-native progress watchdog" in spawn_instruction, spawn_instruc
 assert "src/service.py" in spawn_instruction, spawn_instruction
 for forbidden in ("FAIL_TO_PASS", "PASS_TO_PASS", "test_patch", "selected_test_files_to_run"):
     assert forbidden not in spawn_instruction, spawn_instruction
+
+with tempfile.TemporaryDirectory() as td:
+    repo = Path(td) / "repo"
+    repo.mkdir()
+    (repo / "internal/server/evaluation").mkdir(parents=True)
+    (repo / "internal/server/ofrep").mkdir(parents=True)
+    (repo / "internal/server/evaluation/ofrep_bridge.go").write_text("package evaluation\n", encoding="utf-8")
+    (repo / "internal/server/ofrep/evaluation.go").write_text("package ofrep\n", encoding="utf-8")
+    blockers = [
+        "required-path-outside-owned: internal/server/evaluation/ofrep_bridge.go because it is the production bridge implementation",
+        "prior owned path internal/server/ofrep/evaluation.go contains the call site",
+    ]
+    hints = solve_swe_prod.helper_scope_hints(repo, "OFREP bulk evaluation should list namespace flags.", "", blockers)
+    assert "internal/server/evaluation/ofrep_bridge.go" in hints, hints
+    assert "internal/server/ofrep/evaluation.go" in hints, hints
+
+captured_worker_commands = []
+try:
+    solve_swe_prod.run = fake_worker_run
+    worker_name = solve_swe_prod.spawn_adapter_helper_worker(
+        root,
+        root,
+        {},
+        "OFREP bulk evaluation should list namespace flags.",
+        "",
+        ["required-path-outside-owned: evaluation/native_solver/solve_swe_prod.py because it owns the wrapper handoff"],
+        [],
+        2,
+        "",
+        launch_reason="ownership blocker regression",
+    )
+finally:
+    solve_swe_prod.run = original_run
+assert worker_name == "worker-adapter-helper-02", worker_name
+assignment_commands = [args for args in captured_worker_commands if "assignment-create" in args]
+assert assignment_commands, captured_worker_commands
+owned_index = assignment_commands[-1].index("--owned")
+assert assignment_commands[-1][owned_index + 1] == "evaluation/native_solver/solve_swe_prod.py", assignment_commands[-1]
 
 solver_source = (root / "evaluation/native_solver/solve_swe_prod.py").read_text(encoding="utf-8")
 assert 'adapter_helper_repair_allowed("progress watchdog stale diff")' in solver_source, (

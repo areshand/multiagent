@@ -21,8 +21,11 @@ As orchestrator:
    existing completed worker pane; spawn a fresh worker process with a new
    assignment name.
 4. If ownership is too narrow for a legitimate source file, create a new
-   bounded assignment that includes that source file. Do not silently accept
-   outside-owned edits.
+   bounded assignment that includes that exact source file. If a worker reports
+   `required-path-outside-owned:` or names a required repository-relative path,
+   the next repair todo/worker must include those exact path(s) in `--owned`
+   plus any still-needed prior owned paths. Do not silently accept outside-owned
+   edits, and do not respawn the same owned set after an ownership blocker.
 5. Every worker and verifier prompt you create must include the durable contract
    ledger from `/tmp/multiagent-prod-swe/contract-ledger.md` or a faithful
    excerpt of every listed invariant. Follow-up prompts must preserve prior
