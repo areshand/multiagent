@@ -225,6 +225,12 @@ Worker quality bar:
   One passing package does not clear another changed package. Treat
   `undefined:`, `has no field or method`, `build failed`, `FAIL`, or any nonzero
   return code as blocking.
+- If changed Go code wires service startup, adapters, helpers, parsers,
+  converters, or shared feature plumbing, inspect source-visible sibling
+  packages and issue/diff vocabulary for a related feature subtree. If that
+  subtree has Go tests, run or require a bounded command such as
+  `go test ./related/tree/...` after the final diff and record `returncode=0`;
+  changed-package success alone is too narrow for this class.
 - Trace one layer below changed feature code into helper APIs when the issue
   mentions keys, fallback sources, expired records, parsers, serializers,
   adapters, persistence, or missing data.

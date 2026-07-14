@@ -168,6 +168,11 @@ non-test `.go` package after the final diff. In final validation, include
 changed package. Do not let one `ok` package stand in for another changed
 package; any `undefined:`, `has no field or method`, `build failed`, `FAIL`, or
 nonzero return code is `validation-repair-needed:`.
+If the changed Go package wires service startup, adapters, helpers, parsers,
+converters, or shared feature plumbing, inspect source-visible sibling packages
+and issue/diff vocabulary for a related feature subtree. When such a subtree has
+Go tests, also run or request a bounded command such as
+`go test ./related/tree/...` after the final diff and record `returncode=0`.
 Before reporting completion, audit every new or changed method/function call
 through a receiver, field, interface, protocol, trait, or adapter. Prove the
 method exists on the declared static type used at the call site, not only on a

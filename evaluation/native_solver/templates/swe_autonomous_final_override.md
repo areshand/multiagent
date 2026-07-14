@@ -103,6 +103,12 @@ As orchestrator:
      Treat `undefined:`,
      `has no field or method`, `build failed`, `FAIL`, or any nonzero return
      code as blocking.
+   - If changed Go code wires service startup, adapters, helpers, parsers,
+     converters, or shared feature plumbing, inspect source-visible sibling
+     packages and issue/diff vocabulary for a related feature subtree. If that
+     subtree has Go tests, run or require a bounded command such as
+     `go test ./related/tree/...` after the final diff and record
+     `returncode=0`; changed-package success alone is too narrow for this class.
    - If parser/reader linked, alternate, repeated, complete, or multi-value
      behavior changed, the status JSON `validation` field must include exact
      `multi-value-probe-passed:` or `multi-value-probe-skip-justified:`. For a

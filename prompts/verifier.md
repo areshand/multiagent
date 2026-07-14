@@ -237,6 +237,12 @@ changed package, require return code 0, and record
 package. One `ok` package does not clear a different changed package. Treat
 `undefined:`, `undefined method`, `undefined field`, `has no field or method`,
 `build failed`, `FAIL`, or any nonzero return code as blocking.
+When changed Go code wires service startup, adapters, helpers, parsers,
+converters, or shared feature plumbing, inspect source-visible sibling packages
+and issue/diff vocabulary for a related feature subtree. If a related subtree
+has Go tests, run or require a bounded command such as
+`go test ./related/tree/...` after the final diff and record its `returncode=0`;
+changed-package success alone is too narrow for this class.
 Before accepting, cross-check every worker/verifier claim about changed files
 against `git diff --name-only`. If an agent says a mock, interface,
 compatibility wrapper, fixture, caller, or generated/source companion was

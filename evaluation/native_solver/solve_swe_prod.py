@@ -489,6 +489,51 @@ def completed_status_has_final_build_evidence(diff: str) -> bool:
     return not structured_repair_gate_blockers()
 
 
+def status_covers_validation_commands(current_status: dict[str, object], commands: list[list[str]]) -> bool:
+    """Return true when status evidence covers every selected validation command."""
+
+    if not commands:
+        return True
+    status_text = json.dumps(current_status, sort_keys=True).lower().replace("\\n", "\n")
+    for command in commands:
+        label = " ".join(command).lower()
+        if label not in status_text:
+            return False
+        window_start = status_text.find(label)
+        window = status_text[window_start : window_start + 700]
+        if not any(marker in window for marker in ("returncode=0", "return code: 0", "rc=0", "passed")):
+            return False
+    return True
+
+
+def completed_status_covers_adapter_validation(
+    workdir: Path,
+    issue: str,
+    diff: str,
+    current_status: dict[str, object] | None = None,
+) -> bool:
+    """Return true when completed status proves the adapter-selected command surface."""
+
+    if current_status is None:
+        if not STATUS_PATH.exists():
+            return False
+        try:
+            loaded = json.loads(STATUS_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        if not isinstance(loaded, dict):
+            return False
+        current_status = loaded
+    state = str(current_status.get("status", "")).lower()
+    if state not in {"completed", "complete", "done"}:
+        return False
+    if not build_verification_has_evidence(json.dumps(current_status, sort_keys=True), diff):
+        return False
+    if structured_repair_gate_blockers():
+        return False
+    return status_covers_validation_commands(current_status, coverage_probe_commands(workdir, issue, diff))
+
+
 def require_path(path: Path, description: str) -> None:
     if not path.exists():
         raise RuntimeError(f"missing {description}: {path}")
@@ -2762,16 +2807,18 @@ def pytest_teardown_after_success(output: str) -> bool:
 
 
 def run_validation_coverage_probe(workdir: Path, issue: str, diff: str, blockers: list[str]) -> tuple[str, bool]:
-    if completed_status_has_final_build_evidence(diff):
+    commands = coverage_probe_commands(workdir, issue, diff)
+    current_status = status()
+    if completed_status_covers_adapter_validation(workdir, issue, diff, current_status):
         report = (
             "Adapter-selected public helper validation probe skipped because "
-            "status.json already records completed final-diff build verification "
-            "and the structured repair gate accepts the run."
+            "status.json already records completed final-diff build verification, "
+            "covers the adapter-selected validation command surface, and the "
+            "structured repair gate accepts the run."
         )
         HELPER_PROBE_PATH.write_text(report, encoding="utf-8")
         return report, True
 
-    commands = coverage_probe_commands(workdir, issue, diff)
     if not commands:
         report = "No adapter-selected public helper validation command was available for this repository/task."
         HELPER_PROBE_PATH.write_text(report, encoding="utf-8")
@@ -3877,7 +3924,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 capture_session(session)
                 diff = git_diff(workdir)
                 text = captured_text()
-                if completed_status_has_final_build_evidence(diff):
+                if completed_status_covers_adapter_validation(workdir, issue, diff, current_status):
                     accepted_completed_status_snapshot = dict(current_status)
                     accepted_completed_status_diff_hash = final_diff_sha256(diff)
                 scope_blockers = implementation_scope_blockers(issue, diff, current_status, task_metadata)
@@ -3892,7 +3939,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 if (
                     not blockers
                     and not coverage_probe_satisfied
-                    and not completed_status_has_final_build_evidence(diff)
+                    and not completed_status_covers_adapter_validation(workdir, issue, diff, current_status)
                     and coverage_probe_commands(workdir, issue, diff)
                 ):
                     probe_report, probe_passed = run_validation_coverage_probe(
@@ -4853,8 +4900,8 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                     or (diff_bytes > 0 and not has_live_agent_process())
                 ):
                     diff = git_diff(workdir)
-                    if completed_status_has_final_build_evidence(diff):
-                        log("coverage follow-up recovery yielded to completed status with accepted final build gate")
+                    if completed_status_covers_adapter_validation(workdir, issue, diff):
+                        log("coverage follow-up recovery yielded to completed status with accepted final build and adapter validation gate")
                         outcome = "completed"
                         break
                     coverage_status_for_blockers = status_with_recovered_public_evidence(
@@ -5124,8 +5171,8 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         ):
                             time.sleep(5)
                             continue
-                        if completed_status_has_final_build_evidence(git_diff(workdir)):
-                            log("coverage follow-up blocker path yielded to completed status with accepted final build gate")
+                        if completed_status_covers_adapter_validation(workdir, issue, git_diff(workdir)):
+                            log("coverage follow-up blocker path yielded to completed status with accepted final build and adapter validation gate")
                             outcome = "completed"
                             break
                         ownership_paths = required_path_outside_owned_reports(RUNTIME_ROOT)
@@ -5272,11 +5319,18 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
             ),
             *structured_repair_gate_blockers(),
         ]
+        if not status_covers_validation_commands(
+            accepted_completed_status_snapshot,
+            coverage_probe_commands(workdir, issue, final_diff),
+        ):
+            snapshot_blockers.append(
+                "completed status snapshot lacks adapter-selected validation command coverage for the final diff"
+            )
         if not snapshot_blockers:
             STATUS_PATH.write_text(json.dumps(accepted_completed_status_snapshot), encoding="utf-8")
             log(
                 "nonzero wrapper exit overridden because an earlier completed status snapshot "
-                "still proves the final diff after stale coverage follow-up state"
+                "still proves the final diff and adapter validation after stale coverage follow-up state"
             )
             coverage_gate_unresolved = False
             exit_code = 0
@@ -5286,9 +5340,9 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 "completed status snapshot could not override nonzero wrapper exit; blockers remain: "
                 + "; ".join(snapshot_blockers)
             )
-    if exit_code != 0 and final_diff.strip() and completed_status_has_final_build_evidence(final_diff):
+    if exit_code != 0 and final_diff.strip() and completed_status_covers_adapter_validation(workdir, issue, final_diff):
         log(
-            "nonzero wrapper exit overridden because status.json already records completed final-diff build verification accepted by the structured repair gate"
+            "nonzero wrapper exit overridden because status.json already records completed final-diff build verification and adapter validation accepted by the structured repair gate"
         )
         coverage_gate_unresolved = False
         exit_code = 0

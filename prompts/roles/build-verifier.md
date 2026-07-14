@@ -23,6 +23,11 @@ correctness is proven.
 For Go, derive affected packages from changed non-test `.go` files and run
 `go test ./affected/package` or a broader command that includes every changed
 package. One passing package does not clear a different changed package.
+If changed Go code wires service startup, adapters, helpers, parsers,
+converters, or shared feature plumbing, inspect source-visible sibling packages
+and issue/diff vocabulary for a related feature subtree. If that subtree has Go
+tests, add a bounded related command such as `go test ./related/tree/...` and
+require return code 0 after the final diff.
 Do not append repo-root `.` or unrelated packages to a focused changed-package
 command unless the root/unrelated package is itself affected and buildable. If a
 broad command mixes changed packages with an invalid unrelated target, rerun the

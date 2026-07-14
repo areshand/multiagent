@@ -791,9 +791,9 @@ assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "complet
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "final cleanup recovery requires adapter public validation before accepting visible-validation text"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "final cleanup recovery found a source diff but no durable worker validation evidence"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "completion marker recovered at final cleanup after adapter public probe passed without durable worker evidence"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "nonzero wrapper exit overridden because status.json already records completed final-diff build verification accepted by the structured repair gate"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "nonzero wrapper exit overridden because status.json already records completed final-diff build verification and adapter validation accepted by the structured repair gate"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "status.json already records completed final-diff build verification"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "coverage follow-up recovery yielded to completed status with accepted final build gate"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "coverage follow-up recovery yielded to completed status with accepted final build and adapter validation gate"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "verifier infrastructure failed before semantic recheck"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_VERIFIER_INFRA_RESUME_LIMIT"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "stale-visible-reconciliation-passed:"
@@ -1677,8 +1677,29 @@ with tempfile.TemporaryDirectory() as td:
             diff,
             ["stale pre-status blocker"],
         )
+        assert not passed, report
+        assert "Return code: 42" in report, report
+        solve_swe_prod.STATUS_PATH.write_text(
+            json.dumps(
+                {
+                    "status": "completed",
+                    "validation": (
+                        "build-verification-passed: "
+                        f"final-diff-sha256={diff_hash} compile_clean=true returncode=0. "
+                        "Command: bash -lc exit 42 Return code: 0"
+                    ),
+                }
+            ),
+            encoding="utf-8",
+        )
+        report, passed = solve_swe_prod.run_validation_coverage_probe(
+            Path(td),
+            "Service should work.",
+            diff,
+            ["covered pre-status blocker"],
+        )
         assert passed, report
-        assert "status.json already records completed final-diff build verification" in report, report
+        assert "covers the adapter-selected validation command surface" in report, report
     finally:
         solve_swe_prod.RUNTIME_ROOT = original_runtime
         solve_swe_prod.STATUS_PATH = original_status
@@ -1724,6 +1745,34 @@ with tempfile.TemporaryDirectory() as td:
     )
     assert ["go", "test", "./lib/service"] in go_related_commands, go_related_commands
     assert ["go", "test", "./lib/kube/..."] in go_related_commands, go_related_commands
+    go_related_diff = "diff --git a/lib/service/kubernetes.go b/lib/service/kubernetes.go\n+func initKubernetesService() {}\n"
+    go_related_hash = solve_swe_prod.final_diff_sha256(go_related_diff)
+    narrow_status = {
+        "status": "completed",
+        "validation": (
+            f"build-verification-passed: final-diff-sha256={go_related_hash} changed-files=1 compile_clean=true returncode=0. "
+            "go-package-validation-passed: package=./lib/service command='go test ./lib/service' returncode=0"
+        ),
+    }
+    assert not solve_swe_prod.completed_status_covers_adapter_validation(
+        repo,
+        "Kubernetes service startup should initialize credentials used by proxy forwarding.",
+        go_related_diff,
+        narrow_status,
+    )
+    broad_status = {
+        "status": "completed",
+        "validation": (
+            narrow_status["validation"]
+            + ". related-feature-validation-passed: command='go test ./lib/kube/...' returncode=0"
+        ),
+    }
+    assert solve_swe_prod.completed_status_covers_adapter_validation(
+        repo,
+        "Kubernetes service startup should initialize credentials used by proxy forwarding.",
+        go_related_diff,
+        broad_status,
+    )
 
 false_helper_blockers = solve_swe_prod.implementation_scope_blockers(
     "`Panel` `Submit` flow fails when independent `app` files use API scripts and a keyboard key command result in the working directory.",
