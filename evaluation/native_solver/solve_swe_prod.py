@@ -2226,6 +2226,19 @@ def validation_coverage_blockers(
             pass
     official_contract_satisfied = official_expected_tests_satisfied_by_text(metadata or {}, text)
     blockers: list[str] = [] if official_contract_satisfied else official_expected_test_blockers(metadata or {}, current_status)
+    if any(
+        marker in status_text
+        for marker in (
+            "validation-repair-needed:",
+            "compile_clean=false",
+            '"compile_clean": false',
+        )
+    ):
+        blockers.append(
+            "status.json contains unresolved verifier repair evidence (`validation-repair-needed:` "
+            "or compile_clean=false); record it as a blocking finding/todo, repair it, and only "
+            "complete after verifier closure plus hash-bound final validation"
+        )
     blockers.extend(claimed_changed_path_blockers(diff, f"{text}\n{json.dumps(current_status, sort_keys=True)}"))
     blockers.extend(stale_patch_application_blockers(text))
     changed_code_paths = changed_code_paths_from_diff(diff)
@@ -4985,6 +4998,13 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     if restored:
         log(f"restored benchmark-disallowed changes: {restored}")
     final_diff = git_diff(workdir)
+    if exit_code != 0 and final_diff.strip() and completed_status_has_final_build_evidence(final_diff):
+        log(
+            "nonzero wrapper exit overridden because status.json already records completed final-diff build verification accepted by the structured repair gate"
+        )
+        coverage_gate_unresolved = False
+        exit_code = 0
+        outcome = "completed"
     if exit_code == 0 and final_diff.strip():
         final_status = status()
         final_text = captured_text()

@@ -791,6 +791,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "complet
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "final cleanup recovery requires adapter public validation before accepting visible-validation text"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "final cleanup recovery found a source diff but no durable worker validation evidence"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "completion marker recovered at final cleanup after adapter public probe passed without durable worker evidence"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "nonzero wrapper exit overridden because status.json already records completed final-diff build verification accepted by the structured repair gate"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "status.json already records completed final-diff build verification"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "coverage follow-up recovery yielded to completed status with accepted final build gate"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "stale-visible-reconciliation-passed:"
@@ -1961,6 +1962,19 @@ validation_repair_needed_blockers = solve_swe_prod.implementation_scope_blockers
     },
 )
 assert any("requires a repair worker" in blocker for blocker in validation_repair_needed_blockers), validation_repair_needed_blockers
+validation_repair_needed_gate_blockers = solve_swe_prod.validation_coverage_blockers(
+    "Parser output should preserve author contribution shape.",
+    "diff --git a/openlibrary/catalog/marc/parse.py b/openlibrary/catalog/marc/parse.py\n+def read_authors(record):\n+    return []\n",
+    "",
+    {
+        "status": "completed",
+        "validation": (
+            "validation-repair-needed: pytest -q openlibrary/catalog/marc/tests/test_parse.py failed. "
+            "compile_clean=false"
+        ),
+    },
+)
+assert any("status.json contains unresolved verifier repair evidence" in blocker for blocker in validation_repair_needed_gate_blockers), validation_repair_needed_gate_blockers
 nonzero_validation_blockers = solve_swe_prod.implementation_scope_blockers(
     "Parser output should preserve author contribution shape.",
     "diff --git a/openlibrary/catalog/marc/parse.py b/openlibrary/catalog/marc/parse.py\n+def read_authors(record):\n+    return []\n",
