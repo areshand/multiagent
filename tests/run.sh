@@ -882,6 +882,31 @@ with tempfile.TemporaryDirectory() as td:
         solve_swe_prod.RUNTIME_ROOT = original_runtime_root
         solve_swe_prod.CONTRACT_LEDGER_PATH = original_ledger_path
 
+with tempfile.TemporaryDirectory() as td:
+    runtime_root = Path(td) / "runtime"
+    workdir = Path(td) / "repo"
+    workdir.mkdir()
+    (workdir / "src").mkdir()
+    (workdir / "src" / "main.go").write_text("package main\nfunc EvaluateBulk() {}\n", encoding="utf-8")
+    original_runtime_root = solve_swe_prod.RUNTIME_ROOT
+    original_which = solve_swe_prod.shutil.which
+    try:
+        solve_swe_prod.RUNTIME_ROOT = runtime_root
+        runtime_root.mkdir()
+        solve_swe_prod.shutil.which = lambda cmd: None if cmd == "rg" else original_which(cmd)
+        solve_swe_prod.write_rg_fallback()
+        rg = runtime_root / "rg"
+        assert rg.exists(), rg
+        search = subprocess.run([str(rg), "-n", "EvaluateBulk", str(workdir)], text=True, capture_output=True, check=False)
+        assert search.returncode == 0, search.stderr
+        assert "src/main.go:2:func EvaluateBulk()" in search.stdout, search.stdout
+        listed = subprocess.run([str(rg), "--files", str(workdir)], text=True, capture_output=True, check=False)
+        assert listed.returncode == 0, listed.stderr
+        assert "src/main.go" in listed.stdout, listed.stdout
+    finally:
+        solve_swe_prod.RUNTIME_ROOT = original_runtime_root
+        solve_swe_prod.shutil.which = original_which
+
 captured_worker_commands = []
 try:
     def fake_worker_run(args, **_kwargs):

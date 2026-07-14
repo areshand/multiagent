@@ -515,6 +515,140 @@ if __name__ == "__main__":
         log(f"could not install stable apply_patch helper at {STABLE_APPLY_PATCH}: {exc}")
 
 
+def write_rg_fallback() -> None:
+    if shutil.which("rg"):
+        return
+    rg_path = RUNTIME_ROOT / "rg"
+    rg_path.write_text(
+        r'''#!/usr/bin/env python3
+from __future__ import annotations
+
+import os
+import re
+import sys
+from pathlib import Path
+
+
+IGNORED_DIRS = {".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "coverage", "__pycache__"}
+
+
+def iter_files(paths: list[str]) -> list[Path]:
+    roots = [Path(path) for path in (paths or ["."])]
+    files: list[Path] = []
+    for root in roots:
+        if root.is_file():
+            files.append(root)
+            continue
+        if not root.exists():
+            continue
+        for current, dirs, names in os.walk(root):
+            dirs[:] = [name for name in dirs if name not in IGNORED_DIRS]
+            for name in names:
+                path = Path(current) / name
+                if path.is_file():
+                    files.append(path)
+    return files
+
+
+def parse_args(argv: list[str]) -> tuple[dict[str, bool], str | None, list[str]]:
+    flags = {"files": False, "ignore_case": False, "files_with_matches": False}
+    pattern: str | None = None
+    paths: list[str] = []
+    idx = 0
+    while idx < len(argv):
+        arg = argv[idx]
+        if arg == "--":
+            if flags["files"]:
+                paths.extend(argv[idx + 1 :])
+            elif idx + 1 < len(argv) and pattern is None:
+                pattern = argv[idx + 1]
+                paths.extend(argv[idx + 2 :])
+            else:
+                paths.extend(argv[idx + 1 :])
+            break
+        if arg == "--files":
+            flags["files"] = True
+            idx += 1
+            continue
+        if arg in {"-i", "--ignore-case"}:
+            flags["ignore_case"] = True
+            idx += 1
+            continue
+        if arg in {"-l", "--files-with-matches"}:
+            flags["files_with_matches"] = True
+            idx += 1
+            continue
+        if arg in {"-n", "-S", "--no-heading", "--hidden", "--follow", "--color=never"}:
+            idx += 1
+            continue
+        if arg in {"-g", "--glob", "--type", "-t", "--type-not", "-T"}:
+            idx += 2
+            continue
+        if arg.startswith("-"):
+            idx += 1
+            continue
+        if flags["files"]:
+            paths.append(arg)
+            idx += 1
+            continue
+        if pattern is None:
+            pattern = arg
+        else:
+            paths.append(arg)
+        idx += 1
+    return flags, pattern, paths
+
+
+def is_binary(path: Path) -> bool:
+    try:
+        return b"\0" in path.read_bytes()[:4096]
+    except OSError:
+        return True
+
+
+def main() -> int:
+    flags, pattern, paths = parse_args(sys.argv[1:])
+    if flags["files"]:
+        for path in iter_files(paths):
+            print(path)
+        return 0
+    if pattern is None:
+        print("rg fallback: missing pattern", file=sys.stderr)
+        return 2
+    try:
+        regex = re.compile(pattern, re.IGNORECASE if flags["ignore_case"] else 0)
+    except re.error:
+        regex = re.compile(re.escape(pattern), re.IGNORECASE if flags["ignore_case"] else 0)
+    matched = False
+    for path in iter_files(paths):
+        if is_binary(path):
+            continue
+        try:
+            lines = path.read_text(errors="replace").splitlines()
+        except OSError:
+            continue
+        file_matched = False
+        for line_no, line in enumerate(lines, 1):
+            if not regex.search(line):
+                continue
+            matched = True
+            file_matched = True
+            if not flags["files_with_matches"]:
+                print(f"{path}:{line_no}:{line}")
+        if flags["files_with_matches"] and file_matched:
+            print(path)
+    return 0 if matched else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+''',
+        encoding="utf-8",
+    )
+    rg_path.chmod(0o755)
+    log(f"installed rg fallback at {rg_path}")
+
+
 def _walk_source_dirs(workdir: Path, *, max_dirs: int = 500) -> list[str]:
     ignored = {".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "coverage", "__pycache__"}
     dirs: list[str] = []
@@ -2873,6 +3007,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
     write_codex_bridge(real_codex, os.environ.get("EVAL_NATIVE_SOLVER_MODEL", "gpt-5"), auth_mode)
     write_apply_patch_helper()
+    write_rg_fallback()
     issue = read_prompt(prompt_path)
     task_metadata = read_task_metadata()
     task_metadata["_solver_workdir"] = str(workdir)
