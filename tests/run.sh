@@ -907,6 +907,36 @@ with tempfile.TemporaryDirectory() as td:
         solve_swe_prod.RUNTIME_ROOT = original_runtime_root
         solve_swe_prod.shutil.which = original_which
 
+with tempfile.TemporaryDirectory() as td:
+    runtime_root = Path(td) / "runtime"
+    workdir = Path(td) / "repo"
+    fake_go = Path(td) / "go-real"
+    count_file = Path(td) / "go-count"
+    workdir.mkdir()
+    fake_go.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$*\" >> " + str(count_file) + "\n"
+        "printf 'fake go %s\\n' \"$*\"\n",
+        encoding="utf-8",
+    )
+    fake_go.chmod(0o755)
+    original_runtime_root = solve_swe_prod.RUNTIME_ROOT
+    try:
+        solve_swe_prod.RUNTIME_ROOT = runtime_root
+        runtime_root.mkdir()
+        solve_swe_prod.write_go_singleflight_wrapper(str(fake_go))
+        go = runtime_root / "go"
+        first = subprocess.run([str(go), "test", "./pkg"], cwd=workdir, text=True, capture_output=True, check=False)
+        second = subprocess.run([str(go), "test", "./pkg"], cwd=workdir, text=True, capture_output=True, check=False)
+        assert first.returncode == 0, first.stderr
+        assert second.returncode == 0, second.stderr
+        assert "fake go test ./pkg" in first.stdout, first.stdout
+        assert "fake go test ./pkg" in second.stdout, second.stdout
+        assert count_file.read_text(encoding="utf-8").splitlines() == ["test ./pkg"]
+        assert "replaying completed validation" in second.stderr, second.stderr
+    finally:
+        solve_swe_prod.RUNTIME_ROOT = original_runtime_root
+
 captured_worker_commands = []
 try:
     def fake_worker_run(args, **_kwargs):

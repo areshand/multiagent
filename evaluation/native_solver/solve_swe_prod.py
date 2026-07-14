@@ -649,6 +649,138 @@ if __name__ == "__main__":
     log(f"installed rg fallback at {rg_path}")
 
 
+def find_go_binary() -> str | None:
+    for candidate in (
+        Path("/usr/local/go/bin/go-real"),
+        Path("/usr/local/go/bin/go"),
+        Path("/usr/bin/go-real"),
+        Path("/usr/bin/go"),
+    ):
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    found = shutil.which("go")
+    return found
+
+
+def write_go_singleflight_wrapper(real_go: str | None = None) -> None:
+    real_go = real_go or find_go_binary()
+    if not real_go:
+        return
+    go_path = RUNTIME_ROOT / "go"
+    go_path.write_text(
+        f'''#!/usr/bin/env python3
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+
+REAL_GO = {real_go!r}
+LOCK_ROOT = Path(os.environ.get("MULTIAGENT_GO_TEST_LOCK_ROOT", "/tmp/multiagent-prod-swe/go-test-locks"))
+WAIT_TIMEOUT = int(os.environ.get("MULTIAGENT_GO_TEST_WAIT_TIMEOUT", "3600"))
+
+
+def repo_diff_hash() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--no-ext-diff", "--no-color"],
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+    except Exception:
+        return "nogit"
+    if result.returncode != 0:
+        return "nogit"
+    return hashlib.sha256(result.stdout.encode()).hexdigest()
+
+
+def key_for(argv: list[str]) -> str:
+    payload = {{
+        "cwd": str(Path.cwd()),
+        "argv": argv,
+        "diff": repo_diff_hash(),
+    }}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def replay(lock_dir: Path) -> int:
+    stdout = lock_dir / "stdout.log"
+    stderr = lock_dir / "stderr.log"
+    rc_file = lock_dir / "returncode"
+    if stdout.exists():
+        sys.stdout.write(stdout.read_text(errors="replace"))
+    if stderr.exists():
+        sys.stderr.write(stderr.read_text(errors="replace"))
+    try:
+        return int(rc_file.read_text().strip())
+    except Exception:
+        return 1
+
+
+def wait_for(lock_dir: Path) -> int:
+    started = time.monotonic()
+    while time.monotonic() - started < WAIT_TIMEOUT:
+        status = lock_dir / "status"
+        if status.exists() and status.read_text(errors="replace").strip() == "done":
+            sys.stderr.write(f"go singleflight: replaying completed validation {{lock_dir.name}}\\n")
+            return replay(lock_dir)
+        pid_file = lock_dir / "pid"
+        if pid_file.exists():
+            try:
+                os.kill(int(pid_file.read_text().strip()), 0)
+            except Exception:
+                (lock_dir / "returncode").write_text("1\\n")
+                (lock_dir / "stderr.log").write_text("go singleflight: owner process disappeared before writing result\\n")
+                status.write_text("done\\n")
+                return replay(lock_dir)
+        time.sleep(2)
+    sys.stderr.write(f"go singleflight: timed out waiting for validation {{lock_dir.name}}\\n")
+    return 124
+
+
+def run_owner(lock_dir: Path, argv: list[str]) -> int:
+    (lock_dir / "pid").write_text(f"{{os.getpid()}}\\n")
+    (lock_dir / "command.json").write_text(json.dumps(argv, indent=2) + "\\n")
+    (lock_dir / "status").write_text("running\\n")
+    started = time.time()
+    with (lock_dir / "stdout.log").open("w") as stdout, (lock_dir / "stderr.log").open("w") as stderr:
+        proc = subprocess.run([REAL_GO, *argv], text=True, stdout=stdout, stderr=stderr, check=False)
+    (lock_dir / "returncode").write_text(f"{{proc.returncode}}\\n")
+    (lock_dir / "finished.json").write_text(json.dumps({{"started": started, "finished": time.time(), "returncode": proc.returncode}}, sort_keys=True) + "\\n")
+    (lock_dir / "status").write_text("done\\n")
+    return replay(lock_dir)
+
+
+def main() -> int:
+    argv = sys.argv[1:]
+    if not argv or argv[0] != "test":
+        os.execv(REAL_GO, [REAL_GO, *argv])
+    LOCK_ROOT.mkdir(parents=True, exist_ok=True)
+    lock_dir = LOCK_ROOT / key_for(argv)
+    try:
+        lock_dir.mkdir()
+    except FileExistsError:
+        sys.stderr.write(f"go singleflight: waiting for duplicate validation {{lock_dir.name}}\\n")
+        return wait_for(lock_dir)
+    return run_owner(lock_dir, argv)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+''',
+        encoding="utf-8",
+    )
+    go_path.chmod(0o755)
+    log(f"installed go test singleflight wrapper at {go_path} -> {real_go}")
+
+
 def _walk_source_dirs(workdir: Path, *, max_dirs: int = 500) -> list[str]:
     ignored = {".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "coverage", "__pycache__"}
     dirs: list[str] = []
@@ -3008,6 +3140,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     write_codex_bridge(real_codex, os.environ.get("EVAL_NATIVE_SOLVER_MODEL", "gpt-5"), auth_mode)
     write_apply_patch_helper()
     write_rg_fallback()
+    write_go_singleflight_wrapper()
     issue = read_prompt(prompt_path)
     task_metadata = read_task_metadata()
     task_metadata["_solver_workdir"] = str(workdir)
