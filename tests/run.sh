@@ -1376,6 +1376,27 @@ with tempfile.TemporaryDirectory() as td:
     assert "owned=lib/kube/proxy/forwarder.go,lib/service/service.go" in active_summaries[0], active_summaries
     assert "request context and CSR cache behavior" in active_summaries[0], active_summaries
     assert not solve_swe_prod.active_repair_subagent_summaries(runtime_root, live_agent_names=set())
+    active_verifier = runtime_root / "state" / "subagents" / "verifier-03-final"
+    active_verifier.mkdir(parents=True)
+    (active_verifier / "status").write_text("running\n", encoding="utf-8")
+    (active_verifier / "current.txt").write_text("Checking final diff evidence.\n", encoding="utf-8")
+    verifier_summaries = solve_swe_prod.active_verifier_subagent_summaries(
+        runtime_root,
+        live_agent_names={"verifier-03-final"},
+    )
+    assert len(verifier_summaries) == 1, verifier_summaries
+    assert "verifier-03-final status=running" in verifier_summaries[0], verifier_summaries
+    assert not solve_swe_prod.active_verifier_subagent_summaries(runtime_root, live_agent_names=set())
+    assert solve_swe_prod.blocked_status_waits_for_verifier(
+        {
+            "status": "blocked",
+            "reason": "required durable verifier acceptance gate did not pass before terminal status",
+            "blockers": ["verifier-03-final did not produce durable accepted status before completion"],
+        }
+    )
+    assert not solve_swe_prod.blocked_status_waits_for_verifier(
+        {"status": "blocked", "reason": "verifier rejected a compile failure"}
+    )
     assert solve_swe_prod.unresolved_repair_state_exists(runtime_root)
     verifier_agent = runtime_root / "subagents" / "verifier-01-fix"
     verifier_agent.mkdir(parents=True)
@@ -1538,6 +1559,18 @@ assert "ownership-boundary no-diff recovery" in solver_source and "adapter helpe
 )
 assert "active_repair_subagent_summaries" in solver_source and "unresolved_repair_state_exists" in solver_source, (
     "active structured repair workers should be detected before terminal local rejection"
+)
+assert "active_verifier_subagent_summaries" in solver_source and "blocked_status_waits_for_verifier" in solver_source, (
+    "verifier lifecycle failures should wait for live verifiers and get a bounded durable-status handoff"
+)
+assert "completed status enriched from hash-bound durable verifier acceptance before final gate" in solver_source, (
+    "a hash-bound accepted verifier artifact and terminal status must form one gate transition"
+)
+assert "status.json.tmp" in solve_swe_prod.AUTONOMOUS_FINAL_OVERRIDE, (
+    "terminal status publication should use an atomic temp-file rename"
+)
+assert "blocked verifier acceptance delayed because active verifier is still running" in solver_source, (
+    "an active verifier is pending work, not an immediate terminal native rejection"
 )
 assert "coverage follow-up timeout extended because active repair worker" in solver_source, (
     "coverage follow-up timeouts should not reject while a structured repair worker is actively fixing verifier findings"

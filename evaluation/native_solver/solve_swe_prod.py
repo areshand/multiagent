@@ -2145,7 +2145,18 @@ def status() -> dict[str, object]:
     if not STATUS_PATH.exists():
         return {}
     try:
-        parsed = json.loads(STATUS_PATH.read_text(encoding="utf-8"))
+        raw = STATUS_PATH.read_text(encoding="utf-8")
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict) and str(parsed.get("status", "")).lower() in {
+            "blocked",
+            "completed",
+            "complete",
+            "done",
+        }:
+            # A direct shell write can briefly expose valid but incomplete JSON.
+            time.sleep(float(os.environ.get("EVAL_STATUS_SETTLE_SECONDS", "0.2")))
+            if STATUS_PATH.read_text(encoding="utf-8") != raw:
+                return {"status": "publishing"}
         return parsed if isinstance(parsed, dict) else {}
     except json.JSONDecodeError:
         return {"status": "invalid-json", "raw": STATUS_PATH.read_text(encoding="utf-8", errors="replace")[-1000:]}
@@ -2345,11 +2356,12 @@ def no_diff_blocked_subagent_blockers(runtime_root: Path = RUNTIME_ROOT) -> list
     ]
 
 
-def active_repair_subagent_summaries(
+def active_role_subagent_summaries(
+    role: str,
     runtime_root: Path = RUNTIME_ROOT,
     live_agent_names: set[str] | None = None,
 ) -> list[str]:
-    """Return active implementation workers that should not be cut off early."""
+    """Return active workers for a role that should not be cut off early."""
 
     summaries: list[str] = []
     active_statuses = {"starting", "running", "restoring"}
@@ -2365,7 +2377,13 @@ def active_repair_subagent_summaries(
         for agent_dir in sorted(path for path in subagents_dir.iterdir() if path.is_dir()):
             agent_name = agent_dir.name
             lower_name = agent_name.lower()
-            if "worker" not in lower_name or "scout" in lower_name or "verifier" in lower_name:
+            if role == "repair":
+                role_matches = "worker" in lower_name and "scout" not in lower_name and "verifier" not in lower_name
+            elif role == "verifier":
+                role_matches = "verifier" in lower_name
+            else:
+                raise ValueError(f"unsupported active subagent role: {role}")
+            if not role_matches:
                 continue
             if live_agent_names is not None and agent_name not in live_agent_names:
                 continue
@@ -2397,6 +2415,37 @@ def active_repair_subagent_summaries(
                 summary += ": " + snippets[0][:1000]
             summaries.append(summary)
     return summaries
+
+
+def active_repair_subagent_summaries(
+    runtime_root: Path = RUNTIME_ROOT,
+    live_agent_names: set[str] | None = None,
+) -> list[str]:
+    return active_role_subagent_summaries("repair", runtime_root, live_agent_names)
+
+
+def active_verifier_subagent_summaries(
+    runtime_root: Path = RUNTIME_ROOT,
+    live_agent_names: set[str] | None = None,
+) -> list[str]:
+    return active_role_subagent_summaries("verifier", runtime_root, live_agent_names)
+
+
+def blocked_status_waits_for_verifier(current_status: dict[str, object]) -> bool:
+    """Identify terminal claims caused by verifier lifecycle, not a verifier rejection."""
+
+    text = json.dumps(current_status, sort_keys=True).lower()
+    if "verifier" not in text:
+        return False
+    return any(
+        marker in text
+        for marker in (
+            "active or missing verifier acceptance",
+            "did not produce durable accepted",
+            "durable verifier acceptance gate did not pass before terminal",
+            "verifier infrastructure failed",
+        )
+    )
 
 
 def unresolved_repair_state_exists(runtime_root: Path = RUNTIME_ROOT) -> bool:
@@ -4785,6 +4834,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     terminal_deadline_at: float | None = None
     no_diff_blocked_retries = 0
     active_followup_extensions = 0
+    active_verifier_blocked_at: float | None = None
     convergence_start = time.monotonic()
     last_diff_digest = ""
     last_diff_changed_at = convergence_start
@@ -4801,6 +4851,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     terminal_force_resume_enabled = env_truthy("EVAL_TERMINAL_FORCE_RESUME", True)
     no_diff_blocked_retry_limit = int(os.environ.get("EVAL_NO_DIFF_BLOCKED_RETRY_LIMIT", "4"))
     active_followup_extension_limit = int(os.environ.get("EVAL_ACTIVE_FOLLOWUP_EXTENSION_LIMIT", "8"))
+    active_verifier_grace = int(os.environ.get("EVAL_ACTIVE_VERIFIER_GRACE", "240"))
     adapter_helper_worker_limit = int(os.environ.get("EVAL_ADAPTER_HELPER_WORKER_LIMIT", "1"))
     orchestrator_resume_limit = int(os.environ.get("EVAL_ORCHESTRATOR_RESUME_LIMIT", "1"))
     orchestrator_resume_attempts = 0
@@ -4982,6 +5033,15 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 capture_session(session)
                 diff = git_diff(workdir)
                 text = captured_text()
+                verifier_acceptance = persisted_subagent_final_acceptance_evidence(diff)
+                if verifier_acceptance:
+                    current_status = status_with_recovered_public_evidence(
+                        current_status,
+                        verifier_acceptance,
+                        issue,
+                        text,
+                    )
+                    log("completed status enriched from hash-bound durable verifier acceptance before final gate")
                 if completed_status_covers_adapter_validation(workdir, issue, diff, current_status):
                     accepted_completed_status_snapshot = dict(current_status)
                     accepted_completed_status_diff_hash = final_diff_sha256(diff)
@@ -5150,6 +5210,55 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
             if state == "blocked":
                 diff = git_diff(workdir)
                 reason_text = json.dumps(current_status, sort_keys=True).lower()
+                verifier_lifecycle_blocked = diff.strip() and blocked_status_waits_for_verifier(current_status)
+                if verifier_lifecycle_blocked:
+                    active_verifiers = active_verifier_subagent_summaries(RUNTIME_ROOT)
+                    if active_verifiers and active_verifier_blocked_at is None:
+                        active_verifier_blocked_at = time.monotonic()
+                    verifier_grace_elapsed = (
+                        time.monotonic() - active_verifier_blocked_at
+                        if active_verifier_blocked_at is not None
+                        else active_verifier_grace
+                    )
+                    if (
+                        active_verifiers
+                        and verifier_grace_elapsed < active_verifier_grace
+                        and int(deadline - time.monotonic()) > 300
+                    ):
+                        log(
+                            "blocked verifier acceptance delayed because active verifier is still running: "
+                            + "; ".join(active_verifiers[:3])
+                        )
+                        time.sleep(10)
+                        continue
+                    status_blockers = current_status.get("blockers")
+                    blockers = (
+                        [str(blocker) for blocker in status_blockers]
+                        if isinstance(status_blockers, list)
+                        else [str(current_status.get("reason") or "verifier acceptance was not persisted")]
+                    )
+                    blockers = list(
+                        dict.fromkeys(
+                            [
+                                *blockers,
+                                "verifier infrastructure failed to persist a terminal verdict; inspect durable verifier evidence for the live final diff, replace a stalled verifier if needed, and write one authoritative completed/blocked status",
+                            ]
+                        )
+                    )
+                    if (
+                        int(deadline - time.monotonic()) > 300
+                        and relaunch_orchestrator_for_blockers(
+                            "blocked status was written before verifier lifecycle completed",
+                            diff,
+                            blockers,
+                            "",
+                            force_live_handoff=True,
+                        )
+                    ):
+                        active_verifier_blocked_at = None
+                        log("verifier-lifecycle blocked status resumed for durable terminal verdict")
+                        time.sleep(5)
+                        continue
                 no_diff_blocked = (
                     not diff.strip()
                     and (
