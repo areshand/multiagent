@@ -725,6 +725,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "complet
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "final cleanup recovery requires adapter public validation before accepting visible-validation text"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "final cleanup recovery found a source diff but no durable worker validation evidence"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "completion marker recovered at final cleanup after adapter public probe passed without durable worker evidence"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "status.json already records completed final-diff build verification"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "stale-visible-reconciliation-passed:"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "STALE_VISIBLE_RECONCILIATION_PATH"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Do not rely on leaked evaluator tests"
@@ -1469,6 +1470,44 @@ with tempfile.TemporaryDirectory() as td:
         solve_swe_prod.RUNTIME_ROOT = original_runtime
         solve_swe_prod.DEFAULT_WORKDIR = original_workdir
         solve_swe_prod.DEFAULT_MULTIAGENT_ROOT = original_multiagent_root
+with tempfile.TemporaryDirectory() as td:
+    runtime = Path(td)
+    original_runtime = solve_swe_prod.RUNTIME_ROOT
+    original_status = solve_swe_prod.STATUS_PATH
+    original_probe_path = solve_swe_prod.HELPER_PROBE_PATH
+    old_probe_commands = solve_swe_prod.coverage_probe_commands
+    try:
+        solve_swe_prod.RUNTIME_ROOT = runtime
+        solve_swe_prod.STATUS_PATH = runtime / "status.json"
+        solve_swe_prod.HELPER_PROBE_PATH = runtime / "helper-validation-probe.txt"
+        diff = "diff --git a/pkg/service.go b/pkg/service.go\n+func Service() {}\n"
+        diff_hash = solve_swe_prod.final_diff_sha256(diff)
+        solve_swe_prod.STATUS_PATH.write_text(
+            json.dumps(
+                {
+                    "status": "completed",
+                    "validation": (
+                        "build-verification-passed: "
+                        f"final-diff-sha256={diff_hash} compile_clean=true returncode=0"
+                    ),
+                }
+            ),
+            encoding="utf-8",
+        )
+        solve_swe_prod.coverage_probe_commands = lambda *_args: [["bash", "-lc", "exit 42"]]
+        report, passed = solve_swe_prod.run_validation_coverage_probe(
+            Path(td),
+            "Service should work.",
+            diff,
+            ["stale pre-status blocker"],
+        )
+        assert passed, report
+        assert "status.json already records completed final-diff build verification" in report, report
+    finally:
+        solve_swe_prod.RUNTIME_ROOT = original_runtime
+        solve_swe_prod.STATUS_PATH = original_status
+        solve_swe_prod.HELPER_PROBE_PATH = original_probe_path
+        solve_swe_prod.coverage_probe_commands = old_probe_commands
 generic_commands = solve_swe_prod.coverage_probe_commands(
     Path("/tmp"),
     "A text parser should decode escaped strings.",

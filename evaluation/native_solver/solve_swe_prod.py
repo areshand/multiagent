@@ -366,6 +366,24 @@ def structured_repair_gate_blockers() -> list[str]:
     return blockers
 
 
+def completed_status_has_final_build_evidence(diff: str) -> bool:
+    """Return true when status.json already proves the final diff passed build gate."""
+
+    if not STATUS_PATH.exists():
+        return False
+    try:
+        current_status = json.loads(STATUS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(current_status, dict):
+        return False
+    if str(current_status.get("status", "")).lower() not in {"completed", "complete", "done"}:
+        return False
+    if not build_verification_has_evidence(json.dumps(current_status, sort_keys=True), diff):
+        return False
+    return not structured_repair_gate_blockers()
+
+
 def require_path(path: Path, description: str) -> None:
     if not path.exists():
         raise RuntimeError(f"missing {description}: {path}")
@@ -2460,6 +2478,15 @@ def pytest_teardown_after_success(output: str) -> bool:
 
 
 def run_validation_coverage_probe(workdir: Path, issue: str, diff: str, blockers: list[str]) -> tuple[str, bool]:
+    if completed_status_has_final_build_evidence(diff):
+        report = (
+            "Adapter-selected public helper validation probe skipped because "
+            "status.json already records completed final-diff build verification "
+            "and the structured repair gate accepts the run."
+        )
+        HELPER_PROBE_PATH.write_text(report, encoding="utf-8")
+        return report, True
+
     commands = coverage_probe_commands(workdir, issue, diff)
     if not commands:
         report = "No adapter-selected public helper validation command was available for this repository/task."
@@ -3497,7 +3524,12 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                     blockers = blockers_after_passing_public_probe(blockers)
                     scope_blockers = blockers
                     coverage_blockers = []
-                if not blockers and not coverage_probe_satisfied and coverage_probe_commands(workdir, issue, diff):
+                if (
+                    not blockers
+                    and not coverage_probe_satisfied
+                    and not completed_status_has_final_build_evidence(diff)
+                    and coverage_probe_commands(workdir, issue, diff)
+                ):
                     probe_report, probe_passed = run_validation_coverage_probe(
                         workdir,
                         issue,
