@@ -1886,6 +1886,11 @@ with tempfile.TemporaryDirectory() as td:
         assert todo["source_finding_id"] == "adapter-no-diff-stall-001", todo
         gate_blockers = solve_swe_prod.structured_repair_gate_blockers()
         assert gate_blockers and "todo-adapter-no-diff-stall-001" in gate_blockers[0], gate_blockers
+        diagnostic_sections = solve_swe_prod.structured_repair_diagnostic_sections(runtime)
+        diagnostic_text = "\n".join(diagnostic_sections)
+        assert "structured gate-check rc=1" in diagnostic_text, diagnostic_text
+        assert "todo-adapter-no-diff-stall-001 status=open todo.json" in diagnostic_text, diagnostic_text
+        assert "adapter-no-diff-stall-001" in diagnostic_text, diagnostic_text
     finally:
         solve_swe_prod.RUNTIME_ROOT = original_runtime
         solve_swe_prod.DEFAULT_WORKDIR = original_workdir

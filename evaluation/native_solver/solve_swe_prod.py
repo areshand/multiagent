@@ -2339,6 +2339,66 @@ def valid_required_path_outside_owned_report(report: str) -> bool:
     return "/" in normalized or "." in Path(normalized).name
 
 
+def structured_repair_diagnostic_sections(runtime_root: Path = RUNTIME_ROOT) -> list[str]:
+    """Return high-signal structured repair state for failure report tails."""
+
+    subagent = DEFAULT_MULTIAGENT_ROOT / "bin/subagent.sh"
+    sections: list[str] = []
+    seen_state_dirs: set[Path] = set()
+    for state_dir in (runtime_root, runtime_root / "state"):
+        if state_dir in seen_state_dirs:
+            continue
+        seen_state_dirs.add(state_dir)
+        if not any((state_dir / name).exists() for name in ("findings", "todos")):
+            continue
+        sections.append(f"structured repair state: {state_dir}")
+        if subagent.exists():
+            env = os.environ.copy()
+            env.update(
+                {
+                    "MULTIAGENT_ROOT": str(DEFAULT_WORKDIR),
+                    "MULTIAGENT_STATE_DIR": str(state_dir),
+                }
+            )
+            result = run(
+                [str(subagent), "gate-check"],
+                cwd=DEFAULT_MULTIAGENT_ROOT,
+                env=env,
+                timeout=30,
+            )
+            output = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+            sections.append(f"structured gate-check rc={result.returncode}:\n{output[-3000:]}")
+        findings_base = state_dir / "findings"
+        if findings_base.exists():
+            for path in sorted(findings_base.glob("*/finding.json"))[-8:]:
+                try:
+                    sections.append(f"structured finding {path.parent.name}:\n" + path.read_text(encoding="utf-8", errors="replace")[-3000:])
+                except OSError as exc:
+                    sections.append(f"structured finding {path.parent.name}: unreadable: {exc}")
+        todos_base = state_dir / "todos"
+        if todos_base.exists():
+            for todo_dir in sorted(path for path in todos_base.iterdir() if path.is_dir())[-8:]:
+                status = ""
+                status_file = todo_dir / "status"
+                if status_file.exists():
+                    try:
+                        status = status_file.read_text(encoding="utf-8", errors="replace").strip()
+                    except OSError:
+                        status = ""
+                for name in ("todo.json", "resolution.json", "closure.json"):
+                    path = todo_dir / name
+                    if not path.exists():
+                        continue
+                    try:
+                        sections.append(
+                            f"structured todo {todo_dir.name} status={status or 'unknown'} {name}:\n"
+                            + path.read_text(encoding="utf-8", errors="replace")[-3000:]
+                        )
+                    except OSError as exc:
+                        sections.append(f"structured todo {todo_dir.name} {name}: unreadable: {exc}")
+    return sections
+
+
 def emit_failure_diagnostics(session: str, *, limit: int = 24000) -> None:
     """Print compact runtime diagnostics before the sandbox is deleted."""
     sections: list[str] = ["failure diagnostics:"]
@@ -2352,22 +2412,6 @@ def emit_failure_diagnostics(session: str, *, limit: int = 24000) -> None:
             sections.append("source-owner-candidates.md:\n" + SOURCE_OWNER_CANDIDATES_PATH.read_text(encoding="utf-8", errors="replace")[-6000:])
         except OSError as exc:
             sections.append(f"source-owner-candidates.md: unreadable: {exc}")
-
-    for state_dir in (RUNTIME_ROOT, RUNTIME_ROOT / "state"):
-        findings_base = state_dir / "findings"
-        todos_base = state_dir / "todos"
-        if findings_base.exists():
-            for path in sorted(findings_base.glob("*/finding.json"))[:8]:
-                try:
-                    sections.append(f"finding {path.parent.name}:\n" + path.read_text(encoding="utf-8", errors="replace")[-3000:])
-                except OSError as exc:
-                    sections.append(f"finding {path.parent.name}: unreadable: {exc}")
-        if todos_base.exists():
-            for path in sorted(todos_base.glob("*/todo.json"))[:8]:
-                try:
-                    sections.append(f"todo {path.parent.name}:\n" + path.read_text(encoding="utf-8", errors="replace")[-3000:])
-                except OSError as exc:
-                    sections.append(f"todo {path.parent.name}: unreadable: {exc}")
 
     windows = run(["tmux", "list-windows", "-t", session, "-F", "#W"], timeout=10)
     if windows.returncode == 0 and windows.stdout.strip():
@@ -2398,6 +2442,7 @@ def emit_failure_diagnostics(session: str, *, limit: int = 24000) -> None:
                 except OSError as exc:
                     sections.append(f"subagent {agent_dir.name} {name}: unreadable: {exc}")
 
+    sections.extend(structured_repair_diagnostic_sections(RUNTIME_ROOT))
     text = "\n\n".join(sections)
     try:
         FAILURE_DIAGNOSTICS_PATH.write_text(text, encoding="utf-8")
