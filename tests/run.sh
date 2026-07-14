@@ -2838,6 +2838,14 @@ poll_output="$("$ROOT/bin/subagent.sh" poll subagent-watch)"
 [[ "$poll_output" == $'subagent-watch\trunning' ]]
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/transcript.log" "Progress update: still running"
 
+printf 'Read and follow the assignment. Proceed now, then report progress/final status in this window.\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"
+poll_prompt_output="$("$ROOT/bin/subagent.sh" poll subagent-watch)"
+[[ "$poll_prompt_output" == $'subagent-watch\trunning' ]]
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/current.txt" "progress/final status"
+
+printf 'Progress update: still running\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"
+"$ROOT/bin/subagent.sh" poll subagent-watch >/dev/null
+
 printf 'worker-01-docs\n' >>"$MOCK_TMUX_WINDOWS"
 status_output="$("$ROOT/bin/status.sh")"
 [[ "$status_output" == *$'worker\tworker-01-docs\tbusy\topen\tWorker progress: editing README\t-'* ]]

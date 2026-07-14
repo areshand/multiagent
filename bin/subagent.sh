@@ -953,7 +953,7 @@ infer_status() {
 
   if grep -Eiq '\b(blocked|need input|waiting for|cannot proceed)\b' "$current"; then
     printf 'blocked\n'
-  elif grep -Eiq '\b(final status|completed|complete_task|assignment complete|task complete|finished assignment|work completed|done with)\b|Worked for [0-9]' "$current"; then
+  elif grep -Eiq '^[[:space:]]*(final status:|complete_task|assignment complete|task complete|finished assignment|work completed|done with)\b|Worked for [0-9]' "$current"; then
     printf 'done\n'
   elif window_exists "$name"; then
     printf 'running\n'
@@ -1180,7 +1180,7 @@ classify_recovery() {
     if [[ "$lowered" == "blocked" ]] || grep -Eiq '\b(blocked|need input|waiting for|cannot proceed)\b' <<<"$combined"; then
       action="skip-blocked"
       reason="requires-orchestrator-decision"
-    elif grep -Eiq '\b(done|complete|completed|final status|finished)\b' <<<"$combined"; then
+    elif grep -Eiq '^[[:space:]]*(final status:|complete_task|assignment complete|task complete|finished assignment|work completed|done with)\b|Worked for [0-9]' <<<"$combined"; then
       action="skip-finalized"
       reason="context-looks-final"
     elif ! has_recovery_context "$name"; then
