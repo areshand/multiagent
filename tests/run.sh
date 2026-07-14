@@ -464,6 +464,13 @@ printf 'done\n' >"$HASH_GATE_STATE/subagents/verifier-01-hash/status"
 MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
   "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-verifier-structured-hash.out"
 assert_file_contains "$TMPDIR/gate-verifier-structured-hash.out" "accepted"
+printf 'verdict=REJECTED\nrequired_resolution=repair semantic contract\n' >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
+if MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
+  "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-verifier-rejected-variant.out" 2>&1; then
+  echo "expected normalized REJECTED verifier verdict to block the gate" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/gate-verifier-rejected-variant.out" $'reject\tlatest-verifier-blocking\tverifier=verifier-01-hash'
 
 LEGACY_RESOLUTION_STATE="$TMPDIR/legacy-resolution-state"
 mkdir -p "$LEGACY_RESOLUTION_STATE"
@@ -919,6 +926,31 @@ structured_acceptance = "ACCEPTED\n" + json.dumps(
 assert solve_swe_prod.build_verification_has_evidence(structured_acceptance, structured_diff)
 structured_failed = structured_acceptance.replace('"rc": 0', '"rc": 1')
 assert not solve_swe_prod.build_verification_has_evidence(structured_failed, structured_diff)
+
+with tempfile.TemporaryDirectory() as td:
+    runtime = Path(td)
+    verifier = runtime / "state" / "subagents" / "verifier-03-semantic"
+    verifier.mkdir(parents=True)
+    verifier.joinpath("last-message.txt").write_text(
+        "verdict=REJECTED\nblocking-finding: capitalization contract is broken\n"
+        "affected_paths=src/keys.ts\nrequired_resolution=preserve shifted letter matching\n",
+        encoding="utf-8",
+    )
+    evidence = solve_swe_prod.persisted_verifier_blocking_evidence(runtime)
+    assert "verifier-03-semantic" in evidence and "required_resolution" in evidence, evidence
+    original_runtime = solve_swe_prod.RUNTIME_ROOT
+    try:
+        solve_swe_prod.RUNTIME_ROOT = runtime
+        routing = solve_swe_prod.structured_repair_state_instructions(
+            summary="resume",
+            blockers=["missing verifier acceptance"],
+            source_hints=["src/keys.ts"],
+        )
+    finally:
+        solve_swe_prod.RUNTIME_ROOT = original_runtime
+    assert "verifier already confirmed a semantic source defect" in routing, routing
+    assert "Normalize the verifier evidence into finding-create" in routing, routing
+    assert "do not launch another acceptance-only verifier over the unchanged diff" in routing, routing
 
 with tempfile.TemporaryDirectory() as td:
     prompt_test_root = Path(td)

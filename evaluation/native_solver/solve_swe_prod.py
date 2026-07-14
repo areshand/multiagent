@@ -4095,6 +4095,15 @@ def structured_repair_state_instructions(
 
     blocker_text = "; ".join(blockers)[:1800] or summary
     hint_text = ", ".join(source_hints[:8]) or "derive exact paths from the live diff"
+    confirmed_finding = persisted_verifier_blocking_evidence(RUNTIME_ROOT)
+    if confirmed_finding:
+        return (
+            "A verifier already confirmed a semantic source defect. Preserve its public/source evidence exactly; "
+            "do not relabel this as verifier infrastructure and do not launch another acceptance-only verifier over the unchanged diff. "
+            "Normalize the verifier evidence into finding-create, create a todo whose done criteria include the stated required resolution, "
+            "assign one bounded source worker, require resolution-create with validation, then launch a fresh verifier over the repaired diff. "
+            f"Verifier-confirmed evidence: {confirmed_finding}"
+        )
     return (
         "Treat this adapter result as a verification handoff, not a confirmed source finding. "
         "Do not create an adapter-authored finding/todo merely because acceptance evidence is missing. "
@@ -4106,6 +4115,40 @@ def structured_repair_state_instructions(
         "--worker NAME --status resolved|blocked --validation-json JSON --why TEXT, and a later verifier must close it. "
         "Never call resolution-create for an evidence-only handoff or for a todo that no worker repaired."
     )
+
+
+def persisted_verifier_blocking_evidence(runtime_root: Path = RUNTIME_ROOT) -> str:
+    """Return the newest durable verifier-confirmed semantic blocker."""
+
+    candidates: list[tuple[int, str]] = []
+    for subagents_dir in subagent_state_roots(runtime_root):
+        for agent_dir in subagents_dir.iterdir():
+            if not agent_dir.is_dir():
+                continue
+            agent_name = agent_dir.name.lower()
+            if "verifier" not in agent_name and "review" not in agent_name:
+                continue
+            path = agent_dir / "last-message.txt"
+            try:
+                raw = path.read_text(encoding="utf-8", errors="replace")
+                mtime = path.stat().st_mtime_ns
+            except OSError:
+                continue
+            lower = raw.lower()
+            blocking = bool(
+                re.search(r"(?im)^\s*(?:blocking|verdict\s*[:=]\s*(?:blocking|rejected))\s*$", raw)
+                or "blocking-finding:" in lower
+            )
+            if not blocking or not any(
+                marker in lower
+                for marker in ("required_resolution", "required resolution", "affected_paths", "affected paths")
+            ):
+                continue
+            excerpt = " ".join(raw[-3000:].split())
+            candidates.append((mtime, f"{agent_dir.name}: {excerpt}"))
+    if not candidates:
+        return ""
+    return max(candidates, key=lambda item: item[0])[1][:2400]
 
 
 def send_orchestrator_followup(session: str, blockers: list[str], probe_report: str, source_hints: list[str]) -> None:

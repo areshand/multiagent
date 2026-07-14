@@ -2852,8 +2852,16 @@ for path in base.glob("*/last-message.txt"):
         if not line.strip():
             continue
         match = re.fullmatch(r"\s*(ACCEPTED|BLOCKING)\s*", line, re.IGNORECASE)
+        if not match:
+            match = re.fullmatch(
+                r"\s*(?:verdict\s*[:=]\s*)?(ACCEPTED|BLOCKING|REJECTED)\s*",
+                line,
+                re.IGNORECASE,
+            )
         if match:
             verdict = match.group(1).upper()
+            if verdict == "REJECTED":
+                verdict = "BLOCKING"
         break
     candidates.append((mtime, path.parent.name, verdict, path))
 
