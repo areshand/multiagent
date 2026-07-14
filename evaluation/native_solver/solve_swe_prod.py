@@ -845,6 +845,8 @@ def run_owner(lock_dir: Path, argv: list[str]) -> int:
     (lock_dir / "command.json").write_text(json.dumps(argv, indent=2) + "\\n")
     (lock_dir / "status").write_text("running\\n")
     started = time.time()
+    start_diff_hash = repo_diff_hash()
+    (lock_dir / "start_diff_hash").write_text(f"{{start_diff_hash}}\\n")
     with (lock_dir / "stdout.log").open("w") as stdout, (lock_dir / "stderr.log").open("w") as stderr:
         proc = subprocess.Popen(
             [REAL_GO, *argv],
@@ -875,9 +877,19 @@ def run_owner(lock_dir: Path, argv: list[str]) -> int:
         finally:
             for signum, handler in previous_handlers.items():
                 signal.signal(signum, handler)
+        finish_diff_hash = repo_diff_hash()
+        stale_diff = finish_diff_hash != start_diff_hash
+        if stale_diff:
+            stderr.write(
+                "\\ngo singleflight: validation diff changed while command was running; "
+                f"start_diff_hash={{start_diff_hash}} finish_diff_hash={{finish_diff_hash}}\\n"
+            )
+            if returncode == 0:
+                returncode = 125
     (lock_dir / "returncode").write_text(f"{{returncode}}\\n")
-    (lock_dir / "finished.json").write_text(json.dumps({{"started": started, "finished": time.time(), "returncode": returncode, "timeout_seconds": RUN_TIMEOUT, "timed_out": timed_out}}, sort_keys=True) + "\\n")
-    (lock_dir / "status").write_text(("timed-out" if timed_out else "done") + "\\n")
+    (lock_dir / "finish_diff_hash").write_text(f"{{finish_diff_hash}}\\n")
+    (lock_dir / "finished.json").write_text(json.dumps({{"started": started, "finished": time.time(), "returncode": returncode, "timeout_seconds": RUN_TIMEOUT, "timed_out": timed_out, "start_diff_hash": start_diff_hash, "finish_diff_hash": finish_diff_hash, "stale_diff": stale_diff}}, sort_keys=True) + "\\n")
+    (lock_dir / "status").write_text(("timed-out" if timed_out else "stale-diff" if stale_diff else "done") + "\\n")
     return replay(lock_dir)
 
 
@@ -922,7 +934,7 @@ def main() -> int:
                 time.sleep(1)
         lock_dir = results_root / result_key_for(argv)
         status = lock_dir / "status"
-        if status.exists() and status.read_text(errors="replace").strip() in {{"done", "timed-out"}}:
+        if status.exists() and status.read_text(errors="replace").strip() in {{"done", "timed-out", "stale-diff"}}:
             sys.stderr.write(f"go singleflight: replaying completed validation {{lock_dir.name}}\\n")
             return replay(lock_dir)
         lock_dir.mkdir(parents=True, exist_ok=True)

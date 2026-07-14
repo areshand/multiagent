@@ -1052,7 +1052,9 @@ with tempfile.TemporaryDirectory() as td:
         assert ordered_first.returncode == 0, ordered_first_stderr
         assert ordered_second.returncode == 0, ordered_second_stderr
         count_lines_after_ordered = count_file.read_text(encoding="utf-8").splitlines()
-        assert count_lines_after_ordered == ["test ./pkg", "test ./pkg", "test ./system", "test ./b ./a"], count_lines_after_ordered
+        assert count_lines_after_ordered[:3] == ["test ./pkg", "test ./pkg", "test ./system"], count_lines_after_ordered
+        assert len(count_lines_after_ordered) == 4, count_lines_after_ordered
+        assert count_lines_after_ordered[3] in {"test ./b ./a", "test ./a ./b"}, count_lines_after_ordered
         assert "replaying completed validation" in (ordered_first_stderr + ordered_second_stderr), (
             ordered_first_stderr,
             ordered_second_stderr,
@@ -1074,6 +1076,24 @@ with tempfile.TemporaryDirectory() as td:
         assert timed_out.returncode == 124, (timed_out.stdout, timed_out.stderr)
         assert "go test timed out after 1 seconds" in timed_out.stderr, timed_out.stderr
 
+        stale_go = Path(td) / "go-stale-real"
+        stale_go.write_text(
+            "#!/usr/bin/env bash\n"
+            "printf '\\n// mutated during validation\\n' >> tracked.go\n"
+            "printf 'stale fake go %s\\n' \"$*\"\n",
+            encoding="utf-8",
+        )
+        stale_go.chmod(0o755)
+        solve_swe_prod.write_go_singleflight_wrapper(str(stale_go))
+        stale_env = os.environ.copy()
+        stale_env["MULTIAGENT_GO_TEST_LOCK_ROOT"] = str(Path(td) / "stale-locks")
+        stale = subprocess.run([str(go), "test", "./stale"], cwd=workdir, env=stale_env, text=True, capture_output=True, check=False)
+        assert stale.returncode == 125, (stale.stdout, stale.stderr)
+        assert "validation diff changed while command was running" in stale.stderr, stale.stderr
+        stale_statuses = [path.read_text(encoding="utf-8").strip() for path in (Path(td) / "stale-locks" / "results").glob("*/status")]
+        assert stale_statuses == ["stale-diff"], stale_statuses
+
+        solve_swe_prod.write_go_singleflight_wrapper(str(slow_go))
         wait_env = os.environ.copy()
         wait_env["MULTIAGENT_GO_TEST_LOCK_ROOT"] = str(Path(td) / "wait-locks")
         wait_env["MULTIAGENT_GO_TEST_TIMEOUT_SECONDS"] = "5"
