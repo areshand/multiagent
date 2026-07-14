@@ -299,12 +299,17 @@ ISSUE_COVERAGE_WEAK_CLOSURE_MARKERS = {
     "source-not-touched",
     "source-not-modified",
     "source-not-changed",
+    "not-touched",
+    "not-modified",
+    "not-changed",
     "nonblocking",
     "non-blocking",
     "verifier-reviewed",
     "not alter",
     "not changed",
     "not modify",
+    "preserved-not",
+    "preserved-",
 }
 
 

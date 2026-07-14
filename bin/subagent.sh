@@ -1010,6 +1010,9 @@ capture_subagent() {
 
   local capture
   if ! capture="$(tmux capture-pane -t "$SESSION:$name" -p -S -1000 2>&1)"; then
+    if capture_subagent_from_durable_files "$name" "$capture"; then
+      return 0
+    fi
     printf '%s\n' "$capture" >"$dir/last-error.txt"
     return 1
   fi
@@ -1019,6 +1022,38 @@ capture_subagent() {
     printf '\n----- capture %s -----\n' "$(timestamp)"
     printf '%s\n' "$capture"
   } >>"$dir/transcript.log"
+}
+
+capture_subagent_from_durable_files() {
+  local name="$1"
+  local capture_error="$2"
+  local dir last_message transcript current tmp
+  dir="$(subagent_dir "$name")"
+  last_message="$dir/last-message.txt"
+  transcript="$dir/transcript.log"
+  current="$dir/current.txt"
+  tmp="$dir/current.txt.tmp.$$"
+
+  [[ -s "$last_message" || -s "$transcript" ]] || return 1
+
+  {
+    printf 'tmux capture unavailable for %s; recovered durable subagent output.\n' "$name"
+    printf 'tmux-capture-error: %s\n' "$capture_error"
+    if [[ -s "$last_message" ]]; then
+      printf '\n----- last-message.txt -----\n'
+      cat "$last_message"
+    fi
+    if [[ -s "$transcript" ]]; then
+      printf '\n----- transcript tail -----\n'
+      tail -n 240 "$transcript"
+    fi
+  } >"$tmp"
+
+  mv "$tmp" "$current"
+  {
+    printf '\n----- durable capture %s -----\n' "$(timestamp)"
+    cat "$current"
+  } >>"$transcript"
 }
 
 infer_status() {

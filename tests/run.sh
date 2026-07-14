@@ -1935,6 +1935,27 @@ with tempfile.TemporaryDirectory() as td:
         row8_weak_nonblocking_status,
     )
     assert any("weak non-evidence" in blocker for blocker in row8_weak_nonblocking_blockers), row8_weak_nonblocking_blockers
+    row8_weak_preserved_status = {
+        "status": "completed",
+        "validation": (
+            f"build-verification-passed: final-diff-sha256={go_related_hash} changed-files=1 compile_clean=true returncode=0. "
+            "go-package-validation-passed: package=./lib/kube/proxy command='go test ./lib/kube/proxy' returncode=0. "
+            "issue-coverage-ledger: "
+            "issue-exec-session-uploader=source-change-NewForwarder-initializes-filesessions-uploader "
+            "issue-kubectlexec-exec=source-change-exec-recorder-upload-dir-created-before-streaming "
+            "issue-clustersession-cached-state=preserved-not-touched "
+            "issue-audit-request-context=preserved-not-touched "
+            "issue-logging-response-exec=preserved-not-touched "
+            "issue-api-config-fields=preserved-ForwarderConfig-shape-not-changed"
+        ),
+    }
+    row8_weak_preserved_blockers = solve_swe_prod.validation_coverage_blockers(
+        row8_issue,
+        go_related_diff,
+        "",
+        row8_weak_preserved_status,
+    )
+    assert any("weak non-evidence" in blocker for blocker in row8_weak_preserved_blockers), row8_weak_preserved_blockers
     row8_covered_status = {
         "status": "completed",
         "validation": (
@@ -3542,6 +3563,15 @@ printf 'final status: codex exec exited rc=0\n' >"$MOCK_TMUX_CAPTURES/subagent-w
 poll_final_status_output="$("$ROOT/bin/subagent.sh" poll subagent-watch)"
 [[ "$poll_final_status_output" == $'subagent-watch\tdone' ]]
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/current.txt" "final status: codex exec exited rc=0"
+
+mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-durable-codex"
+printf 'Read-only scout completed with source owner findings.\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-durable-codex/last-message.txt"
+printf 'final status: codex exec exited rc=0\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-durable-codex/transcript.log"
+poll_durable_output="$("$ROOT/bin/subagent.sh" poll subagent-durable-codex)"
+[[ "$poll_durable_output" == $'subagent-durable-codex\tdone' ]]
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-durable-codex/current.txt" "recovered durable subagent output"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-durable-codex/current.txt" "Read-only scout completed with source owner findings."
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-durable-codex/current.txt" "final status: codex exec exited rc=0"
 
 printf 'Warning: no last agent message; wrote empty content to /tmp/last-message.txt\nfinal status: codex exec exited rc=0\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"
 poll_empty_final_output="$("$ROOT/bin/subagent.sh" poll subagent-watch)"
