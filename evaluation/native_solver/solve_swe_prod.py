@@ -769,10 +769,25 @@ def repo_diff_hash() -> str:
     return hashlib.sha256(result.stdout.encode()).hexdigest()
 
 
+def canonical_argv(argv: list[str]) -> list[str]:
+    if not argv or argv[0] != "test":
+        return argv
+    packages: list[str] = []
+    others: list[str] = []
+    for item in argv[1:]:
+        if item.startswith("./"):
+            packages.append(item)
+        else:
+            others.append(item)
+    if len(packages) <= 1:
+        return argv
+    return [argv[0], *others, *sorted(packages)]
+
+
 def key_for(argv: list[str]) -> str:
     payload = {{
         "cwd": str(Path.cwd()),
-        "argv": argv,
+        "argv": canonical_argv(argv),
     }}
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
@@ -780,7 +795,7 @@ def key_for(argv: list[str]) -> str:
 def result_key_for(argv: list[str]) -> str:
     payload = {{
         "cwd": str(Path.cwd()),
-        "argv": argv,
+        "argv": canonical_argv(argv),
         "diff": repo_diff_hash(),
     }}
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()

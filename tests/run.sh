@@ -1045,6 +1045,19 @@ with tempfile.TemporaryDirectory() as td:
         assert fourth.returncode == 0, fourth.stderr
         assert count_file.read_text(encoding="utf-8").splitlines() == ["test ./pkg", "test ./pkg", "test ./system"]
 
+        ordered_first = subprocess.Popen([str(go), "test", "./b", "./a"], cwd=workdir, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        ordered_second = subprocess.Popen([str(go), "test", "./a", "./b"], cwd=workdir, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        ordered_first_stdout, ordered_first_stderr = ordered_first.communicate(timeout=10)
+        ordered_second_stdout, ordered_second_stderr = ordered_second.communicate(timeout=10)
+        assert ordered_first.returncode == 0, ordered_first_stderr
+        assert ordered_second.returncode == 0, ordered_second_stderr
+        count_lines_after_ordered = count_file.read_text(encoding="utf-8").splitlines()
+        assert count_lines_after_ordered == ["test ./pkg", "test ./pkg", "test ./system", "test ./b ./a"], count_lines_after_ordered
+        assert "replaying completed validation" in (ordered_first_stderr + ordered_second_stderr), (
+            ordered_first_stderr,
+            ordered_second_stderr,
+        )
+
         slow_go = Path(td) / "go-slow-real"
         slow_go.write_text(
             "#!/usr/bin/env bash\n"
