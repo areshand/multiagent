@@ -3665,7 +3665,7 @@ def source_required_go_validation_packages(text: str, current_status: dict[str, 
 
     def add_package(raw: str) -> None:
         package = raw.strip().strip("`'\"")
-        package = package.rstrip(",;:)]}")
+        package = package.rstrip(".,;:)]}")
         package = package.lstrip("([{")
         if not package.startswith("./"):
             return
@@ -3679,7 +3679,7 @@ def source_required_go_validation_packages(text: str, current_status: dict[str, 
 
     def add_package_from_path(raw: str) -> None:
         path = raw.strip().strip("`'\"")
-        path = path.rstrip(",;:)]}")
+        path = path.rstrip(".,;:)]}")
         path = path.lstrip("([{")
         path = path.removeprefix("./")
         if not path.endswith(".go"):

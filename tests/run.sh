@@ -2976,6 +2976,10 @@ source_symbol_map_owner_evidence_blockers = solve_swe_prod.implementation_scope_
 assert not any("source-symbol-map-passed:" in blocker for blocker in source_symbol_map_owner_evidence_blockers), source_symbol_map_owner_evidence_blockers
 assert not any("source-owner-ledger:" in blocker for blocker in source_symbol_map_owner_evidence_blockers), source_symbol_map_owner_evidence_blockers
 assert not solve_swe_prod.source_symbol_map_blocker_present(source_symbol_map_owner_evidence_blockers), source_symbol_map_owner_evidence_blockers
+assert solve_swe_prod.source_required_go_validation_packages(
+    "",
+    {"validation": "source-owner-ledger: validation-package=./lib/benchmark. go test ./lib/benchmark returncode=0"},
+) == ["./lib/benchmark"]
 dependency_contract_diff = (
     "diff --git a/internal/server/ofrep/evaluation.go b/internal/server/ofrep/evaluation.go\n"
     "+type flagLister interface { ListFlags(ctx context.Context, namespace string) ([]string, error) }\n"
