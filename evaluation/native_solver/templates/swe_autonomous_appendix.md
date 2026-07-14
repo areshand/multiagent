@@ -123,7 +123,8 @@ Benchmark spawning path:
   not prose memory. Record the issue with `bin/subagent.sh finding-create`,
   convert accepted blocking findings to `bin/subagent.sh todo-create` items with
   objective done criteria, require the worker to attach
-  `bin/subagent.sh resolution-create` evidence, and close the todo with
+  `${MULTIAGENT_HELPER:-/opt/multiagent/bin/subagent.sh} resolution-create`
+  evidence, and close the todo with
   `bin/subagent.sh todo-close` only after a verifier rechecks the original
   finding with accepted evidence. Run `bin/subagent.sh gate-check` before
   writing completed status; any open, assigned, resolved, reopened, or closed
@@ -131,6 +132,10 @@ Benchmark spawning path:
   nonzero or `gate-check` exits nonzero, do not write completed status; repair
   the structured evidence/closure first or write blocked status with the exact
   command failure.
+- Workers run from `/app`; they must not use relative `bin/subagent.sh` for
+  resolution evidence. Give workers the exact helper command using
+  `${MULTIAGENT_HELPER:-/opt/multiagent/bin/subagent.sh}` or run it from
+  `/opt/multiagent` with `MULTIAGENT_ROOT=/app`.
 - If worker/verifier spawning fails, record the exact blocker in status JSON
   only after retrying once with a fresh, differently named bounded worker or
   verifier.

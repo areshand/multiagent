@@ -130,15 +130,19 @@ As orchestrator:
 10. Before writing completed status, run the structured repair gate. Any
    blocking verifier or adapter issue must be recorded with
    `bin/subagent.sh finding-create`, converted into a `bin/subagent.sh
-   todo-create` repair item, resolved by a worker with `bin/subagent.sh
-   resolution-create` evidence, and closed with `bin/subagent.sh todo-close`
-   only after verifier recheck accepts the original finding. Run
+   todo-create` repair item, resolved by a worker with
+   `${MULTIAGENT_HELPER:-/opt/multiagent/bin/subagent.sh} resolution-create`
+   evidence, and closed with `bin/subagent.sh todo-close` only after verifier
+   recheck accepts the original finding. Run
    `bin/subagent.sh gate-check`; if it rejects an unqueued finding, an open,
    assigned, resolved, reopened todo, or a closed todo without closure evidence,
    route repair or write blocked status instead of completed status. If
    `todo-close` exits nonzero or `gate-check` exits nonzero, do not write
    completed status; repair the structured evidence/closure first or write
    blocked status with the exact command failure.
+   Workers run from `/app`; never tell a worker to use relative
+   `bin/subagent.sh` for resolution evidence. Use `MULTIAGENT_HELPER` or the
+   absolute `/opt/multiagent/bin/subagent.sh` helper.
 11. Completion requires both accepted source state in `/app` and
    `/tmp/multiagent-prod-swe/status.json`.
 12. If the run has a non-empty source diff but no accepted verifier/status

@@ -212,7 +212,9 @@ edit.
 When repairing an orchestrator todo, completion requires a structured worker
 resolution report bound to that todo. Record the changed paths, validation
 commands with return codes, and why the original finding is resolved, preferably
-with `bin/subagent.sh resolution-create TODO_ID ...`. A plain "fixed" summary
+with `${MULTIAGENT_HELPER:-/opt/multiagent/bin/subagent.sh} resolution-create
+TODO_ID ...`. If your workdir is the task repo, do not use a relative
+`bin/subagent.sh`; the helper may live outside the repo. A plain "fixed" summary
 does not close the todo; it only tells the orchestrator/verifier there is
 evidence to recheck.
 

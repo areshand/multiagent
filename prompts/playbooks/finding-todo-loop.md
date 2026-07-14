@@ -65,13 +65,17 @@ state; the gate rechecks the current finding artifact against that hash.
 A worker assigned a todo must record resolution evidence, not only a sentence:
 
 ```bash
-bin/subagent.sh resolution-create todo-017 \
+"${MULTIAGENT_HELPER:-/opt/multiagent/bin/subagent.sh}" resolution-create todo-017 \
   --worker worker-02-ofrep-build \
   --status resolved \
   --changed internal/server/ofrep/evaluation.go,internal/server/evaluation/ofrep_bridge.go \
   --validation-json '[{"cmd":"go test ./internal/server/ofrep","rc":0},{"cmd":"go test ./internal/server/evaluation","rc":0}]' \
   --why "The missing interface contract is implemented and both changed packages compile."
 ```
+
+Use the helper path from `MULTIAGENT_HELPER` when present. If a worker is running
+from a task checkout such as `/app`, do not assume `bin/subagent.sh` exists in
+the current repo.
 
 `resolved` means ready for verifier review. It is not final acceptance.
 
