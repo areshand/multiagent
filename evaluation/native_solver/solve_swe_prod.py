@@ -323,7 +323,7 @@ ISSUE_COVERAGE_WEAK_CLOSURE_MARKERS = {
 
 
 def _clean_issue_sentence(sentence: str) -> str:
-    return re.sub(r"\s+", " ", sentence.replace("**", " ")).strip(" -:*`\t\r\n")
+    return re.sub(r"\s+", " ", sentence.replace("**", " ")).strip(" -:*\t\r\n")
 
 
 def public_issue_text_for_coverage(issue: str) -> str:
@@ -364,6 +364,42 @@ def _issue_sentences(issue: str) -> list[str]:
     return lines
 
 
+def _issue_explicit_requirement_bullets(issue: str) -> list[str]:
+    """Extract visible Requirements: bullets as first-class coverage items."""
+
+    bullets: list[str] = []
+    current: list[str] = []
+    in_requirements = False
+    for raw_line in public_issue_text_for_coverage(issue).replace("\r\n", "\n").splitlines():
+        stripped = raw_line.strip()
+        if re.match(r"^requirements?\s*:\s*$", stripped, flags=re.IGNORECASE):
+            in_requirements = True
+            continue
+        if not in_requirements:
+            continue
+        if not stripped:
+            continue
+        if re.match(r"^(#{1,6}\s+|\w[\w -]{0,80}:\s*$)", stripped) and not re.match(
+            r"^([-*]|\d+[.)])\s+", stripped
+        ):
+            break
+        bullet_match = re.match(r"^([-*]|\d+[.)])\s+(.*)$", stripped)
+        if bullet_match:
+            if current:
+                cleaned = _clean_issue_sentence(" ".join(current))
+                if cleaned:
+                    bullets.append(cleaned)
+            current = [bullet_match.group(2)]
+            continue
+        if current:
+            current.append(stripped)
+    if current:
+        cleaned = _clean_issue_sentence(" ".join(current))
+        if cleaned:
+            bullets.append(cleaned)
+    return bullets
+
+
 def _issue_sentence_keywords(sentence: str) -> list[str]:
     keywords: list[str] = []
     seen: set[str] = set()
@@ -390,30 +426,79 @@ def _issue_requirement_id(keywords: list[str], index: int) -> str:
     return "issue-" + "-".join(parts or [f"item-{index}"])
 
 
+def _fallback_issue_keywords(sentence: str, existing: list[str]) -> list[str]:
+    if existing:
+        return existing
+    stopwords = {
+        "and",
+        "are",
+        "for",
+        "from",
+        "into",
+        "only",
+        "should",
+        "that",
+        "the",
+        "their",
+        "this",
+        "via",
+        "when",
+        "with",
+    }
+    keywords: list[str] = []
+    seen: set[str] = set()
+    for word in re.findall(r"\b[a-zA-Z][a-zA-Z0-9_-]{3,}\b", sentence.lower()):
+        if word in stopwords or word in seen:
+            continue
+        seen.add(word)
+        keywords.append(word)
+        if len(keywords) >= 5:
+            break
+    return keywords
+
+
 def issue_coverage_requirements(issue: str) -> list[dict[str, object]]:
     """Derive public issue coverage requirements without evaluator metadata."""
 
     requirements: list[dict[str, object]] = []
     seen_ids: set[str] = set()
-    for sentence in _issue_sentences(issue):
-        lower = sentence.lower()
-        keywords = _issue_sentence_keywords(sentence)
-        if len(keywords) < 2:
-            continue
-        if not any(trigger in lower for trigger in ISSUE_COVERAGE_TRIGGER_WORDS):
-            continue
+    seen_summaries: set[str] = set()
+
+    def add_requirement(sentence: str, *, explicit: bool = False) -> None:
+        summary = _clean_issue_sentence(sentence)
+        if not summary or summary.lower() in seen_summaries:
+            return
+        keywords = _issue_sentence_keywords(summary)
+        if explicit:
+            keywords = _fallback_issue_keywords(summary, keywords)
+        elif len(keywords) < 2:
+            return
         requirement_id = _issue_requirement_id(keywords, len(requirements) + 1)
         if requirement_id in seen_ids:
-            continue
+            suffix = 2
+            base_id = requirement_id
+            while requirement_id in seen_ids:
+                requirement_id = f"{base_id}-{suffix}"
+                suffix += 1
         seen_ids.add(requirement_id)
+        seen_summaries.add(summary.lower())
         requirements.append(
             {
                 "id": requirement_id,
-                "summary": sentence[:220],
+                "summary": summary[:320] if explicit else summary[:220],
                 "keywords": keywords,
             }
         )
-    return requirements[:12]
+
+    for bullet in _issue_explicit_requirement_bullets(issue):
+        add_requirement(bullet, explicit=True)
+
+    for sentence in _issue_sentences(issue):
+        lower = sentence.lower()
+        if not any(trigger in lower for trigger in ISSUE_COVERAGE_TRIGGER_WORDS):
+            continue
+        add_requirement(sentence, explicit=False)
+    return requirements[:40]
 
 
 def issue_coverage_blockers(issue: str, evidence_text: str) -> list[str]:

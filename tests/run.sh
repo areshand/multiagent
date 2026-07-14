@@ -1556,6 +1556,20 @@ full_public_problem_statement = (
     "Requirements:\n"
     "- The class `Forwarder` should ensure audit events from `exec`, `portForward`, and `catchAll` "
     "continue to be recorded if the client disconnects during a request.\n"
+    "- `Forwarder` should authorize via `ForwarderConfig.Authz.Authorize()`, should read cluster "
+    "config via `ForwarderConfig.CachingAuthClient.GetClusterConfig()`, and should default the "
+    "Teleport target cluster to `ForwarderConfig.ClusterName` when `identity.RouteToCluster` is empty.\n"
+    "- When credentials are required, `Forwarder` should obtain ephemeral user credentials via "
+    "`ForwarderConfig.AuthClient.ProcessKubeCSR()` and should not cache request scoped "
+    "`clusterSession` state.\n"
+    "- `Forwarder` should use `ForwarderConfig.ConnPingPeriod` for ping or keepalive of interactive "
+    "connections and should expose `ServeHTTP()` delegating to an internal `httprouter.Router`.\n"
+    "- The Kubernetes service should initialize the session uploader at startup so upload or streaming "
+    "directories required for interactive sessions are present and usable.\n"
+    "- `ForwarderConfig` should expose clearly named fields representing distinct responsibilities: "
+    "`Authz`, `AuthClient`, `CachingAuthClient`, `ReverseTunnelSrv`, `ConnPingPeriod`, `ClusterName`, "
+    "`Namespace`, `ServerID`, `Clock`, `StreamEmitter`, `Keygen`, `DataDir`, `StaticLabels`, and "
+    "`DynamicLabels`.\n"
 )
 combined_coverage_items = solve_swe_prod.issue_coverage_requirements(
     solve_swe_prod.issue_with_public_problem_text(
@@ -1564,12 +1578,20 @@ combined_coverage_items = solve_swe_prod.issue_coverage_requirements(
     )
 )
 assert any(item["id"] == "issue-forwarder-exec-portforward" for item in combined_coverage_items), combined_coverage_items
+assert len(
+    [item for item in combined_coverage_items if str(item["summary"]).startswith(("The class `Forwarder`", "`Forwarder`", "When credentials", "The Kubernetes", "`ForwarderConfig`"))]
+) == 6, combined_coverage_items
+assert any("authz" in ",".join(item["keywords"]) for item in combined_coverage_items), combined_coverage_items
+assert any("connpingperiod" in ",".join(item["keywords"]) for item in combined_coverage_items), combined_coverage_items
+assert any("Kubernetes service" in item["summary"] for item in combined_coverage_items), combined_coverage_items
+assert any("forwarderconfig" in item["id"] for item in combined_coverage_items), combined_coverage_items
 compressed_coverage_excerpt = solve_swe_prod.contract_coverage_items_excerpt(
     "Short issue symptom.",
     {"problem_statement": full_public_problem_statement},
     limit=260,
 )
 assert "issue-forwarder-exec-portforward" in compressed_coverage_excerpt, compressed_coverage_excerpt
+assert "connpingperiod" in compressed_coverage_excerpt, compressed_coverage_excerpt
 evalscope_prompt_without_requirements = (
     "Short issue symptom.\n\n"
     "## Submission\n"
@@ -1580,6 +1602,7 @@ coverage_from_prompt_plus_metadata = solve_swe_prod.contract_coverage_items_exce
     {"problem_statement": full_public_problem_statement},
 )
 assert "issue-forwarder-exec-portforward" in coverage_from_prompt_plus_metadata, coverage_from_prompt_plus_metadata
+assert "connpingperiod" in coverage_from_prompt_plus_metadata, coverage_from_prompt_plus_metadata
 
 for excluded in (
     "tests/run.sh",
