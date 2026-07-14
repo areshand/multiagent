@@ -131,9 +131,8 @@ class MultiagentNativeRunner(AgentRunner):
         self._codex_auth_container_home = codex_auth_container_home.rstrip("/") or "/root/.codex-multiagent-prod"
         self._score_failed_diff = score_failed_diff
         self._score_timed_out_diff = score_timed_out_diff
-        # Accepted for backwards-compatible EvalScope configs only. Production
-        # no-leak mode must not enrich solver metadata from official datasets.
-        _ = swe_bench_pro_repo_path, swe_bench_pro_sample_offset
+        self._swe_bench_pro_repo_path = swe_bench_pro_repo_path.strip()
+        self._swe_bench_pro_sample_offset = swe_bench_pro_sample_offset
 
     async def setup(self, env: AgentEnvironment) -> None:
         await self._write_file(env, _DEFAULT_SOLVER_COMMAND, _SOLVER_LAUNCHER)
@@ -167,6 +166,13 @@ class MultiagentNativeRunner(AgentRunner):
 
         raw_metadata = dict(task.metadata or {})
         metadata = _public_solver_metadata(dict(task.metadata or {}))
+        metadata.update(
+            _public_problem_statement_metadata(
+                self._swe_bench_pro_repo_path,
+                self._swe_bench_pro_sample_offset,
+                existing=metadata,
+            )
+        )
         await self._write_file(env, _PROMPT_FILE, task.instruction)
         await self._write_file(env, _METADATA_FILE, json.dumps(metadata, indent=2, sort_keys=True))
 
@@ -395,3 +401,33 @@ def _public_solver_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
             if key in _PUBLIC_METADATA_KEYS and key not in public:
                 public[key] = value
     return public
+
+
+def _public_problem_statement_metadata(
+    swe_bench_pro_repo_path: str,
+    sample_offset: int,
+    *,
+    existing: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Load only the public problem statement from the local SWE-bench Pro JSONL."""
+
+    if existing and existing.get("problem_statement"):
+        return {}
+    if not swe_bench_pro_repo_path:
+        return {}
+    jsonl = Path(swe_bench_pro_repo_path) / "helper_code" / "sweap_eval_full_v2.jsonl"
+    if not jsonl.exists() or sample_offset < 0:
+        return {}
+    try:
+        with jsonl.open(encoding="utf-8") as handle:
+            for index, line in enumerate(handle):
+                if index != sample_offset:
+                    continue
+                row = json.loads(line)
+                statement = row.get("problem_statement")
+                if isinstance(statement, str) and statement.strip():
+                    return {"problem_statement": statement.strip()}
+                return {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {}

@@ -1443,6 +1443,23 @@ public_metadata = evalscope_multiagent_native_runner._public_solver_metadata(
     }
 )
 assert public_metadata == {"language": "python", "problem_statement": "public prompt copy"}, public_metadata
+with tempfile.TemporaryDirectory() as td:
+    public_repo = Path(td)
+    helper_code = public_repo / "helper_code"
+    helper_code.mkdir()
+    (helper_code / "sweap_eval_full_v2.jsonl").write_text(
+        json.dumps({"problem_statement": "first public issue"}) + "\n"
+        + json.dumps({"problem_statement": "second public issue with Requirements:\n- Forwarder should work."}) + "\n",
+        encoding="utf-8",
+    )
+    loaded_public_statement = evalscope_multiagent_native_runner._public_problem_statement_metadata(
+        str(public_repo),
+        1,
+        existing={},
+    )
+    assert loaded_public_statement == {
+        "problem_statement": "second public issue with Requirements:\n- Forwarder should work."
+    }, loaded_public_statement
 solver_metadata = solve_swe_prod.public_solver_metadata(
     {
         "sample_id": 7,
