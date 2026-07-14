@@ -536,18 +536,24 @@ def contract_coverage_items_excerpt(
     lines = [
         "Public issue coverage items that must be copied into worker/verifier checklists:",
     ]
+    summary_limit = max(80, min(220, (limit // max(1, len(requirements))) - 80))
     for requirement in requirements:
+        summary = str(requirement["summary"])
+        if len(summary) > summary_limit:
+            summary = summary[:summary_limit].rstrip() + "..."
         lines.append(
             "- "
             + str(requirement["id"])
             + ": "
-            + str(requirement["summary"])
+            + summary
             + " [keywords="
             + ",".join(str(keyword) for keyword in requirement["keywords"])
             + "]"
         )
     text = "\n".join(lines)
-    return text[-limit:]
+    if len(text) <= limit:
+        return text
+    return "\n".join(line[: max(120, limit // max(1, len(lines)))] for line in lines)
 
 
 def official_expected_test_blockers(metadata: dict[str, object], current_status: dict[str, object]) -> list[str]:

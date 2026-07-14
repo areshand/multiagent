@@ -1564,6 +1564,12 @@ combined_coverage_items = solve_swe_prod.issue_coverage_requirements(
     )
 )
 assert any(item["id"] == "issue-forwarder-exec-portforward" for item in combined_coverage_items), combined_coverage_items
+compressed_coverage_excerpt = solve_swe_prod.contract_coverage_items_excerpt(
+    "Short issue symptom.",
+    {"problem_statement": full_public_problem_statement},
+    limit=260,
+)
+assert "issue-forwarder-exec-portforward" in compressed_coverage_excerpt, compressed_coverage_excerpt
 
 for excluded in (
     "tests/run.sh",
