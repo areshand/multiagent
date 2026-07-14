@@ -444,6 +444,53 @@ path_in_assignment() {
   return 1
 }
 
+paths_overlap() {
+  local left="$1"
+  local right="$2"
+  [[ "$left" == "$right" || "$left" == "$right/"* || "$right" == "$left/"* ]]
+}
+
+assignment_status_is_terminal() {
+  local status="$1"
+  case "$status" in
+    done|completed|closed|cancelled|canceled|failed|released|skipped)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+reject_active_assignment_overlap() {
+  local new_name="$1"
+  local new_owned_file="$2"
+  local new_role="$3"
+  [[ "$new_role" != "verifier" ]] || return 0
+  local base="$STATE_DIR/assignments"
+  [[ -d "$base" ]] || return 0
+  local dir existing existing_status existing_owned_file new_owned existing_owned
+  while IFS= read -r new_owned; do
+    [[ -n "$new_owned" ]] || continue
+    for dir in "$base"/*; do
+      [[ -d "$dir" ]] || continue
+      existing="$(basename "$dir")"
+      [[ "$existing" != "$new_name" ]] || continue
+      [[ -f "$(assignment_meta_file "$existing")" && -f "$(assignment_status_file "$existing")" ]] || continue
+      existing_status="$(get_assignment_status "$existing")"
+      assignment_status_is_terminal "$existing_status" && continue
+      existing_owned_file="$(assignment_owned_file "$existing")"
+      [[ -f "$existing_owned_file" ]] || continue
+      while IFS= read -r existing_owned; do
+        [[ -n "$existing_owned" ]] || continue
+        if paths_overlap "$new_owned" "$existing_owned"; then
+          die "active assignment owned-path overlap: new=$new_name path=$new_owned existing=$existing status=$existing_status existing_path=$existing_owned"
+        fi
+      done <"$existing_owned_file"
+    done
+  done <"$new_owned_file"
+}
+
 assignment_create() {
   local name="${1:-}"
   [[ -n "$name" ]] || die "assignment-create requires NAME"
@@ -538,6 +585,7 @@ assignment_create() {
     grep -Fx -- "$normalized" "$owned_file" >/dev/null 2>&1 || printf '%s\n' "$normalized" >>"$owned_file"
   done
   [[ -s "$owned_file" ]] || die "assignment must own at least one path"
+  reject_active_assignment_overlap "$name" "$owned_file" "$role"
 
   cat >"$(assignment_meta_file "$name")" <<EOF
 agent_name=$name
