@@ -1694,7 +1694,7 @@ def blocked_no_diff_subagent_summaries(runtime_root: Path = RUNTIME_ROOT) -> lis
             if not status_file.exists():
                 continue
             status = status_file.read_text(encoding="utf-8", errors="replace").strip().lower()
-            if status != "blocked":
+            if status not in {"blocked", "missing"}:
                 continue
             snippets: list[str] = []
             for name in ("last-message.txt", "current.txt", "transcript.log"):
@@ -1708,7 +1708,7 @@ def blocked_no_diff_subagent_summaries(runtime_root: Path = RUNTIME_ROOT) -> lis
                 if text:
                     snippets.append(" ".join(text[-1200:].split()))
             tail = snippets[0] if snippets else "no captured blocked-worker text"
-            summaries.append(f"{agent_dir.name}: {tail[:1200]}")
+            summaries.append(f"{agent_dir.name} status={status}: {tail[:1200]}")
     return summaries
 
 
@@ -1742,9 +1742,24 @@ def required_path_outside_owned_reports(runtime_root: Path = RUNTIME_ROOT) -> li
                     continue
                 for match in pattern.finditer(text):
                     report = match.group(1).strip()
-                    if report:
+                    if valid_required_path_outside_owned_report(report):
                         reports.append(report)
     return list(dict.fromkeys(reports))
+
+
+def valid_required_path_outside_owned_report(report: str) -> bool:
+    normalized = report.strip().strip(".")
+    if not normalized:
+        return False
+    if normalized in {"RELATIVE_PATH", "RELATIVE_PATHS", "PATH", "PATHS"}:
+        return False
+    if normalized.startswith(("<", "{", "$")):
+        return False
+    if any(token in normalized for token in ("...", "*", "\n", "\t")):
+        return False
+    if normalized.startswith(("/", "../")) or "/../" in normalized:
+        return False
+    return "/" in normalized or "." in Path(normalized).name
 
 
 def emit_failure_diagnostics(session: str, *, limit: int = 24000) -> None:
