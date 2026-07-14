@@ -1254,8 +1254,8 @@ assert "blocked_status_needs_diff_reconciliation" in solver_source and "blocked-
 assert "EVAL_NO_DIFF_BLOCKED_RETRY_LIMIT" in solver_source and "blocked with no materialized source diff" in solver_source, (
     "blocked no-diff worker outcomes should get one production-orchestrator retry"
 )
-assert 'EVAL_NO_DIFF_BLOCKED_RETRY_LIMIT", "2"' in solver_source, (
-    "ownership-boundary no-diff recovery needs more than one retry for chained owner expansion"
+assert 'EVAL_NO_DIFF_BLOCKED_RETRY_LIMIT", "4"' in solver_source, (
+    "ownership-boundary no-diff recovery needs several retries for chained owner expansion"
 )
 assert re.search(
     r'"blocked with no materialized source diff".*?force_live_handoff=True',
