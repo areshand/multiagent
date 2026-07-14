@@ -3693,20 +3693,20 @@ def source_required_go_validation_packages(text: str, current_status: dict[str, 
         for package in re.split(r"[,]+", match.group(1)):
             add_package(package)
 
-    for match in re.finditer(r"(?:implemented-by|already-satisfied-by)\s*=\s*([^\s;`\"']+)", lower):
-        add_package_from_path(match.group(1))
+    for line in lower.splitlines():
+        if "issue-coverage-ledger:" not in line:
+            continue
+        for match in re.finditer(r"(?:implemented-by|already-satisfied-by)\s*=\s*([^\s;`\"']+)", line):
+            add_package_from_path(match.group(1))
 
-    for match in re.finditer(r"go\s+test\s+([^\n`\"']+)", lower):
-        command_tail = match.group(1)
-        for token in re.split(r"\s+", command_tail):
-            token = token.strip()
-            if not token or token.startswith("-"):
-                continue
-            if token in {"&&", ";", "|"}:
-                break
-            add_package(token)
-
-    return list(dict.fromkeys(packages))
+    unique_packages = list(dict.fromkeys(packages))
+    # Tmux capture wraps long evidence lines. A wrapped token can look like a
+    # valid package prefix (for example ./lib/benchm); retain the complete token.
+    return [
+        package
+        for package in unique_packages
+        if not any(other != package and other.startswith(package) for other in unique_packages)
+    ]
 
 
 def go_failure_is_unaffected_unbuildable_root_target(text: str, go_packages: list[str]) -> bool:

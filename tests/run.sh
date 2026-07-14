@@ -2980,6 +2980,14 @@ assert solve_swe_prod.source_required_go_validation_packages(
     "",
     {"validation": "source-owner-ledger: validation-package=./lib/benchmark. go test ./lib/benchmark returncode=0"},
 ) == ["./lib/benchmark"]
+assert solve_swe_prod.source_required_go_validation_packages(
+    (
+        "source-owner-ledger: validation-package=./lib/benchm\n"
+        "source-owner-ledger: validation-package=./lib/benchmark\n"
+        "example only: go test ./internal/feature\n"
+    ),
+    {},
+) == ["./lib/benchmark"]
 dependency_contract_diff = (
     "diff --git a/internal/server/ofrep/evaluation.go b/internal/server/ofrep/evaluation.go\n"
     "+type flagLister interface { ListFlags(ctx context.Context, namespace string) ([]string, error) }\n"
