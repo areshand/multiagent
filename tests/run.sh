@@ -391,6 +391,17 @@ assert_file_contains "$TMPDIR/validation-run-ok.out" "validation-ok"
 MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease-show validation-run-ok >"$TMPDIR/validation-run-ok-lease.out"
 assert_file_contains "$TMPDIR/validation-run-ok-lease.out" '"state": "passed"'
 assert_file_contains "$TMPDIR/validation-run-ok-lease.out" '"returncode": 0'
+mkdir -p "$TMPDIR/not-root"
+(
+  cd "$TMPDIR/not-root"
+  MULTIAGENT_ROOT="$ROOT" MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-run validation-run-cwd \
+    --owner worker-02-ofrep-build \
+    --target "unit-target-cwd" \
+    -- bash -lc 'pwd' >"$TMPDIR/validation-run-cwd.out"
+)
+assert_file_contains "$TMPDIR/validation-run-cwd.out" "$ROOT"
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease-show validation-run-cwd >"$TMPDIR/validation-run-cwd-lease.out"
+assert_file_contains "$TMPDIR/validation-run-cwd-lease.out" "\"cwd\": \"$ROOT\""
 if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-run validation-run-fail \
   --owner worker-02-ofrep-build \
   --target "unit-target-fail" \

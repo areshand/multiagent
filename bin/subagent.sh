@@ -2293,6 +2293,7 @@ validation_run_result_json() {
   local finished_at="$4"
   local stdout_path="$5"
   local stderr_path="$6"
+  local cwd="$7"
   require_cmd python3
   python3 -c '
 import json
@@ -2305,6 +2306,7 @@ started_at = sys.argv[3]
 finished_at = sys.argv[4]
 stdout_path = pathlib.Path(sys.argv[5])
 stderr_path = pathlib.Path(sys.argv[6])
+cwd = sys.argv[7]
 
 def tail(path):
     text = path.read_text(errors="replace") if path.exists() else ""
@@ -2314,12 +2316,13 @@ print(json.dumps({
     "command": command,
     "command_text": " ".join(command),
     "returncode": return_code,
+    "cwd": cwd,
     "started_at": started_at,
     "finished_at": finished_at,
     "stdout_tail": tail(stdout_path),
     "stderr_tail": tail(stderr_path),
 }, sort_keys=True))
-' "$command_json" "$return_code" "$started_at" "$finished_at" "$stdout_path" "$stderr_path"
+' "$command_json" "$return_code" "$started_at" "$finished_at" "$stdout_path" "$stderr_path" "$cwd"
 }
 
 validation_run() {
@@ -2358,8 +2361,9 @@ validation_run() {
   validate_name "$owner"
   [[ -n "$target" ]] || die "validation-run requires --target TEXT"
   [[ $# -gt 0 ]] || die "validation-run requires COMMAND after --"
+  [[ -d "$ROOT" ]] || die "validation-run root does not exist: $ROOT"
 
-  local command_json command_text tmp_dir stdout_path stderr_path started_at finished_at rc result_json
+  local command_json command_text tmp_dir stdout_path stderr_path started_at finished_at rc result_json run_cwd
   command_json="$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1:]))' "$@")"
   command_text="$(python3 -c 'import json, sys; print(" ".join(json.loads(sys.argv[1])))' "$command_json")"
   validation_lease_acquire "$lease_id" --owner "$owner" --target "$target" --command "$command_text" --state running --resource-risk "$resource_risk" >/dev/null
@@ -2367,16 +2371,17 @@ validation_run() {
   tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/multiagent-validation-run.XXXXXX")"
   stdout_path="$tmp_dir/stdout"
   stderr_path="$tmp_dir/stderr"
+  run_cwd="$(cd "$ROOT" && pwd -P)"
   started_at="$(timestamp)"
   set +e
-  "$@" >"$stdout_path" 2>"$stderr_path"
+  (cd "$run_cwd" && "$@") >"$stdout_path" 2>"$stderr_path"
   rc=$?
   set -e
   finished_at="$(timestamp)"
 
   cat "$stdout_path"
   cat "$stderr_path" >&2
-  result_json="$(validation_run_result_json "$command_json" "$rc" "$started_at" "$finished_at" "$stdout_path" "$stderr_path")"
+  result_json="$(validation_run_result_json "$command_json" "$rc" "$started_at" "$finished_at" "$stdout_path" "$stderr_path" "$run_cwd")"
   if [[ "$rc" -eq 0 ]]; then
     validation_lease_status "$lease_id" passed --result-json "$result_json" >/dev/null
   else
