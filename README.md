@@ -9,7 +9,7 @@ This project launches a tmux session with one `orchestrator` window. The orchest
 - **Flexible Configuration**: Environment-based setup for different project contexts
 - **State Persistence**: Durable subagent state management with transcript logging
 - **Assignment Checks**: Repo-local metadata and post-work acceptance checks for branch and file ownership
-- **Structured Repair Loop**: Verifier findings become queued todos, workers attach resolution evidence, and final gates require closure
+- **Structured Repair Loop**: Verifier findings become queued todos, workers attach resolution evidence, and final gates require hash-bound verifier closure
 - **Parallel DAG Discipline**: Ready workers with disjoint ownership fan out in parallel and consolidate later
 
 ## Launch

@@ -290,6 +290,28 @@ assert_file_contains "$TMPDIR/launch-explicit-state/orchestrator-bootstrap.sh" "
 
 REPAIR_STATE="$TMPDIR/repair-state"
 mkdir -p "$REPAIR_STATE"
+if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" finding-create invalid-prose-finding \
+  --severity blocking \
+  --type compile_failure \
+  --summary "Prose-only compile finding" \
+  --evidence-json '"go test failed somewhere"' \
+  --required-resolution "Final diff must compile." >"$TMPDIR/finding-prose-invalid.out" 2>&1; then
+  echo "expected blocking finding with prose-only evidence to fail" >&2
+  cat "$TMPDIR/finding-prose-invalid.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/finding-prose-invalid.out" "evidence JSON must be an object"
+if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" finding-create invalid-command-finding \
+  --severity blocking \
+  --type compile_failure \
+  --summary "Missing command evidence" \
+  --evidence-json '{"source_evidence":"compile failed in verifier output"}' \
+  --required-resolution "Final diff must compile." >"$TMPDIR/finding-command-invalid.out" 2>&1; then
+  echo "expected compile failure finding without command+returncode to fail" >&2
+  cat "$TMPDIR/finding-command-invalid.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/finding-command-invalid.out" "compile_failure finding evidence requires command and returncode"
 MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" finding-create build-go-ofrep \
   --severity blocking \
   --type compile_failure \
@@ -356,6 +378,17 @@ MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" todo-close todo-017
 MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-closed.out"
 assert_file_contains "$TMPDIR/gate-closed.out" "accepted"
 assert_file_contains "$REPAIR_STATE/todos/todo-017/closure.json" '"verified_by": "verifier-01-ofrep-build"'
+cp "$REPAIR_STATE/findings/build-go-ofrep/finding.json" "$TMPDIR/build-go-ofrep.finding.json"
+printf '{"id":"build-go-ofrep","severity":"blocking","type":"compile_failure","summary":"mutated after closure","affected_paths":[],"evidence":{"command":"go test ./internal/server/ofrep","returncode":1},"required_resolution":"mutated","created_at":"mutated"}\n' >"$REPAIR_STATE/findings/build-go-ofrep/finding.json"
+if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-mutated-finding.out" 2>&1; then
+  echo "expected gate-check to reject a closed todo after source finding mutation" >&2
+  cat "$TMPDIR/gate-mutated-finding.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/gate-mutated-finding.out" "closed-todo-source-finding-hash-changed"
+cp "$TMPDIR/build-go-ofrep.finding.json" "$REPAIR_STATE/findings/build-go-ofrep/finding.json"
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-restored-finding.out"
+assert_file_contains "$TMPDIR/gate-restored-finding.out" "accepted"
 
 MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease-acquire go-ofrep \
   --owner worker-02-ofrep-build \

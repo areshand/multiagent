@@ -29,7 +29,10 @@ bin/subagent.sh finding-create build-go-ofrep \
 ```
 
 The verifier may still include human-readable analysis, but any blocking issue
-that should drive repair must have a corresponding finding artifact.
+that should drive repair must have a corresponding finding artifact. Blocking
+compile, build, test, and validation failure findings must include command
+evidence with a return code; source-only evidence is reserved for source-level
+contract findings such as hidden API shape or adapter parity risks.
 
 ## Orchestrator Todo
 
@@ -52,6 +55,10 @@ done criterion that starts with `run ` becomes a machine-checkable required
 command. For commands that are not naturally phrased as a `run ...` done
 criterion, add `--required-command "exact command"` so the worker resolution
 and verifier recheck must both cover it.
+
+Todo creation snapshots the source finding hash. This prevents the orchestrator
+from closing a task against stale, mutated, or prose-reconstructed verifier
+state; the gate rechecks the current finding artifact against that hash.
 
 ## Worker Resolution
 
@@ -99,6 +106,6 @@ bin/subagent.sh gate-check
 Do not accept while `gate-check` reports an unqueued blocking finding or any
 open, assigned, resolved, or reopened todo. A closed todo also fails the gate if
 it lacks worker resolution evidence, verifier closure evidence, source-finding
-binding, or required-command coverage. For code patches, build verification is
-one required finding/todo class; behavior and hidden-contract findings use the
-same loop.
+binding/hash consistency, or required-command coverage. For code patches, build
+verification is one required finding/todo class; behavior and hidden-contract
+findings use the same loop.

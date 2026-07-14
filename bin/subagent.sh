@@ -296,6 +296,18 @@ append_unique_line() {
   grep -Fx -- "$line" "$file" >/dev/null 2>&1 || printf '%s\n' "$line" >>"$file"
 }
 
+sha256_file() {
+  local file="$1"
+  require_cmd python3
+  python3 -c '
+import hashlib
+import pathlib
+import sys
+path = pathlib.Path(sys.argv[1])
+print(hashlib.sha256(path.read_bytes()).hexdigest())
+' "$file"
+}
+
 set_env_key() {
   local file="$1"
   local key="$2"
@@ -1467,6 +1479,7 @@ context = context_file.read_text() if context_file.exists() else ""
 payload = {
     "todo_id": meta["todo_id"],
     "source_finding_id": meta["source_finding_id"],
+    "source_finding_hash": meta.get("source_finding_hash") or None,
     "assigned_to": meta.get("assigned_to") or None,
     "status": status,
     "task": meta["task"],
@@ -1532,6 +1545,7 @@ with (root / "recheck.json").open() as fh:
 payload = {
     "todo_id": meta["todo_id"],
     "source_finding_id": meta["source_finding_id"],
+    "source_finding_hash": meta.get("source_finding_hash") or None,
     "verified_by": meta["verified_by"],
     "recheck": recheck,
     "notes": meta.get("notes", ""),
@@ -1539,6 +1553,51 @@ payload = {
 }
 (root / "closure.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 ' "$dir"
+}
+
+validate_finding_evidence_payload() {
+  local severity="$1"
+  local type="$2"
+  local evidence_json="$3"
+  require_cmd python3
+  python3 -c '
+import json
+import sys
+
+severity, finding_type, raw = sys.argv[1:4]
+try:
+    payload = json.loads(raw)
+except Exception as exc:
+    raise SystemExit(f"invalid evidence JSON: {exc}")
+if not isinstance(payload, dict):
+    raise SystemExit("evidence JSON must be an object")
+if not payload:
+    raise SystemExit("evidence JSON must be non-empty")
+
+has_command = bool(str(payload.get("command") or payload.get("cmd") or "").strip())
+has_rc = "returncode" in payload or "rc" in payload
+has_source = any(
+    str(payload.get(key, "")).strip()
+    for key in ("source_evidence", "source_reasoning", "evidence", "stderr_excerpt", "stdout_excerpt")
+)
+if severity == "blocking" and not ((has_command and has_rc) or has_source):
+    raise SystemExit("blocking finding evidence needs command+returncode or source evidence")
+if has_rc:
+    rc = payload.get("returncode", payload.get("rc"))
+    try:
+        int(rc)
+    except Exception:
+        raise SystemExit("finding evidence returncode/rc must be an integer")
+
+command_required_types = {
+    "compile_failure",
+    "build_failure",
+    "test_failure",
+    "validation_failure",
+}
+if severity == "blocking" and finding_type in command_required_types and not (has_command and has_rc):
+    raise SystemExit(f"{finding_type} finding evidence requires command and returncode")
+' "$severity" "$type" "$evidence_json"
 }
 
 validate_resolution_payload() {
@@ -1671,8 +1730,9 @@ for idx, item in enumerate(commands):
 validate_closure_matches_todo() {
   local todo_id="$1"
   local source_finding_id="$2"
-  local resolution_json="$3"
-  local recheck_json="$4"
+  local source_finding_hash="$3"
+  local resolution_json="$4"
+  local recheck_json="$5"
   require_cmd python3
   python3 -c '
 import json
@@ -1680,8 +1740,9 @@ import sys
 
 todo_id = sys.argv[1]
 source_finding_id = sys.argv[2]
-resolution = json.loads(sys.argv[3])
-recheck = json.loads(sys.argv[4])
+source_finding_hash = sys.argv[3]
+resolution = json.loads(sys.argv[4])
+recheck = json.loads(sys.argv[5])
 
 finding_keys = [
     str(recheck.get(key, "")).strip()
@@ -1691,6 +1752,11 @@ finding_keys = [
 if source_finding_id not in finding_keys:
     raise SystemExit(
         f"recheck JSON for todo {todo_id} must name source finding {source_finding_id}"
+    )
+recheck_hash = str(recheck.get("source_finding_hash", "")).strip()
+if recheck_hash and recheck_hash != source_finding_hash:
+    raise SystemExit(
+        f"recheck JSON for todo {todo_id} must match source finding hash {source_finding_hash}"
     )
 
 resolution_commands = {
@@ -1709,7 +1775,7 @@ if missing:
     raise SystemExit(
         f"recheck JSON for todo {todo_id} must cover worker validation command(s): {joined}"
     )
-' "$todo_id" "$source_finding_id" "$resolution_json" "$recheck_json"
+' "$todo_id" "$source_finding_id" "$source_finding_hash" "$resolution_json" "$recheck_json"
 }
 
 finding_create() {
@@ -1765,6 +1831,7 @@ finding_create() {
   reject_newline "--type" "$type"
   reject_newline "--summary" "$summary"
   reject_newline "--required-resolution" "$required_resolution"
+  validate_finding_evidence_payload "$severity" "$type" "$evidence_json"
 
   local dir
   dir="$(finding_dir "$finding_id")"
@@ -1892,15 +1959,17 @@ todo_create() {
     validate_name "$assigned_to"
   fi
 
-  local dir status
+  local dir status source_finding_hash
   dir="$(todo_dir "$todo_id")"
   [[ ! -e "$dir" ]] || die "todo already exists: $todo_id"
   mkdir -p "$dir"
   status="open"
   [[ -n "$assigned_to" ]] && status="assigned"
+  source_finding_hash="$(sha256_file "$(finding_dir "$source_finding_id")/finding.json")"
   cat >"$(todo_meta_file "$todo_id")" <<EOF
 todo_id=$todo_id
 source_finding_id=$source_finding_id
+source_finding_hash=$source_finding_hash
 assigned_to=$assigned_to
 task=$task
 created_at=$(timestamp)
@@ -2105,13 +2174,15 @@ todo_close() {
   validate_closure_payload "$recheck_json"
   validate_required_commands_covered "$todo_id" "verifier recheck" "$recheck_json"
 
-  local source_finding_id dir
+  local source_finding_id source_finding_hash dir
   source_finding_id="$(read_todo_value "$todo_id" source_finding_id)"
+  source_finding_hash="$(read_todo_value "$todo_id" source_finding_hash)"
   dir="$(todo_dir "$todo_id")"
-  validate_closure_matches_todo "$todo_id" "$source_finding_id" "$(cat "$dir/resolution.json")" "$recheck_json"
+  validate_closure_matches_todo "$todo_id" "$source_finding_id" "$source_finding_hash" "$(cat "$dir/resolution.json")" "$recheck_json"
   cat >"$dir/closure.env" <<EOF
 todo_id=$todo_id
 source_finding_id=$source_finding_id
+source_finding_hash=$source_finding_hash
 verified_by=$verified_by
 notes=$notes
 created_at=$(timestamp)
@@ -2126,8 +2197,23 @@ EOF
 
 audit_closed_todo() {
   local todo_id="$1"
-  local dir
+  local dir source_finding_id source_finding_hash current_finding_hash
   dir="$(todo_dir "$todo_id")"
+  source_finding_id="$(read_todo_value "$todo_id" source_finding_id || true)"
+  source_finding_hash="$(read_todo_value "$todo_id" source_finding_hash || true)"
+  if [[ -z "$source_finding_id" || ! -f "$(finding_dir "$source_finding_id")/finding.json" ]]; then
+    printf 'reject\tclosed-todo-missing-source-finding\ttodo=%s\tfinding=%s\n' "$todo_id" "$source_finding_id"
+    return 1
+  fi
+  if [[ -z "$source_finding_hash" ]]; then
+    printf 'reject\tclosed-todo-missing-source-finding-hash\ttodo=%s\n' "$todo_id"
+    return 1
+  fi
+  current_finding_hash="$(sha256_file "$(finding_dir "$source_finding_id")/finding.json")"
+  if [[ "$current_finding_hash" != "$source_finding_hash" ]]; then
+    printf 'reject\tclosed-todo-source-finding-hash-changed\ttodo=%s\tfinding=%s\n' "$todo_id" "$source_finding_id"
+    return 1
+  fi
   if [[ ! -f "$dir/resolution.json" ]]; then
     printf 'reject\tclosed-todo-missing-resolution\ttodo=%s\n' "$todo_id"
     return 1
@@ -2143,6 +2229,7 @@ import pathlib
 import sys
 root = pathlib.Path(sys.argv[1])
 todo_id = sys.argv[2]
+expected_finding_hash = sys.argv[3]
 try:
     resolution = json.loads((root / "resolution.json").read_text())
     closure = json.loads((root / "closure.json").read_text())
@@ -2155,6 +2242,9 @@ if resolution.get("todo_id") != todo_id or resolution.get("status") != "resolved
 recheck = closure.get("recheck")
 if closure.get("todo_id") != todo_id or not isinstance(recheck, dict) or recheck.get("accepted") is not True:
     print(f"reject\tclosed-todo-invalid-closure\ttodo={todo_id}")
+    raise SystemExit(1)
+if closure.get("source_finding_hash") != expected_finding_hash:
+    print(f"reject\tclosed-todo-closure-finding-hash-mismatch\ttodo={todo_id}")
     raise SystemExit(1)
 source_finding_id = closure.get("source_finding_id")
 if source_finding_id not in {
@@ -2177,7 +2267,7 @@ missing = sorted(resolution_commands - recheck_commands)
 if missing:
     print(f"reject\tclosed-todo-recheck-missing-worker-command\ttodo={todo_id}\tcmd={missing[0]}")
     raise SystemExit(1)
-' "$dir" "$todo_id"
+' "$dir" "$todo_id" "$source_finding_hash"
   validate_required_commands_covered "$todo_id" "closed todo resolution" "$(cat "$dir/resolution.json")" || return 1
   validate_required_commands_covered "$todo_id" "closed todo verifier recheck" "$(cat "$dir/recheck.json")" || return 1
 }
