@@ -685,6 +685,7 @@ import hashlib
 import fcntl
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -749,11 +750,54 @@ def run_owner(lock_dir: Path, argv: list[str]) -> int:
     (lock_dir / "status").write_text("running\\n")
     started = time.time()
     with (lock_dir / "stdout.log").open("w") as stdout, (lock_dir / "stderr.log").open("w") as stderr:
-        proc = subprocess.run([REAL_GO, *argv], text=True, stdout=stdout, stderr=stderr, check=False)
-    (lock_dir / "returncode").write_text(f"{{proc.returncode}}\\n")
-    (lock_dir / "finished.json").write_text(json.dumps({{"started": started, "finished": time.time(), "returncode": proc.returncode}}, sort_keys=True) + "\\n")
+        proc = subprocess.Popen(
+            [REAL_GO, *argv],
+            text=True,
+            stdout=stdout,
+            stderr=stderr,
+            preexec_fn=child_preexec,
+        )
+        (lock_dir / "child_pid").write_text(f"{{proc.pid}}\\n")
+
+        def forward_signal(signum, _frame):
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            try:
+                proc.wait(timeout=10)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            raise SystemExit(128 + signum)
+
+        previous_handlers = {{}}
+        for signum in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+            previous_handlers[signum] = signal.getsignal(signum)
+            signal.signal(signum, forward_signal)
+        try:
+            returncode = proc.wait()
+        finally:
+            for signum, handler in previous_handlers.items():
+                signal.signal(signum, handler)
+    (lock_dir / "returncode").write_text(f"{{returncode}}\\n")
+    (lock_dir / "finished.json").write_text(json.dumps({{"started": started, "finished": time.time(), "returncode": returncode}}, sort_keys=True) + "\\n")
     (lock_dir / "status").write_text("done\\n")
     return replay(lock_dir)
+
+
+def child_preexec() -> None:
+    if sys.platform.startswith("linux"):
+        try:
+            import ctypes
+
+            libc = ctypes.CDLL("libc.so.6")
+            PR_SET_PDEATHSIG = 1
+            libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM)
+        except Exception:
+            pass
 
 
 def main() -> int:
