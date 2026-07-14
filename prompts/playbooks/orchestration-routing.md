@@ -167,6 +167,10 @@ and use its progress/status procedure.
   source mapping: the next state must be a source diff,
   `required-path-outside-owned: RELATIVE_PATH`, `validation-repair-needed:`, or
   blocked status with a source-visible reason.
+- After killing or finalizing a worker, release its assignment ownership before
+  reusing paths: `bin/subagent.sh assignment-status NAME failed` for killed
+  workers or `bin/subagent.sh assignment-status NAME done` for finalized
+  workers, then create the replacement assignment.
 - Never let a verifier receive writable ownership for a worker's owned paths.
 - Before accepting completed worker or subagent work, run `bin/subagent.sh assignment-check NAME`.
 - Always capture final output before killing a worker.

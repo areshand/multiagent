@@ -1472,6 +1472,9 @@ finalize_subagent() {
     fi
   fi
   set_status "$name" "finalized"
+  if [[ -f "$(assignment_meta_file "$name")" ]]; then
+    set_assignment_status "$name" "done"
+  fi
   printf '%s\n' "$(timestamp)" >"$(subagent_dir "$name")/finalized_at"
   printf 'finalized %s\n' "$name"
 }
@@ -1487,6 +1490,9 @@ kill_subagent() {
     tmux kill-window -t "$SESSION:$name"
   fi
   set_status "$name" "killed"
+  if [[ -f "$(assignment_meta_file "$name")" ]]; then
+    set_assignment_status "$name" "failed"
+  fi
   printf 'killed %s\n' "$name"
 }
 

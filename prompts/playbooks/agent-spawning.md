@@ -136,6 +136,12 @@ continue indefinitely: the next state must be a source diff,
 `required-path-outside-owned: RELATIVE_PATH`, `validation-repair-needed:`, or
 blocked status with a source-visible reason.
 
+After `bin/subagent.sh kill NAME` or `bin/subagent.sh finalize NAME`, ensure the
+assignment no longer owns paths before reusing them. If needed, run
+`bin/subagent.sh assignment-status NAME failed` for killed workers or
+`bin/subagent.sh assignment-status NAME done` for finalized workers before
+creating the replacement assignment.
+
 Before final acceptance, run:
 
 ```bash

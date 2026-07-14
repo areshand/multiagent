@@ -96,6 +96,10 @@ Benchmark spawning path:
 - A completed worker pane is not an interactive worker anymore. Every
   implementation follow-up must use `assignment-create` plus
   `bin/subagent.sh spawn` with a fresh bounded worker name.
+- After killing or finalizing a worker, release its assignment ownership before
+  reusing paths: `bin/subagent.sh assignment-status NAME failed` for killed
+  workers or `bin/subagent.sh assignment-status NAME done` for finalized
+  workers, then create the replacement assignment.
 - Maintain a validation lease table for expensive commands. For each package,
   test file, component suite, or build target, keep one owner, command, state,
   and resource-risk note. One active validator per package/path is the default.

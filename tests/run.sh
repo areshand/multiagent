@@ -795,16 +795,20 @@ assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Do not spawn w
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "live worker remains no-diff after a planning checkpoint"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Scout To Worker Handoff"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "active generic scout block"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "assignment-status NAME failed"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "most one same-owned-path replacement"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "live worker remains no-diff after a planning checkpoint"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "active generic scout block"
+assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "assignment-status NAME failed"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "same-owned-path replacement is allowed at"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "live worker remains no-diff after a planning checkpoint"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "active generic worker already running"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "assignment-status NAME failed"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "must treat that as"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "That one fresh replacement is the retry budget"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "live worker remains no-diff after a planning checkpoint"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "active generic scout block"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "assignment-status NAME failed"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-symbol map contract"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-symbol-map-passed:"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-owner-ledger:"
@@ -3578,6 +3582,14 @@ assignment_after_scout_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE
 [[ "$assignment_after_scout_output" == $'assignment created\tworker-after-scout\tdocs-after-scout\tworker/docs' ]]
 assert_file_contains "$ASSIGN_STATE/assignments/scout-overlap/assignment.env" "role=scout"
 MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-status worker-after-scout done >/dev/null
+
+assignment_kill_owner_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create worker-kill-owner --assignment-id docs-kill-owner --branch worker/docs --owned docs)"
+[[ "$assignment_kill_owner_output" == $'assignment created\tworker-kill-owner\tdocs-kill-owner\tworker/docs' ]]
+MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" MULTIAGENT_SESSION="missing-test-session" "$ROOT/bin/subagent.sh" kill worker-kill-owner >/dev/null
+assert_file_contains "$ASSIGN_STATE/assignments/worker-kill-owner/status" "failed"
+assignment_after_kill_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create worker-after-kill --assignment-id docs-after-kill --branch worker/docs --owned docs)"
+[[ "$assignment_after_kill_output" == $'assignment created\tworker-after-kill\tdocs-after-kill\tworker/docs' ]]
+MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-status worker-after-kill done >/dev/null
 
 assignment_show_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-show worker-docs)"
 [[ "$assignment_show_output" == *"agent_name=worker-docs"* ]]

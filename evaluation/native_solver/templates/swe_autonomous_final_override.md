@@ -194,6 +194,10 @@ As orchestrator:
    Before spawning that edit-capable worker, poll or inspect any active scout
    once, persist useful findings, then finalize or kill the scout if it is still
    running. Do not let an active generic scout block implementation worker spawn.
+   After killing or finalizing a worker, release its assignment ownership before
+   reusing paths: run `bin/subagent.sh assignment-status NAME failed` for killed
+   workers or `bin/subagent.sh assignment-status NAME done` for finalized
+   workers, then create the replacement assignment.
    If an implementation worker exits after only restating the task, listing
    likely files, or producing a checklist while `/app` still has no source diff,
    treat that worker as unresolved no-diff failure. Spawn one fresh bounded
