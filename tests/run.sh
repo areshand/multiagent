@@ -2850,6 +2850,11 @@ poll_prompt_output="$("$ROOT/bin/subagent.sh" poll subagent-watch)"
 [[ "$poll_prompt_output" == $'subagent-watch\trunning' ]]
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/current.txt" "progress/final status"
 
+printf 'final status: codex exec exited rc=0\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"
+poll_final_status_output="$("$ROOT/bin/subagent.sh" poll subagent-watch)"
+[[ "$poll_final_status_output" == $'subagent-watch\tdone' ]]
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/current.txt" "final status: codex exec exited rc=0"
+
 printf 'Progress update: still running\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"
 "$ROOT/bin/subagent.sh" poll subagent-watch >/dev/null
 
