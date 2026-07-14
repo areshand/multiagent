@@ -3490,7 +3490,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     terminal_deadline_remaining = int(os.environ.get("EVAL_TERMINAL_DEADLINE_REMAINING", "900"))
     terminal_deadline_grace = int(os.environ.get("EVAL_TERMINAL_DEADLINE_GRACE", "300"))
     terminal_force_resume_enabled = env_truthy("EVAL_TERMINAL_FORCE_RESUME", True)
-    no_diff_blocked_retry_limit = int(os.environ.get("EVAL_NO_DIFF_BLOCKED_RETRY_LIMIT", "1"))
+    no_diff_blocked_retry_limit = int(os.environ.get("EVAL_NO_DIFF_BLOCKED_RETRY_LIMIT", "2"))
     adapter_helper_worker_limit = int(os.environ.get("EVAL_ADAPTER_HELPER_WORKER_LIMIT", "1"))
     orchestrator_resume_limit = int(os.environ.get("EVAL_ORCHESTRATOR_RESUME_LIMIT", "1"))
     orchestrator_resume_attempts = 0
@@ -3838,6 +3838,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         diff,
                         blockers,
                         "",
+                        force_live_handoff=True,
                     ):
                         log(f"no-diff blocked retry launched attempt={no_diff_blocked_retries}")
                         time.sleep(5)
