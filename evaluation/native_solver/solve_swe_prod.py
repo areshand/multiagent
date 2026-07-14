@@ -750,6 +750,7 @@ from pathlib import Path
 REAL_GO = {real_go!r}
 LOCK_ROOT = Path(os.environ.get("MULTIAGENT_GO_TEST_LOCK_ROOT", "/tmp/multiagent-prod-swe/go-test-locks"))
 WAIT_TIMEOUT = int(os.environ.get("MULTIAGENT_GO_TEST_WAIT_TIMEOUT", "3600"))
+RUN_TIMEOUT = int(os.environ.get("MULTIAGENT_GO_TEST_TIMEOUT_SECONDS", os.environ.get("MULTIAGENT_VALIDATION_TIMEOUT_SECONDS", "600")))
 
 
 def repo_diff_hash() -> str:
@@ -799,6 +800,31 @@ def replay(lock_dir: Path) -> int:
         return 1
 
 
+def kill_process_group(proc: subprocess.Popen[str]) -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    except Exception:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        proc.wait()
+
+
 def run_owner(lock_dir: Path, argv: list[str]) -> int:
     (lock_dir / "pid").write_text(f"{{os.getpid()}}\\n")
     (lock_dir / "command.json").write_text(json.dumps(argv, indent=2) + "\\n")
@@ -815,17 +841,7 @@ def run_owner(lock_dir: Path, argv: list[str]) -> int:
         (lock_dir / "child_pid").write_text(f"{{proc.pid}}\\n")
 
         def forward_signal(signum, _frame):
-            try:
-                proc.terminate()
-            except Exception:
-                pass
-            try:
-                proc.wait(timeout=10)
-            except Exception:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
+            kill_process_group(proc)
             raise SystemExit(128 + signum)
 
         previous_handlers = {{}}
@@ -833,18 +849,29 @@ def run_owner(lock_dir: Path, argv: list[str]) -> int:
             previous_handlers[signum] = signal.getsignal(signum)
             signal.signal(signum, forward_signal)
         try:
-            returncode = proc.wait()
+            timed_out = False
+            try:
+                returncode = proc.wait(timeout=RUN_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                kill_process_group(proc)
+                returncode = 124
+                stderr.write(f"\\ngo singleflight: go test timed out after {{RUN_TIMEOUT}} seconds\\n")
         finally:
             for signum, handler in previous_handlers.items():
                 signal.signal(signum, handler)
     (lock_dir / "returncode").write_text(f"{{returncode}}\\n")
-    (lock_dir / "finished.json").write_text(json.dumps({{"started": started, "finished": time.time(), "returncode": returncode}}, sort_keys=True) + "\\n")
-    (lock_dir / "status").write_text("done\\n")
+    (lock_dir / "finished.json").write_text(json.dumps({{"started": started, "finished": time.time(), "returncode": returncode, "timeout_seconds": RUN_TIMEOUT, "timed_out": timed_out}}, sort_keys=True) + "\\n")
+    (lock_dir / "status").write_text(("timed-out" if timed_out else "done") + "\\n")
     return replay(lock_dir)
 
 
 def child_preexec() -> None:
     if sys.platform.startswith("linux"):
+        try:
+            os.setsid()
+        except Exception:
+            pass
         try:
             import ctypes
 
@@ -864,14 +891,23 @@ def main() -> int:
     results_root.mkdir(parents=True, exist_ok=True)
     lock_path = LOCK_ROOT / f"{{key_for(argv)}}.lock"
     with lock_path.open("a+") as lock_file:
-        try:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            sys.stderr.write(f"go singleflight: waiting for duplicate validation {{lock_path.stem}}\\n")
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        wait_started = time.time()
+        announced_wait = False
+        while True:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if not announced_wait:
+                    sys.stderr.write(f"go singleflight: waiting for duplicate validation {{lock_path.stem}}\\n")
+                    announced_wait = True
+                if time.time() - wait_started >= WAIT_TIMEOUT:
+                    sys.stderr.write(f"go singleflight: duplicate validation wait timed out after {{WAIT_TIMEOUT}} seconds\\n")
+                    return 124
+                time.sleep(1)
         lock_dir = results_root / result_key_for(argv)
         status = lock_dir / "status"
-        if status.exists() and status.read_text(errors="replace").strip() == "done":
+        if status.exists() and status.read_text(errors="replace").strip() in {{"done", "timed-out"}}:
             sys.stderr.write(f"go singleflight: replaying completed validation {{lock_dir.name}}\\n")
             return replay(lock_dir)
         lock_dir.mkdir(parents=True, exist_ok=True)

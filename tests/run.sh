@@ -821,6 +821,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1043,6 +1044,34 @@ with tempfile.TemporaryDirectory() as td:
         fourth = subprocess.run([str(system_go), "test", "./system"], cwd=workdir, text=True, capture_output=True, check=False)
         assert fourth.returncode == 0, fourth.stderr
         assert count_file.read_text(encoding="utf-8").splitlines() == ["test ./pkg", "test ./pkg", "test ./system"]
+
+        slow_go = Path(td) / "go-slow-real"
+        slow_go.write_text(
+            "#!/usr/bin/env bash\n"
+            "sleep 2\n"
+            "printf 'slow fake go %s\\n' \"$*\"\n",
+            encoding="utf-8",
+        )
+        slow_go.chmod(0o755)
+        solve_swe_prod.write_go_singleflight_wrapper(str(slow_go))
+        slow_env = os.environ.copy()
+        slow_env["MULTIAGENT_GO_TEST_LOCK_ROOT"] = str(Path(td) / "slow-locks")
+        slow_env["MULTIAGENT_GO_TEST_TIMEOUT_SECONDS"] = "1"
+        timed_out = subprocess.run([str(go), "test", "./slow"], cwd=workdir, env=slow_env, text=True, capture_output=True, check=False)
+        assert timed_out.returncode == 124, (timed_out.stdout, timed_out.stderr)
+        assert "go test timed out after 1 seconds" in timed_out.stderr, timed_out.stderr
+
+        wait_env = os.environ.copy()
+        wait_env["MULTIAGENT_GO_TEST_LOCK_ROOT"] = str(Path(td) / "wait-locks")
+        wait_env["MULTIAGENT_GO_TEST_TIMEOUT_SECONDS"] = "5"
+        wait_env["MULTIAGENT_GO_TEST_WAIT_TIMEOUT"] = "1"
+        first_waiter = subprocess.Popen([str(go), "test", "./wait"], cwd=workdir, env=wait_env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        time.sleep(0.2)
+        second_waiter = subprocess.run([str(go), "test", "./wait"], cwd=workdir, env=wait_env, text=True, capture_output=True, check=False)
+        first_waiter_stdout, first_waiter_stderr = first_waiter.communicate(timeout=10)
+        assert first_waiter.returncode == 0, (first_waiter_stdout, first_waiter_stderr)
+        assert second_waiter.returncode == 124, (second_waiter.stdout, second_waiter.stderr)
+        assert "duplicate validation wait timed out after 1 seconds" in second_waiter.stderr, second_waiter.stderr
     finally:
         solve_swe_prod.RUNTIME_ROOT = original_runtime_root
 
