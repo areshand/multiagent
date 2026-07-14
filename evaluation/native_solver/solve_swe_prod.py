@@ -726,6 +726,119 @@ def structured_repair_gate_blockers() -> list[str]:
     return blockers
 
 
+def create_no_diff_stall_repair_state(
+    *,
+    status_payload: dict[str, object],
+    blockers: list[str],
+    runtime_root: Path | None = None,
+) -> list[str]:
+    """Persist exhausted no-diff worker stalls as normal finding/todo state."""
+
+    if runtime_root is None:
+        runtime_root = RUNTIME_ROOT
+    subagent = DEFAULT_MULTIAGENT_ROOT / "bin/subagent.sh"
+    if not subagent.exists():
+        return []
+
+    worker_summaries = blocked_no_diff_subagent_summaries(runtime_root)
+    if not worker_summaries and not blockers:
+        return []
+
+    finding_id = "adapter-no-diff-stall-001"
+    todo_id = "todo-adapter-no-diff-stall-001"
+    affected_paths = list(
+        dict.fromkeys(
+            [
+                *required_path_outside_owned_reports(runtime_root),
+                *inferred_required_paths_from_worker_text(runtime_root),
+                *assignment_owned_paths(runtime_root),
+            ]
+        )
+    )
+    evidence = {
+        "source": "public-source-adapter-check",
+        "source_evidence": "; ".join([*blockers, *worker_summaries[:4], *affected_paths[:8]])[:2000],
+        "status_payload": status_payload,
+        "blockers": blockers,
+        "worker_summaries": worker_summaries[:8],
+        "affected_path_hints": affected_paths[:12],
+    }
+    env = os.environ.copy()
+    env.update(
+        {
+            "MULTIAGENT_ROOT": str(DEFAULT_WORKDIR),
+            "MULTIAGENT_STATE_DIR": str(runtime_root),
+        }
+    )
+    created: list[str] = []
+    finding_json = runtime_root / "findings" / finding_id / "finding.json"
+    if not finding_json.exists():
+        args = [
+            str(subagent),
+            "finding-create",
+            finding_id,
+            "--severity",
+            "blocking",
+            "--type",
+            "worker_no_diff_stall",
+            "--summary",
+            "Bounded implementation workers produced no materialized source diff",
+            "--evidence-json",
+            json.dumps(evidence, sort_keys=True),
+            "--required-resolution",
+            (
+                "Spawn a bounded implementation worker over source-derived paths, "
+                "produce a materialized /app source diff or record an exact source-visible blocker, "
+                "then verify and close this todo before submission."
+            ),
+        ]
+        if affected_paths:
+            args.extend(["--affected", ",".join(affected_paths[:12])])
+        result = run(args, cwd=DEFAULT_MULTIAGENT_ROOT, env=env, timeout=30)
+        output = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+        if result.returncode == 0:
+            created.append(f"finding:{finding_id}")
+            log(f"no-diff stall finding recorded: {output}")
+        else:
+            log(f"no-diff stall finding recording failed: {output[-1000:]}")
+            return created
+
+    todo_json = runtime_root / "todos" / todo_id / "todo.json"
+    if not todo_json.exists():
+        context = "; ".join([*blockers, *worker_summaries])[:1200]
+        result = run(
+            [
+                str(subagent),
+                "todo-create",
+                todo_id,
+                "--source-finding-id",
+                finding_id,
+                "--task",
+                "Recover exhausted no-diff implementation handoff and produce a validated source diff.",
+                "--context",
+                context or "No-diff implementation workers stopped without source changes.",
+                "--done-criteria",
+                "spawn a bounded implementation worker over implicated source paths",
+                "--done-criteria",
+                "worker produces a materialized /app source diff or exact source-visible blocker",
+                "--done-criteria",
+                "worker records resolution-create with changed paths and validation evidence",
+                "--done-criteria",
+                "verifier closes todo only after objective recheck",
+            ],
+            cwd=DEFAULT_MULTIAGENT_ROOT,
+            env=env,
+            timeout=30,
+        )
+        output = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+        if result.returncode == 0:
+            created.append(f"todo:{todo_id}")
+            log(f"no-diff stall todo recorded: {output}")
+        else:
+            log(f"no-diff stall todo recording failed: {output[-1000:]}")
+    return created
+
+
 def recover_verifier_accepted_todo_closures(text: str, diff: str) -> list[str]:
     """Close resolved todos when a verifier transcript explicitly rechecked them.
 
@@ -2239,6 +2352,22 @@ def emit_failure_diagnostics(session: str, *, limit: int = 24000) -> None:
             sections.append("source-owner-candidates.md:\n" + SOURCE_OWNER_CANDIDATES_PATH.read_text(encoding="utf-8", errors="replace")[-6000:])
         except OSError as exc:
             sections.append(f"source-owner-candidates.md: unreadable: {exc}")
+
+    for state_dir in (RUNTIME_ROOT, RUNTIME_ROOT / "state"):
+        findings_base = state_dir / "findings"
+        todos_base = state_dir / "todos"
+        if findings_base.exists():
+            for path in sorted(findings_base.glob("*/finding.json"))[:8]:
+                try:
+                    sections.append(f"finding {path.parent.name}:\n" + path.read_text(encoding="utf-8", errors="replace")[-3000:])
+                except OSError as exc:
+                    sections.append(f"finding {path.parent.name}: unreadable: {exc}")
+        if todos_base.exists():
+            for path in sorted(todos_base.glob("*/todo.json"))[:8]:
+                try:
+                    sections.append(f"todo {path.parent.name}:\n" + path.read_text(encoding="utf-8", errors="replace")[-3000:])
+                except OSError as exc:
+                    sections.append(f"todo {path.parent.name}: unreadable: {exc}")
 
     windows = run(["tmux", "list-windows", "-t", session, "-F", "#W"], timeout=10)
     if windows.returncode == 0 and windows.stdout.strip():
@@ -4848,6 +4977,34 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         log(f"no-diff blocked retry launched attempt={no_diff_blocked_retries}")
                         time.sleep(5)
                         continue
+                if no_diff_blocked:
+                    ownership_paths = list(
+                        dict.fromkeys(
+                            [
+                                *required_path_outside_owned_reports(RUNTIME_ROOT),
+                                *inferred_required_paths_from_worker_text(RUNTIME_ROOT),
+                                *assignment_owned_paths(RUNTIME_ROOT),
+                            ]
+                        )
+                    )
+                    no_diff_blockers = [
+                        "no-diff retry budget exhausted before a materialized /app source patch",
+                        *[
+                            f"source ownership hint:{path}"
+                            for path in ownership_paths[:8]
+                        ],
+                    ]
+                    status_blockers = current_status.get("blockers")
+                    if isinstance(status_blockers, list):
+                        no_diff_blockers.extend(str(blocker) for blocker in status_blockers)
+                    elif current_status.get("reason"):
+                        no_diff_blockers.append(str(current_status.get("reason")))
+                    created_state = create_no_diff_stall_repair_state(
+                        status_payload=current_status,
+                        blockers=list(dict.fromkeys(no_diff_blockers)),
+                    )
+                    if created_state:
+                        log("no-diff stall structured repair state recorded: " + ", ".join(created_state))
                 if (
                     diff.strip()
                     and blocked_status_needs_diff_reconciliation(current_status)

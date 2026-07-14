@@ -1846,6 +1846,51 @@ with tempfile.TemporaryDirectory() as td:
         solve_swe_prod.DEFAULT_WORKDIR = original_workdir
         solve_swe_prod.DEFAULT_MULTIAGENT_ROOT = original_multiagent_root
 with tempfile.TemporaryDirectory() as td:
+    runtime = Path(td) / "runtime"
+    runtime.mkdir()
+    original_runtime = solve_swe_prod.RUNTIME_ROOT
+    original_workdir = solve_swe_prod.DEFAULT_WORKDIR
+    original_multiagent_root = solve_swe_prod.DEFAULT_MULTIAGENT_ROOT
+    solve_swe_prod.RUNTIME_ROOT = runtime
+    solve_swe_prod.DEFAULT_WORKDIR = Path(td) / "app"
+    solve_swe_prod.DEFAULT_WORKDIR.mkdir()
+    solve_swe_prod.DEFAULT_MULTIAGENT_ROOT = root
+    try:
+        for worker_name, owned_path in (
+            ("worker-01-fix", "lib/service/kubernetes.go"),
+            ("worker-02-followup", "lib/kube/proxy/forwarder.go"),
+        ):
+            agent_dir = runtime / "subagents" / worker_name
+            agent_dir.mkdir(parents=True)
+            agent_dir.joinpath("status").write_text("failed\n", encoding="utf-8")
+            agent_dir.joinpath("last-message.txt").write_text(
+                f"Read {owned_path} but stalled before applying a source patch.\n",
+                encoding="utf-8",
+            )
+            assignment_dir = runtime / "assignments" / worker_name
+            assignment_dir.mkdir(parents=True)
+            assignment_dir.joinpath("owned-paths").write_text(owned_path + "\n", encoding="utf-8")
+        created = solve_swe_prod.create_no_diff_stall_repair_state(
+            status_payload={
+                "status": "blocked",
+                "reason": "Both bounded implementation workers produced no /app source diff.",
+            },
+            blockers=["no-diff retry budget exhausted before a materialized /app source patch"],
+        )
+        assert "finding:adapter-no-diff-stall-001" in created, created
+        assert "todo:todo-adapter-no-diff-stall-001" in created, created
+        finding = json.loads((runtime / "findings" / "adapter-no-diff-stall-001" / "finding.json").read_text())
+        assert finding["type"] == "worker_no_diff_stall", finding
+        assert "lib/kube/proxy/forwarder.go" in finding["affected_paths"], finding
+        todo = json.loads((runtime / "todos" / "todo-adapter-no-diff-stall-001" / "todo.json").read_text())
+        assert todo["source_finding_id"] == "adapter-no-diff-stall-001", todo
+        gate_blockers = solve_swe_prod.structured_repair_gate_blockers()
+        assert gate_blockers and "todo-adapter-no-diff-stall-001" in gate_blockers[0], gate_blockers
+    finally:
+        solve_swe_prod.RUNTIME_ROOT = original_runtime
+        solve_swe_prod.DEFAULT_WORKDIR = original_workdir
+        solve_swe_prod.DEFAULT_MULTIAGENT_ROOT = original_multiagent_root
+with tempfile.TemporaryDirectory() as td:
     runtime = Path(td)
     original_runtime = solve_swe_prod.RUNTIME_ROOT
     original_status = solve_swe_prod.STATUS_PATH
