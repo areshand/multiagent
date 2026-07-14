@@ -111,6 +111,16 @@ the relevant previous owned paths if they still contain the active diff or call
 site. Never spawn a replacement worker with the same owned path set after an
 ownership blocker.
 
+When a worker exits or is killed with no materialized source diff, same-owned-path
+replacement is allowed at most once. The replacement instruction must say
+`replacement-no-diff-attempt=1`, must include an edit-or-block requirement, and
+must start from the narrowest source-visible hypothesis. If that replacement also
+produces no diff and no exact outside-owned path/source blocker, stop the loop:
+write blocked status with the no-diff worker names, owned paths, and concrete
+source discovery gap. Do not spawn worker-03/worker-04 over the same owned path
+set without a new verifier finding, failed validation command, or exact
+source-derived ownership blocker.
+
 Before final acceptance, run:
 
 ```bash

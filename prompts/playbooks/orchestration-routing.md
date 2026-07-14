@@ -153,6 +153,11 @@ and use its progress/status procedure.
 - Never ask a worker to write outside `$MULTIAGENT_ROOT` unless approved and recorded with `bin/write-policy.sh approve`.
 - Use `prompts/playbooks/write-policy.md` for outside-write decisions.
 - Never let two workers own the same files unless you explicitly coordinate the overlap.
+- If a worker over an owned path set produces no `/app` source diff, allow at
+  most one same-owned-path replacement with an explicit
+  `replacement-no-diff-attempt=1` edit-or-block instruction. If the replacement
+  also produces no diff and no exact source blocker, write blocked status rather
+  than spawning another same-scope worker.
 - Never let a verifier receive writable ownership for a worker's owned paths.
 - Before accepting completed worker or subagent work, run `bin/subagent.sh assignment-check NAME`.
 - Always capture final output before killing a worker.

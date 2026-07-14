@@ -49,6 +49,13 @@ Also include:
   either patch from current evidence or name the exact source file/API still
   missing. Do not finish with only a plan, checklist, or source map when the
   assignment expects code.
+- If you are a replacement worker over the same owned paths after a prior
+  no-diff worker, tighten the budget further: perform at most two focused
+  read-only command batches, then either materialize a source diff, report
+  `required-path-outside-owned: RELATIVE_PATH`, report
+  `validation-repair-needed:` with the exact blocker, or write blocked status
+  with the source-visible reason no patch can be made. Do not hand back another
+  broad source map or request another same-scope exploratory worker.
 - List the assumptions your solution depends on and how you checked them.
 - Identify edge cases, invariants, compatibility constraints, and forbidden shortcuts.
 - If your path only validates a proxy, scaffold, or partial behavior, stop and report the mismatch.

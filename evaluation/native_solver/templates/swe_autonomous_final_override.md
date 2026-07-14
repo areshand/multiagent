@@ -191,6 +191,13 @@ As orchestrator:
    treat that worker as unresolved no-diff failure. Spawn one fresh bounded
    implementation worker with an explicit edit-or-block instruction, or write
    blocked status with the source reason no patch can be made.
+   That one fresh replacement is the retry budget for the same owned path set.
+   Its instruction must include `replacement-no-diff-attempt=1`. If that
+   replacement also produces no source diff and no exact outside-owned
+   path/source blocker, write blocked status with the worker names and source
+   discovery gap; do not spawn worker-03/worker-04 over the same paths unless a
+   new failed validation, verifier finding, or exact source-derived ownership
+   blocker changes the assignment.
 14. If a worker reports an `apply_patch` stale-hunk, missing-context, or patch
    failure, treat the intended patch as not applied. Re-read the live target
    file, rebase the edit onto current contents, and rerun affected validation

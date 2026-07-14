@@ -143,6 +143,13 @@ Benchmark spawning path:
 - If worker/verifier spawning fails, record the exact blocker in status JSON
   only after retrying once with a fresh, differently named bounded worker or
   verifier.
+- If a worker over a given owned path set is killed, finalized, or exits without
+  a materialized `/app` source diff, same-owned-path replacement is allowed at
+  most once. Mark that instruction with `replacement-no-diff-attempt=1` and
+  require edit-or-block after a bounded read budget. If the replacement also
+  produces no source diff and no exact outside-owned path/source blocker, write
+  blocked status with the no-diff worker names and source discovery gap instead
+  of spawning another same-scope worker.
 - If the benchmark adapter sends an additional follow-up after a completion
   marker, treat it as a verifier rejection. Remove the weak status marker and
   continue the orchestration loop.
