@@ -1498,6 +1498,40 @@ def captured_text() -> str:
     return "\n".join(chunks).lower()
 
 
+def subagent_state_roots(runtime_root: Path = RUNTIME_ROOT) -> list[Path]:
+    roots: list[Path] = []
+    for candidate in (runtime_root / "subagents", runtime_root / "state" / "subagents"):
+        if candidate.exists() and candidate not in roots:
+            roots.append(candidate)
+    return roots
+
+
+def blocked_no_diff_subagent_summaries(runtime_root: Path = RUNTIME_ROOT) -> list[str]:
+    summaries: list[str] = []
+    for subagents_dir in subagent_state_roots(runtime_root):
+        for agent_dir in sorted(path for path in subagents_dir.iterdir() if path.is_dir()):
+            status_file = agent_dir / "status"
+            if not status_file.exists():
+                continue
+            status = status_file.read_text(encoding="utf-8", errors="replace").strip().lower()
+            if status != "blocked":
+                continue
+            snippets: list[str] = []
+            for name in ("last-message.txt", "current.txt", "transcript.log"):
+                path = agent_dir / name
+                if not path.exists():
+                    continue
+                try:
+                    text = path.read_text(encoding="utf-8", errors="replace").strip()
+                except OSError:
+                    continue
+                if text:
+                    snippets.append(" ".join(text[-1200:].split()))
+            tail = snippets[0] if snippets else "no captured blocked-worker text"
+            summaries.append(f"{agent_dir.name}: {tail[:1200]}")
+    return summaries
+
+
 def emit_failure_diagnostics(session: str, *, limit: int = 24000) -> None:
     """Print compact runtime diagnostics before the sandbox is deleted."""
     sections: list[str] = ["failure diagnostics:"]
@@ -1525,8 +1559,7 @@ def emit_failure_diagnostics(session: str, *, limit: int = 24000) -> None:
                 tail = f"unreadable: {exc}"
             sections.append(f"capture {path.name}:\n{tail}")
 
-    subagents_dir = RUNTIME_ROOT / "state" / "subagents"
-    if subagents_dir.exists():
+    for subagents_dir in subagent_state_roots(RUNTIME_ROOT):
         for agent_dir in sorted(path for path in subagents_dir.iterdir() if path.is_dir())[:12]:
             status_file = agent_dir / "status"
             status_text = ""
@@ -3794,6 +3827,29 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 text = captured_text()
                 log(f"waiting status={state or 'none'} diff_bytes={diff_bytes}")
                 remaining_seconds = int(deadline - time.monotonic())
+                blocked_no_diff_subagents = blocked_no_diff_subagent_summaries(RUNTIME_ROOT)
+                if (
+                    not state
+                    and diff_bytes == 0
+                    and blocked_no_diff_subagents
+                    and no_diff_blocked_retries < no_diff_blocked_retry_limit
+                    and remaining_seconds > 300
+                ):
+                    no_diff_blocked_retries += 1
+                    blockers = [
+                        "production subagent reached blocked status without a materialized source diff; replace the no-diff worker and implement from issue/source evidence before blocking again",
+                        *blocked_no_diff_subagents[:3],
+                    ]
+                    if relaunch_orchestrator_for_blockers(
+                        "blocked subagent with no materialized source diff",
+                        diff_snapshot,
+                        blockers,
+                        "",
+                        force_live_handoff=True,
+                    ):
+                        log(f"no-diff blocked subagent retry launched attempt={no_diff_blocked_retries}")
+                        time.sleep(5)
+                        continue
                 if (
                     not state
                     and not terminal_deadline_sent

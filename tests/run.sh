@@ -1075,6 +1075,20 @@ with tempfile.TemporaryDirectory() as td:
     finally:
         solve_swe_prod.RUNTIME_ROOT = original_runtime_root
 
+with tempfile.TemporaryDirectory() as td:
+    runtime_root = Path(td) / "runtime"
+    blocked_agent = runtime_root / "subagents" / "worker-01-fix"
+    blocked_agent.mkdir(parents=True)
+    (blocked_agent / "status").write_text("blocked\n", encoding="utf-8")
+    (blocked_agent / "last-message.txt").write_text("Restated the task but produced no source diff.\n", encoding="utf-8")
+    state_agent = runtime_root / "state" / "subagents" / "worker-02-fix"
+    state_agent.mkdir(parents=True)
+    (state_agent / "status").write_text("running\n", encoding="utf-8")
+    summaries = solve_swe_prod.blocked_no_diff_subagent_summaries(runtime_root)
+    assert len(summaries) == 1, summaries
+    assert "worker-01-fix" in summaries[0], summaries
+    assert "no source diff" in summaries[0], summaries
+
 captured_worker_commands = []
 try:
     def fake_worker_run(args, **_kwargs):
@@ -1175,6 +1189,9 @@ assert "blocked_status_needs_diff_reconciliation" in solver_source and "blocked-
 )
 assert "EVAL_NO_DIFF_BLOCKED_RETRY_LIMIT" in solver_source and "blocked with no materialized source diff" in solver_source, (
     "blocked no-diff worker outcomes should get one production-orchestrator retry"
+)
+assert "blocked_no_diff_subagent_summaries" in solver_source and "blocked subagent with no materialized source diff" in solver_source, (
+    "blocked no-diff subagent outcomes should force one production-orchestrator replacement"
 )
 assert "post-cleanup final gate rejected stale validation evidence" in solver_source and "benchmark cleanup changed the final submitted diff after verifier acceptance" in solver_source, (
     "cleanup must not change the submitted diff after verifier hash-bound acceptance without forcing reverification"
