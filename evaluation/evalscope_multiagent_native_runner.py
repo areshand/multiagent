@@ -220,6 +220,7 @@ class MultiagentNativeRunner(AgentRunner):
         diagnostics = ""
         if result.timed_out:
             diagnostics = await self._collect_rejection_diagnostics(env)
+            logger.error("multiagent-native rejection diagnostics:\n%s", diagnostics[-60000:])
             if not self._score_timed_out_diff:
                 raise RunnerTimeoutError(
                     "multiagent-native timed out after "
@@ -228,6 +229,7 @@ class MultiagentNativeRunner(AgentRunner):
             logger.warning(f"multiagent-native timed out after {task.timeout}s; scoring current git diff by explicit config")
         elif result.returncode != 0:
             diagnostics = await self._collect_rejection_diagnostics(env)
+            logger.error("multiagent-native rejection diagnostics:\n%s", diagnostics[-60000:])
             tail = (stderr_tail + "\n" + stdout_tail + "\n" + diagnostics).strip()[-12000:]
             if not self._score_failed_diff:
                 raise RuntimeError(

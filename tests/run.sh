@@ -1925,6 +1925,56 @@ with tempfile.TemporaryDirectory() as td:
         )
         assert recovered_auto and recovered_auto[0].endswith(":TODO-compile-service"), recovered_auto
         assert solve_swe_prod.structured_repair_gate_blockers() == [], solve_swe_prod.structured_repair_gate_blockers()
+        subprocess.run(
+            [
+                str(root / "bin/subagent.sh"),
+                "resolution-create",
+                "issue-forwarder-exec-portforward",
+                "--worker",
+                "worker-03-repair",
+                "--status",
+                "resolved",
+                "--changed",
+                "lib/kube/proxy/forwarder.go,lib/service/service.go",
+                "--validation-json",
+                '[{"cmd":"go test ./lib/kube/proxy ./lib/service","rc":0}]',
+                "--why",
+                "repair verifier blockers",
+            ],
+            env={
+                **os.environ,
+                "MULTIAGENT_STATE_DIR": str(runtime),
+                "MULTIAGENT_ROOT": str(solve_swe_prod.DEFAULT_WORKDIR),
+                "MULTIAGENT_RESOLUTION_AUTOCREATE_TODO": "1",
+            },
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert solve_swe_prod.structured_repair_gate_blockers(), "row8-shaped autocreated todo should require verifier closure"
+        forwarder_diff = (
+            "diff --git a/lib/kube/proxy/forwarder.go b/lib/kube/proxy/forwarder.go\n"
+            "+func fixedForwarder() {}\n"
+            "diff --git a/lib/service/service.go b/lib/service/service.go\n"
+            "+func fixedService() {}\n"
+        )
+        forwarder_hash = solve_swe_prod.final_diff_sha256(forwarder_diff)
+        persisted_verifier = runtime / "subagents" / "verifier-03-final"
+        persisted_verifier.mkdir(parents=True)
+        (persisted_verifier / "last-message.txt").write_text(
+            "ACCEPTED\n"
+            "issue-coverage-ledger: issue-forwarder-exec-portforward implemented-by=lib/kube/proxy/forwarder.go,lib/service/service.go\n"
+            f"build-verification-passed: final-diff-sha256={forwarder_hash} changed-files=2 compile_clean=true returncode=0\n"
+            "go-package-validation-passed: package=./lib/kube/proxy command='go test ./lib/kube/proxy ./lib/service' returncode=0\n"
+            "go-package-validation-passed: package=./lib/service command='go test ./lib/kube/proxy ./lib/service' returncode=0\n",
+            encoding="utf-8",
+        )
+        recovered_persisted = solve_swe_prod.recover_verifier_accepted_todo_closures(
+            "worker reported resolution, but tmux capture missed verifier final acceptance",
+            forwarder_diff,
+        )
+        assert recovered_persisted and recovered_persisted[0].endswith(":issue-forwarder-exec-portforward"), recovered_persisted
+        assert solve_swe_prod.structured_repair_gate_blockers() == [], solve_swe_prod.structured_repair_gate_blockers()
     finally:
         solve_swe_prod.RUNTIME_ROOT = original_runtime
         solve_swe_prod.DEFAULT_WORKDIR = original_workdir

@@ -865,10 +865,12 @@ def recover_verifier_accepted_todo_closures(text: str, diff: str) -> list[str]:
     """
 
     subagent = DEFAULT_MULTIAGENT_ROOT / "bin/subagent.sh"
-    if not text or not subagent.exists():
+    if not subagent.exists():
         return []
-    lower = text.lower()
-    hash_bound_acceptance = build_verification_has_evidence(text, diff)
+    evidence_texts = [text, *persisted_subagent_final_acceptance_texts(diff, RUNTIME_ROOT)]
+    combined_text = "\n".join(evidence_texts)
+    lower = combined_text.lower()
+    hash_bound_acceptance = any(build_verification_has_evidence(candidate, diff) for candidate in evidence_texts)
     if "accepted" not in lower or ("todo-recheck-passed:" not in lower and not hash_bound_acceptance):
         return []
 
@@ -917,7 +919,8 @@ def recover_verifier_accepted_todo_closures(text: str, diff: str) -> list[str]:
                 continue
             has_explicit_marker = marker in lower
             if not has_explicit_marker and not (
-                hash_bound_acceptance and verifier_text_covers_resolution_commands(text, commands)
+                hash_bound_acceptance
+                and any(verifier_text_covers_resolution_commands(candidate, commands) for candidate in evidence_texts)
             ):
                 log(f"verifier todo closure recovery skipped {todo_id}: accepted transcript does not cover worker commands")
                 continue
@@ -2790,23 +2793,24 @@ def persisted_subagent_visible_validation_evidence(
     return ""
 
 
-def persisted_subagent_final_acceptance_evidence(
+def persisted_subagent_final_acceptance_texts(
     diff: str,
     runtime_root: Path = RUNTIME_ROOT,
-) -> str:
-    """Return durable verifier acceptance evidence bound to the final diff.
+) -> list[str]:
+    """Return durable verifier acceptance transcript tails bound to the final diff.
 
     This recovers orchestration bookkeeping failures, not source correctness.
-    A report is usable only when it explicitly accepts the final patch, includes
+    A transcript is usable only when it explicitly accepts the final patch, includes
     the final diff hash in build evidence, and covers every changed Go package
     when Go source changed.
     """
 
     if not diff.strip():
-        return ""
+        return []
 
     go_packages = changed_go_package_args(diff)
     touches_go_source = bool(go_packages)
+    evidence_texts: list[str] = []
     for subagents_dir in subagent_state_roots(runtime_root):
         for agent_dir in sorted(path for path in subagents_dir.iterdir() if path.is_dir()):
             agent_name = agent_dir.name.lower()
@@ -2837,9 +2841,21 @@ def persisted_subagent_final_acceptance_evidence(
                     continue
                 if touches_go_source and go_compile_failure_present(evidence_tail):
                     continue
-                excerpt = " ".join(evidence_tail[:1800].split())
-                return f"persisted verifier {agent_dir.name} {name}: {excerpt}"
-    return ""
+                evidence_texts.append(f"persisted verifier {agent_dir.name} {name}:\n{evidence_tail}")
+    return evidence_texts
+
+
+def persisted_subagent_final_acceptance_evidence(
+    diff: str,
+    runtime_root: Path = RUNTIME_ROOT,
+) -> str:
+    """Return durable verifier acceptance evidence bound to the final diff."""
+
+    evidence_texts = persisted_subagent_final_acceptance_texts(diff, runtime_root)
+    if not evidence_texts:
+        return ""
+    excerpt = " ".join(evidence_texts[0][:1800].split())
+    return excerpt
 
 
 def persisted_stale_visible_reconciliation_evidence(
