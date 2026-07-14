@@ -650,6 +650,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_ap
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "normally limit yourself to three focused read-only"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Do not write blocked status merely because a read-count limit was consumed"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" 'invoke the `apply_patch` executable from that shell'
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" 'JSON object with a `cmd` string'
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Do not finish with only a checklist"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "constructor-dependency-checked:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "provider-capability-checked:"
@@ -760,6 +761,7 @@ assert_file_contains "$ROOT/prompts/worker.md" "candidate-owner="
 assert_file_contains "$ROOT/prompts/worker.md" "source-owner-ledger:"
 assert_file_contains "$ROOT/prompts/worker.md" "normally limit yourself to three focused"
 assert_file_contains "$ROOT/prompts/worker.md" "Do not report blocked merely because a read-count limit was consumed"
+assert_file_contains "$ROOT/prompts/worker.md" 'JSON arguments include a `cmd` string'
 assert_file_contains "$ROOT/prompts/worker.md" "Do not finish with only a plan"
 assert_file_contains "$ROOT/prompts/worker.md" "constructor-dependency-checked:"
 assert_file_contains "$ROOT/prompts/worker.md" "provider-capability-checked:"
@@ -2600,6 +2602,23 @@ with tempfile.TemporaryDirectory() as preedit_owner_tmp:
     assert "status" not in explicit_terms, explicit_terms
     explicit_paths = solve_swe_prod.source_owner_issue_paths(explicit_owner_issue)
     assert explicit_paths == ["lib/benchmark/linear.go"], explicit_paths
+    wrapped_owner_issue = (
+        "<pr_description>\n"
+        + explicit_owner_issue
+        + "\n</pr_description>\n<instructions>\n"
+        "Your response MUST include at least one bash tool call.\n"
+        "Create `examples/harness/file1.go` only if asked by the harness.\n"
+        "Set MY_ENV_VAR=my-value before running tests.\n"
+        "</instructions>\n"
+    )
+    wrapped_terms = solve_swe_prod.source_owner_issue_terms(wrapped_owner_issue)
+    assert "linear" in wrapped_terms, wrapped_terms
+    assert "benchmark" in wrapped_terms, wrapped_terms
+    assert "bash" not in wrapped_terms, wrapped_terms
+    assert "harness" not in wrapped_terms, wrapped_terms
+    assert "my-env-var" not in wrapped_terms, wrapped_terms
+    wrapped_paths = solve_swe_prod.source_owner_issue_paths(wrapped_owner_issue)
+    assert wrapped_paths == ["lib/benchmark/linear.go"], wrapped_paths
     explicit_discovery = solve_swe_prod.source_owner_discovery(preedit_repo, explicit_owner_issue)
     assert "Explicit source paths from issue: lib/benchmark/linear.go" in explicit_discovery, explicit_discovery
     assert "candidate-owner=lib/benchmark/linear.go score=100 reason=issue-explicit-source-path" in explicit_discovery, explicit_discovery
@@ -3450,6 +3469,15 @@ if MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$ROOT/bin/subagent.sh" spawn code
   exit 1
 fi
 assert_file_contains "$TMPDIR/codex-no-prompt.out" "codex exec subagent spawn requires --instruction or --instruction-file"
+
+printf 'Codex exec prompt ready\n' >"$MOCK_TMUX_CAPTURES/codex-exec-protocol.txt"
+MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$ROOT/bin/subagent.sh" spawn codex-exec-protocol --instruction "Inspect /app"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/codex-exec-protocol/instruction.txt" "Codex Exec Tool Protocol"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/codex-exec-protocol/instruction.txt" '{"cmd":"cd /app && sed -n'
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/codex-exec-protocol/instruction.txt" "Inspect /app"
+codex_exec_spawn_line="$(grep -F "new-window -d test-session codex-exec-protocol " "$MOCK_TMUX_LOG")"
+[[ "$codex_exec_spawn_line" == *"exec --cd $ROOT"* ]]
+[[ "$codex_exec_spawn_line" == *"--output-last-message"* ]]
 
 printf 'Login required before Claude can start\n' >"$MOCK_TMUX_CAPTURES/subagent-auth.txt"
 if "$ROOT/bin/subagent.sh" spawn subagent-auth --instruction "Should not send" >"$TMPDIR/auth-spawn.out" 2>&1; then

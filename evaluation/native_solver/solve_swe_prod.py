@@ -1323,6 +1323,7 @@ def _walk_source_dirs(workdir: Path, *, max_dirs: int = 500) -> list[str]:
 
 
 def source_owner_issue_terms(issue: str) -> list[str]:
+    issue = public_issue_text_for_coverage(issue)
     stop = {
         "add",
         "adds",
@@ -1389,6 +1390,7 @@ def source_owner_issue_terms(issue: str) -> list[str]:
 
 
 def source_owner_issue_paths(issue: str) -> list[str]:
+    issue = public_issue_text_for_coverage(issue)
     candidates: set[str] = set()
     source_suffixes = (".go", ".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".rs", ".java", ".kt", ".rb", ".php")
     path_patterns = [

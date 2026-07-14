@@ -150,6 +150,12 @@ Benchmark spawning path:
   `/usr/local/bin/apply_patch`. If your environment exposes only a shell-style
   command tool, invoke the `apply_patch` executable from that shell. Do not
   block while waiting for a separate JSON `apply_patch` tool.
+- When a Codex worker uses the shell command tool, the tool arguments must be a
+  JSON object with a `cmd` string, for example
+  `{"cmd":"cd /app && sed -n '1,120p' lib/example.go"}`. Do not emit raw command
+  arrays, partial JSON, or prose pretending to be a tool call. If a worker sees
+  `missing field cmd`, it must immediately retry the same operation with one
+  valid `cmd` string rather than continuing from stale context.
 - If `apply_patch` reports a stale hunk, missing context, or patch failure, do
   not continue from the intended patch text as if it changed `/app`. Re-read the
   current target files, rebase the edit onto the live tree, rerun

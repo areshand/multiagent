@@ -137,6 +137,23 @@ build_cli_command() {
   esac
 }
 
+codex_exec_protocol_prelude() {
+  cat <<'EOF'
+## Codex Exec Tool Protocol
+
+You are running under `codex exec` in a benchmark container. When you need to run
+a shell command, emit a normal Codex shell tool call with a JSON object that
+contains a `cmd` string, for example:
+
+{"cmd":"cd /app && sed -n '1,120p' lib/example.go"}
+
+Do not emit raw command arrays, partial JSON, or prose pretending to be a tool
+call. If a tool call fails with `missing field cmd`, immediately retry the same
+operation as a shell tool call whose arguments include exactly one `cmd` string.
+
+EOF
+}
+
 read_subagent_meta_value() {
   local name="$1"
   local key="$2"
@@ -1092,10 +1109,13 @@ EOF
   output_file="$dir/last-message.txt"
   if [[ "${MULTIAGENT_CODEX_EXEC:-0}" == "1" && "$cli" == "codex" && -n "$instruction" ]]; then
     prompt_file="$dir/instruction.txt"
-    printf '%s\n' "$instruction" >"$prompt_file"
+    {
+      codex_exec_protocol_prelude
+      printf '%s\n' "$instruction"
+    } >"$prompt_file"
     {
       printf '\n----- instruction %s -----\n' "$(timestamp)"
-      printf '%s\n' "$instruction"
+      cat "$prompt_file"
     } >>"$dir/transcript.log"
   fi
   printf -v command "cd %q && export MULTIAGENT_SESSION=%q MULTIAGENT_ROOT=%q MULTIAGENT_STATE_DIR=%q MULTIAGENT_WRITE_POLICY=%q MULTIAGENT_SUBAGENT_NAME=%q MULTIAGENT_HELPER=%q WORKER_CLI=%q SUBAGENT_CLI=%q VERIFIER_CLI=%q CODEX_BIN=%q CLAUDE_BIN=%q MULTIAGENT_CODEX_EXEC=%q PATH=%q && %s; rc=\$?; printf '\\nfinal status: codex exec exited rc=%%s\\n' \$rc; sleep infinity" \

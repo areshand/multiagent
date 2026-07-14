@@ -11,6 +11,13 @@ the task-specific assignment.
 4. If blocked, stop and state what you need.
 5. Stay in your assigned files only.
 
+If you are running under Codex with a shell command tool, every shell operation
+must be a tool call whose JSON arguments include a `cmd` string, for example
+`{"cmd":"cd /app && sed -n '1,120p' path/to/file.go"}`. Do not emit raw command
+arrays, partial JSON, or prose that imitates a tool call. If you see a
+`missing field cmd` tool error, retry the same operation with exactly one `cmd`
+string argument.
+
 Also include:
 
 - You are a worker agent launched by the orchestrator.
