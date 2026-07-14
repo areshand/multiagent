@@ -4444,6 +4444,10 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                     or (diff_bytes > 0 and not has_live_agent_process())
                 ):
                     diff = git_diff(workdir)
+                    if completed_status_has_final_build_evidence(diff):
+                        log("coverage follow-up recovery yielded to completed status with accepted final build gate")
+                        outcome = "completed"
+                        break
                     coverage_status_for_blockers = status_with_recovered_public_evidence(
                         {},
                         "captured coverage-follow-up verifier/worker text",
@@ -4700,6 +4704,10 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         ):
                             time.sleep(5)
                             continue
+                        if completed_status_has_final_build_evidence(git_diff(workdir)):
+                            log("coverage follow-up blocker path yielded to completed status with accepted final build gate")
+                            outcome = "completed"
+                            break
                         coverage_gate_unresolved = True
                         STATUS_PATH.write_text(
                             json.dumps(
