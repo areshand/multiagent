@@ -666,9 +666,19 @@ def write_go_singleflight_wrapper(real_go: str | None = None) -> None:
     real_go = real_go or find_go_binary()
     if not real_go:
         return
+    system_go_path: Path | None = None
+    real_go_path = Path(real_go)
+    if real_go_path.name == "go" and real_go_path.exists() and os.access(real_go_path.parent, os.W_OK):
+        go_real_path = real_go_path.with_name("go-real")
+        if not go_real_path.exists():
+            real_go_path.rename(go_real_path)
+        real_go = str(go_real_path)
+        system_go_path = real_go_path
+    elif real_go_path.name == "go-real" and os.access(real_go_path.parent, os.W_OK):
+        system_go_path = real_go_path.with_name("go")
+
     go_path = RUNTIME_ROOT / "go"
-    go_path.write_text(
-        f'''#!/usr/bin/env python3
+    wrapper_text = f'''#!/usr/bin/env python3
 from __future__ import annotations
 
 import hashlib
@@ -771,10 +781,13 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-''',
-        encoding="utf-8",
-    )
+'''
+    go_path.write_text(wrapper_text, encoding="utf-8")
     go_path.chmod(0o755)
+    if system_go_path is not None:
+        system_go_path.write_text(wrapper_text, encoding="utf-8")
+        system_go_path.chmod(0o755)
+        log(f"installed go test singleflight wrapper at {system_go_path} -> {real_go}")
     log(f"installed go test singleflight wrapper at {go_path} -> {real_go}")
 
 

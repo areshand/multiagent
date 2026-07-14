@@ -974,6 +974,11 @@ with tempfile.TemporaryDirectory() as td:
         third = subprocess.run([str(go), "test", "./pkg"], cwd=workdir, text=True, capture_output=True, check=False)
         assert third.returncode == 0, third.stderr
         assert count_file.read_text(encoding="utf-8").splitlines() == ["test ./pkg", "test ./pkg"]
+        system_go = fake_go.with_name("go")
+        assert system_go.exists(), system_go
+        fourth = subprocess.run([str(system_go), "test", "./system"], cwd=workdir, text=True, capture_output=True, check=False)
+        assert fourth.returncode == 0, fourth.stderr
+        assert count_file.read_text(encoding="utf-8").splitlines() == ["test ./pkg", "test ./pkg", "test ./system"]
     finally:
         solve_swe_prod.RUNTIME_ROOT = original_runtime_root
 
