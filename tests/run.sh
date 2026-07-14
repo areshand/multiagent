@@ -390,6 +390,23 @@ cp "$TMPDIR/build-go-ofrep.finding.json" "$REPAIR_STATE/findings/build-go-ofrep/
 MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-restored-finding.out"
 assert_file_contains "$TMPDIR/gate-restored-finding.out" "accepted"
 
+LEGACY_RESOLUTION_STATE="$TMPDIR/legacy-resolution-state"
+mkdir -p "$LEGACY_RESOLUTION_STATE"
+if MULTIAGENT_STATE_DIR="$LEGACY_RESOLUTION_STATE" "$ROOT/bin/subagent.sh" resolution-create --todo TODO-legacy --owner worker-legacy --summary "Legacy summary" --evidence "go test ./pkg returncode=0" >"$TMPDIR/legacy-resolution-no-autocreate.out" 2>&1; then
+  echo "expected legacy resolution-create without auto-create to fail for a missing todo" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/legacy-resolution-no-autocreate.out" "no todo: TODO-legacy"
+MULTIAGENT_STATE_DIR="$LEGACY_RESOLUTION_STATE" MULTIAGENT_RESOLUTION_AUTOCREATE_TODO=1 "$ROOT/bin/subagent.sh" resolution-create --todo TODO-legacy --owner worker-legacy --summary "Legacy summary" --evidence "go test ./pkg returncode=0" >"$TMPDIR/legacy-resolution-autocreate.out"
+assert_file_contains "$TMPDIR/legacy-resolution-autocreate.out" $'resolution recorded\tTODO-legacy\tworker-legacy\tresolved'
+assert_file_contains "$LEGACY_RESOLUTION_STATE/todos/TODO-legacy/resolution.json" '"cmd": "go test ./pkg"'
+assert_file_contains "$LEGACY_RESOLUTION_STATE/todos/TODO-legacy/resolution.json" '"rc": 0'
+if MULTIAGENT_STATE_DIR="$LEGACY_RESOLUTION_STATE" "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/legacy-resolution-gate.out" 2>&1; then
+  echo "expected auto-created legacy resolution to remain blocked until verifier closure" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/legacy-resolution-gate.out" $'reject\topen-blocking-todo\tfinding=auto-TODO-legacy\ttodo=TODO-legacy\tstatus=resolved'
+
 MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease-acquire go-ofrep \
   --owner worker-02-ofrep-build \
   --target "./internal/server/ofrep ./internal/server/evaluation" \

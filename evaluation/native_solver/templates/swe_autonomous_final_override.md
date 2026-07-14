@@ -132,7 +132,10 @@ As orchestrator:
    `bin/subagent.sh finding-create`, converted into a `bin/subagent.sh
    todo-create` repair item, resolved by a worker with
    `${MULTIAGENT_HELPER:-/opt/multiagent/bin/subagent.sh} resolution-create`
-   evidence, and closed with `bin/subagent.sh todo-close` only after verifier
+   evidence using the canonical shape
+   `resolution-create TODO_ID --worker WORKER --status resolved --changed PATHS
+   --validation-json '[{"cmd":"...","rc":0}]' --why "..."`, and closed with
+   `bin/subagent.sh todo-close` only after verifier
    recheck accepts the original finding. Run
    `bin/subagent.sh gate-check`; if it rejects an unqueued finding, an open,
    assigned, resolved, reopened todo, or a closed todo without closure evidence,

@@ -2881,7 +2881,7 @@ def structured_repair_state_instructions(
         "--done-criteria 'worker records resolution-create with changed paths and command return codes' "
         "--done-criteria 'verifier closes todo only after blockers are resolved'\n"
         "# After worker resolution and verifier recheck, run:\n"
-        f"bin/subagent.sh todo-status {shlex.quote(todo_id)} closed\n"
+        f"bin/subagent.sh todo-close {shlex.quote(todo_id)} --verified-by VERIFIER_NAME --recheck-json '<accepted verifier JSON>'\n"
         "bin/subagent.sh gate-check"
     )
     return (
@@ -3392,6 +3392,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
             "MULTIAGENT_SESSION": session,
             "MULTIAGENT_ROOT": str(workdir),
             "MULTIAGENT_STATE_DIR": str(RUNTIME_ROOT / "state"),
+            "MULTIAGENT_RESOLUTION_AUTOCREATE_TODO": "1",
             "MULTIAGENT_WRITE_POLICY": str(RUNTIME_ROOT / "write-policy.paths"),
             "MULTIAGENT_PROMPT": str(autonomous_prompt),
             "MULTIAGENT_RESUME": "0",

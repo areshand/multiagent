@@ -124,7 +124,11 @@ Benchmark spawning path:
   convert accepted blocking findings to `bin/subagent.sh todo-create` items with
   objective done criteria, require the worker to attach
   `${MULTIAGENT_HELPER:-/opt/multiagent/bin/subagent.sh} resolution-create`
-  evidence, and close the todo with
+  evidence using the canonical shape
+  `resolution-create TODO_ID --worker WORKER --status resolved --changed PATHS
+  --validation-json '[{"cmd":"...","rc":0}]' --why "..."`. Do not use legacy
+  `--todo`, `--owner`, `--summary`, or free-form `--evidence` arguments.
+  Close the todo with
   `bin/subagent.sh todo-close` only after a verifier rechecks the original
   finding with accepted evidence. Run `bin/subagent.sh gate-check` before
   writing completed status; any open, assigned, resolved, reopened, or closed

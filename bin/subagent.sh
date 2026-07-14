@@ -2066,15 +2066,30 @@ todo_status() {
 
 resolution_create() {
   local todo_id="${1:-}"
-  [[ -n "$todo_id" ]] || die "resolution-create requires TODO_ID"
-  validate_name "$todo_id"
-  shift
+  local legacy_mode=0 legacy_summary="" legacy_evidence=""
+  if [[ -n "$todo_id" && "$todo_id" == --* ]]; then
+    todo_id=""
+  else
+    [[ -n "$todo_id" ]] || die "resolution-create requires TODO_ID"
+    validate_name "$todo_id"
+    shift
+  fi
 
   local worker="" status="" validation_json="" why="" changed_csv=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --todo)
+        todo_id="${2:-}"
+        legacy_mode=1
+        shift 2
+        ;;
       --worker)
         worker="${2:-}"
+        shift 2
+        ;;
+      --owner)
+        worker="${2:-}"
+        legacy_mode=1
         shift 2
         ;;
       --status)
@@ -2089,6 +2104,17 @@ resolution_create() {
         why="${2:-}"
         shift 2
         ;;
+      --summary)
+        legacy_summary="${2:-}"
+        [[ -z "$why" ]] && why="${2:-}"
+        legacy_mode=1
+        shift 2
+        ;;
+      --evidence)
+        legacy_evidence="${2:-}"
+        legacy_mode=1
+        shift 2
+        ;;
       --changed)
         changed_csv="${2:-}"
         shift 2
@@ -2099,6 +2125,48 @@ resolution_create() {
     esac
   done
 
+  [[ -n "$todo_id" ]] || die "resolution-create requires TODO_ID"
+  validate_name "$todo_id"
+  if [[ "$legacy_mode" -eq 1 ]]; then
+    [[ -n "$status" ]] || status="resolved"
+    if [[ -z "$validation_json" && -n "$legacy_evidence" ]]; then
+      validation_json="$(python3 -c '
+import json
+import re
+import sys
+text = sys.argv[1]
+items = []
+match = re.search(r"(go\s+test(?:\s+[^;,\n]+)*?)\s+returncode\s*=\s*(-?\d+)", text)
+if match:
+    items.append({"cmd": " ".join(match.group(1).split()), "rc": int(match.group(2)), "evidence": text})
+else:
+    items.append({"source_evidence": text})
+print(json.dumps(items, separators=(",", ":")))
+' "$legacy_evidence")"
+    fi
+    if [[ -z "$why" ]]; then
+      why="${legacy_summary:-legacy resolution evidence recorded}"
+    fi
+  fi
+  if [[ ! -f "$(todo_meta_file "$todo_id")" && "${MULTIAGENT_RESOLUTION_AUTOCREATE_TODO:-0}" == "1" ]]; then
+    local auto_finding_id="auto-${todo_id}"
+    if [[ ! -f "$(finding_meta_file "$auto_finding_id")" ]]; then
+      local auto_evidence
+      auto_evidence="$(python3 -c 'import json,sys; print(json.dumps({"source":"resolution-create-autocreate","evidence":sys.argv[1]}))' "${legacy_evidence:-$why}")"
+      finding_create "$auto_finding_id" \
+        --severity blocking \
+        --type worker_resolution_without_registered_todo \
+        --summary "Worker recorded a resolution for an unregistered todo." \
+        --evidence-json "$auto_evidence" \
+        --required-resolution "Create durable todo state before assigning worker repairs; verifier must close the todo after rechecking the worker resolution."
+    fi >/dev/null
+    todo_create "$todo_id" \
+      --source-finding-id "$auto_finding_id" \
+      --task "${legacy_summary:-Record and verify worker resolution evidence.}" \
+      --context "${legacy_evidence:-$why}" \
+      --done-criteria "worker records structured resolution evidence" \
+      --done-criteria "verifier closes todo only after objective recheck" >/dev/null
+  fi
   [[ -f "$(todo_meta_file "$todo_id")" ]] || die "no todo: $todo_id"
   [[ -n "$worker" ]] || die "resolution-create requires --worker NAME"
   validate_name "$worker"
