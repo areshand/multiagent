@@ -1335,11 +1335,15 @@ with tempfile.TemporaryDirectory() as td:
     active_todo = runtime_root / "state" / "todos" / "todo-forwarder-audit-request-context"
     active_todo.mkdir(parents=True)
     (active_todo / "status").write_text("resolved\n", encoding="utf-8")
-    active_summaries = solve_swe_prod.active_repair_subagent_summaries(runtime_root)
+    active_summaries = solve_swe_prod.active_repair_subagent_summaries(
+        runtime_root,
+        live_agent_names={"worker-04-forwarder-contracts"},
+    )
     assert len(active_summaries) == 1, active_summaries
     assert "worker-04-forwarder-contracts status=running" in active_summaries[0], active_summaries
     assert "owned=lib/kube/proxy/forwarder.go,lib/service/service.go" in active_summaries[0], active_summaries
     assert "request context and CSR cache behavior" in active_summaries[0], active_summaries
+    assert not solve_swe_prod.active_repair_subagent_summaries(runtime_root, live_agent_names=set())
     assert solve_swe_prod.unresolved_repair_state_exists(runtime_root)
     verifier_agent = runtime_root / "subagents" / "verifier-01-fix"
     verifier_agent.mkdir(parents=True)

@@ -2345,16 +2345,29 @@ def no_diff_blocked_subagent_blockers(runtime_root: Path = RUNTIME_ROOT) -> list
     ]
 
 
-def active_repair_subagent_summaries(runtime_root: Path = RUNTIME_ROOT) -> list[str]:
+def active_repair_subagent_summaries(
+    runtime_root: Path = RUNTIME_ROOT,
+    live_agent_names: set[str] | None = None,
+) -> list[str]:
     """Return active implementation workers that should not be cut off early."""
 
     summaries: list[str] = []
     active_statuses = {"starting", "running", "restoring"}
+    if live_agent_names is None:
+        windows = run(["tmux", "list-windows", "-a", "-F", "#{window_name}"], timeout=10)
+        if windows.returncode == 0:
+            live_agent_names = {
+                line.strip()
+                for line in windows.stdout.splitlines()
+                if line.strip()
+            }
     for subagents_dir in subagent_state_roots(runtime_root):
         for agent_dir in sorted(path for path in subagents_dir.iterdir() if path.is_dir()):
             agent_name = agent_dir.name
             lower_name = agent_name.lower()
             if "worker" not in lower_name or "scout" in lower_name or "verifier" in lower_name:
+                continue
+            if live_agent_names is not None and agent_name not in live_agent_names:
                 continue
             status_file = agent_dir / "status"
             if not status_file.exists():
