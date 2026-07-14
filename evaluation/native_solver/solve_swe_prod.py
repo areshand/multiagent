@@ -1559,6 +1559,26 @@ def blocked_no_diff_subagent_summaries(runtime_root: Path = RUNTIME_ROOT) -> lis
     return summaries
 
 
+def required_path_outside_owned_reports(runtime_root: Path = RUNTIME_ROOT) -> list[str]:
+    reports: list[str] = []
+    pattern = re.compile(r"required-path-outside-owned:\s*([^\s`'\",;)]+)")
+    for subagents_dir in subagent_state_roots(runtime_root):
+        for agent_dir in sorted(path for path in subagents_dir.iterdir() if path.is_dir()):
+            for name in ("last-message.txt", "current.txt", "transcript.log"):
+                path = agent_dir / name
+                if not path.exists():
+                    continue
+                try:
+                    text = path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                for match in pattern.finditer(text):
+                    report = match.group(1).strip()
+                    if report:
+                        reports.append(report)
+    return list(dict.fromkeys(reports))
+
+
 def emit_failure_diagnostics(session: str, *, limit: int = 24000) -> None:
     """Print compact runtime diagnostics before the sandbox is deleted."""
     sections: list[str] = ["failure diagnostics:"]
@@ -3791,8 +3811,13 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                     and int(deadline - time.monotonic()) > 300
                 ):
                     no_diff_blocked_retries += 1
+                    ownership_paths = required_path_outside_owned_reports(RUNTIME_ROOT)
                     blockers = [
-                        "production orchestrator wrote blocked status after a worker completed without a materialized source diff; restart from issue/source evidence and choose the narrowest implementation path before blocking again"
+                        "production orchestrator wrote blocked status after a worker completed without a materialized source diff; restart from issue/source evidence and choose the narrowest implementation path before blocking again",
+                        *[
+                            f"worker reported required-path-outside-owned:{path}; include this source path in the next bounded worker owned set"
+                            for path in ownership_paths[:8]
+                        ],
                     ]
                     if relaunch_orchestrator_for_blockers(
                         "blocked with no materialized source diff",
@@ -3863,8 +3888,13 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                     and remaining_seconds > 300
                 ):
                     no_diff_blocked_retries += 1
+                    ownership_paths = required_path_outside_owned_reports(RUNTIME_ROOT)
                     blockers = [
                         "production subagent reached blocked status without a materialized source diff; replace the no-diff worker and implement from issue/source evidence before blocking again",
+                        *[
+                            f"worker reported required-path-outside-owned:{path}; include this source path in the next bounded worker owned set"
+                            for path in ownership_paths[:8]
+                        ],
                         *blocked_no_diff_subagents[:3],
                     ]
                     if relaunch_orchestrator_for_blockers(
@@ -4827,6 +4857,29 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                             log("coverage follow-up blocker path yielded to completed status with accepted final build gate")
                             outcome = "completed"
                             break
+                        ownership_paths = required_path_outside_owned_reports(RUNTIME_ROOT)
+                        if (
+                            not diff.strip()
+                            and ownership_paths
+                            and orchestrator_resume_attempts < orchestrator_resume_limit
+                            and int(deadline - time.monotonic()) > 240
+                            and relaunch_orchestrator_for_blockers(
+                                "orchestrator exited after ownership-boundary no-diff worker",
+                                diff,
+                                [
+                                    *blockers,
+                                    *[
+                                        f"worker reported required-path-outside-owned:{path}; include this source path in the next bounded worker owned set"
+                                        for path in ownership_paths[:8]
+                                    ],
+                                    "The previous worker correctly stopped at an ownership boundary without producing a diff. Spawn a fresh bounded worker whose owned paths include the requested outside-owned path plus the original endpoint owner paths.",
+                                ],
+                                probe_report,
+                                force_live_handoff=True,
+                            )
+                        ):
+                            time.sleep(5)
+                            continue
                         coverage_gate_unresolved = True
                         STATUS_PATH.write_text(
                             json.dumps(

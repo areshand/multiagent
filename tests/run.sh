@@ -1121,6 +1121,19 @@ with tempfile.TemporaryDirectory() as td:
     assert len(summaries) == 1, summaries
     assert "worker-01-fix" in summaries[0], summaries
     assert "no source diff" in summaries[0], summaries
+    (blocked_agent / "last-message.txt").write_text(
+        "required-path-outside-owned: internal/server/evaluation/ofrep_bridge.go\n",
+        encoding="utf-8",
+    )
+    (state_agent / "last-message.txt").write_text(
+        "required-path-outside-owned: internal/server/ofrep/evaluation.go\n",
+        encoding="utf-8",
+    )
+    required_paths = solve_swe_prod.required_path_outside_owned_reports(runtime_root)
+    assert required_paths == [
+        "internal/server/evaluation/ofrep_bridge.go",
+        "internal/server/ofrep/evaluation.go",
+    ], required_paths
 
 captured_worker_commands = []
 try:
