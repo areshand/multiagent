@@ -3730,6 +3730,21 @@ with tempfile.TemporaryDirectory() as td:
     assert "--memory-limit 16g" in dry_run, dry_run
     assert "--cpu-limit 2" in dry_run, dry_run
 
+assert swe_bench_pro_run_next_shard.effective_proxy_timeout(
+    SimpleNamespace(
+        proxy_timeout=1800,
+        agent_timeout=3600.0,
+        agent_framework="multiagent-native",
+    )
+) == 3720
+assert swe_bench_pro_run_next_shard.effective_proxy_timeout(
+    SimpleNamespace(
+        proxy_timeout=1800,
+        agent_timeout=3600.0,
+        agent_framework="codex-devnull",
+    )
+) == 1800
+
 captured_refresh_commands = []
 old_run_next_checked = swe_bench_pro_run_next_shard.run_checked
 try:

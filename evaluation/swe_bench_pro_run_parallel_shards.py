@@ -188,7 +188,7 @@ def main() -> int:
     parser.add_argument("--no-refresh-before", action="store_true")
     parser.add_argument("--no-refresh-after", action="store_true")
     parser.add_argument("--proxy-port-base", type=int, default=8765)
-    parser.add_argument("--proxy-timeout", type=int, default=1800)
+    parser.add_argument("--proxy-timeout", type=int, default=3720)
     parser.add_argument("--proxy-ready-timeout", type=float, default=30.0)
     parser.add_argument("--no-start-proxy", action="store_true")
     parser.add_argument(

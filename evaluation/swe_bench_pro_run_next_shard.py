@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import shlex
 import subprocess
 import sys
@@ -33,6 +34,7 @@ DEFAULT_SCAFFOLD_AUDIT_MD = DEFAULT_REPORT_DIR / "swe-bench-pro-scaffold-audit.m
 DEFAULT_WORK_ROOT = Path("/private/tmp")
 DEFAULT_NATIVE_SOLVER_COMMAND = "/tmp/evalscope-native-multiagent-solver.sh"
 DEFAULT_NATIVE_SOLVER_SOURCE = Path(__file__).resolve().parents[1]
+PROXY_TIMEOUT_MARGIN_S = 120
 
 
 def run_checked(cmd: list[str], *, cwd: Path) -> None:
@@ -96,6 +98,14 @@ def wait_for_proxy(host: str, port: int, timeout_s: float) -> None:
             last_error = exc
             time.sleep(0.5)
     raise RuntimeError(f"proxy did not become ready at {url}: {last_error!r}")
+
+
+def effective_proxy_timeout(args: argparse.Namespace) -> int:
+    """Keep the model proxy alive for the full native solver request."""
+    requested = int(args.proxy_timeout)
+    if args.agent_framework != "multiagent-native":
+        return requested
+    return max(requested, math.ceil(float(args.agent_timeout)) + PROXY_TIMEOUT_MARGIN_S)
 
 
 def build_scaffold_command(args: argparse.Namespace, *, offset: int, count: int) -> tuple[str, list[str]]:
@@ -212,7 +222,7 @@ def start_proxy(args: argparse.Namespace, *, cwd: Path) -> subprocess.Popen[str]
         "--port",
         str(args.proxy_port),
         "--timeout",
-        str(args.proxy_timeout),
+        str(effective_proxy_timeout(args)),
         "--codex-bin",
         args.codex_bin,
         "--proxy-mode",
@@ -264,7 +274,7 @@ def main() -> int:
     parser.add_argument("--no-start-proxy", action="store_false", dest="start_proxy")
     parser.add_argument("--proxy-host", default="127.0.0.1")
     parser.add_argument("--proxy-port", type=int, default=8765)
-    parser.add_argument("--proxy-timeout", type=int, default=900)
+    parser.add_argument("--proxy-timeout", type=int, default=3720)
     parser.add_argument("--proxy-mode", choices=["codex", "scaffold-probe"], default="codex")
     parser.add_argument("--proxy-ready-timeout", type=float, default=15.0)
     parser.add_argument("--codex-bin", default="codex")
@@ -314,6 +324,13 @@ def main() -> int:
     proxy: subprocess.Popen[str] | None = None
     try:
         if args.start_proxy:
+            proxy_timeout = effective_proxy_timeout(args)
+            if proxy_timeout != args.proxy_timeout:
+                print(
+                    "raising proxy timeout from "
+                    f"{args.proxy_timeout}s to {proxy_timeout}s so it exceeds "
+                    f"the {args.agent_timeout}s native-agent budget"
+                )
             proxy = start_proxy(args, cwd=cwd)
             wait_for_proxy(args.proxy_host, args.proxy_port, args.proxy_ready_timeout)
         run_checked(scaffold_cmd, cwd=cwd)
