@@ -160,6 +160,10 @@ literal key/value tokens such as
 If no definition-level symbol contract changed, include one single
 machine-readable `source-symbol-map-skip-justified:` line with `path=` or
 `package=` and source evidence.
+For Go, adding or removing fields from a struct is a source-symbol contract
+change even when the enclosing `type` line is unchanged; same-package tests may
+instantiate structs by field name, so do not use
+`source-symbol-map-skip-justified:` for struct field diffs.
 If your first instruction does not include a `source-owner-ledger:` with
 `selected-owner=...`, plausible `candidate-owner=...`, rejected-owner reasons,
 and `validation-package=...`, do read-only owner discovery before editing source

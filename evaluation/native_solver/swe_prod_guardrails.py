@@ -183,13 +183,22 @@ def implementation_scope_blockers(
             )
 
     symbol_changes = source_symbol_changes(diff)
+    struct_field_changes = go_struct_field_changes(diff)
     if symbol_changes and not source_owner_ledger_has_evidence(status_text):
         blockers.append(
             "source symbol contracts changed, but status does not include `source-owner-ledger:` "
             "with `selected-owner=`, at least one plausible `candidate-owner=`, rejected-owner "
             "reasoning, and `validation-package=` before source-symbol acceptance"
         )
-    if symbol_changes and not source_symbol_map_has_evidence(status_text):
+    if struct_field_changes and "source-symbol-map-skip-justified:" in status_text:
+        blockers.append(
+            "Go struct field shape changed, but status used `source-symbol-map-skip-justified:`; "
+            "same-package tests and hidden contracts can instantiate structs by field name, so record "
+            "`source-symbol-map-passed:` with the changed struct fields, owner evidence, and caller/nearby-test "
+            "compatibility evidence before completion: "
+            + ", ".join(struct_field_changes[:8])
+        )
+    if (symbol_changes or struct_field_changes) and not source_symbol_map_has_evidence(status_text):
         blockers.append(
             "source symbol contracts changed, but status does not include `source-symbol-map-passed:` "
             "or `source-symbol-map-skip-justified:` with exact package/path placement, added/removed/renamed "
@@ -690,6 +699,65 @@ def source_symbol_changes(diff: str) -> list[str]:
         symbol = _changed_symbol_name(current_path, line)
         if symbol:
             changes.append(f"{raw_line[0]}{current_path}:{symbol}")
+    return sorted(dict.fromkeys(changes))
+
+
+def go_struct_field_changes(diff: str) -> list[str]:
+    """Return changed Go struct fields even when the enclosing type line is unchanged."""
+
+    changed_paths = _changed_paths(diff)
+    go_paths = {path for path in changed_paths if path.endswith(".go") and not _is_test_path(path)}
+    if not go_paths:
+        return []
+
+    changes: list[str] = []
+    current_path = ""
+    current_struct = ""
+    in_struct = False
+    for raw_line in diff.splitlines():
+        if raw_line.startswith("diff --git a/") and " b/" in raw_line:
+            current_path = raw_line.split(" b/", 1)[1].split("\t", 1)[0].strip()
+            current_struct = ""
+            in_struct = False
+            continue
+        if raw_line.startswith("@@"):
+            current_struct = ""
+            in_struct = False
+            if current_path in go_paths:
+                match = re.search(r"\btype\s+([A-Za-z_][A-Za-z0-9_]*)\s+struct\s*\{", raw_line)
+                if match:
+                    current_struct = match.group(1)
+                    in_struct = True
+            continue
+        if current_path not in go_paths:
+            continue
+        if not raw_line or raw_line[0] not in {" ", "+", "-"} or raw_line.startswith(("+++", "---")):
+            continue
+        line = raw_line[1:].strip()
+        match = re.search(r"\btype\s+([A-Za-z_][A-Za-z0-9_]*)\s+struct\s*\{", line)
+        if match:
+            current_struct = match.group(1)
+            in_struct = True
+            continue
+        if not in_struct:
+            continue
+        if line == "}":
+            current_struct = ""
+            in_struct = False
+            continue
+        if not raw_line.startswith(("+", "-")):
+            continue
+        if not line or line.startswith(("//", "/*", "*")):
+            continue
+        field_match = re.match(r"([A-Za-z_][A-Za-z0-9_]*)\s+[*\[\]A-Za-z_][A-Za-z0-9_./\[\]*]*", line)
+        embedded_match = re.match(r"\*?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s*(?:`[^`]*`)?$", line)
+        if field_match:
+            field = field_match.group(1)
+        elif embedded_match:
+            field = embedded_match.group(1)
+        else:
+            continue
+        changes.append(f"{raw_line[0]}{current_path}:{current_struct}.{field}")
     return sorted(dict.fromkeys(changes))
 
 

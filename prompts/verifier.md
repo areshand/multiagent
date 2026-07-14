@@ -284,6 +284,9 @@ machine-readable `source-symbol-map-skip-justified:` line with `path=` or
 `package=` and source evidence. Do not accept a patch that places the right idea
 in the wrong package or removes helper names still referenced by visible
 tests/callers.
+For Go, added or removed struct fields are source-symbol contract changes even
+when the enclosing `type` line did not change; same-package tests can instantiate
+structs by field name, so reject `source-symbol-map-skip-justified:` for struct field diffs.
 If the transcript contains `apply_patch` stale-hunk, missing-context, or patch
 failure output, verify the live final diff rather than the intended patch text.
 Reject unless the target files were re-read, the edit was reapplied to the live

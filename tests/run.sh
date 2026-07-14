@@ -644,6 +644,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_ap
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "expected-output-count=N"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "multi-value-probe.txt"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "source-symbol-map-passed:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "struct field diffs"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "owner-evidence="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "candidate-owner="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "source-owner-ledger:"
@@ -672,6 +673,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_fi
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "final-output-field="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "multi-value-probe.txt"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "source-symbol-map-passed:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "struct field diffs"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "source-owner-ledger:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "constructor-dependency-checked:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "provider-capability-checked:"
@@ -729,6 +731,7 @@ assert_file_contains "$ROOT/prompts/verifier.md" "final-output-field="
 assert_file_contains "$ROOT/prompts/verifier.md" "expected-output-count=N"
 assert_file_contains "$ROOT/prompts/verifier.md" "multi-value-probe.txt"
 assert_file_contains "$ROOT/prompts/verifier.md" "source-symbol-map-passed:"
+assert_file_contains "$ROOT/prompts/verifier.md" "struct field diffs"
 assert_file_contains "$ROOT/prompts/verifier.md" "source-owner-ledger:"
 assert_file_contains "$ROOT/prompts/verifier.md" "constructor-dependency-checked:"
 assert_file_contains "$ROOT/prompts/verifier.md" "provider-capability-checked:"
@@ -754,6 +757,7 @@ assert_file_contains "$ROOT/prompts/worker.md" "multi-value-probe-passed:"
 assert_file_contains "$ROOT/prompts/worker.md" "actual-output-count=N"
 assert_file_contains "$ROOT/prompts/worker.md" "multi-value-probe.txt"
 assert_file_contains "$ROOT/prompts/worker.md" "source-symbol-map-passed:"
+assert_file_contains "$ROOT/prompts/worker.md" "struct field diffs"
 assert_file_contains "$ROOT/prompts/worker.md" "one single machine-readable"
 assert_file_contains "$ROOT/prompts/worker.md" "go-package-validation-passed:"
 assert_file_contains "$ROOT/prompts/worker.md" "owner-evidence="
@@ -2306,6 +2310,25 @@ source_symbol_map_blockers = solve_swe_prod.implementation_scope_blockers(
 assert any("source-symbol-map-passed:" in blocker for blocker in source_symbol_map_blockers), source_symbol_map_blockers
 assert solve_swe_prod.source_symbol_map_blocker_present(source_symbol_map_blockers), source_symbol_map_blockers
 assert "source-symbol-map-passed:" in solve_swe_prod.source_symbol_map_resume_instructions(source_symbol_map_blockers)
+go_struct_field_skip_blockers = solve_swe_prod.implementation_scope_blockers(
+    "Kubernetes forwarder config fields are inconsistently named and should preserve same-package API compatibility.",
+    "diff --git a/lib/kube/proxy/forwarder.go b/lib/kube/proxy/forwarder.go\n"
+    "@@ -226,6 +226,8 @@ type Forwarder struct {\n"
+    " \tclusterSessions *ttlmap.TTLMap\n"
+    "+\t// sessionUploader uploads streamed exec session recordings.\n"
+    "+\tsessionUploader *filesessions.Uploader\n"
+    " \tactiveRequests map[string]context.Context\n"
+    " }\n",
+    {
+        "status": "completed",
+        "validation": (
+            "go test ./lib/kube/proxy passed. "
+            "source-symbol-map-skip-justified: path=lib/kube/proxy/forwarder.go "
+            "evidence=no-public-or-contract-symbol-name-arity-return-package-changed"
+        ),
+    },
+)
+assert any("Go struct field shape changed" in blocker for blocker in go_struct_field_skip_blockers), go_struct_field_skip_blockers
 source_symbol_map_evidence_blockers = solve_swe_prod.implementation_scope_blockers(
     "Add a linear benchmark generator for benchmark tests.",
     "diff --git a/lib/client/bench.go b/lib/client/bench.go\n"

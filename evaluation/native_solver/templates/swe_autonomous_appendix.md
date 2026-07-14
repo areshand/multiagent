@@ -314,6 +314,10 @@ Verifier quality bar:
   Use one single machine-readable `source-symbol-map-skip-justified:` line only
   with `path=` or `package=` and source evidence that no definition-level symbol
   contract changed.
+  For Go, added or removed struct fields are source-symbol contract changes even
+  when the enclosing `type` line did not change; same-package tests may
+  instantiate structs by field name, so do not use
+  `source-symbol-map-skip-justified:` for struct field diffs.
 - Validate the worker's validation claim. If the worker only ran an unrelated
   smoke check, a single guessed case while a relevant test file was available,
   or no check due to a service that could be locally started, run/request the

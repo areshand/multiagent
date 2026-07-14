@@ -143,6 +143,10 @@ As orchestrator:
      Use one single machine-readable `source-symbol-map-skip-justified:` line
      only when it includes `path=` or `package=` and source evidence proving no
      definition-level symbol contract changed.
+     For Go, added or removed struct fields are source-symbol contract changes
+     even when the enclosing `type` line did not change; same-package tests may
+     instantiate structs by field name, so do not use
+     `source-symbol-map-skip-justified:` for struct field diffs.
 10. Before writing completed status, run the structured repair gate. Any
    blocking verifier or adapter issue must be recorded with
    `bin/subagent.sh finding-create`, converted into a `bin/subagent.sh
