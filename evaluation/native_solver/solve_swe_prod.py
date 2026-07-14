@@ -230,11 +230,197 @@ def metadata_problem_text(metadata: dict[str, object] | None) -> str:
 
 
 
+ISSUE_COVERAGE_KEYWORDS = {
+    "api",
+    "audit",
+    "cache",
+    "cached",
+    "caching",
+    "cluster",
+    "concurrent",
+    "config",
+    "context",
+    "credential",
+    "csr",
+    "directory",
+    "error",
+    "exec",
+    "expiry",
+    "fallback",
+    "field",
+    "fields",
+    "forwarder",
+    "handler",
+    "initialize",
+    "initialization",
+    "logging",
+    "namespace",
+    "persist",
+    "request",
+    "response",
+    "router",
+    "session",
+    "state",
+    "stream",
+    "ttl",
+    "tunnel",
+    "uploader",
+}
+ISSUE_COVERAGE_TRIGGER_WORDS = {
+    "bug",
+    "canceled",
+    "cancelled",
+    "cache",
+    "cached",
+    "caching",
+    "current",
+    "disconnect",
+    "disconnects",
+    "harder",
+    "error",
+    "expected",
+    "fail",
+    "fails",
+    "failure",
+    "inconsistent",
+    "inconsistently",
+    "missing",
+    "must",
+    "prevent",
+    "prematurely",
+    "required",
+    "requires",
+    "should",
+    "unnecessary",
+    "unnecessarily",
+}
+
+
+def _clean_issue_sentence(sentence: str) -> str:
+    return re.sub(r"\s+", " ", sentence.replace("**", " ")).strip(" -:*`\t\r\n")
+
+
+def public_issue_text_for_coverage(issue: str) -> str:
+    """Return public issue text, excluding benchmark harness instructions."""
+
+    pr_match = re.search(
+        r"<pr_description>\s*(.*?)\s*</pr_description>",
+        issue,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if pr_match:
+        return pr_match.group(1)
+    for marker in (
+        "\n<instructions>",
+        "\n# Task Instructions",
+        "\n## Task Instructions",
+        "\n## Overview\n\nYou're a software engineer",
+        "\nCurrent `/app` diff excerpt",
+    ):
+        if marker in issue:
+            return issue.split(marker, 1)[0]
+    return issue
+
+
+def _issue_sentences(issue: str) -> list[str]:
+    lines: list[str] = []
+    for raw_line in public_issue_text_for_coverage(issue).replace("\r\n", "\n").splitlines():
+        line = _clean_issue_sentence(raw_line)
+        if not line or line.startswith("```"):
+            continue
+        if len(line) > 320:
+            for part in re.split(r"(?<=[.!?])\s+", line):
+                cleaned = _clean_issue_sentence(part)
+                if cleaned:
+                    lines.append(cleaned)
+        else:
+            lines.append(line)
+    return lines
+
+
+def _issue_sentence_keywords(sentence: str) -> list[str]:
+    keywords: list[str] = []
+    seen: set[str] = set()
+    for code in re.findall(r"`([^`]{2,80})`", sentence):
+        token = re.sub(r"[^A-Za-z0-9_./-]+", "", code).strip("./-").lower()
+        if token and len(token) >= 3 and token not in seen:
+            seen.add(token)
+            keywords.append(token)
+    for camel in re.findall(r"\b[A-Za-z]+[A-Z][A-Za-z0-9_]*\b", sentence):
+        token = camel.lower()
+        if token not in seen:
+            seen.add(token)
+            keywords.append(token)
+    for word in re.findall(r"\b[a-zA-Z][a-zA-Z0-9_-]{2,}\b", sentence.lower()):
+        if word in ISSUE_COVERAGE_KEYWORDS and word not in seen:
+            seen.add(word)
+            keywords.append(word)
+    return keywords[:8]
+
+
+def _issue_requirement_id(keywords: list[str], index: int) -> str:
+    parts = [re.sub(r"[^a-z0-9]+", "-", keyword.lower()).strip("-") for keyword in keywords[:3]]
+    parts = [part for part in parts if part]
+    return "issue-" + "-".join(parts or [f"item-{index}"])
+
+
+def issue_coverage_requirements(issue: str) -> list[dict[str, object]]:
+    """Derive public issue coverage requirements without evaluator metadata."""
+
+    requirements: list[dict[str, object]] = []
+    seen_ids: set[str] = set()
+    for sentence in _issue_sentences(issue):
+        lower = sentence.lower()
+        keywords = _issue_sentence_keywords(sentence)
+        if len(keywords) < 2:
+            continue
+        if not any(trigger in lower for trigger in ISSUE_COVERAGE_TRIGGER_WORDS):
+            continue
+        requirement_id = _issue_requirement_id(keywords, len(requirements) + 1)
+        if requirement_id in seen_ids:
+            continue
+        seen_ids.add(requirement_id)
+        requirements.append(
+            {
+                "id": requirement_id,
+                "summary": sentence[:220],
+                "keywords": keywords,
+            }
+        )
+    return requirements[:12]
+
+
+def issue_coverage_blockers(issue: str, evidence_text: str) -> list[str]:
+    requirements = issue_coverage_requirements(issue)
+    if len(requirements) < 2:
+        return []
+    lower = evidence_text.lower()
+    if "issue-coverage-ledger:" not in lower:
+        return [
+            "public issue describes multiple independent contracts, but final validation lacks `issue-coverage-ledger:` "
+            "mapping each issue-stated behavior to a source change, source-level already-satisfied proof, or blocking todo"
+        ]
+    ledger_text = lower.split("issue-coverage-ledger:", 1)[1]
+    missing: list[str] = []
+    for requirement in requirements:
+        keywords = [str(keyword).lower() for keyword in requirement.get("keywords", [])]
+        if not any(keyword in ledger_text for keyword in keywords):
+            missing.append(str(requirement.get("id") or requirement.get("summary") or "issue item"))
+    if missing:
+        return [
+            "`issue-coverage-ledger:` does not account for public issue coverage item(s): "
+            + ", ".join(missing[:8])
+            + "; do not accept a one-symptom patch until every issue-stated contract is implemented, proved already satisfied, or queued as a blocking todo"
+        ]
+    return []
+
+
 def contract_ledger_text(issue: str, metadata: dict[str, object] | None = None) -> str:
     solver_metadata = public_solver_metadata(metadata or {})
     contract = official_test_contract(solver_metadata)
     symbols = required_public_symbols(issue, solver_metadata)
     contract_excerpt = metadata_problem_text(solver_metadata)
+    issue_requirements = issue_coverage_requirements(issue)
     sections = [
         "# SWE Bench Pro Contract Ledger",
         "",
@@ -264,6 +450,18 @@ def contract_ledger_text(issue: str, metadata: dict[str, object] | None = None) 
         )
     if not symbols:
         sections.append("- No explicit public-symbol invariants were detected from public task text.")
+    if issue_requirements:
+        sections.append("- Public issue coverage items:")
+        for requirement in issue_requirements:
+            sections.append(
+                "  - "
+                + requirement["id"]
+                + ": "
+                + requirement["summary"]
+                + " [keywords="
+                + ",".join(requirement["keywords"])
+                + "]"
+            )
     sections.extend(
         [
             "",
@@ -274,6 +472,7 @@ def contract_ledger_text(issue: str, metadata: dict[str, object] | None = None) 
             "- Visible-test success does not override this ledger; workers must preserve these invariants and verifiers must reject contradictions.",
             "- Literal expected values, command argv, serialized outputs, error text, and ordered lists from legitimate task/source evidence are normative; workers and verifiers must probe that exact shape when practical.",
             "- Hidden contracts must be inferred from user intent, issue text, visible tests, docs, source compatibility behavior, public APIs, data schemas, and runtime behavior.",
+            "- If the public issue lists multiple behavior contracts, final validation must include `issue-coverage-ledger:` mapping every public issue coverage item to a source change, source-level proof it was already satisfied, or a blocking todo.",
             "- Verifier reports must explicitly say whether every listed invariant is preserved.",
             "",
         ]
@@ -1697,7 +1896,7 @@ def blocked_no_diff_subagent_summaries(runtime_root: Path = RUNTIME_ROOT) -> lis
             if not status_file.exists():
                 continue
             status = status_file.read_text(encoding="utf-8", errors="replace").strip().lower()
-            if status not in {"blocked", "missing", "done", "stopped"}:
+            if status not in {"blocked", "missing", "done", "stopped", "failed"}:
                 continue
             snippets: list[str] = []
             for name in ("last-message.txt", "current.txt", "transcript.log"):
@@ -1732,13 +1931,88 @@ def assignment_owned_paths(runtime_root: Path = RUNTIME_ROOT) -> list[str]:
     return list(dict.fromkeys(paths))
 
 
+def agent_owned_paths(agent_name: str, runtime_root: Path = RUNTIME_ROOT) -> list[str]:
+    paths: list[str] = []
+    for root in (runtime_root / "assignments", runtime_root / "state" / "assignments"):
+        owned_file = root / agent_name / "owned-paths"
+        if not owned_file.exists():
+            continue
+        try:
+            lines = owned_file.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            path = line.strip()
+            if valid_required_path_outside_owned_report(path):
+                paths.append(path)
+    return list(dict.fromkeys(paths))
+
+
+def path_within_owned(path: str, owned_paths: list[str]) -> bool:
+    normalized = path.strip().strip("/")
+    for owned in owned_paths:
+        owner = owned.strip().strip("/")
+        if not owner:
+            continue
+        if normalized == owner or normalized.startswith(owner.rstrip("/") + "/"):
+            return True
+    return False
+
+
+def inferred_required_paths_from_worker_text(runtime_root: Path = RUNTIME_ROOT) -> list[str]:
+    """Infer outside-owned source paths from repeated worker source discovery.
+
+    This is a routing aid for no-diff recovery. It promotes source-visible paths
+    a bounded worker inspected or named, but only when they are outside that
+    worker's persisted owned-paths. It must not infer benchmark answers; it just
+    prevents the next worker from being overconstrained by stale ownership.
+    """
+
+    counts: dict[str, int] = {}
+    source_path = re.compile(r"\b((?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+\.(?:go|py|js|jsx|ts|tsx|java|rb|rs|php))\b")
+    for subagents_dir in subagent_state_roots(runtime_root):
+        for agent_dir in sorted(path for path in subagents_dir.iterdir() if path.is_dir()):
+            agent_name = agent_dir.name
+            lower_name = agent_name.lower()
+            if "worker" not in lower_name or "scout" in lower_name or "verifier" in lower_name:
+                continue
+            owned = agent_owned_paths(agent_name, runtime_root)
+            if not owned:
+                continue
+            for name in ("last-message.txt", "current.txt", "transcript.log"):
+                path = agent_dir / name
+                if not path.exists():
+                    continue
+                try:
+                    text = path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                for match in source_path.finditer(text):
+                    candidate = match.group(1).strip()
+                    if not valid_required_path_outside_owned_report(candidate):
+                        continue
+                    if is_test_path(candidate) or candidate.startswith(("vendor/", "node_modules/", "docs/")):
+                        continue
+                    if path_within_owned(candidate, owned):
+                        continue
+                    counts[candidate] = counts.get(candidate, 0) + 1
+    return [path for path, _ in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:8]]
+
+
 def no_diff_blocked_subagent_blockers(runtime_root: Path = RUNTIME_ROOT) -> list[str]:
     blocked_subagents = blocked_no_diff_subagent_summaries(runtime_root)
     if not blocked_subagents:
         return []
-    ownership_paths = required_path_outside_owned_reports(runtime_root)
+    ownership_paths = list(
+        dict.fromkeys(
+            [
+                *required_path_outside_owned_reports(runtime_root),
+                *inferred_required_paths_from_worker_text(runtime_root),
+            ]
+        )
+    )
     return [
-        "production subagent reached blocked status without a materialized source diff; replace the no-diff worker and implement from issue/source evidence before blocking again",
+        "production subagent failed, exited, or reached terminal status without a materialized source diff; replace the no-diff worker and implement from issue/source evidence before blocking again",
         *[
             f"worker reported required-path-outside-owned:{path}; include this source path in the next bounded worker owned set"
             for path in ownership_paths[:8]
@@ -2088,6 +2362,58 @@ def persisted_subagent_visible_validation_evidence(
                         continue
                     excerpt = raw[marker: marker + 800].strip()
                     return f"persisted subagent {agent_dir.name} {name}: {excerpt}"
+    return ""
+
+
+def persisted_subagent_final_acceptance_evidence(
+    diff: str,
+    runtime_root: Path = RUNTIME_ROOT,
+) -> str:
+    """Return durable verifier acceptance evidence bound to the final diff.
+
+    This recovers orchestration bookkeeping failures, not source correctness.
+    A report is usable only when it explicitly accepts the final patch, includes
+    the final diff hash in build evidence, and covers every changed Go package
+    when Go source changed.
+    """
+
+    if not diff.strip():
+        return ""
+
+    go_packages = changed_go_package_args(diff)
+    touches_go_source = bool(go_packages)
+    for subagents_dir in subagent_state_roots(runtime_root):
+        for agent_dir in sorted(path for path in subagents_dir.iterdir() if path.is_dir()):
+            agent_name = agent_dir.name.lower()
+            if "verifier" not in agent_name and "review" not in agent_name:
+                continue
+            for name in ("last-message.txt", "current.txt", "transcript.log"):
+                path = agent_dir / name
+                if not path.exists():
+                    continue
+                try:
+                    raw = path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                lower = raw.lower()
+                if "accepted" not in lower:
+                    continue
+                accepted_at = lower.rfind("accepted")
+                build_at = lower.rfind("build-verification-passed:")
+                if build_at < 0:
+                    continue
+                start = min(idx for idx in (accepted_at, build_at) if idx >= 0)
+                evidence_tail = raw[start:]
+                if not build_verification_has_evidence(evidence_tail, diff):
+                    continue
+                if touches_go_source and not all(
+                    go_package_validation_has_evidence(evidence_tail, package) for package in go_packages
+                ):
+                    continue
+                if touches_go_source and go_compile_failure_present(evidence_tail):
+                    continue
+                excerpt = " ".join(evidence_tail[:1800].split())
+                return f"persisted verifier {agent_dir.name} {name}: {excerpt}"
     return ""
 
 
@@ -2472,6 +2798,7 @@ def validation_coverage_blockers(
             "or compile_clean=false); record it as a blocking finding/todo, repair it, and only "
             "complete after verifier closure plus hash-bound final validation"
         )
+    blockers.extend(issue_coverage_blockers(issue, evidence_text))
     blockers.extend(claimed_changed_path_blockers(diff, f"{text}\n{json.dumps(current_status, sort_keys=True)}"))
     blockers.extend(stale_patch_application_blockers(text))
     changed_code_paths = changed_code_paths_from_diff(diff)
@@ -3966,7 +4293,15 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
             resume_attempt = orchestrator_resume_attempts
         source_hints = helper_scope_hints(workdir, issue, diff, [] if not diff.strip() else blockers)
         if not diff.strip():
-            source_hints = list(dict.fromkeys([*assignment_owned_paths(RUNTIME_ROOT), *source_hints]))
+            source_hints = list(
+                dict.fromkeys(
+                    [
+                        *inferred_required_paths_from_worker_text(RUNTIME_ROOT),
+                        *assignment_owned_paths(RUNTIME_ROOT),
+                        *source_hints,
+                    ]
+                )
+            )
         resume_prompt = write_orchestrator_resume_prompt(
             autonomous_prompt,
             attempt=resume_attempt,
@@ -4219,7 +4554,14 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                     and int(deadline - time.monotonic()) > 300
                 ):
                     no_diff_blocked_retries += 1
-                    ownership_paths = required_path_outside_owned_reports(RUNTIME_ROOT)
+                    ownership_paths = list(
+                        dict.fromkeys(
+                            [
+                                *required_path_outside_owned_reports(RUNTIME_ROOT),
+                                *inferred_required_paths_from_worker_text(RUNTIME_ROOT),
+                            ]
+                        )
+                    )
                     blockers = [
                         "production orchestrator wrote blocked status after a worker completed without a materialized source diff; restart from issue/source evidence and choose the narrowest implementation path before blocking again",
                         *[
@@ -5296,7 +5638,14 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                             no_diff_blocked_retries += 1
                             time.sleep(5)
                             continue
-                        ownership_paths = required_path_outside_owned_reports(RUNTIME_ROOT)
+                        ownership_paths = list(
+                            dict.fromkeys(
+                                [
+                                    *required_path_outside_owned_reports(RUNTIME_ROOT),
+                                    *inferred_required_paths_from_worker_text(RUNTIME_ROOT),
+                                ]
+                            )
+                        )
                         if (
                             not diff.strip()
                             and ownership_paths
@@ -5518,8 +5867,11 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
         non_recoverable_validation_blockers = non_recoverable_final_validation_blockers(
             original_final_validation_blockers
         )
-        validation_evidence = persisted_subagent_visible_validation_evidence(final_diff)
-        validation_evidence_kind = "visible"
+        validation_evidence = persisted_subagent_final_acceptance_evidence(final_diff)
+        validation_evidence_kind = "final-verifier"
+        if not validation_evidence:
+            validation_evidence = persisted_subagent_visible_validation_evidence(final_diff)
+            validation_evidence_kind = "visible"
         if not validation_evidence and visible_validation_passed_in_text(final_text):
             validation_evidence = "captured tmux output contains passing visible validation"
             validation_evidence_kind = "visible"

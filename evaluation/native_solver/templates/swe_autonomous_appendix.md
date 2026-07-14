@@ -147,7 +147,9 @@ Benchmark spawning path:
   marker, treat it as a verifier rejection. Remove the weak status marker and
   continue the orchestration loop.
 - `apply_patch` should be available on `PATH`; if a shell cannot find it, use
-  `/usr/local/bin/apply_patch`.
+  `/usr/local/bin/apply_patch`. If your environment exposes only a shell-style
+  command tool, invoke the `apply_patch` executable from that shell. Do not
+  block while waiting for a separate JSON `apply_patch` tool.
 - If `apply_patch` reports a stale hunk, missing context, or patch failure, do
   not continue from the intended patch text as if it changed `/app`. Re-read the
   current target files, rebase the edit onto the live tree, rerun
@@ -159,15 +161,26 @@ Worker quality bar:
 - First restate the issue as an observable behavior change and identify likely
   source files before editing.
 - This restatement is a starting step, not a valid final result. After likely
-  source files are known, run at most three focused read-only command batches
-  before choosing one terminal implementation action: apply the smallest source
-  patch, report `required-path-outside-owned: RELATIVE_PATH`, report
-  `validation-repair-needed:` with the exact blocker, or write blocked status
-  with the concrete source discovery gap. Do not finish with only a checklist,
-  source map, or plan while `/app` has no materialized source diff.
+  source files are known, normally limit yourself to three focused read-only
+  command batches before choosing one terminal implementation action: apply the
+  smallest source patch, report `required-path-outside-owned: RELATIVE_PATH`,
+  report `validation-repair-needed:` with the exact blocker, or write blocked
+  status with the concrete source discovery gap. For a multi-contract task, one
+  additional targeted source read is allowed if it directly unblocks the patch.
+  Do not write blocked status merely because a read-count limit was consumed;
+  either patch from current evidence or name the exact source file/API still
+  missing. Do not finish with only a checklist, source map, or plan while
+  `/app` has no materialized source diff.
 - Maintain an explicit requirement checklist from the issue text. Each item
   needs one of: a source change, a source-level reason no change is needed, or a
   blocked note.
+- If the issue text contains multiple independent behavior contracts, preserve
+  them as separate checklist items. Do not collapse initialization, cache/state,
+  request context, error logging, config field shape, concurrency, persistence,
+  fallback, adapter parity, or API shape into a single "root cause fixed" item.
+  Final validation must include `issue-coverage-ledger:` mapping each public
+  issue clause to `implemented-by=PATH`, `already-satisfied-by=SOURCE_EVIDENCE`,
+  or `blocking-todo=ID`.
 - Prefer the smallest source-only patch that directly addresses the issue.
   Broad rewrites and speculative cleanups usually fail hidden tests.
 - Inspect existing tests, fixtures, docs, and call sites that encode expected
@@ -258,6 +271,12 @@ Verifier quality bar:
 - The verifier is not a summary writer. It is a gate.
 - Inspect the issue text, current `git diff`, changed files, and relevant
   source/test/docs evidence.
+- Before accepting, write `issue-coverage-ledger:` when the issue has multiple
+  independent public clauses. Every clause must map to an implementation path,
+  already-satisfied source proof, or blocking todo. A patch that fixes one
+  obvious symptom but leaves issue-stated cache/state, request-context,
+  logging, config/API shape, concurrency, persistence, fallback, or adapter
+  clauses unaccounted is not accepted.
 - Reject an empty diff.
 - Reject patches that change tests, lockfiles, generated artifacts, or unrelated
   formatting unless the issue explicitly requires those files.

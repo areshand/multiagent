@@ -72,6 +72,14 @@ As orchestrator:
    `source-declaration=...`, and `compile=...` or `returncode=0`.
 9. Before writing completed status, check the final validation text for
    machine-gated evidence markers:
+   - If the public issue text contains multiple independent behavior contracts,
+     the status JSON `validation` field must include `issue-coverage-ledger:`
+     mapping every issue-stated clause to `implemented-by=PATH`,
+     `already-satisfied-by=SOURCE_EVIDENCE`, or `blocking-todo=ID`. Do not
+     write completed status after fixing only the first visible symptom while
+     leaving issue-stated cache/state, request-context, logging, config/API
+     shape, concurrency, persistence, fallback, or adapter-parity clauses
+     unaccounted.
    - If worker or verifier output contains a relevant failed validation command,
      spawn a fresh bounded repair worker before completion. Do not convert a
      failing relevant visible test, fixture, compile, package, component, or

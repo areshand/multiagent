@@ -647,7 +647,9 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_ap
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "owner-evidence="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "candidate-owner="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "source-owner-ledger:"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "at most three focused read-only command batches"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "normally limit yourself to three focused read-only"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Do not write blocked status merely because a read-count limit was consumed"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" 'invoke the `apply_patch` executable from that shell'
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Do not finish with only a checklist"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "constructor-dependency-checked:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "provider-capability-checked:"
@@ -756,7 +758,8 @@ assert_file_contains "$ROOT/prompts/worker.md" "go-package-validation-passed:"
 assert_file_contains "$ROOT/prompts/worker.md" "owner-evidence="
 assert_file_contains "$ROOT/prompts/worker.md" "candidate-owner="
 assert_file_contains "$ROOT/prompts/worker.md" "source-owner-ledger:"
-assert_file_contains "$ROOT/prompts/worker.md" "no more than three focused read-only"
+assert_file_contains "$ROOT/prompts/worker.md" "normally limit yourself to three focused"
+assert_file_contains "$ROOT/prompts/worker.md" "Do not report blocked merely because a read-count limit was consumed"
 assert_file_contains "$ROOT/prompts/worker.md" "Do not finish with only a plan"
 assert_file_contains "$ROOT/prompts/worker.md" "constructor-dependency-checked:"
 assert_file_contains "$ROOT/prompts/worker.md" "provider-capability-checked:"
@@ -1144,6 +1147,12 @@ with tempfile.TemporaryDirectory() as td:
     state_agent.mkdir(parents=True)
     (state_agent / "status").write_text("done\n", encoding="utf-8")
     (state_agent / "current.txt").write_text("Restated likely source files but produced no source diff.\n", encoding="utf-8")
+    (state_agent / "transcript.log").write_text(
+        "lib/service/service.go:1842: func initUploaderService(...) error\n"
+        "lib/service/service.go:1852: streamingDir := []string{...}\n"
+        "lib/kube/proxy/forwarder.go:565: func (f *Forwarder) newStreamer(...)\n",
+        encoding="utf-8",
+    )
     scout_agent = runtime_root / "subagents" / "worker-03-scout"
     scout_agent.mkdir(parents=True)
     (scout_agent / "status").write_text("done\n", encoding="utf-8")
@@ -1153,7 +1162,7 @@ with tempfile.TemporaryDirectory() as td:
     (assignment_dir / "owned-paths").write_text(
         "lib/kube/proxy/forwarder.go\n"
         "RELATIVE_PATH\n"
-        "lib/service/service.go\n",
+        "lib/service/kubernetes.go\n",
         encoding="utf-8",
     )
     summaries = solve_swe_prod.blocked_no_diff_subagent_summaries(runtime_root)
@@ -1184,8 +1193,28 @@ with tempfile.TemporaryDirectory() as td:
     assert solve_swe_prod.valid_required_path_outside_owned_report("internal/server/ofrep/evaluation.go")
     assert solve_swe_prod.assignment_owned_paths(runtime_root) == [
         "lib/kube/proxy/forwarder.go",
-        "lib/service/service.go",
+        "lib/service/kubernetes.go",
     ]
+    inferred_paths = solve_swe_prod.inferred_required_paths_from_worker_text(runtime_root)
+    assert "lib/service/service.go" in inferred_paths, inferred_paths
+    inferred_blockers = solve_swe_prod.no_diff_blocked_subagent_blockers(runtime_root)
+    assert any("required-path-outside-owned:lib/service/service.go" in blocker for blocker in inferred_blockers), inferred_blockers
+    verifier_agent = runtime_root / "subagents" / "verifier-01-fix"
+    verifier_agent.mkdir(parents=True)
+    go_diff = (
+        "diff --git a/lib/kube/proxy/forwarder.go b/lib/kube/proxy/forwarder.go\n"
+        "+func fixed() {}\n"
+    )
+    go_hash = solve_swe_prod.final_diff_sha256(go_diff)
+    (verifier_agent / "last-message.txt").write_text(
+        "ACCEPTED\n"
+        f"build-verification-passed: final-diff-sha256={go_hash} changed-files=1 compile_clean=true returncode=0\n"
+        "go-package-validation-passed: package=./lib/kube/proxy command=\"go test ./lib/kube/proxy\" returncode=0\n",
+        encoding="utf-8",
+    )
+    final_acceptance = solve_swe_prod.persisted_subagent_final_acceptance_evidence(go_diff, runtime_root)
+    assert "persisted verifier verifier-01-fix last-message.txt" in final_acceptance, final_acceptance
+    assert "build-verification-passed" in final_acceptance, final_acceptance
 
 captured_worker_commands = []
 try:
@@ -1841,6 +1870,63 @@ with tempfile.TemporaryDirectory() as td:
         "Kubernetes service startup should initialize credentials used by proxy forwarding.",
         go_related_diff,
         broad_status,
+    )
+
+    row8_issue = (
+        "kubectl exec interactive sessions fail due to missing session uploader initialization in Kubernetes service.\n"
+        "The Kubernetes service was missing initialization of the session uploader, which is required to create the async upload directory on disk.\n"
+        "The `clusterSession` object was being fully cached, including request-specific and cluster-related state that should not persist.\n"
+        "Audit events were emitted using the request context, which can be prematurely canceled when the client disconnects.\n"
+        "Logging of response errors from the exec handler was incomplete.\n"
+        "Config fields in the Kubernetes forwarder were inconsistently named or embedded unnecessarily, making the API harder to maintain."
+    )
+    row8_requirements = solve_swe_prod.issue_coverage_requirements(row8_issue)
+    assert any("clustersession" in req["keywords"] for req in row8_requirements), row8_requirements
+    assert any("audit" in req["keywords"] for req in row8_requirements), row8_requirements
+    assert any("config" in req["keywords"] for req in row8_requirements), row8_requirements
+    wrapped_row8_requirements = solve_swe_prod.issue_coverage_requirements(
+        "<pr_description>\n"
+        + row8_issue
+        + "\n</pr_description>\n<instructions>\n"
+        "Your response SHOULD include reasoning text explaining what you're doing.\n"
+        "Your response MUST include AT LEAST ONE bash tool call.\n"
+        "</instructions>\n"
+    )
+    wrapped_requirement_text = json.dumps(wrapped_row8_requirements).lower()
+    assert "your response" not in wrapped_requirement_text, wrapped_row8_requirements
+    assert "bash tool call" not in wrapped_requirement_text, wrapped_row8_requirements
+    assert any("clustersession" in req["keywords"] for req in wrapped_row8_requirements), wrapped_row8_requirements
+    row8_uploader_only_status = {
+        "status": "completed",
+        "validation": (
+            f"build-verification-passed: final-diff-sha256={go_related_hash} changed-files=1 compile_clean=true returncode=0. "
+            "go-package-validation-passed: package=./lib/service command='go test ./lib/service ./lib/kube/proxy' returncode=0. "
+            "go-package-validation-passed: package=./lib/kube/proxy command='go test ./lib/service ./lib/kube/proxy' returncode=0. "
+            "source-symbol-map-skip-justified: path=lib/service/kubernetes.go package=service"
+        ),
+    }
+    row8_uploader_only_blockers = solve_swe_prod.validation_coverage_blockers(
+        row8_issue,
+        go_related_diff,
+        "",
+        row8_uploader_only_status,
+    )
+    assert any("issue-coverage-ledger" in blocker for blocker in row8_uploader_only_blockers), row8_uploader_only_blockers
+    row8_covered_status = {
+        "status": "completed",
+        "validation": (
+            row8_uploader_only_status["validation"]
+            + " issue-coverage-ledger: "
+            "session uploader implemented-by=lib/service/kubernetes.go; "
+            "clusterSession cache already-satisfied-by=lib/kube/proxy/forwarder.go source inspection; "
+            "audit request context implemented-by=lib/kube/proxy/forwarder.go; "
+            "logging response exec handler implemented-by=lib/kube/proxy/forwarder.go; "
+            "api config fields forwarder implemented-by=lib/kube/proxy/forwarder.go"
+        ),
+    }
+    assert not solve_swe_prod.issue_coverage_blockers(
+        row8_issue,
+        row8_covered_status["validation"],
     )
 
 false_helper_blockers = solve_swe_prod.implementation_scope_blockers(
@@ -3358,6 +3444,13 @@ verifier_spawn_line="$(grep -F "new-window -d test-session verifier-01-docs " "$
 [[ "$verifier_spawn_line" == *"--cd $ROOT"* ]]
 [[ "$verifier_spawn_line" == *"--dangerously-bypass-approvals-and-sandbox --no-alt-screen"* ]]
 
+if MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$ROOT/bin/subagent.sh" spawn codex-no-prompt >"$TMPDIR/codex-no-prompt.out" 2>&1; then
+  echo "expected codex exec subagent spawn without instruction to fail" >&2
+  cat "$TMPDIR/codex-no-prompt.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/codex-no-prompt.out" "codex exec subagent spawn requires --instruction or --instruction-file"
+
 printf 'Login required before Claude can start\n' >"$MOCK_TMUX_CAPTURES/subagent-auth.txt"
 if "$ROOT/bin/subagent.sh" spawn subagent-auth --instruction "Should not send" >"$TMPDIR/auth-spawn.out" 2>&1; then
   echo "expected spawn to stop when the subagent is not ready" >&2
@@ -3400,6 +3493,14 @@ printf 'final status: codex exec exited rc=0\n' >"$MOCK_TMUX_CAPTURES/subagent-w
 poll_final_status_output="$("$ROOT/bin/subagent.sh" poll subagent-watch)"
 [[ "$poll_final_status_output" == $'subagent-watch\tdone' ]]
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/current.txt" "final status: codex exec exited rc=0"
+
+printf 'Warning: no last agent message; wrote empty content to /tmp/last-message.txt\nfinal status: codex exec exited rc=0\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"
+poll_empty_final_output="$("$ROOT/bin/subagent.sh" poll subagent-watch)"
+[[ "$poll_empty_final_output" == $'subagent-watch\tfailed' ]]
+
+printf 'final status: codex exec exited rc=1\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"
+poll_failed_status_output="$("$ROOT/bin/subagent.sh" poll subagent-watch)"
+[[ "$poll_failed_status_output" == $'subagent-watch\tfailed' ]]
 
 printf 'Progress update: still running\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"
 "$ROOT/bin/subagent.sh" poll subagent-watch >/dev/null
@@ -3445,6 +3546,20 @@ mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-blocked"
 printf 'running\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-blocked/status"
 printf 'Blocked: need input from orchestrator\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-blocked/current.txt"
 
+mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-prompt-only"
+printf 'missing\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-prompt-only/status"
+printf 'If blocked, stop and state what you need. Do not finish with only a plan while /app has no materialized source diff.\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-prompt-only/current.txt"
+cat >"$MULTIAGENT_STATE_DIR/subagents/subagent-prompt-only/meta.env" <<EOF
+name=subagent-prompt-only
+session=$MULTIAGENT_SESSION
+root=$ROOT
+write_policy=$MULTIAGENT_WRITE_POLICY
+cli=claude
+cli_bin=true
+created_at=2026-01-01T00:00:00Z
+EOF
+printf 'Restored prompt-only Claude prompt ready\n' >"$MOCK_TMUX_CAPTURES/subagent-prompt-only.txt"
+
 mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-open"
 printf 'running\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-open/status"
 printf 'Still active in tmux\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-open/current.txt"
@@ -3457,6 +3572,7 @@ recover_plan="$("$ROOT/bin/subagent.sh" recover-plan)"
 [[ "$recover_plan" == *$'subagent-watch\tskip-finalized\tstatus-finalized\tfinalized\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-watch"* ]]
 [[ "$recover_plan" == *$'subagent-restore\trestore\tclosed-with-recoverable-context\trunning\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-restore"* ]]
 [[ "$recover_plan" == *$'subagent-blocked\tskip-blocked\trequires-orchestrator-decision\trunning\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-blocked"* ]]
+[[ "$recover_plan" == *$'subagent-prompt-only\trestore\tclosed-with-recoverable-context\tmissing\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-prompt-only"* ]]
 [[ "$recover_plan" == *$'subagent-open\tskip-open\ttmux-window-already-open\trunning\topen\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-open"* ]]
 [[ "$recover_plan" == *$'subagent-unknown\tskip-unknown\tno-current-or-transcript\tunknown\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-unknown"* ]]
 [[ "$recover_plan" == *$'subagent-structured\trestore\tcheckpoint-resumable\trunning\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-structured"* ]]
@@ -3493,7 +3609,8 @@ restore_all_output="$("$ROOT/bin/subagent.sh" restore-all)"
 [[ "$restore_all_output" == *$'skipped subagent-blocked\tskip-blocked'* ]]
 [[ "$restore_all_output" == *$'skipped subagent-open\tskip-open'* ]]
 [[ "$restore_all_output" == *$'skipped subagent-watch\tskip-finalized'* ]]
-[[ "$restore_all_output" == *"restore-all complete: restored=0"* ]]
+[[ "$restore_all_output" == *"restored subagent-prompt-only"* ]]
+[[ "$restore_all_output" == *"restore-all complete: restored=1"* ]]
 
 # Test organizational learning functionality
 

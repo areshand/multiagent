@@ -933,6 +933,13 @@ readiness_state() {
   fi
 }
 
+looks_blocked_report() {
+  local text="$1"
+  grep -Eiq '^[[:space:]]*(blocked|blocker|need input|waiting for|cannot proceed)[[:space:]:.-]' <<<"$text" \
+    || grep -Eiq '^[[:space:]]*final status:[[:space:]]*(blocked|needs input|cannot proceed)\b' <<<"$text" \
+    || grep -Eiq '^[[:space:]]*status:[[:space:]]*(blocked|needs input|cannot proceed)\b' <<<"$text"
+}
+
 wait_for_ready() {
   local name="$1"
   local attempts="${MULTIAGENT_READY_ATTEMPTS:-20}"
@@ -1006,7 +1013,9 @@ infer_status() {
     return
   fi
 
-  if grep -Eiq '\b(blocked|need input|waiting for|cannot proceed)\b' "$current"; then
+  if grep -Eiq 'final status: codex exec exited rc=[1-9][0-9]*|warning: no last agent message' "$current"; then
+    printf 'failed\n'
+  elif looks_blocked_report "$(tail -n 160 "$current")"; then
     printf 'blocked\n'
   elif grep -Eiq '^[[:space:]]*(final status:|complete_task\b|assignment complete\b|task complete\b|finished assignment\b|work completed\b|done with\b)|Worked for [0-9]' "$current"; then
     printf 'done\n'
@@ -1059,6 +1068,9 @@ spawn_subagent() {
   tmux has-session -t "$SESSION" 2>/dev/null || die "missing tmux session: $SESSION"
   window_exists "$name" && die "subagent window already exists: $name"
   reject_parallel_generic_worker_spawn "$name"
+  if [[ "${MULTIAGENT_CODEX_EXEC:-0}" == "1" && "$cli" == "codex" && -z "$instruction" ]]; then
+    die "codex exec subagent spawn requires --instruction or --instruction-file: $name"
+  fi
 
   local dir
   dir="$(subagent_dir "$name")"
@@ -1234,7 +1246,7 @@ classify_recovery() {
     [[ -f "$current" ]] && combined="$combined"$'\n'"$(tail -n 120 "$current")"
     [[ -f "$transcript" ]] && combined="$combined"$'\n'"$(tail -n 160 "$transcript")"
 
-    if [[ "$lowered" == "blocked" ]] || grep -Eiq '\b(blocked|need input|waiting for|cannot proceed)\b' <<<"$combined"; then
+    if [[ "$lowered" == "blocked" ]] || looks_blocked_report "$combined"; then
       action="skip-blocked"
       reason="requires-orchestrator-decision"
     elif grep -Eiq '^[[:space:]]*(final status:|complete_task\b|assignment complete\b|task complete\b|finished assignment\b|work completed\b|done with\b)|Worked for [0-9]' <<<"$combined"; then

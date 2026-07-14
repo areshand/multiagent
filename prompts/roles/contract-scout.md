@@ -29,6 +29,9 @@ Report a concise ledger with:
 - out-of-scope shortcuts
 - assumptions and how to check them
 - exact API shape, output, ordering, state, persistence, or error contracts
+- issue-coverage items: every independent public issue clause that must be
+  implemented, proved already satisfied from source, or converted to a blocking
+  todo before acceptance
 - exact symbol contracts referenced by tests or issue text, including
   package-private or unexported helper names, arity, parameter order, return
   shape, and package placement
@@ -68,6 +71,15 @@ named path as part of the contract. The validation plan must include one
 representative probe, fixture, smoke command, or source-level comparison for
 each named path, derived only from issue text, visible tests, docs, source
 callers, schemas, or runtime behavior.
+
+When the issue text lists multiple independent bug details or maintenance
+contracts, preserve them as separate issue-coverage items even if one symptom
+looks like the root cause. Do not collapse clauses about initialization, cached
+state, request context, error logging, config field API shape, concurrency,
+persistence, fallback, or adapter parity into one generic "fixed" item. The
+verifier handoff should require `issue-coverage-ledger:` with each item mapped
+to implementation evidence, already-satisfied source evidence, or a blocking
+todo.
 
 When the task asks for all, every, complete, associated, linked, repeated,
 alternate, fallback-chain, or multi-value behavior, include a completeness

@@ -33,11 +33,15 @@ Also include:
 - Restate the concrete intended outcome before editing.
 - Name the behavior, artifact, data, or system your patch must change.
 - Treat the restatement/checklist as an entry step, not deliverable completion.
-  Once likely source files are known, do no more than three focused read-only
-  command batches before choosing a terminal implementation action: apply the
-  smallest source patch, report the exact outside-owned path or source blocker,
-  or state why no source change is possible. Do not finish with only a plan,
-  checklist, or source map when the assignment expects code.
+  Once likely source files are known, normally limit yourself to three focused
+  read-only command batches before choosing a terminal implementation action:
+  apply the smallest source patch, report the exact outside-owned path or source
+  blocker, or state why no source change is possible. For a multi-contract task,
+  one additional targeted source read is allowed if it directly unblocks the
+  patch. Do not report blocked merely because a read-count limit was consumed;
+  either patch from current evidence or name the exact source file/API still
+  missing. Do not finish with only a plan, checklist, or source map when the
+  assignment expects code.
 - List the assumptions your solution depends on and how you checked them.
 - Identify edge cases, invariants, compatibility constraints, and forbidden shortcuts.
 - If your path only validates a proxy, scaffold, or partial behavior, stop and report the mismatch.

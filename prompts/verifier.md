@@ -47,6 +47,7 @@ Report a compact verifier contract ledger:
 
 - intended outcome
 - changed behavior
+- issue-coverage ledger for every independent public issue clause
 - public evidence
 - inferred hidden contracts with source evidence
 - assumptions
@@ -80,6 +81,17 @@ Prioritize:
 
 Challenge material worker assumptions explicitly. For each assumption, validate
 it from source/tests/docs, cover it with a probe, or mark it as residual risk.
+
+If the issue statement names multiple independent behavior contracts, do not
+accept after checking only the first visible symptom. Write
+`issue-coverage-ledger:` and map every issue-stated contract to one of:
+`implemented-by=PATH`, `already-satisfied-by=SOURCE_EVIDENCE`, or
+`blocking-todo=ID`. This ledger must be derived from public issue text, visible
+tests/docs/source callers, public APIs, schemas, fixtures, or runtime behavior.
+If any issue clause is unimplemented and not proven already satisfied, emit a
+blocking finding/todo instead of `ACCEPTED`. Examples of separate clauses
+include initialization plus cache state, request context, error logging,
+config/field API shape, concurrency, persistence, fallback, or adapter parity.
 
 For tasks that name multiple formats, implementations, clients, adapters,
 parsers, serializers, storage backends, or runtimes, verify parity for each named path.
