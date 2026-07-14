@@ -866,6 +866,7 @@ from evaluation.native_solver import solve_swe_prod
 from evaluation import swe_bench_pro_scaffold_parity
 from evaluation.swe_bench_pro_on_demand import OnDemandImageManager
 from evaluation import swe_bench_pro_run_parallel_shards
+from evaluation import swe_bench_pro_run_next_shard
 
 evalscope = SimpleNamespace()
 sys.modules.setdefault("evalscope", evalscope)
@@ -3210,6 +3211,27 @@ with tempfile.TemporaryDirectory() as td:
     )
     assert "--memory-limit 16g" in dry_run, dry_run
     assert "--cpu-limit 2" in dry_run, dry_run
+
+captured_refresh_commands = []
+old_run_next_checked = swe_bench_pro_run_next_shard.run_checked
+try:
+    swe_bench_pro_run_next_shard.run_checked = lambda cmd, *, cwd: captured_refresh_commands.append(cmd)
+    swe_bench_pro_run_next_shard.refresh_aggregate(
+        SimpleNamespace(
+            aggregate_json=Path("agg.json"),
+            aggregate_report=Path("agg.md"),
+            shard_size=10,
+            agent_framework="multiagent-native",
+            aggregate_reports=[],
+            swe_bench_pro_repo_path=Path("/tmp/public-swe-pro"),
+        ),
+        cwd=root,
+    )
+finally:
+    swe_bench_pro_run_next_shard.run_checked = old_run_next_checked
+assert captured_refresh_commands, "refresh_aggregate did not invoke run_checked"
+refresh_command = " ".join(str(part) for part in captured_refresh_commands[0])
+assert "--swe-bench-pro-repo-path /tmp/public-swe-pro" in refresh_command, refresh_command
 
 parallel_cmd = swe_bench_pro_run_parallel_shards.build_worker_command(
     SimpleNamespace(

@@ -56,6 +56,8 @@ def refresh_aggregate(args: argparse.Namespace, *, cwd: Path) -> None:
         str(args.shard_size),
         "--framework",
         args.agent_framework,
+        "--swe-bench-pro-repo-path",
+        str(args.swe_bench_pro_repo_path),
     ]
     if args.agent_framework not in {"codex", "codex-devnull"}:
         cmd.append("--allow-non-codex")
