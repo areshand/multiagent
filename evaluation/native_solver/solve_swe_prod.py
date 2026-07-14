@@ -66,6 +66,7 @@ STABLE_APPLY_PATCH = Path("/usr/local/bin/apply_patch")
 ACTIVE_START_HEAD: str | None = None
 PUBLIC_SOLVER_METADATA_KEYS = {
     "language",
+    "problem_statement",
 }
 PRIVATE_SOLVER_METADATA_KEYS = {
     "FAIL_TO_PASS",
@@ -74,7 +75,6 @@ PRIVATE_SOLVER_METADATA_KEYS = {
     "fail_to_pass",
     "interface",
     "pass_to_pass",
-    "problem_statement",
     "requirements",
     "run_script_dir",
     "selected_test_files_to_run",
@@ -224,6 +224,15 @@ def metadata_problem_text(metadata: dict[str, object] | None) -> str:
         source.get("interface"),
     ]
     return "\n".join(str(part) for part in parts if part)
+
+
+def issue_with_public_problem_text(issue: str, metadata: dict[str, object] | None = None) -> str:
+    problem = metadata_problem_text(metadata)
+    if not problem:
+        return issue
+    if problem in issue:
+        return issue
+    return issue.rstrip() + "\n\n" + problem
 
 
 
@@ -441,10 +450,11 @@ def issue_coverage_blockers(issue: str, evidence_text: str) -> list[str]:
 
 def contract_ledger_text(issue: str, metadata: dict[str, object] | None = None) -> str:
     solver_metadata = public_solver_metadata(metadata or {})
+    coverage_issue = issue_with_public_problem_text(issue, solver_metadata)
     contract = official_test_contract(solver_metadata)
-    symbols = required_public_symbols(issue, solver_metadata)
+    symbols = required_public_symbols(coverage_issue, solver_metadata)
     contract_excerpt = metadata_problem_text(solver_metadata)
-    issue_requirements = issue_coverage_requirements(issue)
+    issue_requirements = issue_coverage_requirements(coverage_issue)
     sections = [
         "# SWE Bench Pro Contract Ledger",
         "",
@@ -515,8 +525,12 @@ def contract_ledger_excerpt(limit: int = 6000) -> str:
     return CONTRACT_LEDGER_PATH.read_text(encoding="utf-8", errors="replace")[-limit:]
 
 
-def contract_coverage_items_excerpt(issue: str, limit: int = 5000) -> str:
-    requirements = issue_coverage_requirements(issue)
+def contract_coverage_items_excerpt(
+    issue: str,
+    metadata: dict[str, object] | None = None,
+    limit: int = 5000,
+) -> str:
+    requirements = issue_coverage_requirements(issue_with_public_problem_text(issue, metadata))
     if not requirements:
         return "No public issue coverage items were auto-derived."
     lines = [
@@ -1673,7 +1687,7 @@ def make_prompt(repo_root: Path, workdir: Path, issue: str, metadata: dict[str, 
         + "When spawning follow-up workers or verifiers, copy every public issue coverage item into the worker prompt, "
         + "not only the first symptom or the paths that look easiest. Explicit `Requirements:` bullets in the public issue "
         + "are first-class coverage items and must be implemented, source-proved already satisfied, or queued as blocking todos.\n\n"
-        + contract_coverage_items_excerpt(issue)
+        + contract_coverage_items_excerpt(issue, solver_metadata)
         + "\n\n"
         + contract_ledger_excerpt()
         + repo_discovery_snapshot(workdir, issue)
@@ -2821,7 +2835,8 @@ def validation_coverage_blockers(
     current_status: dict[str, object],
     metadata: dict[str, object] | None = None,
 ) -> list[str]:
-    issue_lower = issue.lower()
+    coverage_issue = issue_with_public_problem_text(issue, metadata)
+    issue_lower = coverage_issue.lower()
     diff_lower = diff.lower()
     issue_and_diff = f"{issue_lower}\n{diff_lower}"
     # Only the explicit status payload can clear the gate. The captured tmux
@@ -2849,7 +2864,7 @@ def validation_coverage_blockers(
             "or compile_clean=false); record it as a blocking finding/todo, repair it, and only "
             "complete after verifier closure plus hash-bound final validation"
         )
-    blockers.extend(issue_coverage_blockers(issue, evidence_text))
+    blockers.extend(issue_coverage_blockers(coverage_issue, evidence_text))
     status_json_text = json.dumps(current_status, sort_keys=True)
     stale_sensitive_text = status_json_text if build_verification_has_evidence(status_text, diff) else f"{text}\n{status_json_text}"
     blockers.extend(claimed_changed_path_blockers(diff, stale_sensitive_text))

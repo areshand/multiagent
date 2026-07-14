@@ -1431,7 +1431,7 @@ public_metadata = evalscope_multiagent_native_runner._public_solver_metadata(
         "task_id": "task-7",
         "repo": "example/repo",
         "language": "python",
-        "problem_statement": "hidden prompt copy",
+        "problem_statement": "public prompt copy",
         "FAIL_TO_PASS": ["TestHidden"],
         "test_patch": "diff --git a/tests/hidden_test.py b/tests/hidden_test.py",
         "swe_bench_pro": {
@@ -1442,7 +1442,7 @@ public_metadata = evalscope_multiagent_native_runner._public_solver_metadata(
         },
     }
 )
-assert public_metadata == {"language": "python"}, public_metadata
+assert public_metadata == {"language": "python", "problem_statement": "public prompt copy"}, public_metadata
 solver_metadata = solve_swe_prod.public_solver_metadata(
     {
         "sample_id": 7,
@@ -1450,7 +1450,7 @@ solver_metadata = solve_swe_prod.public_solver_metadata(
         "task_id": "task-7",
         "repo": "example/repo",
         "language": "python",
-        "problem_statement": "hidden prompt copy",
+        "problem_statement": "public prompt copy",
         "requirements": "private requirements copy",
         "interface": "private interface copy",
         "FAIL_TO_PASS": ["TestHidden"],
@@ -1463,7 +1463,7 @@ solver_metadata = solve_swe_prod.public_solver_metadata(
         },
     }
 )
-assert solver_metadata == {"language": "python"}, solver_metadata
+assert solver_metadata == {"language": "python", "problem_statement": "public prompt copy"}, solver_metadata
 raw_private_contract = solve_swe_prod.official_test_contract(
     {
         "sample_id": 7,
@@ -1501,7 +1501,7 @@ ledger = solve_swe_prod.contract_ledger_text(
         "task_id": "task-7",
         "repo": "example/repo",
         "language": "python",
-        "problem_statement": "hidden prompt copy",
+        "problem_statement": "public prompt copy",
         "requirements": "private requirements copy",
         "interface": "private interface copy",
         "FAIL_TO_PASS": ["TestHidden"],
@@ -1515,6 +1515,7 @@ ledger = solve_swe_prod.contract_ledger_text(
     },
 )
 assert "public solver inputs" in ledger, ledger
+assert "public prompt copy" in ledger, ledger
 assert "full official contract" not in ledger, ledger
 assert "Official requirements/interface excerpt" not in ledger, ledger
 for forbidden in (
@@ -1523,7 +1524,6 @@ for forbidden in (
     "task-7",
     "example/repo",
     "instance-7",
-    "hidden prompt copy",
     "private requirements copy",
     "private interface copy",
     "TestHidden",
@@ -1532,6 +1532,20 @@ for forbidden in (
     "private evaluator contract",
 ):
     assert forbidden not in ledger, forbidden
+
+full_public_problem_statement = (
+    "Short issue symptom.\n\n"
+    "Requirements:\n"
+    "- The class `Forwarder` should ensure audit events from `exec`, `portForward`, and `catchAll` "
+    "continue to be recorded if the client disconnects during a request.\n"
+)
+combined_coverage_items = solve_swe_prod.issue_coverage_requirements(
+    solve_swe_prod.issue_with_public_problem_text(
+        "Short issue symptom.",
+        {"problem_statement": full_public_problem_statement},
+    )
+)
+assert any(item["id"] == "issue-forwarder-exec-portforward" for item in combined_coverage_items), combined_coverage_items
 
 for excluded in (
     "tests/run.sh",

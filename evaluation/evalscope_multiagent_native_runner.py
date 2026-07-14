@@ -36,6 +36,7 @@ _DIAGNOSTICS_FILE = "/tmp/evalscope-native-multiagent-diagnostics.txt"
 _DEFAULT_SOLVER_COMMAND = "/tmp/evalscope-native-multiagent-solver.sh"
 _PUBLIC_METADATA_KEYS = {
     "language",
+    "problem_statement",
 }
 _PRIVATE_SOLVER_METADATA_KEYS = {
     "FAIL_TO_PASS",
@@ -44,7 +45,6 @@ _PRIVATE_SOLVER_METADATA_KEYS = {
     "fail_to_pass",
     "interface",
     "pass_to_pass",
-    "problem_statement",
     "requirements",
     "run_script_dir",
     "selected_test_files_to_run",
