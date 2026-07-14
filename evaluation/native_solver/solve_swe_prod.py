@@ -1690,11 +1690,14 @@ def blocked_no_diff_subagent_summaries(runtime_root: Path = RUNTIME_ROOT) -> lis
     summaries: list[str] = []
     for subagents_dir in subagent_state_roots(runtime_root):
         for agent_dir in sorted(path for path in subagents_dir.iterdir() if path.is_dir()):
+            name = agent_dir.name.lower()
+            if "worker" not in name or "scout" in name or "verifier" in name:
+                continue
             status_file = agent_dir / "status"
             if not status_file.exists():
                 continue
             status = status_file.read_text(encoding="utf-8", errors="replace").strip().lower()
-            if status not in {"blocked", "missing"}:
+            if status not in {"blocked", "missing", "done", "stopped"}:
                 continue
             snippets: list[str] = []
             for name in ("last-message.txt", "current.txt", "transcript.log"):
@@ -1710,6 +1713,23 @@ def blocked_no_diff_subagent_summaries(runtime_root: Path = RUNTIME_ROOT) -> lis
             tail = snippets[0] if snippets else "no captured blocked-worker text"
             summaries.append(f"{agent_dir.name} status={status}: {tail[:1200]}")
     return summaries
+
+
+def assignment_owned_paths(runtime_root: Path = RUNTIME_ROOT) -> list[str]:
+    paths: list[str] = []
+    for root in (runtime_root / "assignments", runtime_root / "state" / "assignments"):
+        if not root.exists():
+            continue
+        for owned_file in sorted(root.glob("*/owned-paths")):
+            try:
+                lines = owned_file.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            for line in lines:
+                path = line.strip()
+                if valid_required_path_outside_owned_report(path):
+                    paths.append(path)
+    return list(dict.fromkeys(paths))
 
 
 def no_diff_blocked_subagent_blockers(runtime_root: Path = RUNTIME_ROOT) -> list[str]:
@@ -3944,7 +3964,9 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
         else:
             orchestrator_resume_attempts += 1
             resume_attempt = orchestrator_resume_attempts
-        source_hints = helper_scope_hints(workdir, issue, diff, blockers)
+        source_hints = helper_scope_hints(workdir, issue, diff, [] if not diff.strip() else blockers)
+        if not diff.strip():
+            source_hints = list(dict.fromkeys([*assignment_owned_paths(RUNTIME_ROOT), *source_hints]))
         resume_prompt = write_orchestrator_resume_prompt(
             autonomous_prompt,
             attempt=resume_attempt,

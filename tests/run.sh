@@ -1136,13 +1136,26 @@ with tempfile.TemporaryDirectory() as td:
     (blocked_agent / "last-message.txt").write_text("Restated the task but produced no source diff.\n", encoding="utf-8")
     state_agent = runtime_root / "state" / "subagents" / "worker-02-fix"
     state_agent.mkdir(parents=True)
-    (state_agent / "status").write_text("missing\n", encoding="utf-8")
-    (state_agent / "current.txt").write_text("Repair worker disappeared before producing a source diff.\n", encoding="utf-8")
+    (state_agent / "status").write_text("done\n", encoding="utf-8")
+    (state_agent / "current.txt").write_text("Restated likely source files but produced no source diff.\n", encoding="utf-8")
+    scout_agent = runtime_root / "subagents" / "worker-03-scout"
+    scout_agent.mkdir(parents=True)
+    (scout_agent / "status").write_text("done\n", encoding="utf-8")
+    (scout_agent / "last-message.txt").write_text("Read-only scout completed.\n", encoding="utf-8")
+    assignment_dir = runtime_root / "state" / "assignments" / "worker-02-fix"
+    assignment_dir.mkdir(parents=True)
+    (assignment_dir / "owned-paths").write_text(
+        "lib/kube/proxy/forwarder.go\n"
+        "RELATIVE_PATH\n"
+        "lib/service/service.go\n",
+        encoding="utf-8",
+    )
     summaries = solve_swe_prod.blocked_no_diff_subagent_summaries(runtime_root)
     assert len(summaries) == 2, summaries
     assert "worker-01-fix" in summaries[0], summaries
     assert "worker-02-fix" in summaries[1], summaries
-    assert "status=missing" in summaries[1], summaries
+    assert "status=done" in summaries[1], summaries
+    assert "worker-03-scout" not in "\n".join(summaries), summaries
     assert "no source diff" in summaries[0], summaries
     blockers = solve_swe_prod.no_diff_blocked_subagent_blockers(runtime_root)
     assert any("without a materialized source diff" in blocker for blocker in blockers), blockers
@@ -1163,6 +1176,10 @@ with tempfile.TemporaryDirectory() as td:
     ], required_paths
     assert not solve_swe_prod.valid_required_path_outside_owned_report("RELATIVE_PATH")
     assert solve_swe_prod.valid_required_path_outside_owned_report("internal/server/ofrep/evaluation.go")
+    assert solve_swe_prod.assignment_owned_paths(runtime_root) == [
+        "lib/kube/proxy/forwarder.go",
+        "lib/service/service.go",
+    ]
 
 captured_worker_commands = []
 try:
