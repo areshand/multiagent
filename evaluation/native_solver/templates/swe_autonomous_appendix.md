@@ -273,6 +273,10 @@ Worker quality bar:
   One passing package does not clear another changed package. Treat
   `undefined:`, `has no field or method`, `build failed`, `FAIL`, or any nonzero
   return code as blocking.
+- Also require return code 0 for every Go package named by
+  `validation-package=...`, source-owner ledger, contract scout validation plan,
+  or worker attempted validation command. Changed-package validation alone is
+  insufficient when source evidence names additional contract packages.
 - If changed Go code wires service startup, adapters, helpers, parsers,
   converters, or shared feature plumbing, inspect source-visible sibling
   packages and issue/diff vocabulary for a related feature subtree. If that

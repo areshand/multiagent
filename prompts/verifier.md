@@ -249,6 +249,11 @@ changed package, require return code 0, and record
 package. One `ok` package does not clear a different changed package. Treat
 `undefined:`, `undefined method`, `undefined field`, `has no field or method`,
 `build failed`, `FAIL`, or any nonzero return code as blocking.
+Also require return code 0 for every Go package named by `validation-package=...`,
+the source-owner ledger, contract scout validation commands, or a worker's
+attempted validation command. Do not accept a final diff that only validates the
+changed package when the scout/ledger identified another package as part of the
+task contract.
 When changed Go code wires service startup, adapters, helpers, parsers,
 converters, or shared feature plumbing, inspect source-visible sibling packages
 and issue/diff vocabulary for a related feature subtree. If a related subtree

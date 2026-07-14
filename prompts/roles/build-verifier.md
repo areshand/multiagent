@@ -23,6 +23,11 @@ correctness is proven.
 For Go, derive affected packages from changed non-test `.go` files and run
 `go test ./affected/package` or a broader command that includes every changed
 package. One passing package does not clear a different changed package.
+Also require `returncode=0` evidence for any Go package named by
+`validation-package=...`, a source-owner ledger, a contract scout validation
+plan, or a worker's attempted validation command. Changed-package validation is
+necessary but not sufficient when source evidence names additional contract
+packages.
 If changed Go code wires service startup, adapters, helpers, parsers,
 converters, or shared feature plumbing, inspect source-visible sibling packages
 and issue/diff vocabulary for a related feature subtree. If that subtree has Go

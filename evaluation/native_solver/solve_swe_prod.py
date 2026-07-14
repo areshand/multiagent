@@ -3069,12 +3069,24 @@ def validation_coverage_blockers(
         missing_go_packages = [
             package for package in go_packages if not go_package_validation_has_evidence(go_evidence_text, package)
         ]
+        required_source_go_packages = source_required_go_validation_packages(text, current_status)
+        missing_required_source_go_packages = [
+            package
+            for package in required_source_go_packages
+            if not go_package_validation_has_evidence(go_evidence_text, package)
+        ]
         if missing_go_packages:
             blockers.append(
                 "Go source changed, but final validation does not prove affected package compile/test success for: "
                 + ", ".join(missing_go_packages)
                 + "; run `go test ./affected/package` for every changed Go package after the final diff and record "
                 "`go-package-validation-passed: package=... command=... returncode=0` for every changed package"
+            )
+        if missing_required_source_go_packages:
+            blockers.append(
+                "source-required Go validation packages are missing final returncode=0 evidence: "
+                + ", ".join(missing_required_source_go_packages)
+                + "; these packages were named by source-owner/scout validation evidence, so changed-package validation alone is insufficient"
             )
         elif not any(marker in go_evidence_text for marker in go_validation_markers):
             blockers.append(
@@ -3253,6 +3265,48 @@ def go_compile_failure_present(text: str) -> bool:
             "fail:",
         )
     )
+
+
+def source_required_go_validation_packages(text: str, current_status: dict[str, object]) -> list[str]:
+    """Extract package validation requirements from source/scout evidence.
+
+    Captured text is not accepted as validation proof, but it is useful for
+    discovering package surfaces the orchestrator itself identified as relevant.
+    """
+
+    combined = (text or "") + "\n" + json.dumps(current_status, sort_keys=True)
+    lower = combined.lower().replace("\\n", "\n")
+    packages: list[str] = []
+
+    def add_package(raw: str) -> None:
+        package = raw.strip().strip("`'\"")
+        package = package.rstrip(",;:)]}")
+        package = package.lstrip("([{")
+        if not package.startswith("./"):
+            return
+        if package in {"./affected/package", "./changed/pkg", "./pkg", "./package"}:
+            return
+        if any(token in package for token in ("...",)):
+            packages.append(package)
+            return
+        if re.fullmatch(r"\./[a-z0-9_./-]+", package):
+            packages.append(package)
+
+    for match in re.finditer(r"validation-package\s*=\s*([^\s;`\"']+)", lower):
+        for package in re.split(r"[,]+", match.group(1)):
+            add_package(package)
+
+    for match in re.finditer(r"go\s+test\s+([^\n`\"']+)", lower):
+        command_tail = match.group(1)
+        for token in re.split(r"\s+", command_tail):
+            token = token.strip()
+            if not token or token.startswith("-"):
+                continue
+            if token in {"&&", ";", "|"}:
+                break
+            add_package(token)
+
+    return list(dict.fromkeys(packages))
 
 
 def go_failure_is_unaffected_unbuildable_root_target(text: str, go_packages: list[str]) -> bool:

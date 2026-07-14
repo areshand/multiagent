@@ -648,6 +648,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_ap
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "owner-evidence="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "candidate-owner="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "source-owner-ledger:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "worker attempted validation command"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "normally limit yourself to three focused read-only"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Do not write blocked status merely because a read-count limit was consumed"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" 'invoke the `apply_patch` executable from that shell'
@@ -675,6 +676,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_fi
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "source-symbol-map-passed:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "struct field diffs"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "source-owner-ledger:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "worker attempted validation command"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "constructor-dependency-checked:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "provider-capability-checked:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "required-path-outside-owned:"
@@ -736,6 +738,7 @@ assert_file_contains "$ROOT/prompts/verifier.md" "source-owner-ledger:"
 assert_file_contains "$ROOT/prompts/verifier.md" "constructor-dependency-checked:"
 assert_file_contains "$ROOT/prompts/verifier.md" "provider-capability-checked:"
 assert_file_contains "$ROOT/prompts/verifier.md" "go-package-validation-passed:"
+assert_file_contains "$ROOT/prompts/verifier.md" "attempted validation command"
 assert_file_contains "$ROOT/prompts/verifier.md" "one single machine-readable"
 assert_file_contains "$ROOT/prompts/verifier.md" "owner-evidence="
 assert_file_contains "$ROOT/prompts/verifier.md" "candidate-owner="
@@ -809,6 +812,7 @@ assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "constructor-depend
 assert_file_contains "$ROOT/prompts/roles/build-verifier.md" "build-verification-passed:"
 assert_file_contains "$ROOT/prompts/roles/build-verifier.md" "final-diff-sha256="
 assert_file_contains "$ROOT/prompts/roles/build-verifier.md" "go-package-validation-passed:"
+assert_file_contains "$ROOT/prompts/roles/build-verifier.md" "contract scout validation"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "source-owner-ledger:"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "prompts/roles/build-verifier.md"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "build-verification-passed:"
@@ -2057,6 +2061,49 @@ with tempfile.TemporaryDirectory() as td:
         row8_weak_nonblocking_status,
     )
     assert any("weak non-evidence" in blocker for blocker in row8_weak_nonblocking_blockers), row8_weak_nonblocking_blockers
+    scout_validation_text = (
+        "Validation Commands:\n"
+        "- cd /app && go test ./lib/kube/proxy\n"
+        "- cd /app && go test ./lib/service -run 'Kube|Kubernetes|Upload|Session'\n"
+        "source-owner-ledger: selected-owner=lib/service/kubernetes.go validation-package=./lib/service,./lib/kube/proxy\n"
+    )
+    row8_service_only_validated_status = {
+        "status": "completed",
+        "validation": (
+            f"build-verification-passed: final-diff-sha256={go_related_hash} changed-files=1 compile_clean=true returncode=0. "
+            "go-package-validation-passed: package=./lib/service command='go test ./lib/service' returncode=0. "
+            "issue-coverage-ledger: "
+            "issue-exec-session-uploader=implemented-by=lib/service/kubernetes.go "
+            "issue-kubectlexec-exec=implemented-by=lib/service/kubernetes.go "
+            "issue-kubectlexec-var-lib-teleport-log-upload-streaming-default-exec=implemented-by=lib/service/kubernetes.go "
+            "issue-initialization-session-uploader=implemented-by=lib/service/kubernetes.go "
+            "issue-clustersession-cached-state=preserved-not-touched "
+            "issue-audit-request-context=preserved-not-touched "
+            "issue-logging-response-exec=preserved-not-touched "
+            "issue-api-config-fields=preserved-not-touched"
+        ),
+    }
+    row8_source_required_package_blockers = solve_swe_prod.validation_coverage_blockers(
+        row8_issue,
+        go_related_diff,
+        scout_validation_text,
+        row8_service_only_validated_status,
+    )
+    assert any("./lib/kube/proxy" in blocker for blocker in row8_source_required_package_blockers), row8_source_required_package_blockers
+    row8_proxy_validated_status = {
+        "status": "completed",
+        "validation": (
+            row8_service_only_validated_status["validation"]
+            + ". go-package-validation-passed: package=./lib/kube/proxy command='go test ./lib/kube/proxy' returncode=0"
+        ),
+    }
+    row8_proxy_validated_blockers = solve_swe_prod.validation_coverage_blockers(
+        row8_issue,
+        go_related_diff,
+        scout_validation_text,
+        row8_proxy_validated_status,
+    )
+    assert not any("source-required Go validation packages" in blocker for blocker in row8_proxy_validated_blockers), row8_proxy_validated_blockers
     row8_weak_preserved_status = {
         "status": "completed",
         "validation": (
