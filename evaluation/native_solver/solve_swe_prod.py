@@ -295,6 +295,18 @@ ISSUE_COVERAGE_TRIGGER_WORDS = {
     "unnecessarily",
 }
 
+ISSUE_COVERAGE_WEAK_CLOSURE_MARKERS = {
+    "source-not-touched",
+    "source-not-modified",
+    "source-not-changed",
+    "nonblocking",
+    "non-blocking",
+    "verifier-reviewed",
+    "not alter",
+    "not changed",
+    "not modify",
+}
+
 
 def _clean_issue_sentence(sentence: str) -> str:
     return re.sub(r"\s+", " ", sentence.replace("**", " ")).strip(" -:*`\t\r\n")
@@ -401,6 +413,13 @@ def issue_coverage_blockers(issue: str, evidence_text: str) -> list[str]:
             "mapping each issue-stated behavior to a source change, source-level already-satisfied proof, or blocking todo"
         ]
     ledger_text = lower.split("issue-coverage-ledger:", 1)[1]
+    weak_markers = sorted(marker for marker in ISSUE_COVERAGE_WEAK_CLOSURE_MARKERS if marker in ledger_text)
+    if weak_markers:
+        return [
+            "`issue-coverage-ledger:` closes public issue coverage with weak non-evidence marker(s): "
+            + ", ".join(weak_markers[:8])
+            + "; use `implemented-by=PATH`, source-specific `already-satisfied-by=PATH/evidence`, or `blocking-todo=ID` instead"
+        ]
     missing: list[str] = []
     for requirement in requirements:
         keywords = [str(keyword).lower() for keyword in requirement.get("keywords", [])]

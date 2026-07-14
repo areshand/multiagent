@@ -1914,6 +1914,27 @@ with tempfile.TemporaryDirectory() as td:
         row8_uploader_only_status,
     )
     assert any("issue-coverage-ledger" in blocker for blocker in row8_uploader_only_blockers), row8_uploader_only_blockers
+    row8_weak_nonblocking_status = {
+        "status": "completed",
+        "validation": (
+            f"build-verification-passed: final-diff-sha256={go_related_hash} changed-files=1 compile_clean=true returncode=0. "
+            "go-package-validation-passed: package=./lib/service command='go test ./lib/service' returncode=0. "
+            "issue-coverage-ledger: "
+            "issue-exec-session-uploader implemented-by=lib/service/kubernetes.go; "
+            "issue-kubectlexec-exec implemented-by=lib/service/kubernetes.go; "
+            "issue-clustersession-cached-state already-satisfied-by=source-not-touched-nonblocking-verifier-reviewed; "
+            "issue-audit-request-context already-satisfied-by=source-not-touched-nonblocking-verifier-reviewed; "
+            "issue-logging-response-exec already-satisfied-by=source-not-touched-nonblocking-verifier-reviewed; "
+            "issue-api-config-fields already-satisfied-by=source-not-touched-nonblocking-verifier-reviewed"
+        ),
+    }
+    row8_weak_nonblocking_blockers = solve_swe_prod.validation_coverage_blockers(
+        row8_issue,
+        go_related_diff,
+        "",
+        row8_weak_nonblocking_status,
+    )
+    assert any("weak non-evidence" in blocker for blocker in row8_weak_nonblocking_blockers), row8_weak_nonblocking_blockers
     row8_covered_status = {
         "status": "completed",
         "validation": (
