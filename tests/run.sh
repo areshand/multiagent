@@ -4138,6 +4138,16 @@ verifier_spawn_line="$(grep -F "new-window -d test-session verifier-01-docs " "$
 [[ "$verifier_spawn_line" == *"--cd $ROOT"* ]]
 [[ "$verifier_spawn_line" == *"--dangerously-bypass-approvals-and-sandbox --no-alt-screen"* ]]
 
+printf 'Blocker: this line is stale prompt context\nfinal status: codex exec exited rc=0\n' >"$MOCK_TMUX_CAPTURES/verifier-01-docs.txt"
+cat >"$MULTIAGENT_STATE_DIR/subagents/verifier-01-docs/last-message.txt" <<'EOF'
+ACCEPTED
+final-diff-sha256: abc123
+build-verification-passed: final-diff-sha256=abc123 compile_clean=true returncode=0
+EOF
+verifier_accepted_poll="$(SUBAGENT_CLI="$VERIFIER_CLI" "$ROOT/bin/subagent.sh" poll verifier-01-docs)"
+[[ "$verifier_accepted_poll" == $'verifier-01-docs\tdone' ]]
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-01-docs/status" "done"
+
 if MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$ROOT/bin/subagent.sh" spawn codex-no-prompt >"$TMPDIR/codex-no-prompt.out" 2>&1; then
   echo "expected codex exec subagent spawn without instruction to fail" >&2
   cat "$TMPDIR/codex-no-prompt.out" >&2

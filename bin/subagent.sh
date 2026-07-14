@@ -958,6 +958,11 @@ looks_blocked_report() {
     || grep -Eiq '^[[:space:]]*status:[[:space:]]*(blocked|needs input|cannot proceed)\b' <<<"$text"
 }
 
+looks_accepted_report() {
+  local text="$1"
+  grep -Eiq '^[[:space:]]*(verdict[=:][[:space:]]*)?ACCEPTED([[:space:]]|$)' <<<"$text"
+}
+
 wait_for_ready() {
   local name="$1"
   local attempts="${MULTIAGENT_READY_ATTEMPTS:-20}"
@@ -1059,8 +1064,9 @@ capture_subagent_from_durable_files() {
 
 infer_status() {
   local name="$1"
-  local current
+  local current last_message
   current="$(subagent_dir "$name")/current.txt"
+  last_message="$(subagent_dir "$name")/last-message.txt"
   if [[ ! -f "$current" ]]; then
     printf 'unknown\n'
     return
@@ -1068,6 +1074,8 @@ infer_status() {
 
   if grep -Eiq 'final status: codex exec exited rc=[1-9][0-9]*|warning: no last agent message' "$current"; then
     printf 'failed\n'
+  elif [[ -s "$last_message" ]] && looks_accepted_report "$(tail -n 160 "$last_message")"; then
+    printf 'done\n'
   elif looks_blocked_report "$(tail -n 160 "$current")"; then
     printf 'blocked\n'
   elif grep -Eiq '^[[:space:]]*(final status:|complete_task\b|assignment complete\b|task complete\b|finished assignment\b|work completed\b|done with\b)|Worked for [0-9]' "$current"; then
