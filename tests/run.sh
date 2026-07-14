@@ -2094,6 +2094,36 @@ with tempfile.TemporaryDirectory() as td:
         row8_service_only_validated_status,
     )
     assert any("./lib/kube/proxy" in blocker for blocker in row8_source_required_package_blockers), row8_source_required_package_blockers
+    row8_status_path_required_status = {
+        "status": "completed",
+        "validation": (
+            f"build-verification-passed: final-diff-sha256={go_related_hash} changed-files=1 compile_clean=true returncode=0. "
+            "go-package-validation-passed: package=./lib/service command='go test ./lib/service' returncode=0. "
+            "issue-coverage-ledger: "
+            "issue-forwarder-exec-portforward=already-satisfied-by=lib/kube/proxy/forwarder.go "
+            "issue-forwarder-forwarderconfig-authz-authorize-forwarderconfig-cachingauthclient-getclusterconfig=already-satisfied-by=lib/kube/proxy/forwarder.go "
+            "issue-forwarder-forwarderconfig-authclient-processkubecsr-notafter=already-satisfied-by=lib/kube/proxy/forwarder.go "
+            "issue-forwarder-forwarderconfig-connpingperiod-servehttp=already-satisfied-by=lib/kube/proxy/forwarder.go "
+            "issue-forwarderconfig-authclient-tls-forwarderconfig=implemented-by=lib/service/kubernetes.go "
+            "issue-forwarderconfig-authz-authclient=already-satisfied-by=lib/kube/proxy/forwarder.go "
+            "issue-exec-session-uploader=implemented-by=lib/service/kubernetes.go "
+            "issue-kubectlexec-exec=implemented-by=lib/service/kubernetes.go "
+            "issue-kubectlexec-var-lib-teleport-log-upload-streaming-default-exec=implemented-by=lib/service/kubernetes.go "
+            "issue-initialization-session-uploader=implemented-by=lib/service/kubernetes.go "
+            "issue-clustersession-cached-state=already-satisfied-by=lib/kube/proxy/forwarder.go "
+            "issue-audit-request-context=already-satisfied-by=lib/kube/proxy/forwarder.go "
+            "issue-logging-response-exec=already-satisfied-by=lib/kube/proxy/forwarder.go "
+            "issue-api-config-fields=already-satisfied-by=lib/kube/proxy/forwarder.go "
+            "issue-warn-proxy-pro=implemented-by=lib/service/kubernetes.go"
+        ),
+    }
+    row8_status_path_required_blockers = solve_swe_prod.validation_coverage_blockers(
+        row8_issue,
+        go_related_diff,
+        "",
+        row8_status_path_required_status,
+    )
+    assert any("./lib/kube/proxy" in blocker for blocker in row8_status_path_required_blockers), row8_status_path_required_blockers
     row8_proxy_validated_status = {
         "status": "completed",
         "validation": (

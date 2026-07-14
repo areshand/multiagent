@@ -3073,7 +3073,7 @@ def validation_coverage_blockers(
         missing_required_source_go_packages = [
             package
             for package in required_source_go_packages
-            if not go_package_validation_has_evidence(go_evidence_text, package)
+            if not go_package_validation_has_explicit_marker(go_evidence_text, package)
         ]
         if missing_go_packages:
             blockers.append(
@@ -3292,9 +3292,24 @@ def source_required_go_validation_packages(text: str, current_status: dict[str, 
         if re.fullmatch(r"\./[a-z0-9_./-]+", package):
             packages.append(package)
 
+    def add_package_from_path(raw: str) -> None:
+        path = raw.strip().strip("`'\"")
+        path = path.rstrip(",;:)]}")
+        path = path.lstrip("([{")
+        path = path.removeprefix("./")
+        if not path.endswith(".go"):
+            return
+        if "/" not in path:
+            add_package(".")
+            return
+        add_package("./" + path.rsplit("/", 1)[0])
+
     for match in re.finditer(r"validation-package\s*=\s*([^\s;`\"']+)", lower):
         for package in re.split(r"[,]+", match.group(1)):
             add_package(package)
+
+    for match in re.finditer(r"(?:implemented-by|already-satisfied-by)\s*=\s*([^\s;`\"']+)", lower):
+        add_package_from_path(match.group(1))
 
     for match in re.finditer(r"go\s+test\s+([^\n`\"']+)", lower):
         command_tail = match.group(1)
@@ -3373,6 +3388,23 @@ def go_package_validation_has_evidence(text: str, package: str) -> bool:
                 re.escape(marker) + r"[^\n]*\bok\b", window
             ):
                 return True
+    return False
+
+
+def go_package_validation_has_explicit_marker(text: str, package: str) -> bool:
+    """Return true only for explicit machine-readable package validation."""
+
+    lower = text.lower().replace("\\n", "\n")
+    package_lower = package.lower()
+    package_markers = {package_lower}
+    if package_lower.startswith("./"):
+        package_markers.add(package_lower[2:])
+    for match in re.finditer("go-package-validation-passed:", lower):
+        window = lower[match.start() : match.start() + 700]
+        if any(f"package={marker}" in window for marker in package_markers) and any(
+            ok in window for ok in ("returncode=0", "return-code=0", "rc=0", "passed")
+        ):
+            return True
     return False
 
 
