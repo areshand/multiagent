@@ -1570,6 +1570,16 @@ compressed_coverage_excerpt = solve_swe_prod.contract_coverage_items_excerpt(
     limit=260,
 )
 assert "issue-forwarder-exec-portforward" in compressed_coverage_excerpt, compressed_coverage_excerpt
+evalscope_prompt_without_requirements = (
+    "Short issue symptom.\n\n"
+    "## Submission\n"
+    "Create patch.txt and submit it."
+)
+coverage_from_prompt_plus_metadata = solve_swe_prod.contract_coverage_items_excerpt(
+    evalscope_prompt_without_requirements,
+    {"problem_statement": full_public_problem_statement},
+)
+assert "issue-forwarder-exec-portforward" in coverage_from_prompt_plus_metadata, coverage_from_prompt_plus_metadata
 
 for excluded in (
     "tests/run.sh",

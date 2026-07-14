@@ -230,7 +230,7 @@ def issue_with_public_problem_text(issue: str, metadata: dict[str, object] | Non
     problem = metadata_problem_text(metadata)
     if not problem:
         return issue
-    if problem in issue:
+    if problem.strip() == issue.strip():
         return issue
     return issue.rstrip() + "\n\n" + problem
 
