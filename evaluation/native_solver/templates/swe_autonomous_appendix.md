@@ -208,7 +208,9 @@ Worker quality bar:
   may instead include `provider-capability-checked:` naming the declared
   receiver type, optional method/provider, concrete provider path,
   guard/type assertion, source declaration proving the method exists, and
-  compile evidence after the final diff.
+  compile evidence after the final diff. Use exact keys: `receiver=...`,
+  `method=...`, `concrete-provider=...`, `guard=type-assertion`,
+  `source-declaration=...`, and `compile=...` or `returncode=0`.
 - Basic build correctness is non-negotiable and precedes hidden-contract
   reasoning. For any code diff, final validation must include
   `build-verification-passed: final-diff-sha256=... changed-files=N

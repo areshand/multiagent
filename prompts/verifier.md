@@ -31,6 +31,11 @@ The verifier is a read-only reviewer, not an implementer.
   `required_resolution`. Prefer recording it through
   `bin/subagent.sh finding-create ...`; prose alone is not a blocking repair
   contract.
+- If your tool call, shell invocation, or repository inspection fails before
+  you can semantically recheck the final diff, report an infrastructure blocker
+  and ask the orchestrator to requeue verification. Do not turn a malformed tool
+  call, missing `cmd` argument, or transient `/app` inspection failure into
+  source-level acceptance or rejection.
 
 ## Contract-Led Verification
 
@@ -212,6 +217,9 @@ change a constructor, factory, or required interface shape, acceptance may use
 `provider-capability-checked:` instead. It must name the declared receiver type,
 optional method/provider, concrete provider path, guard/type assertion, source
 declaration proving the method exists, and compile evidence after the final diff.
+Use machine-readable keys in that marker: `receiver=...`, `method=...`,
+`concrete-provider=...`, `guard=type-assertion`,
+`source-declaration=...`, and `compile=...` or `returncode=0`.
 Missing mock/fake constructors, stale `New(...)` call sites, or dependency
 interfaces updated in the wrong package are blocking hidden-contract findings.
 If a worker claims a package test passed, verify that the command actually

@@ -351,6 +351,40 @@ def required_dependency_contract_changed(diff: str) -> bool:
     )
 
 
+def required_dependency_wiring_changed(diff: str) -> bool:
+    """Return true for constructor/factory/field dependency shape changes."""
+
+    added_lines = [
+        line[1:].strip().lower()
+        for line in diff.splitlines()
+        if line.startswith("+") and not line.startswith("+++")
+    ]
+    if not added_lines:
+        return False
+    added = "\n".join(added_lines)
+    dependency_terms = (
+        "store",
+        "storer",
+        "bridge",
+        "adapter",
+        "provider",
+        "client",
+        "repo",
+        "repository",
+        "service",
+        "gateway",
+        "factory",
+    )
+    if re.search(r"\bfunc\s+new[a-z0-9_]*\s*\([^)]*(store|storer|bridge|adapter|provider|client|repo|repository|service|gateway)", added):
+        return True
+    if re.search(r"(?<!\.)\bnew[a-z0-9_]*\s*\([^)]*(store|storer|bridge|adapter|provider|client|repo|repository|service|gateway)", added):
+        return True
+    return any(
+        re.search(r"\b" + re.escape(term) + r"\s*[:=]\s*", added)
+        for term in dependency_terms
+    )
+
+
 def optional_provider_contract_changed(diff: str) -> bool:
     added_lines = [
         line[1:].strip().lower()
@@ -368,6 +402,12 @@ def dependency_contract_has_evidence(diff: str, status_text: str) -> bool:
     if constructor_dependency_has_evidence(status_text):
         return True
     if required_dependency_contract_changed(diff):
+        if (
+            optional_provider_contract_changed(diff)
+            and provider_capability_has_evidence(status_text)
+            and not required_dependency_wiring_changed(diff)
+        ):
+            return True
         return False
     return optional_provider_contract_changed(diff) and provider_capability_has_evidence(status_text)
 

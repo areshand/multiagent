@@ -192,6 +192,9 @@ constructor or required interface shape, final validation may use
 `provider-capability-checked:`. It must name the declared receiver type,
 optional method/provider, concrete provider path, guard/type assertion, source
 declaration proving the method exists, and compile evidence after the final diff.
+Use machine-readable keys in that marker: `receiver=...`, `method=...`,
+`concrete-provider=...`, `guard=type-assertion`,
+`source-declaration=...`, and `compile=...` or `returncode=0`.
 Do not report `go test -run TestNonExistent`, `go test -run '^$'`, `[no test
 files]`, `no tests to run`, or another no-test compile check as behavioral
 validation for a source repair. Those checks can support compile sanity only;

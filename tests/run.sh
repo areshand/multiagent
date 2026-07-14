@@ -794,6 +794,8 @@ assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "complet
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "nonzero wrapper exit overridden because status.json already records completed final-diff build verification accepted by the structured repair gate"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "status.json already records completed final-diff build verification"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "coverage follow-up recovery yielded to completed status with accepted final build gate"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "verifier infrastructure failed before semantic recheck"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_VERIFIER_INFRA_RESUME_LIMIT"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "stale-visible-reconciliation-passed:"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "STALE_VISIBLE_RECONCILIATION_PATH"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Do not rely on leaked evaluator tests"
@@ -1863,6 +1865,47 @@ go_compile_failure_blockers = solve_swe_prod.validation_coverage_blockers(
     },
 )
 assert any("compile/build failure evidence" in blocker for blocker in go_compile_failure_blockers), go_compile_failure_blockers
+go_mixed_root_target_diff = (
+    "diff --git a/lib/a/a.go b/lib/a/a.go\n+// touch package a\n"
+    "diff --git a/lib/b/b.go b/lib/b/b.go\n+// touch package b\n"
+)
+go_mixed_root_target_hash = solve_swe_prod.final_diff_sha256(go_mixed_root_target_diff)
+go_mixed_root_target_blockers = solve_swe_prod.validation_coverage_blockers(
+    "Go packages should compile after changed-package edits.",
+    go_mixed_root_target_diff,
+    "",
+    {
+        "status": "completed",
+        "validation": (
+            f"build-verification-passed: final-diff-sha256={go_mixed_root_target_hash} "
+            "changed-files=2 compile_clean=true returncode=0. "
+            "go-package-validation-passed: package=./lib/a command='go test ./lib/a' returncode=0. "
+            "go-package-validation-passed: package=./lib/b command='go test ./lib/b' returncode=0. "
+            "Command: go test ./lib/a ./lib/b .\nReturn code: 1\n"
+            "Output tail:\npackage example.com/root: build constraints exclude all Go files in /repo\nFAIL\t.\t[setup failed]\n"
+        ),
+    },
+)
+assert not any("compile/build failure evidence" in blocker for blocker in go_mixed_root_target_blockers), go_mixed_root_target_blockers
+assert not any("affected package compile/test success" in blocker for blocker in go_mixed_root_target_blockers), go_mixed_root_target_blockers
+go_changed_root_diff = "diff --git a/main.go b/main.go\n+// touch root package\n"
+go_changed_root_hash = solve_swe_prod.final_diff_sha256(go_changed_root_diff)
+go_changed_root_blockers = solve_swe_prod.validation_coverage_blockers(
+    "Go root package should compile after changed-package edits.",
+    go_changed_root_diff,
+    "",
+    {
+        "status": "completed",
+        "validation": (
+            f"build-verification-passed: final-diff-sha256={go_changed_root_hash} "
+            "changed-files=1 compile_clean=true returncode=0. "
+            "go-package-validation-passed: package=. command='go test .' returncode=0. "
+            "Command: go test .\nReturn code: 1\n"
+            "Output tail:\npackage example.com/root: build constraints exclude all Go files in /repo\nFAIL\t.\t[setup failed]\n"
+        ),
+    },
+)
+assert any("compile/build failure evidence" in blocker for blocker in go_changed_root_blockers), go_changed_root_blockers
 
 with tempfile.TemporaryDirectory() as td:
     postmortem_root = Path(td)
@@ -2116,6 +2159,46 @@ optional_provider_evidence_blockers = solve_swe_prod.implementation_scope_blocke
     },
 )
 assert not any("provider-capability-checked:" in blocker or "constructor-dependency-checked:" in blocker for blocker in optional_provider_evidence_blockers), optional_provider_evidence_blockers
+named_optional_provider_diff = (
+    "diff --git a/internal/server/ofrep/server.go b/internal/server/ofrep/server.go\n"
+    "+type bulkBridge interface { OFREPBulkEvaluation(context.Context, EvaluationBridgeInput) ([]EvaluationBridgeOutput, error) }\n"
+    "diff --git a/internal/server/ofrep/evaluation.go b/internal/server/ofrep/evaluation.go\n"
+    "+bridge, ok := s.bridge.(bulkBridge)\n"
+    "+if !ok { return nil, newFlagsMissingError() }\n"
+    "+return bridge.OFREPBulkEvaluation(ctx, input)\n"
+    "diff --git a/internal/server/evaluation/ofrep_bridge.go b/internal/server/evaluation/ofrep_bridge.go\n"
+    "+func (s *Server) OFREPBulkEvaluation(ctx context.Context, input ofrep.EvaluationBridgeInput) ([]ofrep.EvaluationBridgeOutput, error) { return nil, nil }\n"
+)
+named_optional_provider_hash = solve_swe_prod.final_diff_sha256(named_optional_provider_diff)
+named_optional_provider_validation = (
+    f"ACCEPTED by verifier; build-verification-passed: final-diff-sha256={named_optional_provider_hash} "
+    "changed-files=3 compile_clean=true returncode=0; "
+    "go-package-validation-passed: package=./internal/server/ofrep command='go test ./internal/server/ofrep ./internal/server/evaluation' returncode=0; "
+    "go-package-validation-passed: package=./internal/server/evaluation command='go test ./internal/server/ofrep ./internal/server/evaluation' returncode=0; "
+    "helper-contract-preserved: context.flags; "
+    "bulk-helper-contract-checked: existing explicit context.flags flow preserved; "
+    "provider-capability-checked: receiver=s.bridge declared-type=ofrep.Bridge method=OFREPBulkEvaluation "
+    "concrete-provider=internal/server/evaluation.Server guard=type-assertion "
+    "source-declaration=internal/server/evaluation/ofrep_bridge.go compile=go-test returncode=0; "
+    "source-owner-ledger: selected-owner=internal/server/ofrep candidate-owner=rpc/flipt/ofrep "
+    "rejected-owner=generated candidate-owner=internal/server/evaluation reason=bridge-provider "
+    "validation-package=./internal/server/ofrep,./internal/server/evaluation; "
+    "source-symbol-map-passed: path=internal/server/ofrep/server.go package=ofrep added-symbol=bulkBridge "
+    "path=internal/server/evaluation/ofrep_bridge.go package=evaluation added-symbol=OFREPBulkEvaluation "
+    "owner-evidence=issue-term-ofrep-bulk-evaluation compile=go-test-internal-server-ofrep-and-evaluation"
+)
+named_optional_provider_status = {
+    "status": "completed",
+    "validation": named_optional_provider_validation,
+}
+named_optional_provider_blockers = solve_swe_prod.completed_status_snapshot_blockers(
+    "Bulk OFREP evaluation should work without context.flags and preserve explicit context.flags behavior.",
+    named_optional_provider_diff,
+    named_optional_provider_validation,
+    named_optional_provider_status,
+)
+assert not any("provider-capability-checked:" in blocker or "constructor-dependency-checked:" in blocker for blocker in named_optional_provider_blockers), named_optional_provider_blockers
+assert not any("context.flags" in blocker for blocker in named_optional_provider_blockers), named_optional_provider_blockers
 weak_dependency_contract_blockers = solve_swe_prod.implementation_scope_blockers(
     "Bulk evaluation should list all flags when an explicit flag list is omitted.",
     dependency_contract_diff,
@@ -2555,6 +2638,20 @@ assert not solve_swe_prod.claimed_changed_path_blockers(claim_diff_with_mock, cl
 assert solve_swe_prod.verifier_exact_followup_available(
     "BLOCKING FINDINGS with exact follow-up instructions: update middleware validation and rerun go test ./pkg"
 )
+with tempfile.TemporaryDirectory() as td:
+    live_app = Path(td) / "app"
+    live_app.mkdir()
+    infra_text = (
+        "failed to parse function arguments: missing field `cmd`\n"
+        "BLOCKED: verifier could not inspect /app because /app missing"
+    )
+    assert solve_swe_prod.verifier_infrastructure_failure_present(infra_text, live_app)
+    assert solve_swe_prod.verifier_infrastructure_blockers(infra_text, live_app)
+    assert solve_swe_prod.verifier_exact_followup_available(infra_text)
+    assert not solve_swe_prod.blocked_without_status_marker(
+        "blocked: cannot continue because status.json cannot be written; "
+        "failed to parse function arguments: missing field `cmd`"
+    )
 assert not solve_swe_prod.verifier_exact_followup_available(
     "Findings: reviewed source files and no blocker remains"
 )

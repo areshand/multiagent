@@ -33,6 +33,13 @@ that should drive repair must have a corresponding finding artifact. Blocking
 compile, build, test, and validation failure findings must include command
 evidence with a return code; source-only evidence is reserved for source-level
 contract findings such as hidden API shape or adapter parity risks.
+For Go compile/build findings, command evidence must identify the affected
+changed packages separately or use a package list that contains only affected
+buildable packages. Do not create a blocking changed-package finding from a
+mixed command such as `go test ./changed/pkg .` when the changed package passed
+and only repo-root `.` failed because it is not a buildable package. In that
+case, rerun `go test ./changed/pkg` and use the focused command result as the
+finding or closure evidence.
 
 ## Orchestrator Todo
 
@@ -113,3 +120,18 @@ it lacks worker resolution evidence, verifier closure evidence, source-finding
 binding/hash consistency, or required-command coverage. For code patches, build
 verification is one required finding/todo class; behavior and hidden-contract
 findings use the same loop.
+
+## Verifier Infrastructure Failures
+
+If a verifier cannot complete its review because a tool call failed, a command
+schema was malformed, `/app` could not be inspected even though the task
+checkout exists, or the verifier process exited before reading the final diff,
+classify that as an orchestration infrastructure finding. Do not translate it
+into "patch accepted" or a source-level rejection. Requeue a fresh read-only
+verifier or resume the orchestrator with the current diff, original finding
+state, and objective done criteria preserved.
+
+Infrastructure failures may block final acceptance, but only until a verifier
+successfully rechecks the relevant source/commands or emits structured semantic
+findings. They must not close or reopen a todo without source or command
+evidence tied to the final diff.

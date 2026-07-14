@@ -2425,7 +2425,10 @@ def validation_coverage_blockers(
             or "return code: 0" in go_evidence_text and "go test" in go_evidence_text
             or "go test" in go_evidence_text and any(marker in go_evidence_text for marker in (" passed", ": passed"))
         )
-        if go_compile_failure_present(go_evidence_text):
+        if go_compile_failure_present(go_evidence_text) and not go_failure_is_unaffected_unbuildable_root_target(
+            go_evidence_text,
+            go_packages,
+        ):
             blockers.append(
                 "Go validation contains compile/build failure evidence such as `undefined:`, "
                 "`has no field or method`, `build failed`, `FAIL`, or a nonzero return code; fix it before completion"
@@ -2586,6 +2589,21 @@ def validation_coverage_blockers(
     return blockers
 
 
+def completed_status_snapshot_blockers(
+    issue: str,
+    diff: str,
+    text: str,
+    completed_status: dict[str, object],
+    metadata: dict[str, object] | None = None,
+) -> list[str]:
+    """Return blockers for a previously written completed status snapshot."""
+
+    return [
+        *implementation_scope_blockers(issue, diff, completed_status, metadata),
+        *validation_coverage_blockers(issue, diff, text, completed_status, metadata),
+    ]
+
+
 def go_compile_failure_present(text: str) -> bool:
     lower = text.lower()
     if failed_validation_return_code(lower):
@@ -2606,6 +2624,38 @@ def go_compile_failure_present(text: str) -> bool:
             "fail:",
         )
     )
+
+
+def go_failure_is_unaffected_unbuildable_root_target(text: str, go_packages: list[str]) -> bool:
+    """Return true for mixed Go commands where only unrelated repo-root fails.
+
+    Some Go repos intentionally have no buildable package at repository root.
+    A verifier command such as ``go test ./changed/pkg .`` can therefore fail
+    even when every changed package compiles. That failure should cause the
+    verifier to rerun a focused command, not overwrite focused per-package
+    success evidence for the final diff.
+    """
+
+    if not go_packages or "." in go_packages:
+        return False
+    lower = text.lower().replace("\\n", "\n")
+    if not all(go_package_validation_has_evidence(lower, package) for package in go_packages):
+        return False
+    if not any(
+        marker in lower
+        for marker in (
+            "build constraints exclude all go files",
+            "no go files in",
+            "no go files",
+        )
+    ):
+        return False
+    for line in lower.splitlines():
+        if "go test" not in line:
+            continue
+        if re.search(r"(^|\s)\.(\s|;|$)", line):
+            return True
+    return False
 
 
 def go_package_validation_has_evidence(text: str, package: str) -> bool:
@@ -3365,6 +3415,8 @@ def spawn_adapter_helper_worker(
 def blocked_without_status_marker(text: str) -> bool:
     if not text or "status.json" not in text:
         return False
+    if verifier_infrastructure_failure_present(text):
+        return False
     blocker_phrases = (
         "caller explicitly instructed",
         "benchmark environment is not mounted",
@@ -3378,6 +3430,61 @@ def blocked_without_status_marker(text: str) -> bool:
         "unable to continue",
     )
     return "blocked:" in text and any(phrase in text for phrase in blocker_phrases)
+
+
+def verifier_infrastructure_failure_present(text: str, workdir: Path | None = None) -> bool:
+    """Return true when the verifier failed to execute its review machinery.
+
+    This is not acceptance evidence and not a source-level rejection. The
+    orchestrator should requeue a verifier or hand off to a fresh orchestrator
+    instead of letting a tool/schema/path failure become the terminal semantic
+    gate result.
+    """
+
+    lower = (text or "").lower()
+    if not lower:
+        return False
+    tool_failure = any(
+        marker in lower
+        for marker in (
+            "failed to parse function arguments",
+            "missing field `cmd`",
+            "missing field cmd",
+            "invalid tool call",
+            "tool call failed",
+        )
+    )
+    path_failure = any(
+        marker in lower
+        for marker in (
+            "verifier could not inspect /app",
+            "could not inspect /app",
+            "/app missing",
+            "/app is missing",
+            "working directory /app does not exist",
+            "no such file or directory: '/app'",
+        )
+    )
+    if tool_failure:
+        return True
+    if not path_failure:
+        return False
+    if workdir is None:
+        workdir = DEFAULT_WORKDIR
+    try:
+        return Path(workdir).exists()
+    except OSError:
+        return True
+
+
+def verifier_infrastructure_blockers(text: str, workdir: Path | None = None) -> list[str]:
+    if not verifier_infrastructure_failure_present(text, workdir):
+        return []
+    return [
+        "verifier infrastructure failed before semantic recheck; requeue a fresh verifier/orchestrator, "
+        "preserve the current diff, and require structured finding/todo closure with command/source evidence "
+        "before acceptance or rejection"
+    ]
 
 
 def orchestrator_exited_without_status(text: str) -> bool:
@@ -3397,6 +3504,7 @@ def verifier_exact_followup_available(text: str) -> bool:
         "blocking findings with exact follow-up instructions" in lower
         or "exact follow-up instructions:" in lower
         or "blocking findings:" in lower and "rerun" in lower
+        or verifier_infrastructure_failure_present(text)
     )
 
 
@@ -3575,6 +3683,8 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     adapter_helper_last_probe_digest: str | None = None
     coverage_gate_unresolved = False
     coverage_probe_satisfied = False
+    accepted_completed_status_snapshot: dict[str, object] | None = None
+    accepted_completed_status_diff_hash = ""
     selected_validation_claim_seen = False
     convergence_followup_sent = False
     no_diff_checkpoint_sent = False
@@ -3601,6 +3711,8 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     orchestrator_resume_attempts = 0
     source_symbol_resume_limit = int(os.environ.get("EVAL_SOURCE_SYMBOL_RESUME_LIMIT", "1"))
     source_symbol_resume_attempts = 0
+    verifier_infra_resume_limit = int(os.environ.get("EVAL_VERIFIER_INFRA_RESUME_LIMIT", "1"))
+    verifier_infra_resume_attempts = 0
     adapter_helper_mode = os.environ.get("EVAL_ADAPTER_HELPER_MODE", "advisory").strip().lower()
     adapter_helper_source_edit_opt_in = os.environ.get("EVAL_ADAPTER_HELPER_ALLOW_SOURCE_EDITS", "").strip().lower() in {
         "1",
@@ -3645,6 +3757,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     ) -> bool:
         nonlocal orchestrator_resume_attempts
         nonlocal source_symbol_resume_attempts
+        nonlocal verifier_infra_resume_attempts
         nonlocal coverage_followup_at
         nonlocal last_capture
         nonlocal missing_session_captures
@@ -3653,12 +3766,19 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
         nonlocal last_diff_changed_at
 
         use_source_symbol_extra_resume = False
+        use_verifier_infra_extra_resume = False
         if orchestrator_resume_attempts >= orchestrator_resume_limit:
             if (
                 source_symbol_map_blocker_present(blockers)
                 and source_symbol_resume_attempts < source_symbol_resume_limit
             ):
                 use_source_symbol_extra_resume = True
+            elif (
+                force_live_handoff
+                and any("verifier infrastructure failed" in blocker.lower() for blocker in blockers)
+                and verifier_infra_resume_attempts < verifier_infra_resume_limit
+            ):
+                use_verifier_infra_extra_resume = True
             else:
                 log(
                     "production orchestrator resume skipped for "
@@ -3677,6 +3797,13 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
             )
             source_symbol_resume_attempts += 1
             resume_attempt = orchestrator_resume_attempts + source_symbol_resume_attempts
+        elif use_verifier_infra_extra_resume:
+            log(
+                "production orchestrator verifier-infra resume using extra bounded attempt "
+                f"{verifier_infra_resume_attempts + 1}/{verifier_infra_resume_limit} for {reason}"
+            )
+            verifier_infra_resume_attempts += 1
+            resume_attempt = orchestrator_resume_attempts + source_symbol_resume_attempts + verifier_infra_resume_attempts
         else:
             orchestrator_resume_attempts += 1
             resume_attempt = orchestrator_resume_attempts
@@ -3702,7 +3829,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
         env["MULTIAGENT_RESUME"] = "1"
         launched_resume, launch_tail = launch_production_session(
             resume=True,
-            label=f"resume-{orchestrator_resume_attempts}",
+            label=f"resume-{resume_attempt}",
         )
         if not launched_resume:
             STATUS_PATH.write_text(
@@ -3750,6 +3877,9 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 capture_session(session)
                 diff = git_diff(workdir)
                 text = captured_text()
+                if completed_status_has_final_build_evidence(diff):
+                    accepted_completed_status_snapshot = dict(current_status)
+                    accepted_completed_status_diff_hash = final_diff_sha256(diff)
                 scope_blockers = implementation_scope_blockers(issue, diff, current_status, task_metadata)
                 coverage_blockers = validation_coverage_blockers(issue, diff, text, current_status, task_metadata)
                 structured_gate_blockers = structured_repair_gate_blockers()
@@ -4613,7 +4743,8 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         coverage_status_for_blockers,
                         task_metadata,
                     )
-                    blockers = [*scope_blockers, *coverage_blockers]
+                    infra_blockers = verifier_infrastructure_blockers(text, workdir)
+                    blockers = [*scope_blockers, *coverage_blockers, *infra_blockers]
                     probe_report = ""
                     if coverage_probe_commands(workdir, issue, diff):
                         probe_report, probe_passed = run_validation_coverage_probe(
@@ -4657,6 +4788,15 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                             continue
                         except Exception as exc:
                             log(f"adapter recovery worker spawn failed after unverified orchestrator-exit diff: {exc}")
+                    if infra_blockers and relaunch_orchestrator_for_blockers(
+                        "verifier infrastructure failed before semantic recheck",
+                        diff,
+                        blockers,
+                        probe_report,
+                        force_live_handoff=True,
+                    ):
+                        time.sleep(5)
+                        continue
                     if blockers and relaunch_orchestrator_for_blockers(
                         "orchestrator exited with unverified source diff",
                         diff,
@@ -4731,7 +4871,8 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         coverage_status_for_blockers,
                         task_metadata,
                     )
-                    blockers = [*scope_blockers, *coverage_blockers]
+                    infra_blockers = verifier_infrastructure_blockers(text, workdir)
+                    blockers = [*scope_blockers, *coverage_blockers, *infra_blockers]
                     if coverage_probe_satisfied:
                         blockers = blockers_after_passing_public_probe(blockers)
                         scope_blockers = blockers
@@ -4950,19 +5091,29 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                             continue
                         force_verifier_handoff = (
                             terminal_force_resume_enabled
-                            and verifier_exact_followup_available(text)
+                            and (verifier_exact_followup_available(text) or bool(infra_blockers))
                             and int(deadline - time.monotonic()) > 240
                         )
                         if blockers and relaunch_orchestrator_for_blockers(
-                            "orchestrator exited after unresolved verifier follow-up"
-                            if force_verifier_handoff
-                            else "orchestrator exited after unresolved coverage follow-up",
+                            (
+                                "verifier infrastructure failed before semantic recheck"
+                                if infra_blockers
+                                else "orchestrator exited after unresolved verifier follow-up"
+                                if force_verifier_handoff
+                                else "orchestrator exited after unresolved coverage follow-up"
+                            ),
                             diff,
                             [
                                 *blockers,
                                 *(
                                     [
-                                        "Verifier exact-follow-up handoff: a verifier produced concrete public/source repair instructions, but the active run did not apply them before exiting. Continue from the current /app diff, apply or disprove those verifier findings from source, rerun the implicated visible validation, then write status.json."
+                                        (
+                                            "Verifier infrastructure handoff: the verifier did not complete a semantic recheck because its tool/path execution failed. "
+                                            "Preserve the current /app diff, spawn a fresh read-only verifier, require structured findings/todos for any semantic blockers, "
+                                            "and do not write completed status until gate-check plus final build/provider evidence pass."
+                                            if infra_blockers
+                                            else "Verifier exact-follow-up handoff: a verifier produced concrete public/source repair instructions, but the active run did not apply them before exiting. Continue from the current /app diff, apply or disprove those verifier findings from source, rerun the implicated visible validation, then write status.json."
+                                        )
                                     ]
                                     if force_verifier_handoff
                                     else []
@@ -5104,6 +5255,37 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     if restored:
         log(f"restored benchmark-disallowed changes: {restored}")
     final_diff = git_diff(workdir)
+    if (
+        exit_code != 0
+        and final_diff.strip()
+        and accepted_completed_status_snapshot is not None
+        and accepted_completed_status_diff_hash == final_diff_sha256(final_diff)
+    ):
+        final_text = captured_text()
+        snapshot_blockers = [
+            *completed_status_snapshot_blockers(
+                issue,
+                final_diff,
+                final_text,
+                accepted_completed_status_snapshot,
+                task_metadata,
+            ),
+            *structured_repair_gate_blockers(),
+        ]
+        if not snapshot_blockers:
+            STATUS_PATH.write_text(json.dumps(accepted_completed_status_snapshot), encoding="utf-8")
+            log(
+                "nonzero wrapper exit overridden because an earlier completed status snapshot "
+                "still proves the final diff after stale coverage follow-up state"
+            )
+            coverage_gate_unresolved = False
+            exit_code = 0
+            outcome = "completed"
+        else:
+            log(
+                "completed status snapshot could not override nonzero wrapper exit; blockers remain: "
+                + "; ".join(snapshot_blockers)
+            )
     if exit_code != 0 and final_diff.strip() and completed_status_has_final_build_evidence(final_diff):
         log(
             "nonzero wrapper exit overridden because status.json already records completed final-diff build verification accepted by the structured repair gate"

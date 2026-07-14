@@ -67,7 +67,9 @@ As orchestrator:
    `validation` field may instead include `provider-capability-checked:` naming
    the declared receiver type, optional method/provider, concrete provider path,
    guard/type assertion, source declaration proving the method exists, and
-   compile evidence after the final diff.
+   compile evidence after the final diff. Use exact keys: `receiver=...`,
+   `method=...`, `concrete-provider=...`, `guard=type-assertion`,
+   `source-declaration=...`, and `compile=...` or `returncode=0`.
 9. Before writing completed status, check the final validation text for
    machine-gated evidence markers:
    - If worker or verifier output contains a relevant failed validation command,
