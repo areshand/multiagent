@@ -2648,6 +2648,13 @@ assignment_verifier_overlap_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_
 [[ "$assignment_verifier_overlap_output" == $'assignment created\tverifier-overlap\tdocs-verifier\tworker/docs' ]]
 MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-status verifier-overlap done >/dev/null
 
+assignment_scout_overlap_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create scout-overlap --assignment-id docs-scout --branch worker/docs --owned README.md --role scout)"
+[[ "$assignment_scout_overlap_output" == $'assignment created\tscout-overlap\tdocs-scout\tworker/docs' ]]
+assignment_after_scout_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create worker-after-scout --assignment-id docs-after-scout --branch worker/docs --owned docs)"
+[[ "$assignment_after_scout_output" == $'assignment created\tworker-after-scout\tdocs-after-scout\tworker/docs' ]]
+assert_file_contains "$ASSIGN_STATE/assignments/scout-overlap/assignment.env" "role=scout"
+MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-status worker-after-scout done >/dev/null
+
 assignment_show_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-show worker-docs)"
 [[ "$assignment_show_output" == *"agent_name=worker-docs"* ]]
 [[ "$assignment_show_output" == *"status=assigned"* ]]
@@ -3283,7 +3290,7 @@ fi
 assert_file_contains "$TMPDIR/invalid-role.out" "invalid role: decision"
 
 # Test role validation - valid roles should be accepted
-valid_roles=("exploitation" "exploration" "reflection" "architecture" "qa" "verifier")
+valid_roles=("exploitation" "exploration" "reflection" "architecture" "qa" "verifier" "scout")
 for i in "${!valid_roles[@]}"; do
   role="${valid_roles[$i]}"
   node_id="NODE-ROLE-$i"

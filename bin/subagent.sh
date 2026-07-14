@@ -26,7 +26,7 @@ usage() {
 Usage:
   bin/subagent.sh spawn NAME [--instruction TEXT | --instruction-file PATH]
   bin/subagent.sh list
-  bin/subagent.sh assignment-create NAME --assignment-id ID --branch BRANCH --owned PATH[,PATH...] [--status STATUS] [--start-commit COMMIT] [--role exploitation|exploration|reflection|architecture|qa|verifier] [--decision-id DECISION_ID] [--plan-id PLAN_ID] [--workflow-id WORKFLOW_ID] [--node-id NODE_ID] [--depends-on NODE[,NODE...]]
+  bin/subagent.sh assignment-create NAME --assignment-id ID --branch BRANCH --owned PATH[,PATH...] [--status STATUS] [--start-commit COMMIT] [--role exploitation|exploration|reflection|architecture|qa|verifier|scout] [--decision-id DECISION_ID] [--plan-id PLAN_ID] [--workflow-id WORKFLOW_ID] [--node-id NODE_ID] [--depends-on NODE[,NODE...]]
   bin/subagent.sh assignment-show NAME
   bin/subagent.sh assignment-status NAME STATUS
   bin/subagent.sh assignment-check NAME
@@ -466,10 +466,14 @@ reject_active_assignment_overlap() {
   local new_name="$1"
   local new_owned_file="$2"
   local new_role="$3"
-  [[ "$new_role" != "verifier" ]] || return 0
+  case "$new_role" in
+    verifier|scout)
+      return 0
+      ;;
+  esac
   local base="$STATE_DIR/assignments"
   [[ -d "$base" ]] || return 0
-  local dir existing existing_status existing_owned_file new_owned existing_owned
+  local dir existing existing_status existing_role existing_owned_file new_owned existing_owned
   while IFS= read -r new_owned; do
     [[ -n "$new_owned" ]] || continue
     for dir in "$base"/*; do
@@ -479,6 +483,12 @@ reject_active_assignment_overlap() {
       [[ -f "$(assignment_meta_file "$existing")" && -f "$(assignment_status_file "$existing")" ]] || continue
       existing_status="$(get_assignment_status "$existing")"
       assignment_status_is_terminal "$existing_status" && continue
+      existing_role="$(read_assignment_value "$existing" role || printf 'exploitation')"
+      case "$existing_role" in
+        verifier|scout)
+          continue
+          ;;
+      esac
       existing_owned_file="$(assignment_owned_file "$existing")"
       [[ -f "$existing_owned_file" ]] || continue
       while IFS= read -r existing_owned; do
@@ -558,10 +568,10 @@ assignment_create() {
   [[ -n "$branch" ]] || die "assignment-create requires --branch BRANCH"
   [[ -n "$owned_csv" ]] || die "assignment-create requires --owned PATH[,PATH...]"
   case "$role" in
-    exploitation|exploration|reflection|architecture|qa|verifier)
+    exploitation|exploration|reflection|architecture|qa|verifier|scout)
       ;;
     *)
-      die "invalid role '$role' (expected exploitation|exploration|reflection|architecture|qa|verifier)"
+      die "invalid role '$role' (expected exploitation|exploration|reflection|architecture|qa|verifier|scout)"
       ;;
   esac
   if [[ -z "$start_commit" ]]; then

@@ -77,10 +77,10 @@ validate_status() {
 validate_role() {
   local role="$1"
   case "$role" in
-    exploitation|exploration|reflection|architecture|qa|verifier)
+    exploitation|exploration|reflection|architecture|qa|verifier|scout)
       ;;
     *)
-      die "invalid role: $role (expected exploitation|exploration|reflection|architecture|qa|verifier)"
+      die "invalid role: $role (expected exploitation|exploration|reflection|architecture|qa|verifier|scout)"
       ;;
   esac
 }

@@ -83,9 +83,11 @@ Benchmark spawning path:
   not installed use `grep`, `find`, or language-native search instead of failing
   the task.
 - If the issue has unclear ownership, multiple plausible fixes, or needs
-  behavior inference from tests, first spawn a short read-only scout worker. The
-  scout must not edit files; it should identify likely source files, relevant
-  existing test files/packages, and the observable behavior hypothesis.
+  behavior inference from tests, first spawn a short read-only scout worker with
+  `assignment-create ... --role scout`. The scout must not edit files; it should
+  identify likely source files, relevant existing test files/packages, and the
+  observable behavior hypothesis. Scout owned paths are read scope, not writable
+  ownership, and must not block a later implementation worker.
 - After worker completion, spawn a read-only verifier the same way, with
   `SUBAGENT_CLI="$VERIFIER_CLI" bin/subagent.sh spawn verifier-01-fix --instruction "Review only; do not edit files. ..."`.
 - A completed worker pane is not an interactive worker anymore. Every
