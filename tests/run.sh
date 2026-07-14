@@ -1879,6 +1879,46 @@ with tempfile.TemporaryDirectory() as td:
         )
         assert recovered and recovered[0].endswith(":T-OPEN"), recovered
         assert solve_swe_prod.structured_repair_gate_blockers() == [], solve_swe_prod.structured_repair_gate_blockers()
+        subprocess.run(
+            [
+                str(root / "bin/subagent.sh"),
+                "resolution-create",
+                "TODO-compile-service",
+                "--worker",
+                "worker-02-repair",
+                "--status",
+                "resolved",
+                "--changed",
+                "lib/service/kubernetes.go",
+                "--validation-json",
+                '[{"cmd":"go test ./lib/service ./lib/kube/proxy","rc":0}]',
+                "--why",
+                "Fixed uploader initialization with compile evidence.",
+            ],
+            env={
+                **os.environ,
+                "MULTIAGENT_STATE_DIR": str(runtime),
+                "MULTIAGENT_ROOT": str(solve_swe_prod.DEFAULT_WORKDIR),
+                "MULTIAGENT_RESOLUTION_AUTOCREATE_TODO": "1",
+            },
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert solve_swe_prod.structured_repair_gate_blockers(), "autocreated resolved todo should require verifier closure"
+        accepted_diff = "diff --git a/lib/service/kubernetes.go b/lib/service/kubernetes.go\n+process.initUploaderService(accessPoint, conn.Client)\n"
+        accepted_hash = solve_swe_prod.final_diff_sha256(accepted_diff)
+        recovered_auto = solve_swe_prod.recover_verifier_accepted_todo_closures(
+            (
+                "ACCEPTED\n"
+                f"build-verification-passed: final-diff-sha256={accepted_hash} changed-files=1 compile_clean=true returncode=0\n"
+                "go-package-validation-passed for `./lib/service` and `./lib/kube/proxy`: "
+                "`go test ./lib/service ./lib/kube/proxy` passed.\n"
+            ),
+            accepted_diff,
+        )
+        assert recovered_auto and recovered_auto[0].endswith(":TODO-compile-service"), recovered_auto
+        assert solve_swe_prod.structured_repair_gate_blockers() == [], solve_swe_prod.structured_repair_gate_blockers()
     finally:
         solve_swe_prod.RUNTIME_ROOT = original_runtime
         solve_swe_prod.DEFAULT_WORKDIR = original_workdir

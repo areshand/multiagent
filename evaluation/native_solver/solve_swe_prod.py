@@ -839,6 +839,22 @@ def create_no_diff_stall_repair_state(
     return created
 
 
+def verifier_text_covers_resolution_commands(text: str, commands: list[dict[str, object]]) -> bool:
+    lower = (text or "").lower().replace("\\n", "\n")
+    for command in commands:
+        cmd = str(command.get("cmd", "")).strip().lower()
+        if not cmd:
+            return False
+        if cmd in lower:
+            start = max(0, lower.find(cmd) - 250)
+            end = min(len(lower), lower.find(cmd) + len(cmd) + 700)
+            window = lower[start:end]
+            if any(marker in window for marker in ("returncode=0", "return-code=0", "rc=0", "passed")):
+                continue
+        return False
+    return True
+
+
 def recover_verifier_accepted_todo_closures(text: str, diff: str) -> list[str]:
     """Close resolved todos when a verifier transcript explicitly rechecked them.
 
@@ -852,7 +868,8 @@ def recover_verifier_accepted_todo_closures(text: str, diff: str) -> list[str]:
     if not text or not subagent.exists():
         return []
     lower = text.lower()
-    if "accepted" not in lower or "todo-recheck-passed:" not in lower:
+    hash_bound_acceptance = build_verification_has_evidence(text, diff)
+    if "accepted" not in lower or ("todo-recheck-passed:" not in lower and not hash_bound_acceptance):
         return []
 
     recovered: list[str] = []
@@ -867,8 +884,6 @@ def recover_verifier_accepted_todo_closures(text: str, diff: str) -> list[str]:
         for todo_dir in sorted(path for path in todos_base.iterdir() if path.is_dir()):
             todo_id = todo_dir.name
             marker = f"todo-recheck-passed: {todo_id}".lower()
-            if marker not in lower:
-                continue
             status_path = todo_dir / "status"
             status = status_path.read_text(encoding="utf-8", errors="replace").strip().lower() if status_path.exists() else ""
             if status != "resolved":
@@ -900,6 +915,12 @@ def recover_verifier_accepted_todo_closures(text: str, diff: str) -> list[str]:
             if not commands:
                 log(f"verifier todo closure recovery skipped {todo_id}: worker validation is not all rc=0")
                 continue
+            has_explicit_marker = marker in lower
+            if not has_explicit_marker and not (
+                hash_bound_acceptance and verifier_text_covers_resolution_commands(text, commands)
+            ):
+                log(f"verifier todo closure recovery skipped {todo_id}: accepted transcript does not cover worker commands")
+                continue
             source_finding_id = str(todo_payload.get("source_finding_id", "")).strip()
             source_finding_hash = str(todo_payload.get("source_finding_hash", "")).strip()
             if not source_finding_id:
@@ -911,7 +932,11 @@ def recover_verifier_accepted_todo_closures(text: str, diff: str) -> list[str]:
                 "source_finding_id": source_finding_id,
                 "source_finding_hash": source_finding_hash,
                 "commands": commands,
-                "evidence": f"recovered from verifier transcript marker {marker}",
+                "evidence": (
+                    f"recovered from verifier transcript marker {marker}"
+                    if has_explicit_marker
+                    else "recovered from hash-bound verifier ACCEPTED transcript covering worker validation commands"
+                ),
                 "final_diff_hash": final_diff_sha256(diff),
             }
             env = os.environ.copy()
