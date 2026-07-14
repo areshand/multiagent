@@ -47,7 +47,11 @@ bin/subagent.sh todo-create todo-017 \
 ```
 
 Do not paste raw verifier prose as an open-ended worker order. Give the worker a
-bounded task, exact evidence, owned paths, and objective done criteria.
+bounded task, exact evidence, owned paths, and objective done criteria. Any
+done criterion that starts with `run ` becomes a machine-checkable required
+command. For commands that are not naturally phrased as a `run ...` done
+criterion, add `--required-command "exact command"` so the worker resolution
+and verifier recheck must both cover it.
 
 ## Worker Resolution
 
@@ -67,8 +71,10 @@ bin/subagent.sh resolution-create todo-017 \
 ## Reverification And Gate
 
 The verifier compares the worker resolution against the original finding and
-done criteria. If the issue is fixed, the orchestrator closes the todo with
-verifier recheck evidence:
+done criteria. Required commands must appear with `rc=0` in both the worker
+resolution and the verifier recheck; a nearby successful command does not close
+the todo. If the issue is fixed, the orchestrator closes the todo with verifier
+recheck evidence:
 
 ```bash
 bin/subagent.sh todo-close todo-017 \
@@ -92,6 +98,7 @@ bin/subagent.sh gate-check
 
 Do not accept while `gate-check` reports an unqueued blocking finding or any
 open, assigned, resolved, or reopened todo. A closed todo also fails the gate if
-it lacks worker resolution evidence or verifier closure evidence. For code
-patches, build verification is one required finding/todo class; behavior and
-hidden-contract findings use the same loop.
+it lacks worker resolution evidence, verifier closure evidence, source-finding
+binding, or required-command coverage. For code patches, build verification is
+one required finding/todo class; behavior and hidden-contract findings use the
+same loop.

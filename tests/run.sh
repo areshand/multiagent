@@ -303,6 +303,8 @@ MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" todo-create todo-01
   --context "Exact verifier evidence." \
   --done-criteria "run go test ./internal/server/ofrep" \
   --done-criteria "record returncode=0 after final diff" >"$TMPDIR/todo-create.out"
+assert_file_contains "$REPAIR_STATE/todos/todo-017/todo.json" '"required_commands":'
+assert_file_contains "$REPAIR_STATE/todos/todo-017/todo.json" '"go test ./internal/server/ofrep"'
 if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" resolution-create todo-017 \
   --worker worker-02-ofrep-build \
   --status resolved \
@@ -314,6 +316,17 @@ if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" resolution-creat
   exit 1
 fi
 assert_file_contains "$TMPDIR/resolution-bad.out" "nonzero rc=1"
+if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" resolution-create todo-017 \
+  --worker worker-02-ofrep-build \
+  --status resolved \
+  --changed internal/server/ofrep/evaluation.go \
+  --validation-json '[{"cmd":"go test ./internal/server/evaluation","rc":0}]' \
+  --why "Wrong package compiled." >"$TMPDIR/resolution-missing-required.out" 2>&1; then
+  echo "expected resolved todo missing required command evidence to fail" >&2
+  cat "$TMPDIR/resolution-missing-required.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/resolution-missing-required.out" "missing required command"
 MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" resolution-create todo-017 \
   --worker worker-02-ofrep-build \
   --status resolved \
@@ -2571,6 +2584,8 @@ todo_output="$("$ROOT/bin/subagent.sh" todo-create todo-017 --source-finding-id 
 [[ "$todo_output" == $'todo created\ttodo-017\tbuild-go-ofrep\topen' ]]
 assert_file_contains "$MULTIAGENT_STATE_DIR/todos/todo-017/todo.json" '"source_finding_id": "build-go-ofrep"'
 assert_file_contains "$MULTIAGENT_STATE_DIR/todos/todo-017/todo.json" '"status": "open"'
+assert_file_contains "$MULTIAGENT_STATE_DIR/todos/todo-017/todo.json" '"required_commands":'
+assert_file_contains "$MULTIAGENT_STATE_DIR/todos/todo-017/todo.json" '"go test ./internal/server/evaluation"'
 
 todo_assign_output="$("$ROOT/bin/subagent.sh" todo-assign todo-017 worker-02-ofrep)"
 [[ "$todo_assign_output" == $'todo assigned\ttodo-017\tworker-02-ofrep' ]]
@@ -2601,7 +2616,7 @@ if "$ROOT/bin/subagent.sh" todo-close todo-017 --verified-by verifier-01-ofrep -
   cat "$TMPDIR/todo-close-partial-recheck.out" >&2
   exit 1
 fi
-assert_file_contains "$TMPDIR/todo-close-partial-recheck.out" "must cover worker validation command"
+assert_file_contains "$TMPDIR/todo-close-partial-recheck.out" "missing required command"
 
 if "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-resolved.out" 2>&1; then
   echo "expected gate-check to reject a resolved but unverified todo" >&2

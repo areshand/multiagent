@@ -38,7 +38,7 @@ Usage:
   bin/subagent.sh finding-create FINDING_ID --severity blocking|nonblocking|warning --type TYPE --summary TEXT --evidence-json JSON --required-resolution TEXT [--affected PATH[,PATH...]]
   bin/subagent.sh finding-show FINDING_ID
   bin/subagent.sh finding-list [--severity SEVERITY] [--type TYPE]
-  bin/subagent.sh todo-create TODO_ID --source-finding-id FINDING_ID --task TEXT --done-criteria TEXT [--done-criteria TEXT ...] [--context TEXT | --context-file PATH] [--assigned-to NAME]
+  bin/subagent.sh todo-create TODO_ID --source-finding-id FINDING_ID --task TEXT --done-criteria TEXT [--done-criteria TEXT ...] [--required-command CMD ...] [--context TEXT | --context-file PATH] [--assigned-to NAME]
   bin/subagent.sh todo-show TODO_ID
   bin/subagent.sh todo-list [--status STATUS]
   bin/subagent.sh todo-assign TODO_ID NAME
@@ -208,6 +208,10 @@ todo_status_file() {
   printf '%s/status\n' "$(todo_dir "$1")"
 }
 
+todo_required_commands_file() {
+  printf '%s/required-commands\n' "$(todo_dir "$1")"
+}
+
 validation_lease_dir() {
   printf '%s/validation-leases/%s\n' "$STATE_DIR" "$1"
 }
@@ -282,6 +286,14 @@ write_csv_lines() {
     reject_newline "csv item" "$trimmed"
     grep -Fx -- "$trimmed" "$file" >/dev/null 2>&1 || printf '%s\n' "$trimmed" >>"$file"
   done
+}
+
+append_unique_line() {
+  local line="$1"
+  local file="$2"
+  [[ -n "$line" ]] || return 0
+  reject_newline "line" "$line"
+  grep -Fx -- "$line" "$file" >/dev/null 2>&1 || printf '%s\n' "$line" >>"$file"
 }
 
 set_env_key() {
@@ -1357,6 +1369,8 @@ for line in (root / "todo.env").read_text().splitlines():
         meta[key] = value
 done_file = root / "done-criteria"
 done_criteria = [line for line in done_file.read_text().splitlines() if line] if done_file.exists() else []
+required_file = root / "required-commands"
+required_commands = [line for line in required_file.read_text().splitlines() if line] if required_file.exists() else []
 context_file = root / "context.txt"
 context = context_file.read_text() if context_file.exists() else ""
 payload = {
@@ -1367,6 +1381,7 @@ payload = {
     "task": meta["task"],
     "context": context,
     "done_criteria": done_criteria,
+    "required_commands": required_commands,
     "created_at": meta["created_at"],
     "updated_at": meta.get("updated_at", meta["created_at"]),
 }
@@ -1466,6 +1481,62 @@ for idx, item in enumerate(payload):
         if status == "resolved" and rc != 0:
             raise SystemExit(f"resolved validation item {idx} has nonzero rc={rc}")
 ' "$status" "$validation_json"
+}
+
+json_command_strings() {
+  local payload_json="$1"
+  require_cmd python3
+  python3 -c '
+import json
+import sys
+payload = json.loads(sys.argv[1])
+if isinstance(payload, dict):
+    items = payload.get("commands") or payload.get("validation") or []
+else:
+    items = payload
+if not isinstance(items, list):
+    items = []
+for item in items:
+    if not isinstance(item, dict):
+        continue
+    rc = item.get("rc", item.get("returncode", 0))
+    try:
+        rc = int(rc)
+    except Exception:
+        continue
+    if rc != 0:
+        continue
+    cmd = str(item.get("cmd") or item.get("command_text") or "").strip()
+    if not cmd and isinstance(item.get("command"), list):
+        cmd = " ".join(str(part) for part in item["command"]).strip()
+    if cmd:
+        print(" ".join(cmd.split()))
+' "$payload_json"
+}
+
+validate_required_commands_covered() {
+  local todo_id="$1"
+  local label="$2"
+  local payload_json="$3"
+  local required_file command normalized found
+  required_file="$(todo_required_commands_file "$todo_id")"
+  [[ -f "$required_file" ]] || return 0
+  mapfile -t covered < <(json_command_strings "$payload_json")
+  while IFS= read -r command; do
+    [[ -n "$command" ]] || continue
+    normalized="$(printf '%s\n' "$command" | awk '{$1=$1; print}')"
+    found=0
+    local covered_command
+    for covered_command in "${covered[@]}"; do
+      if [[ "$covered_command" == "$normalized" ]]; then
+        found=1
+        break
+      fi
+    done
+    if [[ "$found" -eq 0 ]]; then
+      die "$label for todo $todo_id missing required command: $command"
+    fi
+  done <"$required_file"
 }
 
 validate_closure_payload() {
@@ -1670,7 +1741,7 @@ todo_create() {
   validate_name "$todo_id"
   shift
 
-  local source_finding_id="" task="" context="" context_file="" assigned_to="" done_joined="" criterion
+  local source_finding_id="" task="" context="" context_file="" assigned_to="" done_joined="" required_commands_joined="" criterion required_command
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --source-finding-id)
@@ -1685,6 +1756,19 @@ todo_create() {
         criterion="${2:-}"
         reject_newline "--done-criteria" "$criterion"
         done_joined="${done_joined}${criterion}"$'\n'
+        if [[ "$criterion" == run\ * ]]; then
+          required_command="${criterion#run }"
+          required_command="${required_command#"${required_command%%[![:space:]]*}"}"
+          required_command="${required_command%"${required_command##*[![:space:]]}"}"
+          [[ -n "$required_command" ]] && required_commands_joined="${required_commands_joined}${required_command}"$'\n'
+        fi
+        shift 2
+        ;;
+      --required-command)
+        required_command="${2:-}"
+        reject_newline "--required-command" "$required_command"
+        [[ -n "$required_command" ]] || die "todo-create --required-command may not be empty"
+        required_commands_joined="${required_commands_joined}${required_command}"$'\n'
         shift 2
         ;;
       --context)
@@ -1733,6 +1817,10 @@ updated_at=$(timestamp)
 root=$ROOT
 EOF
   printf '%s' "$done_joined" >"$dir/done-criteria"
+  : >"$(todo_required_commands_file "$todo_id")"
+  while IFS= read -r required_command; do
+    append_unique_line "$required_command" "$(todo_required_commands_file "$todo_id")"
+  done <<<"$required_commands_joined"
   if [[ -n "$context_file" ]]; then
     cp "$context_file" "$dir/context.txt"
   else
@@ -1863,6 +1951,9 @@ resolution_create() {
   [[ -n "$why" ]] || die "resolution-create requires --why TEXT"
   reject_newline "--why" "$why"
   validate_resolution_payload "$status" "$validation_json"
+  if [[ "$status" == "resolved" ]]; then
+    validate_required_commands_covered "$todo_id" "worker resolution" "$validation_json"
+  fi
 
   local dir
   dir="$(todo_dir "$todo_id")"
@@ -1921,6 +2012,7 @@ todo_close() {
   [[ -n "$recheck_json" ]] || die "todo-close requires --recheck-json JSON"
   reject_newline "--notes" "$notes"
   validate_closure_payload "$recheck_json"
+  validate_required_commands_covered "$todo_id" "verifier recheck" "$recheck_json"
 
   local source_finding_id dir
   source_finding_id="$(read_todo_value "$todo_id" source_finding_id)"
@@ -1995,6 +2087,8 @@ if missing:
     print(f"reject\tclosed-todo-recheck-missing-worker-command\ttodo={todo_id}\tcmd={missing[0]}")
     raise SystemExit(1)
 ' "$dir" "$todo_id"
+  validate_required_commands_covered "$todo_id" "closed todo resolution" "$(cat "$dir/resolution.json")" || return 1
+  validate_required_commands_covered "$todo_id" "closed todo verifier recheck" "$(cat "$dir/recheck.json")" || return 1
 }
 
 write_validation_lease_json() {
