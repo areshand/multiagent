@@ -26,7 +26,7 @@ fi
 usage() {
   cat <<'USAGE'
 Usage:
-  bin/subagent.sh spawn NAME [--instruction TEXT | --instruction-file PATH]
+  bin/subagent.sh spawn NAME [--own PATH[,PATH...] ...] [--instruction TEXT | --instruction-file PATH | -- TEXT]
   bin/subagent.sh list
   bin/subagent.sh assignment-create NAME --assignment-id ID --branch BRANCH --owned PATH[,PATH...] [--status STATUS] [--start-commit COMMIT] [--role exploitation|exploration|reflection|architecture|qa|verifier|scout] [--decision-id DECISION_ID] [--plan-id PLAN_ID] [--workflow-id WORKFLOW_ID] [--node-id NODE_ID] [--depends-on NODE[,NODE...]]
   bin/subagent.sh assignment-show NAME
@@ -1085,16 +1085,33 @@ spawn_subagent() {
   validate_name "$name"
   shift
 
-  local instruction="" instruction_file=""
+  local instruction="" instruction_file="" owned_csv=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --own)
+        [[ $# -ge 2 && -n "${2:-}" ]] || die "spawn --own requires PATH[,PATH...]"
+        if [[ -n "$owned_csv" ]]; then
+          owned_csv="$owned_csv,${2:-}"
+        else
+          owned_csv="${2:-}"
+        fi
+        shift 2
+        ;;
       --instruction)
+        [[ $# -ge 2 ]] || die "spawn --instruction requires TEXT"
         instruction="${2:-}"
         shift 2
         ;;
       --instruction-file)
+        [[ $# -ge 2 ]] || die "spawn --instruction-file requires PATH"
         instruction_file="${2:-}"
         shift 2
+        ;;
+      --)
+        shift
+        [[ $# -gt 0 ]] || die "spawn -- requires instruction text"
+        instruction="$*"
+        break
         ;;
       -h|--help)
         usage
@@ -1123,6 +1140,30 @@ spawn_subagent() {
   reject_parallel_generic_worker_spawn "$name"
   if [[ "${MULTIAGENT_CODEX_EXEC:-0}" == "1" && "$cli" == "codex" && -z "$instruction" ]]; then
     die "codex exec subagent spawn requires --instruction or --instruction-file: $name"
+  fi
+
+  if [[ -n "$owned_csv" ]]; then
+    local owned_file requested normalized current_branch
+    local -a requested_paths
+    owned_file="$(assignment_owned_file "$name")"
+    if [[ -f "$(assignment_meta_file "$name")" ]]; then
+      [[ -f "$owned_file" ]] || die "assignment for $name has no owned-paths file"
+      IFS=',' read -ra requested_paths <<<"$owned_csv"
+      for requested in "${requested_paths[@]}"; do
+        requested="${requested#"${requested%%[![:space:]]*}"}"
+        requested="${requested%"${requested##*[![:space:]]}"}"
+        [[ -n "$requested" ]] || continue
+        normalized="$(normalize_repo_path "$requested")"
+        path_in_assignment "$normalized" <"$owned_file" ||
+          die "spawn requested path outside existing assignment: agent=$name path=$normalized"
+      done
+    else
+      current_branch="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)"
+      assignment_create "$name" \
+        --assignment-id "spawn-$name" \
+        --branch "$current_branch" \
+        --owned "$owned_csv" >/dev/null
+    fi
   fi
 
   local dir
@@ -1158,6 +1199,9 @@ EOF
     "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$POLICY_FILE" "$name" "$MULTIAGENT_HELPER" "$WORKER_CLI" "$cli" "$VERIFIER_CLI" "$CODEX_BIN" "$CLAUDE_BIN" "${MULTIAGENT_CODEX_EXEC:-0}" "$PATH" "$(build_cli_command "$cli" "$ROOT" "$prompt_file" "$output_file")"
   tmux new-window -d -t "$SESSION" -n "$name" "$command"
   set_status "$name" "running"
+  if [[ -f "$(assignment_meta_file "$name")" ]]; then
+    set_assignment_status "$name" "running"
+  fi
 
   capture_subagent "$name" || true
   if [[ -n "$instruction" && ! ( "${MULTIAGENT_CODEX_EXEC:-0}" == "1" && "$cli" == "codex" ) ]]; then

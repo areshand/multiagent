@@ -4097,6 +4097,28 @@ assert_file_contains "$MOCK_TMUX_WINDOWS" "subagent-file"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-file/instruction.txt" "Watch from file"
 assert_file_contains "$MOCK_TMUX_LOG" "send-key test-session:subagent-file Read and follow the assignment in $MULTIAGENT_STATE_DIR/subagents/subagent-file/instruction.txt"
 
+printf 'Claude prompt ready\n' >"$MOCK_TMUX_CAPTURES/owned-inline.txt"
+owned_inline_output="$("$ROOT/bin/subagent.sh" spawn owned-inline --own prompts/verifier.md -- "Repair the bounded path")"
+[[ "$owned_inline_output" == $'spawned owned-inline' ]]
+assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/owned-inline/assignment.env" "assignment_id=spawn-owned-inline"
+assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/owned-inline/assignment.env" "branch=$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)"
+assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/owned-inline/owned-paths" "prompts/verifier.md"
+assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/owned-inline/status" "running"
+assert_file_contains "$MOCK_TMUX_LOG" "send-key test-session:owned-inline Repair the bounded path"
+
+"$ROOT/bin/subagent.sh" assignment-create owned-mismatch --assignment-id existing-owned --branch "$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)" --owned prompts/worker.md >/dev/null
+printf 'Claude prompt ready\n' >"$MOCK_TMUX_CAPTURES/owned-mismatch.txt"
+if "$ROOT/bin/subagent.sh" spawn owned-mismatch --own bin/subagent.sh --instruction "Do not widen ownership" >"$TMPDIR/owned-mismatch.out" 2>&1; then
+  echo "expected spawn to reject paths outside an existing assignment" >&2
+  cat "$TMPDIR/owned-mismatch.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/owned-mismatch.out" "spawn requested path outside existing assignment"
+if grep -Fq "new-window -d test-session owned-mismatch" "$MOCK_TMUX_LOG"; then
+  echo "expected ownership validation before creating the tmux window" >&2
+  exit 1
+fi
+
 printf 'Claude prompt ready\n' >"$MOCK_TMUX_CAPTURES/worker-generic-01.txt"
 "$ROOT/bin/subagent.sh" spawn worker-generic-01 --instruction "First generic worker"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/worker-generic-01/status" "running"

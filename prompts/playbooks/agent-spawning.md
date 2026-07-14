@@ -61,6 +61,18 @@ bin/subagent.sh inspect subagent-build-watch --lines 160
 bin/subagent.sh finalize subagent-build-watch
 ```
 
+For a bounded worker in the current worktree, `spawn` can create the durable
+assignment and worker in one command:
+
+```bash
+bin/subagent.sh spawn worker-02-repair \
+  --own src/affected/,tests/affected/ \
+  -- "FIRST_INSTRUCTION_TEXT"
+```
+
+If that worker already has an assignment, every requested path must be covered
+by its existing ownership. The shorthand never widens existing ownership.
+
 Use `checkpoint-update NAME --step TEXT --status STATUS` after meaningful
 progress, before stopping, and whenever a blocker appears.
 
