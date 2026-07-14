@@ -55,6 +55,12 @@ Also include:
   either patch from current evidence or name the exact source file/API still
   missing. Do not finish with only a plan, checklist, or source map when the
   assignment expects code.
+- A long-running worker with no materialized source diff is not making
+  acceptable progress. After the bounded source-read budget, do not keep
+  expanding repository search. Materialize the narrow patch, emit the exact
+  `required-path-outside-owned:` path, emit `validation-repair-needed:` with the
+  command/source blocker, or write blocked status with the concrete source
+  reason.
 - If you are a replacement worker over the same owned paths after a prior
   no-diff worker, tighten the budget further: perform at most two focused
   read-only command batches, then either materialize a source diff, report

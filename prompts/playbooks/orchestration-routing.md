@@ -158,6 +158,11 @@ and use its progress/status procedure.
   `replacement-no-diff-attempt=1` edit-or-block instruction. If the replacement
   also produces no diff and no exact source blocker, write blocked status rather
   than spawning another same-scope worker.
+- If a live worker remains no-diff after a planning checkpoint, inspect it once
+  and force an edit-or-exact-blocker handoff. Do not allow indefinite read-only
+  source mapping: the next state must be a source diff,
+  `required-path-outside-owned: RELATIVE_PATH`, `validation-repair-needed:`, or
+  blocked status with a source-visible reason.
 - Never let a verifier receive writable ownership for a worker's owned paths.
 - Before accepting completed worker or subagent work, run `bin/subagent.sh assignment-check NAME`.
 - Always capture final output before killing a worker.

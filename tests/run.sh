@@ -767,6 +767,7 @@ assert_file_contains "$ROOT/prompts/worker.md" "normally limit yourself to three
 assert_file_contains "$ROOT/prompts/worker.md" "Do not report blocked merely because a read-count limit was consumed"
 assert_file_contains "$ROOT/prompts/worker.md" 'JSON arguments include a `cmd` string'
 assert_file_contains "$ROOT/prompts/worker.md" "Do not finish with only a plan"
+assert_file_contains "$ROOT/prompts/worker.md" "A long-running worker with no materialized source diff"
 assert_file_contains "$ROOT/prompts/worker.md" "replacement worker over the same owned paths"
 assert_file_contains "$ROOT/prompts/worker.md" "request another same-scope exploratory worker"
 assert_file_contains "$ROOT/prompts/worker.md" "unable-to-verify-repository-state"
@@ -788,10 +789,14 @@ assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "aggregate counts"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "declared-type ownership risk"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "replacement-no-diff-attempt=1"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Do not spawn worker-03/worker-04 over the same owned path"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "live worker remains no-diff after a planning checkpoint"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "most one same-owned-path replacement"
+assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "live worker remains no-diff after a planning checkpoint"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "same-owned-path replacement is allowed at"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "live worker remains no-diff after a planning checkpoint"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "must treat that as"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "That one fresh replacement is the retry budget"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "live worker remains no-diff after a planning checkpoint"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-symbol map contract"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-symbol-map-passed:"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-owner-ledger:"
@@ -953,6 +958,7 @@ assert "spawn exactly one bounded implementation worker" in no_diff_message, no_
 assert "replacement-no-diff-attempt=1" in no_diff_message, no_diff_message
 assert "instead of spawning worker-03/worker-04" in no_diff_message, no_diff_message
 assert "concrete discovery gap" in no_diff_message, no_diff_message
+assert "Do not let a live worker continue read-only source mapping" in no_diff_message, no_diff_message
 for forbidden in ("FAIL_TO_PASS", "PASS_TO_PASS", "test_patch", "selected_test_files_to_run"):
     assert forbidden not in no_diff_message, no_diff_message
 
@@ -1317,6 +1323,12 @@ assert "launch_production_session" in solver_source and "resume=True" in solver_
 )
 assert "EVAL_TERMINAL_DEADLINE_REMAINING" in solver_source and "EVAL_TERMINAL_DEADLINE_GRACE" in solver_source, (
     "active native runs need a terminal deadline checkpoint before timeout"
+)
+assert 'EVAL_NO_DIFF_CHECKPOINT_AFTER", "360"' in solver_source and "EVAL_NO_DIFF_LIVE_HANDOFF_AFTER" in solver_source, (
+    "active no-diff native runs need an early checkpoint and bounded live handoff"
+)
+assert "active no-diff worker exceeded edit-or-block checkpoint" in solver_source, (
+    "live no-diff workers should be handed off instead of consuming the eval timeout"
 )
 assert "EVAL_TERMINAL_FORCE_RESUME" in solver_source and "force_live_handoff=True" in solver_source, (
     "active no-status terminal deadlines should hand off once to the production orchestrator before outer timeout"

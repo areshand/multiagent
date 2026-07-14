@@ -3852,6 +3852,9 @@ def send_orchestrator_no_diff_checkpoint(
     message = (
         f"No-diff planning checkpoint: {elapsed_seconds}s elapsed and /app still has no materialized source diff. "
         "This is a planning-loop warning, not a hidden-test hint. Stop broad repository exploration. "
+        "If a worker is currently running, poll or inspect it once, then force a terminal worker action: apply a narrow source patch now, "
+        "emit `required-path-outside-owned: RELATIVE_PATH`, emit `validation-repair-needed:` with the exact blocker, or write blocked status with the concrete source-visible reason. "
+        "Do not let a live worker continue read-only source mapping without either editing or reporting an exact blocker. "
         "Restate the intended behavior, choose the narrowest likely source files from issue text, visible tests, docs, "
         "source callers, public APIs, data schemas, fixtures, and runtime behavior, then spawn exactly one bounded "
         "implementation worker over those paths with `replacement-no-diff-attempt=1` if this is replacing a no-diff worker. "
@@ -4349,6 +4352,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     selected_validation_claim_seen = False
     convergence_followup_sent = False
     no_diff_checkpoint_sent = False
+    no_diff_live_handoff_sent = False
     progress_repair_sent = False
     terminal_deadline_sent = False
     terminal_deadline_at: float | None = None
@@ -4359,7 +4363,8 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     coverage_followup_limit = int(os.environ.get("EVAL_COVERAGE_FOLLOWUP_LIMIT", "3"))
     early_scope_followup_limit = int(os.environ.get("EVAL_EARLY_SCOPE_FOLLOWUP_LIMIT", "3"))
     convergence_followup_after = int(os.environ.get("EVAL_CONVERGENCE_FOLLOWUP_AFTER", "900"))
-    no_diff_checkpoint_after = int(os.environ.get("EVAL_NO_DIFF_CHECKPOINT_AFTER", "600"))
+    no_diff_checkpoint_after = int(os.environ.get("EVAL_NO_DIFF_CHECKPOINT_AFTER", "360"))
+    no_diff_live_handoff_after = int(os.environ.get("EVAL_NO_DIFF_LIVE_HANDOFF_AFTER", "720"))
     progress_repair_enabled = env_truthy("EVAL_PROGRESS_REPAIR_ENABLED", True)
     progress_repair_after = int(os.environ.get("EVAL_PROGRESS_REPAIR_AFTER", "1200"))
     progress_repair_min_stall = int(os.environ.get("EVAL_PROGRESS_REPAIR_MIN_STALL", "240"))
@@ -5370,6 +5375,49 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                     last_capture = time.monotonic()
                     time.sleep(5)
                     continue
+                if (
+                    not state
+                    and diff_bytes == 0
+                    and no_diff_checkpoint_sent
+                    and not no_diff_live_handoff_sent
+                    and no_diff_live_handoff_after > 0
+                    and time.monotonic() - convergence_start >= no_diff_live_handoff_after
+                    and remaining_seconds > 300
+                    and tmux_has_session(session)
+                ):
+                    no_diff_live_handoff_sent = True
+                    blockers = [
+                        "active production worker/orchestrator remained no-diff after the no-diff checkpoint; force an edit-or-exact-blocker handoff instead of continuing read-only source exploration",
+                        "spawn at most one bounded implementation worker over source-derived ownership hints, or write blocked status with the exact source path/API that prevents a patch",
+                    ]
+                    ownership_hints = list(
+                        dict.fromkeys(
+                            [
+                                *inferred_required_paths_from_worker_text(RUNTIME_ROOT),
+                                *assignment_owned_paths(RUNTIME_ROOT),
+                                *helper_scope_hints(workdir, issue, diff_snapshot, blockers),
+                            ]
+                        )
+                    )
+                    if relaunch_orchestrator_for_blockers(
+                        "active no-diff worker exceeded edit-or-block checkpoint",
+                        diff_snapshot,
+                        [
+                            *blockers,
+                            *[
+                                f"source ownership hint:{path}"
+                                for path in ownership_hints[:8]
+                            ],
+                        ],
+                        "",
+                        force_live_handoff=True,
+                    ):
+                        log(
+                            "no-diff live handoff launched after "
+                            f"{int(time.monotonic() - convergence_start)}s hints={','.join(ownership_hints[:8])}"
+                        )
+                        time.sleep(5)
+                        continue
                 if (
                     not state
                     and diff_bytes == 0

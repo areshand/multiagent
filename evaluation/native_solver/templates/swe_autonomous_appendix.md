@@ -157,6 +157,11 @@ Benchmark spawning path:
   produces no source diff and no exact outside-owned path/source blocker, write
   blocked status with the no-diff worker names and source discovery gap instead
   of spawning another same-scope worker.
+- If a live worker remains no-diff after a planning checkpoint, inspect it once
+  and force an edit-or-exact-blocker handoff. Do not allow indefinite read-only
+  source mapping: the next state must be a source diff,
+  `required-path-outside-owned: RELATIVE_PATH`, `validation-repair-needed:`, or
+  blocked status with a source-visible reason.
 - If the benchmark adapter sends an additional follow-up after a completion
   marker, treat it as a verifier rejection. Remove the weak status marker and
   continue the orchestration loop.

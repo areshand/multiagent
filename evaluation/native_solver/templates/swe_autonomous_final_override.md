@@ -191,6 +191,9 @@ As orchestrator:
    treat that worker as unresolved no-diff failure. Spawn one fresh bounded
    implementation worker with an explicit edit-or-block instruction, or write
    blocked status with the source reason no patch can be made.
+   If a live worker remains no-diff after a planning checkpoint, inspect it once
+   and force an edit-or-exact-blocker handoff; do not let read-only source
+   mapping continue indefinitely.
    That one fresh replacement is the retry budget for the same owned path set.
    Its instruction must include `replacement-no-diff-attempt=1`. If that
    replacement also produces no source diff and no exact outside-owned

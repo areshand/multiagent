@@ -121,6 +121,12 @@ source discovery gap. Do not spawn worker-03/worker-04 over the same owned path
 set without a new verifier finding, failed validation command, or exact
 source-derived ownership blocker.
 
+If a live worker remains no-diff after a planning checkpoint, inspect it once and
+force an edit-or-exact-blocker handoff. Do not let read-only source mapping
+continue indefinitely: the next state must be a source diff,
+`required-path-outside-owned: RELATIVE_PATH`, `validation-repair-needed:`, or
+blocked status with a source-visible reason.
+
 Before final acceptance, run:
 
 ```bash
