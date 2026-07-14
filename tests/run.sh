@@ -854,6 +854,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "Never g
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "public solver inputs"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "solver metadata is public-only"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "orchestrator exited with unverified source diff"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "and not orchestrator_exited_without_status(text)"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "changed_python_test_commands"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "changed_go_feature_test_commands"
 assert_file_not_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_ALLOW_EXPECTED_TEST_GUIDANCE"

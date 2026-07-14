@@ -5377,6 +5377,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                     and diff_bytes > 0
                     and early_scope_followups_sent < early_scope_followup_limit
                     and tmux_has_session(session)
+                    and not orchestrator_exited_without_status(text)
                 ):
                     diff = git_diff(workdir)
                     early_scope_blockers = implementation_scope_blockers(issue, diff, {}, task_metadata)
