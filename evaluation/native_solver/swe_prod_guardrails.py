@@ -200,12 +200,13 @@ def implementation_scope_blockers(
         if workdir:
             blockers.extend(source_symbol_owner_candidate_blockers(workdir, issue, diff, current_status))
 
-    if dependency_contract_changed(diff) and not constructor_dependency_has_evidence(status_text):
+    if dependency_contract_changed(diff) and not dependency_contract_has_evidence(diff, status_text):
         blockers.append(
             "dependency/provider contract changed, but status does not include `constructor-dependency-checked:` "
-            "with constructor/factory, production wiring, mock/fake, and caller/API compatibility evidence. "
-            "Do not accept optional type assertions, bridge/store/interface changes, or fallback providers without "
-            "proving the owning constructor and visible call sites remain compatible."
+            "with constructor/factory, production wiring, mock/fake, and caller/API compatibility evidence, or "
+            "`provider-capability-checked:` for a guarded optional provider with declared receiver, method/provider, "
+            "concrete provider, source declaration, and compile evidence. Do not accept bridge/store/interface changes "
+            "or fallback providers without proving the owning constructor or guarded provider remains compatible."
         )
 
     if any(marker in issue_lower for marker in ("resend", "re-send", "retry", "throttle", "expiry", "expired", "ttl")):
@@ -295,7 +296,7 @@ def dependency_contract_changed(diff: str) -> bool:
         return True
     if re.search(r"\bfunc\s+new[a-z0-9_]*\s*\([^)]*(store|storer|bridge|adapter|provider|client|repo|repository|service|gateway)", added):
         return True
-    if re.search(r"\bnew[a-z0-9_]*\s*\([^)]*(store|storer|bridge|adapter|provider|client|repo|repository|service|gateway)", added):
+    if re.search(r"(?<!\.)\bnew[a-z0-9_]*\s*\([^)]*(store|storer|bridge|adapter|provider|client|repo|repository|service|gateway)", added):
         return True
     if ".(" in added and any(term in added for term in dependency_terms):
         return True
@@ -312,6 +313,79 @@ def dependency_contract_changed(diff: str) -> bool:
     if "fallback" in added and any(term in added for term in dependency_terms):
         return True
     return False
+
+
+def required_dependency_contract_changed(diff: str) -> bool:
+    """Return true when the patch changes required construction/API shape."""
+
+    added_lines = [
+        line[1:].strip().lower()
+        for line in diff.splitlines()
+        if line.startswith("+") and not line.startswith("+++")
+    ]
+    if not added_lines:
+        return False
+    added = "\n".join(added_lines)
+    if re.search(r"\btype\s+[a-z0-9_]*(store|storer|bridge|adapter|provider|client|repo|repository|service|gateway)[a-z0-9_]*\s+interface\b", added):
+        return True
+    if re.search(r"\bfunc\s+new[a-z0-9_]*\s*\([^)]*(store|storer|bridge|adapter|provider|client|repo|repository|service|gateway)", added):
+        return True
+    if re.search(r"(?<!\.)\bnew[a-z0-9_]*\s*\([^)]*(store|storer|bridge|adapter|provider|client|repo|repository|service|gateway)", added):
+        return True
+    dependency_terms = (
+        "store",
+        "storer",
+        "bridge",
+        "adapter",
+        "provider",
+        "client",
+        "repo",
+        "repository",
+        "service",
+        "gateway",
+        "factory",
+    )
+    return any(
+        re.search(r"\b" + re.escape(term) + r"\s*[:=]\s*", added)
+        for term in dependency_terms
+    )
+
+
+def optional_provider_contract_changed(diff: str) -> bool:
+    added_lines = [
+        line[1:].strip().lower()
+        for line in diff.splitlines()
+        if line.startswith("+") and not line.startswith("+++")
+    ]
+    if not added_lines:
+        return False
+    added = "\n".join(added_lines)
+    dependency_terms = ("store", "storer", "bridge", "adapter", "provider", "client", "repo", "repository", "service", "gateway")
+    return ".(" in added and any(term in added for term in dependency_terms)
+
+
+def dependency_contract_has_evidence(diff: str, status_text: str) -> bool:
+    if constructor_dependency_has_evidence(status_text):
+        return True
+    if required_dependency_contract_changed(diff):
+        return False
+    return optional_provider_contract_changed(diff) and provider_capability_has_evidence(status_text)
+
+
+def provider_capability_has_evidence(status_text: str) -> bool:
+    text = status_text.lower()
+    has_marker = "provider-capability-checked:" in text or (
+        "dynamic_optional_interface_method=" in text
+        and "call_guard=type_assertion" in text
+    )
+    if not has_marker:
+        return False
+    has_receiver = any(marker in text for marker in ("declared-receiver=", "declared_receiver=", "receiver=", "s.bridge_declared_type=", "s.store_declared_type="))
+    has_method = any(marker in text for marker in ("method=", "provider-method=", "dynamic_optional_interface_method=", "listflags_declared="))
+    has_provider = any(marker in text for marker in ("concrete-provider=", "concrete_provider=", "provider=", "method_exists=true"))
+    has_guard = any(marker in text for marker in ("guard=", "call_guard=type_assertion", "type-assertion", "optional"))
+    has_compile = any(marker in text for marker in ("compile=", "returncode=0", "go-package-validation-passed:"))
+    return has_receiver and has_method and has_provider and has_guard and has_compile
 
 
 def constructor_dependency_has_evidence(status_text: str) -> bool:

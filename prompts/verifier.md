@@ -207,6 +207,11 @@ required behavior when the issue/source contract implies the server itself must
 own the dependency. Acceptance must include `constructor-dependency-checked:`
 with the constructor/factory path, production wiring path, mock/fake path, and
 compile or source evidence that every caller still has a compatible API shape.
+When the patch uses a guarded optional provider/type assertion and does not
+change a constructor, factory, or required interface shape, acceptance may use
+`provider-capability-checked:` instead. It must name the declared receiver type,
+optional method/provider, concrete provider path, guard/type assertion, source
+declaration proving the method exists, and compile evidence after the final diff.
 Missing mock/fake constructors, stale `New(...)` call sites, or dependency
 interfaces updated in the wrong package are blocking hidden-contract findings.
 If a worker claims a package test passed, verify that the command actually

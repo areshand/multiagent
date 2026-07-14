@@ -578,6 +578,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_ap
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "candidate-owner="
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "source-owner-ledger:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "constructor-dependency-checked:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "provider-capability-checked:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "finding-create"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "todo-create"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "resolution-create"
@@ -596,6 +597,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_fi
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "source-symbol-map-passed:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "source-owner-ledger:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "constructor-dependency-checked:"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "provider-capability-checked:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "go-package-validation-passed:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "finding-create"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "todo-create"
@@ -648,6 +650,7 @@ assert_file_contains "$ROOT/prompts/verifier.md" "multi-value-probe.txt"
 assert_file_contains "$ROOT/prompts/verifier.md" "source-symbol-map-passed:"
 assert_file_contains "$ROOT/prompts/verifier.md" "source-owner-ledger:"
 assert_file_contains "$ROOT/prompts/verifier.md" "constructor-dependency-checked:"
+assert_file_contains "$ROOT/prompts/verifier.md" "provider-capability-checked:"
 assert_file_contains "$ROOT/prompts/verifier.md" "go-package-validation-passed:"
 assert_file_contains "$ROOT/prompts/verifier.md" "one single machine-readable"
 assert_file_contains "$ROOT/prompts/verifier.md" "owner-evidence="
@@ -676,6 +679,7 @@ assert_file_contains "$ROOT/prompts/worker.md" "owner-evidence="
 assert_file_contains "$ROOT/prompts/worker.md" "candidate-owner="
 assert_file_contains "$ROOT/prompts/worker.md" "source-owner-ledger:"
 assert_file_contains "$ROOT/prompts/worker.md" "constructor-dependency-checked:"
+assert_file_contains "$ROOT/prompts/worker.md" "provider-capability-checked:"
 assert_file_contains "$ROOT/prompts/worker.md" "callsite="
 assert_file_contains "$ROOT/prompts/worker.md" "aggregate count"
 assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "multi-value-probe-passed:"
@@ -1720,6 +1724,47 @@ dependency_contract_blockers = solve_swe_prod.implementation_scope_blockers(
     },
 )
 assert any("constructor-dependency-checked:" in blocker for blocker in dependency_contract_blockers), dependency_contract_blockers
+optional_provider_diff = (
+    "diff --git a/internal/server/ofrep/evaluation.go b/internal/server/ofrep/evaluation.go\n"
+    "+bridge, ok := s.bridge.(interface { OFREPFlagKeys(context.Context, string) ([]string, error) })\n"
+    "+if !ok { return nil, newFlagsMissingError() }\n"
+    "+return bridge.OFREPFlagKeys(ctx, namespaceKey)\n"
+    "diff --git a/internal/server/evaluation/ofrep_bridge.go b/internal/server/evaluation/ofrep_bridge.go\n"
+    "+store, ok := s.store.(interface { ListFlags(context.Context, *storage.ListRequest[storage.NamespaceRequest]) (storage.ResultSet[*flipt.Flag], error) })\n"
+    "+if !ok { return nil, errors.New(\"ofrep bridge store does not support listing flags\") }\n"
+    "+return store.ListFlags(ctx, req)\n"
+)
+optional_provider_missing_blockers = solve_swe_prod.implementation_scope_blockers(
+    "Bulk evaluation should list all flags when an explicit flag list is omitted.",
+    optional_provider_diff,
+    {
+        "status": "completed",
+        "validation": (
+            "source-owner-ledger: selected-owner=internal/server/ofrep candidate-owner=internal/server/ofrep "
+            "candidate-owner=internal/server/evaluation validation-package=./internal/server/ofrep. "
+            "source-symbol-map-passed: path=internal/server/ofrep/evaluation.go package=ofrep "
+            "added-symbol=bulkEvaluationKeys owner-evidence=bulk-endpoint-owner compile=go-test-ofrep"
+        ),
+    },
+)
+assert any("provider-capability-checked:" in blocker for blocker in optional_provider_missing_blockers), optional_provider_missing_blockers
+optional_provider_evidence_blockers = solve_swe_prod.implementation_scope_blockers(
+    "Bulk evaluation should list all flags when an explicit flag list is omitted.",
+    optional_provider_diff,
+    {
+        "status": "completed",
+        "validation": (
+            "source-owner-ledger: selected-owner=internal/server/ofrep candidate-owner=internal/server/ofrep "
+            "candidate-owner=internal/server/evaluation validation-package=./internal/server/ofrep. "
+            "source-symbol-map-passed: path=internal/server/ofrep/evaluation.go package=ofrep "
+            "added-symbol=bulkEvaluationKeys owner-evidence=bulk-endpoint-owner compile=go-test-ofrep. "
+            "provider-capability-checked: declared-receiver=internal/server/ofrep.Server.bridge "
+            "method=OFREPFlagKeys concrete-provider=internal/server/evaluation.Server "
+            "guard=type-assertion source-declaration=internal/server/evaluation/ofrep_bridge.go compile=go-test-ofrep returncode=0"
+        ),
+    },
+)
+assert not any("provider-capability-checked:" in blocker or "constructor-dependency-checked:" in blocker for blocker in optional_provider_evidence_blockers), optional_provider_evidence_blockers
 weak_dependency_contract_blockers = solve_swe_prod.implementation_scope_blockers(
     "Bulk evaluation should list all flags when an explicit flag list is omitted.",
     dependency_contract_diff,

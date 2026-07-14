@@ -184,6 +184,12 @@ Worker quality bar:
   dependency. Final validation must include
   `constructor-dependency-checked:` naming the constructor/factory path,
   production wiring path, mock/fake path, and compile or source evidence.
+  If the patch uses a guarded optional provider/type assertion and does not
+  change a constructor, factory, or required interface shape, final validation
+  may instead include `provider-capability-checked:` naming the declared
+  receiver type, optional method/provider, concrete provider path,
+  guard/type assertion, source declaration proving the method exists, and
+  compile evidence after the final diff.
 - Basic build correctness is non-negotiable and precedes hidden-contract
   reasoning. For any code diff, final validation must include
   `build-verification-passed: final-diff-sha256=... changed-files=N

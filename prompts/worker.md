@@ -184,6 +184,11 @@ assertion when the source contract implies the server should own the dependency.
 Final validation must include `constructor-dependency-checked:` with the
 constructor/factory path, production wiring path, mock/fake path, and compile or
 source evidence that every caller still has a compatible API shape.
+If the patch uses a guarded optional provider/type assertion instead of changing
+constructor or required interface shape, final validation may use
+`provider-capability-checked:`. It must name the declared receiver type,
+optional method/provider, concrete provider path, guard/type assertion, source
+declaration proving the method exists, and compile evidence after the final diff.
 Do not report `go test -run TestNonExistent`, `go test -run '^$'`, `[no test
 files]`, `no tests to run`, or another no-test compile check as behavioral
 validation for a source repair. Those checks can support compile sanity only;

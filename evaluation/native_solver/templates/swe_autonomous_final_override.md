@@ -59,6 +59,12 @@ As orchestrator:
    `validation` field must include `constructor-dependency-checked:` naming the
    constructor/factory path, production wiring path, mock/fake path, and compile
    or source evidence that every caller still has a compatible API shape.
+   For a guarded optional provider/type assertion that does not change a
+   constructor, factory, or required interface shape, the status JSON
+   `validation` field may instead include `provider-capability-checked:` naming
+   the declared receiver type, optional method/provider, concrete provider path,
+   guard/type assertion, source declaration proving the method exists, and
+   compile evidence after the final diff.
 9. Before writing completed status, check the final validation text for
    machine-gated evidence markers:
    - If worker or verifier output contains a relevant failed validation command,
