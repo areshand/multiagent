@@ -49,7 +49,7 @@ Usage:
   bin/subagent.sh validation-lease-status LEASE_ID planned|running|passed|failed|timed-out|stale|released [--result-json JSON]
   bin/subagent.sh validation-lease-show LEASE_ID
   bin/subagent.sh validation-lease-list [--state STATE]
-  bin/subagent.sh validation-run LEASE_ID --owner NAME --target TEXT [--resource-risk TEXT] -- COMMAND [ARG ...]
+  bin/subagent.sh validation-run LEASE_ID --owner NAME --target TEXT [--resource-risk TEXT] [--timeout-seconds N] -- COMMAND [ARG ...]
   bin/subagent.sh gate-check
   bin/subagent.sh poll NAME
   bin/subagent.sh inspect NAME [--lines N]
@@ -2352,6 +2352,8 @@ validation_run_result_json() {
   local stdout_path="$5"
   local stderr_path="$6"
   local cwd="$7"
+  local timeout_seconds="$8"
+  local timed_out="$9"
   require_cmd python3
   python3 -c '
 import json
@@ -2365,6 +2367,8 @@ finished_at = sys.argv[4]
 stdout_path = pathlib.Path(sys.argv[5])
 stderr_path = pathlib.Path(sys.argv[6])
 cwd = sys.argv[7]
+timeout_seconds = int(sys.argv[8])
+timed_out = sys.argv[9] == "1"
 
 def tail(path):
     text = path.read_text(errors="replace") if path.exists() else ""
@@ -2377,10 +2381,12 @@ print(json.dumps({
     "cwd": cwd,
     "started_at": started_at,
     "finished_at": finished_at,
+    "timeout_seconds": timeout_seconds,
+    "timed_out": timed_out,
     "stdout_tail": tail(stdout_path),
     "stderr_tail": tail(stderr_path),
 }, sort_keys=True))
-' "$command_json" "$return_code" "$started_at" "$finished_at" "$stdout_path" "$stderr_path" "$cwd"
+' "$command_json" "$return_code" "$started_at" "$finished_at" "$stdout_path" "$stderr_path" "$cwd" "$timeout_seconds" "$timed_out"
 }
 
 validation_run() {
@@ -2390,7 +2396,7 @@ validation_run() {
   require_cmd python3
   shift
 
-  local owner="" target="" resource_risk=""
+  local owner="" target="" resource_risk="" timeout_seconds="${MULTIAGENT_VALIDATION_TIMEOUT_SECONDS:-600}"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --owner)
@@ -2403,6 +2409,10 @@ validation_run() {
         ;;
       --resource-risk)
         resource_risk="${2:-}"
+        shift 2
+        ;;
+      --timeout-seconds)
+        timeout_seconds="${2:-}"
         shift 2
         ;;
       --)
@@ -2420,8 +2430,9 @@ validation_run() {
   [[ -n "$target" ]] || die "validation-run requires --target TEXT"
   [[ $# -gt 0 ]] || die "validation-run requires COMMAND after --"
   [[ -d "$ROOT" ]] || die "validation-run root does not exist: $ROOT"
+  [[ "$timeout_seconds" =~ ^[0-9]+$ && "$timeout_seconds" -gt 0 ]] || die "validation-run --timeout-seconds must be a positive integer"
 
-  local command_json command_text tmp_dir stdout_path stderr_path started_at finished_at rc result_json run_cwd
+  local command_json command_text tmp_dir stdout_path stderr_path timeout_flag_path started_at finished_at rc result_json run_cwd timed_out
   command_json="$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1:]))' "$@")"
   command_text="$(python3 -c 'import json, sys; print(" ".join(json.loads(sys.argv[1])))' "$command_json")"
   validation_lease_acquire "$lease_id" --owner "$owner" --target "$target" --command "$command_text" --state running --resource-risk "$resource_risk" >/dev/null
@@ -2429,18 +2440,70 @@ validation_run() {
   tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/multiagent-validation-run.XXXXXX")"
   stdout_path="$tmp_dir/stdout"
   stderr_path="$tmp_dir/stderr"
+  timeout_flag_path="$tmp_dir/timed-out"
   run_cwd="$(cd "$ROOT" && pwd -P)"
   started_at="$(timestamp)"
   set +e
-  (cd "$run_cwd" && "$@") >"$stdout_path" 2>"$stderr_path"
+  python3 - "$command_json" "$run_cwd" "$stdout_path" "$stderr_path" "$timeout_seconds" "$timeout_flag_path" <<'PY'
+import json
+import os
+import signal
+import subprocess
+import sys
+
+argv = json.loads(sys.argv[1])
+cwd = sys.argv[2]
+stdout_path = sys.argv[3]
+stderr_path = sys.argv[4]
+timeout_seconds = int(sys.argv[5])
+timeout_flag_path = sys.argv[6]
+
+with open(stdout_path, "wb") as stdout, open(stderr_path, "wb") as stderr:
+    proc = subprocess.Popen(
+        argv,
+        cwd=cwd,
+        stdout=stdout,
+        stderr=stderr,
+        start_new_session=True,
+    )
+    try:
+        rc = proc.wait(timeout=timeout_seconds)
+        timed_out = False
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.wait()
+        rc = 124
+
+with open(stderr_path, "ab") as stderr:
+    if timed_out:
+        stderr.write(f"\nvalidation-run timed out after {timeout_seconds} seconds\n".encode())
+
+with open(timeout_flag_path, "w", encoding="utf-8") as flag:
+    flag.write("1\n" if timed_out else "0\n")
+raise SystemExit(rc)
+PY
   rc=$?
+  timed_out="$(tr -d '\n' <"$timeout_flag_path" 2>/dev/null || printf '0')"
   set -e
   finished_at="$(timestamp)"
 
   cat "$stdout_path"
   cat "$stderr_path" >&2
-  result_json="$(validation_run_result_json "$command_json" "$rc" "$started_at" "$finished_at" "$stdout_path" "$stderr_path" "$run_cwd")"
-  if [[ "$rc" -eq 0 ]]; then
+  result_json="$(validation_run_result_json "$command_json" "$rc" "$started_at" "$finished_at" "$stdout_path" "$stderr_path" "$run_cwd" "$timeout_seconds" "$timed_out")"
+  if [[ "$timed_out" -eq 1 ]]; then
+    validation_lease_status "$lease_id" timed-out --result-json "$result_json" >/dev/null
+  elif [[ "$rc" -eq 0 ]]; then
     validation_lease_status "$lease_id" passed --result-json "$result_json" >/dev/null
   else
     validation_lease_status "$lease_id" failed --result-json "$result_json" >/dev/null

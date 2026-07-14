@@ -413,6 +413,22 @@ assert_file_contains "$TMPDIR/validation-run-fail.err" "validation-fail"
 MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease-show validation-run-fail >"$TMPDIR/validation-run-fail-lease.out"
 assert_file_contains "$TMPDIR/validation-run-fail-lease.out" '"state": "failed"'
 assert_file_contains "$TMPDIR/validation-run-fail-lease.out" '"returncode": 7'
+set +e
+MULTIAGENT_VALIDATION_TIMEOUT_SECONDS=1 MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-run validation-run-timeout \
+  --owner worker-02-ofrep-build \
+  --target "unit-target-timeout" \
+  -- bash -lc 'sleep 2' >"$TMPDIR/validation-run-timeout.out" 2>"$TMPDIR/validation-run-timeout.err"
+timeout_rc=$?
+set -e
+if [[ "$timeout_rc" -ne 124 ]]; then
+  echo "expected validation-run timeout rc 124, got $timeout_rc" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/validation-run-timeout.err" "validation-run timed out after 1 seconds"
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease-show validation-run-timeout >"$TMPDIR/validation-run-timeout-lease.out"
+assert_file_contains "$TMPDIR/validation-run-timeout-lease.out" '"state": "timed-out"'
+assert_file_contains "$TMPDIR/validation-run-timeout-lease.out" '"returncode": 124'
+assert_file_contains "$TMPDIR/validation-run-timeout-lease.out" '"timed_out": true'
 if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-run validation-run-conflict \
   --owner verifier-01-ofrep-build \
   --target "./internal/server/ofrep ./internal/server/evaluation" \
