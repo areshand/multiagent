@@ -4699,6 +4699,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     terminal_deadline_sent = False
     terminal_deadline_at: float | None = None
     no_diff_blocked_retries = 0
+    active_followup_extensions = 0
     convergence_start = time.monotonic()
     last_diff_digest = ""
     last_diff_changed_at = convergence_start
@@ -4714,6 +4715,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     terminal_deadline_grace = int(os.environ.get("EVAL_TERMINAL_DEADLINE_GRACE", "300"))
     terminal_force_resume_enabled = env_truthy("EVAL_TERMINAL_FORCE_RESUME", True)
     no_diff_blocked_retry_limit = int(os.environ.get("EVAL_NO_DIFF_BLOCKED_RETRY_LIMIT", "4"))
+    active_followup_extension_limit = int(os.environ.get("EVAL_ACTIVE_FOLLOWUP_EXTENSION_LIMIT", "8"))
     adapter_helper_worker_limit = int(os.environ.get("EVAL_ADAPTER_HELPER_WORKER_LIMIT", "1"))
     orchestrator_resume_limit = int(os.environ.get("EVAL_ORCHESTRATOR_RESUME_LIMIT", "1"))
     orchestrator_resume_attempts = 0
@@ -6275,6 +6277,23 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                                 + "; ".join(active_no_diff_workers[:3])
                             )
                             time.sleep(5)
+                            continue
+                        active_followup_workers = active_repair_subagent_summaries(RUNTIME_ROOT)
+                        if (
+                            diff.strip()
+                            and active_followup_workers
+                            and active_followup_extensions < active_followup_extension_limit
+                            and int(deadline - time.monotonic()) > 240
+                        ):
+                            active_followup_extensions += 1
+                            log(
+                                "coverage-followup orchestrator exit delayed because active repair worker(s) are still running "
+                                f"extension={active_followup_extensions}/{active_followup_extension_limit}: "
+                                + "; ".join(active_followup_workers[:3])
+                            )
+                            coverage_followup_at = time.monotonic()
+                            last_capture = 0.0
+                            time.sleep(30)
                             continue
                         ownership_paths = list(
                             dict.fromkeys(

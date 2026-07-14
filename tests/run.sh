@@ -1417,6 +1417,12 @@ assert "orchestrator exited while implementation worker remained active with no 
 assert "active no-diff worker handoff launched after coverage-followup orchestrator exit" in solver_source, (
     "orphaned active no-diff workers should be visible in diagnostics and bounded by the no-diff retry budget"
 )
+assert "EVAL_ACTIVE_FOLLOWUP_EXTENSION_LIMIT" in solver_source, (
+    "active source-diff follow-up workers need a bounded grace budget before local coverage-followup rejection"
+)
+assert "coverage-followup orchestrator exit delayed because active repair worker" in solver_source, (
+    "coverage-followup exits should wait briefly for active implementation follow-up workers before rc=2"
+)
 assert "FAILURE_DIAGNOSTICS_PATH" in solver_source and "failure-diagnostics.txt" in solver_source, (
     "native wrapper should persist structured failure diagnostics for the eval runner"
 )
