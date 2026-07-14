@@ -672,6 +672,7 @@ def write_go_singleflight_wrapper(real_go: str | None = None) -> None:
 from __future__ import annotations
 
 import hashlib
+import fcntl
 import json
 import os
 import subprocess
@@ -705,6 +706,14 @@ def key_for(argv: list[str]) -> str:
     payload = {{
         "cwd": str(Path.cwd()),
         "argv": argv,
+    }}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def result_key_for(argv: list[str]) -> str:
+    payload = {{
+        "cwd": str(Path.cwd()),
+        "argv": argv,
         "diff": repo_diff_hash(),
     }}
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
@@ -722,27 +731,6 @@ def replay(lock_dir: Path) -> int:
         return int(rc_file.read_text().strip())
     except Exception:
         return 1
-
-
-def wait_for(lock_dir: Path) -> int:
-    started = time.monotonic()
-    while time.monotonic() - started < WAIT_TIMEOUT:
-        status = lock_dir / "status"
-        if status.exists() and status.read_text(errors="replace").strip() == "done":
-            sys.stderr.write(f"go singleflight: replaying completed validation {{lock_dir.name}}\\n")
-            return replay(lock_dir)
-        pid_file = lock_dir / "pid"
-        if pid_file.exists():
-            try:
-                os.kill(int(pid_file.read_text().strip()), 0)
-            except Exception:
-                (lock_dir / "returncode").write_text("1\\n")
-                (lock_dir / "stderr.log").write_text("go singleflight: owner process disappeared before writing result\\n")
-                status.write_text("done\\n")
-                return replay(lock_dir)
-        time.sleep(2)
-    sys.stderr.write(f"go singleflight: timed out waiting for validation {{lock_dir.name}}\\n")
-    return 124
 
 
 def run_owner(lock_dir: Path, argv: list[str]) -> int:
@@ -763,13 +751,22 @@ def main() -> int:
     if not argv or argv[0] != "test":
         os.execv(REAL_GO, [REAL_GO, *argv])
     LOCK_ROOT.mkdir(parents=True, exist_ok=True)
-    lock_dir = LOCK_ROOT / key_for(argv)
-    try:
-        lock_dir.mkdir()
-    except FileExistsError:
-        sys.stderr.write(f"go singleflight: waiting for duplicate validation {{lock_dir.name}}\\n")
-        return wait_for(lock_dir)
-    return run_owner(lock_dir, argv)
+    results_root = LOCK_ROOT / "results"
+    results_root.mkdir(parents=True, exist_ok=True)
+    lock_path = LOCK_ROOT / f"{{key_for(argv)}}.lock"
+    with lock_path.open("a+") as lock_file:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            sys.stderr.write(f"go singleflight: waiting for duplicate validation {{lock_path.stem}}\\n")
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        lock_dir = results_root / result_key_for(argv)
+        status = lock_dir / "status"
+        if status.exists() and status.read_text(errors="replace").strip() == "done":
+            sys.stderr.write(f"go singleflight: replaying completed validation {{lock_dir.name}}\\n")
+            return replay(lock_dir)
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        return run_owner(lock_dir, argv)
 
 
 if __name__ == "__main__":

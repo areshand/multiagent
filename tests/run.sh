@@ -937,9 +937,16 @@ with tempfile.TemporaryDirectory() as td:
     fake_go = Path(td) / "go-real"
     count_file = Path(td) / "go-count"
     workdir.mkdir()
+    subprocess.run(["git", "init"], cwd=workdir, check=True, stdout=subprocess.DEVNULL)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=workdir, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=workdir, check=True)
+    (workdir / "tracked.go").write_text("package main\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.go"], cwd=workdir, check=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=workdir, check=True, stdout=subprocess.DEVNULL)
     fake_go.write_text(
         "#!/usr/bin/env bash\n"
         "printf '%s\\n' \"$*\" >> " + str(count_file) + "\n"
+        "sleep 0.2\n"
         "printf 'fake go %s\\n' \"$*\"\n",
         encoding="utf-8",
     )
@@ -950,14 +957,23 @@ with tempfile.TemporaryDirectory() as td:
         runtime_root.mkdir()
         solve_swe_prod.write_go_singleflight_wrapper(str(fake_go))
         go = runtime_root / "go"
-        first = subprocess.run([str(go), "test", "./pkg"], cwd=workdir, text=True, capture_output=True, check=False)
-        second = subprocess.run([str(go), "test", "./pkg"], cwd=workdir, text=True, capture_output=True, check=False)
+        first_proc = subprocess.Popen([str(go), "test", "./pkg"], cwd=workdir, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        second_proc = subprocess.Popen([str(go), "test", "./pkg"], cwd=workdir, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        first_stdout, first_stderr = first_proc.communicate(timeout=10)
+        second_stdout, second_stderr = second_proc.communicate(timeout=10)
+        first = SimpleNamespace(returncode=first_proc.returncode, stdout=first_stdout, stderr=first_stderr)
+        second = SimpleNamespace(returncode=second_proc.returncode, stdout=second_stdout, stderr=second_stderr)
         assert first.returncode == 0, first.stderr
         assert second.returncode == 0, second.stderr
         assert "fake go test ./pkg" in first.stdout, first.stdout
         assert "fake go test ./pkg" in second.stdout, second.stdout
         assert count_file.read_text(encoding="utf-8").splitlines() == ["test ./pkg"]
-        assert "replaying completed validation" in second.stderr, second.stderr
+        assert "waiting for duplicate validation" in (first.stderr + second.stderr), (first.stderr, second.stderr)
+        assert "replaying completed validation" in (first.stderr + second.stderr), (first.stderr, second.stderr)
+        (workdir / "tracked.go").write_text("package main\n// changed\n", encoding="utf-8")
+        third = subprocess.run([str(go), "test", "./pkg"], cwd=workdir, text=True, capture_output=True, check=False)
+        assert third.returncode == 0, third.stderr
+        assert count_file.read_text(encoding="utf-8").splitlines() == ["test ./pkg", "test ./pkg"]
     finally:
         solve_swe_prod.RUNTIME_ROOT = original_runtime_root
 
