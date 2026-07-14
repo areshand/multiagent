@@ -1391,6 +1391,84 @@ absent_patch_status = {
     ),
 }
 assert not solve_swe_prod.official_expected_test_blockers(metadata, absent_patch_status), solve_swe_prod.official_expected_test_blockers(metadata, absent_patch_status)
+with tempfile.TemporaryDirectory() as td:
+    runtime = Path(td) / "runtime"
+    runtime.mkdir()
+    original_runtime = solve_swe_prod.RUNTIME_ROOT
+    original_workdir = solve_swe_prod.DEFAULT_WORKDIR
+    original_multiagent_root = solve_swe_prod.DEFAULT_MULTIAGENT_ROOT
+    solve_swe_prod.RUNTIME_ROOT = runtime
+    solve_swe_prod.DEFAULT_WORKDIR = Path(td) / "app"
+    solve_swe_prod.DEFAULT_WORKDIR.mkdir()
+    solve_swe_prod.DEFAULT_MULTIAGENT_ROOT = root
+    try:
+        subprocess.run(
+            [
+                str(root / "bin/subagent.sh"),
+                "finding-create",
+                "F-OPEN",
+                "--severity",
+                "blocking",
+                "--type",
+                "compile_failure",
+                "--summary",
+                "compile failed",
+                "--evidence-json",
+                '{"cmd":"go test ./pkg","rc":1}',
+                "--required-resolution",
+                "go test ./pkg returns 0",
+                "--affected",
+                "pkg",
+            ],
+            env={**os.environ, "MULTIAGENT_STATE_DIR": str(runtime), "MULTIAGENT_ROOT": str(solve_swe_prod.DEFAULT_WORKDIR)},
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            [
+                str(root / "bin/subagent.sh"),
+                "todo-create",
+                "T-OPEN",
+                "--source-finding-id",
+                "F-OPEN",
+                "--task",
+                "fix compile",
+                "--done-criteria",
+                "go test ./pkg returns 0",
+                "--required-command",
+                "go test ./pkg",
+            ],
+            env={**os.environ, "MULTIAGENT_STATE_DIR": str(runtime), "MULTIAGENT_ROOT": str(solve_swe_prod.DEFAULT_WORKDIR)},
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            [
+                str(root / "bin/subagent.sh"),
+                "resolution-create",
+                "T-OPEN",
+                "--worker",
+                "worker-01",
+                "--status",
+                "resolved",
+                "--validation-json",
+                '[{"cmd":"go test ./pkg","rc":0}]',
+                "--why",
+                "compiled",
+            ],
+            env={**os.environ, "MULTIAGENT_STATE_DIR": str(runtime), "MULTIAGENT_ROOT": str(solve_swe_prod.DEFAULT_WORKDIR)},
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        gate_blockers = solve_swe_prod.structured_repair_gate_blockers()
+        assert gate_blockers and "status=resolved" in gate_blockers[0], gate_blockers
+    finally:
+        solve_swe_prod.RUNTIME_ROOT = original_runtime
+        solve_swe_prod.DEFAULT_WORKDIR = original_workdir
+        solve_swe_prod.DEFAULT_MULTIAGENT_ROOT = original_multiagent_root
 generic_commands = solve_swe_prod.coverage_probe_commands(
     Path("/tmp"),
     "A text parser should decode escaped strings.",

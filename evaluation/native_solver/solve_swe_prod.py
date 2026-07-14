@@ -329,6 +329,43 @@ def run(
     return result
 
 
+def structured_repair_gate_blockers() -> list[str]:
+    """Return blockers if runtime structured repair state does not pass gate-check."""
+
+    subagent = DEFAULT_MULTIAGENT_ROOT / "bin/subagent.sh"
+    if not subagent.exists():
+        return []
+
+    blockers: list[str] = []
+    seen_state_dirs: set[Path] = set()
+    for state_dir in (RUNTIME_ROOT, RUNTIME_ROOT / "state"):
+        if state_dir in seen_state_dirs:
+            continue
+        seen_state_dirs.add(state_dir)
+        if not any((state_dir / name).exists() for name in ("findings", "todos")):
+            continue
+        env = os.environ.copy()
+        env.update(
+            {
+                "MULTIAGENT_ROOT": str(DEFAULT_WORKDIR),
+                "MULTIAGENT_STATE_DIR": str(state_dir),
+            }
+        )
+        result = run(
+            [str(subagent), "gate-check"],
+            cwd=DEFAULT_MULTIAGENT_ROOT,
+            env=env,
+            timeout=30,
+        )
+        output = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+        if result.returncode != 0:
+            blockers.append(
+                "structured repair gate rejects completed status for "
+                f"{state_dir}: {output[-2000:] or 'gate-check failed without output'}"
+            )
+    return blockers
+
+
 def require_path(path: Path, description: str) -> None:
     if not path.exists():
         raise RuntimeError(f"missing {description}: {path}")
@@ -3453,7 +3490,8 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 text = captured_text()
                 scope_blockers = implementation_scope_blockers(issue, diff, current_status, task_metadata)
                 coverage_blockers = validation_coverage_blockers(issue, diff, text, current_status, task_metadata)
-                blockers = [*scope_blockers, *coverage_blockers]
+                structured_gate_blockers = structured_repair_gate_blockers()
+                blockers = [*scope_blockers, *coverage_blockers, *structured_gate_blockers]
                 probe_report = ""
                 if coverage_probe_satisfied:
                     blockers = blockers_after_passing_public_probe(blockers)

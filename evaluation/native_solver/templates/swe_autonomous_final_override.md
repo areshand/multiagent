@@ -135,7 +135,10 @@ As orchestrator:
    only after verifier recheck accepts the original finding. Run
    `bin/subagent.sh gate-check`; if it rejects an unqueued finding, an open,
    assigned, resolved, reopened todo, or a closed todo without closure evidence,
-   route repair or write blocked status instead of completed status.
+   route repair or write blocked status instead of completed status. If
+   `todo-close` exits nonzero or `gate-check` exits nonzero, do not write
+   completed status; repair the structured evidence/closure first or write
+   blocked status with the exact command failure.
 11. Completion requires both accepted source state in `/app` and
    `/tmp/multiagent-prod-swe/status.json`.
 12. If the run has a non-empty source diff but no accepted verifier/status

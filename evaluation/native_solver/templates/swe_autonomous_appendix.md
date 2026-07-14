@@ -127,7 +127,10 @@ Benchmark spawning path:
   `bin/subagent.sh todo-close` only after a verifier rechecks the original
   finding with accepted evidence. Run `bin/subagent.sh gate-check` before
   writing completed status; any open, assigned, resolved, reopened, or closed
-  todo lacking closure evidence blocks completion.
+  todo lacking closure evidence blocks completion. If `todo-close` exits
+  nonzero or `gate-check` exits nonzero, do not write completed status; repair
+  the structured evidence/closure first or write blocked status with the exact
+  command failure.
 - If worker/verifier spawning fails, record the exact blocker in status JSON
   only after retrying once with a fresh, differently named bounded worker or
   verifier.
