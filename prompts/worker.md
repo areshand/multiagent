@@ -34,6 +34,12 @@ Also include:
 - If you discover another live worker or validation command is operating on the
   same owned package/path, stop and report the overlap to the orchestrator
   instead of starting a duplicate long-running test.
+- If shell/tool output shows repository files, `git status`, `git diff`, or
+  command output from your assigned working directory, you have repository
+  access for that evidence. Do not report synthetic blockers such as
+  `required-path-outside-owned: unable-to-verify-repository-state`. If the
+  evidence is insufficient, name the exact missing repository-relative
+  source path/API or continue with a bounded source edit/block decision.
 
 ## Intent And Contract
 

@@ -2211,6 +2211,12 @@ def valid_required_path_outside_owned_report(report: str) -> bool:
         return False
     if normalized in {"RELATIVE_PATH", "RELATIVE_PATHS", "PATH", "PATHS"}:
         return False
+    if normalized in {
+        "unable-to-verify-repository-state",
+        "unable-to-access-repository",
+        "repository-state",
+    }:
+        return False
     if normalized.startswith(("<", "{", "$")):
         return False
     if any(token in normalized for token in ("...", "*", "\n", "\t")):

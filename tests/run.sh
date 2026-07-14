@@ -769,6 +769,7 @@ assert_file_contains "$ROOT/prompts/worker.md" 'JSON arguments include a `cmd` s
 assert_file_contains "$ROOT/prompts/worker.md" "Do not finish with only a plan"
 assert_file_contains "$ROOT/prompts/worker.md" "replacement worker over the same owned paths"
 assert_file_contains "$ROOT/prompts/worker.md" "request another same-scope exploratory worker"
+assert_file_contains "$ROOT/prompts/worker.md" "unable-to-verify-repository-state"
 assert_file_contains "$ROOT/prompts/worker.md" "constructor-dependency-checked:"
 assert_file_contains "$ROOT/prompts/worker.md" "provider-capability-checked:"
 assert_file_contains "$ROOT/prompts/worker.md" "required-path-outside-owned:"
@@ -789,6 +790,7 @@ assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "replacement-no
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Do not spawn worker-03/worker-04 over the same owned path"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "most one same-owned-path replacement"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "same-owned-path replacement is allowed at"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "must treat that as"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "That one fresh replacement is the retry budget"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-symbol map contract"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-symbol-map-passed:"
@@ -1206,6 +1208,7 @@ with tempfile.TemporaryDirectory() as td:
         "internal/server/ofrep/evaluation.go",
     ], required_paths
     assert not solve_swe_prod.valid_required_path_outside_owned_report("RELATIVE_PATH")
+    assert not solve_swe_prod.valid_required_path_outside_owned_report("unable-to-verify-repository-state")
     assert solve_swe_prod.valid_required_path_outside_owned_report("internal/server/ofrep/evaluation.go")
     assert solve_swe_prod.assignment_owned_paths(runtime_root) == [
         "lib/kube/proxy/forwarder.go",

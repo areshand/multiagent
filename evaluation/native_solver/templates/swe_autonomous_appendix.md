@@ -140,6 +140,13 @@ Benchmark spawning path:
   resolution evidence. Give workers the exact helper command using
   `${MULTIAGENT_HELPER:-/opt/multiagent/bin/subagent.sh}` or run it from
   `/opt/multiagent` with `MULTIAGENT_ROOT=/app`.
+- If a worker can see shell output from `/app`, repository file contents, git
+  status, git diff, or command results in its transcript, it must treat that as
+  repository access. Do not accept or emit synthetic outside-owned blockers such
+  as `required-path-outside-owned: unable-to-verify-repository-state`; the worker
+  must either patch from visible source evidence, name an exact missing
+  repository-relative source path/API, or write a concrete source-visible
+  blocker.
 - If worker/verifier spawning fails, record the exact blocker in status JSON
   only after retrying once with a fresh, differently named bounded worker or
   verifier.
