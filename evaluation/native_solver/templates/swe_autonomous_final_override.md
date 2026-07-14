@@ -174,6 +174,11 @@ As orchestrator:
    task/source evidence, spawn exactly one bounded implementation worker over
    those paths, or write blocked status with the concrete discovery gap. Do not
    keep spawning read-only scouts over the same question.
+   If an implementation worker exits after only restating the task, listing
+   likely files, or producing a checklist while `/app` still has no source diff,
+   treat that worker as unresolved no-diff failure. Spawn one fresh bounded
+   implementation worker with an explicit edit-or-block instruction, or write
+   blocked status with the source reason no patch can be made.
 14. If a worker reports an `apply_patch` stale-hunk, missing-context, or patch
    failure, treat the intended patch as not applied. Re-read the live target
    file, rebase the edit onto current contents, and rerun affected validation

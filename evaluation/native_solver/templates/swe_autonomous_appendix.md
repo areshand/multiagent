@@ -158,6 +158,13 @@ Worker quality bar:
 
 - First restate the issue as an observable behavior change and identify likely
   source files before editing.
+- This restatement is a starting step, not a valid final result. After likely
+  source files are known, run at most three focused read-only command batches
+  before choosing one terminal implementation action: apply the smallest source
+  patch, report `required-path-outside-owned: RELATIVE_PATH`, report
+  `validation-repair-needed:` with the exact blocker, or write blocked status
+  with the concrete source discovery gap. Do not finish with only a checklist,
+  source map, or plan while `/app` has no materialized source diff.
 - Maintain an explicit requirement checklist from the issue text. Each item
   needs one of: a source change, a source-level reason no change is needed, or a
   blocked note.
