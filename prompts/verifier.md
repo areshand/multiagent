@@ -332,6 +332,10 @@ The first non-empty line of the final verifier message must be exactly
 diff. A missing verdict, stale hash, or unbound acceptance is blocking at the
 framework gate.
 
+Prefer the exact line marker above. If structured JSON is also emitted, use
+`final_diff_sha256`, `compile_clean: true`, and a non-empty `commands` array
+whose every entry records `rc: 0`; the gate treats that as equivalent evidence.
+
 ## Miss Taxonomy
 
 If a later failure shows the verifier missed something, categorize it as one of:

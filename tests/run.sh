@@ -450,6 +450,11 @@ printf 'ACCEPTED\nbuild-verification-passed: final-diff-sha256=%s compile_clean=
 MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
   "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-verifier-bound-hash.out"
 assert_file_contains "$TMPDIR/gate-verifier-bound-hash.out" "accepted"
+printf 'ACCEPTED\n{"verdict":"ACCEPTED","final_diff_sha256":"%s","build_verification_passed":{"final_diff_sha256":"%s","compile_clean":true,"commands":[{"cmd":"test -f source.txt","rc":0}]}}\n' \
+  "$HASH_GATE_DIFF_SHA" "$HASH_GATE_DIFF_SHA" >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
+MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
+  "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-verifier-structured-hash.out"
+assert_file_contains "$TMPDIR/gate-verifier-structured-hash.out" "accepted"
 
 LEGACY_RESOLUTION_STATE="$TMPDIR/legacy-resolution-state"
 mkdir -p "$LEGACY_RESOLUTION_STATE"
@@ -885,6 +890,25 @@ from evaluation import swe_bench_pro_scaffold_parity
 from evaluation.swe_bench_pro_on_demand import OnDemandImageManager
 from evaluation import swe_bench_pro_run_parallel_shards
 from evaluation import swe_bench_pro_run_next_shard
+
+structured_diff = "diff --git a/src/service.py b/src/service.py\n+def fixed():\n+    return True\n"
+structured_hash = solve_swe_prod.final_diff_sha256(structured_diff)
+structured_acceptance = "ACCEPTED\n" + json.dumps(
+    {
+        "verdict": "ACCEPTED",
+        "final_diff_sha256": structured_hash,
+        "build_verification_passed": {
+            "final_diff_sha256": structured_hash,
+            "compile_clean": True,
+            "commands": [
+                {"cmd": "python -m py_compile src/service.py", "rc": 0},
+            ],
+        },
+    }
+)
+assert solve_swe_prod.build_verification_has_evidence(structured_acceptance, structured_diff)
+structured_failed = structured_acceptance.replace('"rc": 0', '"rc": 1')
+assert not solve_swe_prod.build_verification_has_evidence(structured_failed, structured_diff)
 
 with tempfile.TemporaryDirectory() as td:
     prompt_test_root = Path(td)

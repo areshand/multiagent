@@ -3126,8 +3126,6 @@ def changed_code_paths_from_diff(diff: str) -> list[str]:
 def build_verification_has_evidence(text: str, diff: str) -> bool:
     lower = text.lower().replace("\\n", "\n")
     diff_hash = final_diff_sha256(diff).lower()
-    if "build-verification-passed:" not in lower:
-        return False
     for match in re.finditer("build-verification-passed:", lower):
         window = lower[match.start() : match.start() + 800]
         if f"final-diff-sha256={diff_hash}" not in window and f'"final_diff_hash": "{diff_hash}"' not in window:
@@ -3137,6 +3135,37 @@ def build_verification_has_evidence(text: str, diff: str) -> bool:
         if not any(marker in window for marker in ("returncode=0", "rc=0", '"rc": 0', '"returncode": 0')):
             continue
         return True
+    decoder = json.JSONDecoder()
+    for offset, character in enumerate(text):
+        if character != "{":
+            continue
+        try:
+            payload, _ = decoder.raw_decode(text[offset:])
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        build = payload.get("build_verification_passed")
+        if not isinstance(build, dict):
+            continue
+        evidence_hash = str(
+            build.get("final_diff_sha256")
+            or build.get("final_diff_hash")
+            or payload.get("final_diff_sha256")
+            or payload.get("final_diff_hash")
+            or ""
+        ).lower()
+        if evidence_hash != diff_hash or build.get("compile_clean") is not True:
+            continue
+        commands = build.get("commands")
+        if isinstance(commands, list) and commands and all(
+            isinstance(command, dict)
+            and command.get("rc", command.get("returncode")) == 0
+            for command in commands
+        ):
+            return True
+        if build.get("rc", build.get("returncode")) == 0:
+            return True
     return False
 
 

@@ -2821,6 +2821,7 @@ compact = re.sub(r"\s+", "", text)
 accepted = (
     f"final-diff-sha256={expected}" in text
     or f'"final_diff_hash":"{expected}"' in compact
+    or f'"final_diff_sha256":"{expected}"' in compact
 )
 raise SystemExit(0 if accepted else 1)
 PY
