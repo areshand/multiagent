@@ -3855,6 +3855,7 @@ def send_orchestrator_no_diff_checkpoint(
         "If a worker is currently running, poll or inspect it once, then force a terminal worker action: apply a narrow source patch now, "
         "emit `required-path-outside-owned: RELATIVE_PATH`, emit `validation-repair-needed:` with the exact blocker, or write blocked status with the concrete source-visible reason. "
         "Do not let a live worker continue read-only source mapping without either editing or reporting an exact blocker. "
+        "If a read-only scout is still active, poll or inspect it once, persist useful findings, then finalize or kill the scout before spawning an edit-capable implementation worker. "
         "Restate the intended behavior, choose the narrowest likely source files from issue text, visible tests, docs, "
         "source callers, public APIs, data schemas, fixtures, and runtime behavior, then spawn exactly one bounded "
         "implementation worker over those paths with `replacement-no-diff-attempt=1` if this is replacing a no-diff worker. "

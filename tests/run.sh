@@ -790,13 +790,18 @@ assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "declared-type owne
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "replacement-no-diff-attempt=1"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Do not spawn worker-03/worker-04 over the same owned path"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "live worker remains no-diff after a planning checkpoint"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Scout To Worker Handoff"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "active generic scout block"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "most one same-owned-path replacement"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "live worker remains no-diff after a planning checkpoint"
+assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "active generic scout block"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "same-owned-path replacement is allowed at"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "live worker remains no-diff after a planning checkpoint"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "active generic worker already running"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "must treat that as"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "That one fresh replacement is the retry budget"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "live worker remains no-diff after a planning checkpoint"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "active generic scout block"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-symbol map contract"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-symbol-map-passed:"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-owner-ledger:"
@@ -959,6 +964,7 @@ assert "replacement-no-diff-attempt=1" in no_diff_message, no_diff_message
 assert "instead of spawning worker-03/worker-04" in no_diff_message, no_diff_message
 assert "concrete discovery gap" in no_diff_message, no_diff_message
 assert "Do not let a live worker continue read-only source mapping" in no_diff_message, no_diff_message
+assert "finalize or kill the scout before spawning an edit-capable implementation worker" in no_diff_message, no_diff_message
 for forbidden in ("FAIL_TO_PASS", "PASS_TO_PASS", "test_patch", "selected_test_files_to_run"):
     assert forbidden not in no_diff_message, no_diff_message
 

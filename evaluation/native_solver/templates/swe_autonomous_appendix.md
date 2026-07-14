@@ -87,7 +87,10 @@ Benchmark spawning path:
   `assignment-create ... --role scout`. The scout must not edit files; it should
   identify likely source files, relevant existing test files/packages, and the
   observable behavior hypothesis. Scout owned paths are read scope, not writable
-  ownership, and must not block a later implementation worker.
+  ownership, and must not block a later implementation worker. Before spawning
+  the edit-capable worker, poll or inspect any active scout once, persist useful
+  findings, then finalize or kill the scout if it is still running. Do not let an
+  active generic scout cause `subagent: active generic worker already running`.
 - After worker completion, spawn a read-only verifier the same way, with
   `SUBAGENT_CLI="$VERIFIER_CLI" bin/subagent.sh spawn verifier-01-fix --instruction "Review only; do not edit files. ..."`.
 - A completed worker pane is not an interactive worker anymore. Every

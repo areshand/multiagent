@@ -186,6 +186,9 @@ As orchestrator:
    task/source evidence, spawn exactly one bounded implementation worker over
    those paths, or write blocked status with the concrete discovery gap. Do not
    keep spawning read-only scouts over the same question.
+   Before spawning that edit-capable worker, poll or inspect any active scout
+   once, persist useful findings, then finalize or kill the scout if it is still
+   running. Do not let an active generic scout block implementation worker spawn.
    If an implementation worker exits after only restating the task, listing
    likely files, or producing a checklist while `/app` still has no source diff,
    treat that worker as unresolved no-diff failure. Spawn one fresh bounded

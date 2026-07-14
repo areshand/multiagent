@@ -64,6 +64,15 @@ bin/subagent.sh finalize subagent-build-watch
 Use `checkpoint-update NAME --step TEXT --status STATUS` after meaningful
 progress, before stopping, and whenever a blocker appears.
 
+## Scout To Worker Handoff
+
+Read-only scouts are temporary evidence gatherers. Before spawning the first
+edit-capable worker, poll or inspect any active scout once, persist the useful
+ledger/findings, then finalize or kill the scout if it is still running. Do not
+let an active generic scout block `bin/subagent.sh spawn` for the implementation
+worker. Use `MULTIAGENT_ALLOW_PARALLEL_WORKERS=1` only when you intentionally
+want parallel disjoint workers and have recorded non-overlapping ownership.
+
 ## Verifier Agent Workflow
 
 Spawn a verifier after a worker reports final status or is otherwise ready for
