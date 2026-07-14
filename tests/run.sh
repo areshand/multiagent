@@ -1976,6 +1976,39 @@ with tempfile.TemporaryDirectory() as td:
         row8_issue,
         row8_covered_status["validation"],
     )
+    stale_worker_text = "worker-01 output: apply_patch: could not find hunk context"
+    stale_capture_blockers = solve_swe_prod.validation_coverage_blockers(
+        "Alpha must be initialized. Beta must be preserved.",
+        (
+            "diff --git a/pkg/foo/foo.go b/pkg/foo/foo.go\n"
+            "index 1111111..2222222 100644\n"
+            "--- a/pkg/foo/foo.go\n"
+            "+++ b/pkg/foo/foo.go\n"
+            "@@ -1 +1 @@\n"
+            "-package foo\n"
+            "+package foo\n"
+        ),
+        stale_worker_text,
+        {
+            "status": "completed",
+            "validation": (
+                "issue-coverage-ledger: alpha implemented-by=pkg/foo/foo.go; beta already-satisfied-by=pkg/foo/foo.go source inspection. "
+                "build-verification-passed: final-diff-sha256="
+                + solve_swe_prod.final_diff_sha256(
+                    "diff --git a/pkg/foo/foo.go b/pkg/foo/foo.go\n"
+                    "index 1111111..2222222 100644\n"
+                    "--- a/pkg/foo/foo.go\n"
+                    "+++ b/pkg/foo/foo.go\n"
+                    "@@ -1 +1 @@\n"
+                    "-package foo\n"
+                    "+package foo\n"
+                )
+                + " changed-files=1 compile_clean=true returncode=0. "
+                "go-package-validation-passed: package=./pkg/foo command='go test ./pkg/foo' returncode=0."
+            ),
+        },
+    )
+    assert not any("stale patch" in blocker for blocker in stale_capture_blockers), stale_capture_blockers
 
 false_helper_blockers = solve_swe_prod.implementation_scope_blockers(
     "`Panel` `Submit` flow fails when independent `app` files use API scripts and a keyboard key command result in the working directory.",

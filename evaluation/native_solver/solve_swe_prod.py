@@ -515,6 +515,27 @@ def contract_ledger_excerpt(limit: int = 6000) -> str:
     return CONTRACT_LEDGER_PATH.read_text(encoding="utf-8", errors="replace")[-limit:]
 
 
+def contract_coverage_items_excerpt(issue: str, limit: int = 5000) -> str:
+    requirements = issue_coverage_requirements(issue)
+    if not requirements:
+        return "No public issue coverage items were auto-derived."
+    lines = [
+        "Public issue coverage items that must be copied into worker/verifier checklists:",
+    ]
+    for requirement in requirements:
+        lines.append(
+            "- "
+            + str(requirement["id"])
+            + ": "
+            + str(requirement["summary"])
+            + " [keywords="
+            + ",".join(str(keyword) for keyword in requirement["keywords"])
+            + "]"
+        )
+    text = "\n".join(lines)
+    return text[-limit:]
+
+
 def official_expected_test_blockers(metadata: dict[str, object], current_status: dict[str, object]) -> list[str]:
     """Never gate production solving on official expected-test metadata."""
 
@@ -1649,7 +1670,11 @@ def make_prompt(repo_root: Path, workdir: Path, issue: str, metadata: dict[str, 
         + "\n\n## Durable Contract Ledger\n\n"
         + f"The adapter wrote the durable contract ledger to `{ledger_path}`. "
         + "Every worker and verifier instruction must preserve every invariant in that file. "
-        + "When spawning follow-up workers, copy the relevant ledger items into the worker prompt.\n\n"
+        + "When spawning follow-up workers or verifiers, copy every public issue coverage item into the worker prompt, "
+        + "not only the first symptom or the paths that look easiest. Explicit `Requirements:` bullets in the public issue "
+        + "are first-class coverage items and must be implemented, source-proved already satisfied, or queued as blocking todos.\n\n"
+        + contract_coverage_items_excerpt(issue)
+        + "\n\n"
         + contract_ledger_excerpt()
         + repo_discovery_snapshot(workdir, issue)
         + AUTONOMOUS_FINAL_OVERRIDE
@@ -2825,8 +2850,10 @@ def validation_coverage_blockers(
             "complete after verifier closure plus hash-bound final validation"
         )
     blockers.extend(issue_coverage_blockers(issue, evidence_text))
-    blockers.extend(claimed_changed_path_blockers(diff, f"{text}\n{json.dumps(current_status, sort_keys=True)}"))
-    blockers.extend(stale_patch_application_blockers(text))
+    status_json_text = json.dumps(current_status, sort_keys=True)
+    stale_sensitive_text = status_json_text if build_verification_has_evidence(status_text, diff) else f"{text}\n{status_json_text}"
+    blockers.extend(claimed_changed_path_blockers(diff, stale_sensitive_text))
+    blockers.extend(stale_patch_application_blockers(stale_sensitive_text))
     changed_code_paths = changed_code_paths_from_diff(diff)
     if changed_code_paths and not build_verification_has_evidence(evidence_text, diff):
         blockers.append(
@@ -3079,9 +3106,10 @@ def completed_status_snapshot_blockers(
 ) -> list[str]:
     """Return blockers for a previously written completed status snapshot."""
 
+    status_text = json.dumps(completed_status, sort_keys=True)
     return [
         *implementation_scope_blockers(issue, diff, completed_status, metadata),
-        *validation_coverage_blockers(issue, diff, text, completed_status, metadata),
+        *validation_coverage_blockers(issue, diff, status_text, completed_status, metadata),
     ]
 
 
