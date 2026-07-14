@@ -232,6 +232,14 @@ def issue_with_public_problem_text(issue: str, metadata: dict[str, object] | Non
         return issue
     if problem.strip() == issue.strip():
         return issue
+    if "</pr_description>" in issue and problem.strip() not in issue:
+        return re.sub(
+            r"\s*</pr_description>",
+            "\n\n" + problem.rstrip() + "\n</pr_description>",
+            issue,
+            count=1,
+            flags=re.IGNORECASE,
+        )
     return issue.rstrip() + "\n\n" + problem
 
 

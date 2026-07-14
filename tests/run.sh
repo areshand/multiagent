@@ -1603,6 +1603,20 @@ coverage_from_prompt_plus_metadata = solve_swe_prod.contract_coverage_items_exce
 )
 assert "issue-forwarder-exec-portforward" in coverage_from_prompt_plus_metadata, coverage_from_prompt_plus_metadata
 assert "connpingperiod" in coverage_from_prompt_plus_metadata, coverage_from_prompt_plus_metadata
+evalscope_wrapped_prompt_without_requirements = (
+    "<pr_description>\n"
+    "Consider the following PR description:\n"
+    "Short issue symptom.\n"
+    "</pr_description>\n"
+    "## Submission\n"
+    "Create patch.txt and submit it."
+)
+coverage_from_wrapped_prompt_plus_metadata = solve_swe_prod.contract_coverage_items_excerpt(
+    evalscope_wrapped_prompt_without_requirements,
+    {"problem_statement": full_public_problem_statement},
+)
+assert "issue-forwarder-exec-portforward" in coverage_from_wrapped_prompt_plus_metadata, coverage_from_wrapped_prompt_plus_metadata
+assert "connpingperiod" in coverage_from_wrapped_prompt_plus_metadata, coverage_from_wrapped_prompt_plus_metadata
 
 for excluded in (
     "tests/run.sh",
