@@ -16,7 +16,8 @@ diff in `/app`.
   build-verifier, acceptance-scout, agent-spawning, orchestration-routing, and
   finding-todo-loop modules when those roles are used.
 - Run helper commands from `/opt/multiagent` with `MULTIAGENT_ROOT=/app` and
-  `MULTIAGENT_STATE_DIR=/tmp/multiagent-prod-swe`.
+  `MULTIAGENT_STATE_DIR=/tmp/multiagent-prod-swe/state`. Keep terminal
+  `/tmp/multiagent-prod-swe/status.json` separate from helper state.
 - Spawn workers and verifiers with `bin/subagent.sh`; this preserves the Codex
   bridge. Assign narrow repository-relative source paths. Never own `.` or the
   whole `/app` tree.
