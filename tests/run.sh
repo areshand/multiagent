@@ -2322,6 +2322,16 @@ accepted_helper_evidence = solve_swe_prod.helper_preservation_evidence(
     "ACCEPTED\n- No blocking findings.\n- Explicit `context.flags` behavior is preserved after source inspection.",
 )
 assert "context.flags" in accepted_helper_evidence, accepted_helper_evidence
+accepted_already_satisfied_helper_evidence = solve_swe_prod.helper_preservation_evidence(
+    "The `clusterSession` object must not persist request-specific state.",
+    (
+        "ACCEPTED\n"
+        "issue-coverage-ledger: issue-clustersession-cached-state="
+        "already-satisfied-by=lib/kube/proxy/forwarder.go source inspection; "
+        "build-verification-passed: final-diff-sha256=abc changed-files=1 compile_clean=true returncode=0"
+    ),
+)
+assert "clusterSession" in accepted_already_satisfied_helper_evidence, accepted_already_satisfied_helper_evidence
 context_flags_blockers = solve_swe_prod.implementation_scope_blockers(
     "Bulk evaluation should preserve `context.flags` behavior.",
     "diff --git a/internal/server/ofrep/evaluation.go b/internal/server/ofrep/evaluation.go\n"
@@ -2338,6 +2348,23 @@ context_flags_blockers = solve_swe_prod.implementation_scope_blockers(
     },
 )
 assert not any("context.flags" in blocker for blocker in context_flags_blockers), context_flags_blockers
+cluster_session_recovered_status = solve_swe_prod.status_with_recovered_public_evidence(
+    {},
+    "captured coverage-follow-up verifier/worker text",
+    "The `clusterSession` object must not persist request-specific state.",
+    (
+        "ACCEPTED\n"
+        "issue-coverage-ledger: issue-clustersession-cached-state="
+        "already-satisfied-by=lib/kube/proxy/forwarder.go source inspection; "
+        "build-verification-passed: final-diff-sha256=abc changed-files=1 compile_clean=true returncode=0"
+    ),
+)
+cluster_session_blockers = solve_swe_prod.implementation_scope_blockers(
+    "The `clusterSession` object must not persist request-specific state.",
+    "diff --git a/lib/service/kubernetes.go b/lib/service/kubernetes.go\n+process.initUploaderService(accessPoint, conn.Client)\n",
+    cluster_session_recovered_status,
+)
+assert not any("clusterSession" in blocker for blocker in cluster_session_blockers), cluster_session_blockers
 recovered_context_flags_status = solve_swe_prod.status_with_recovered_public_evidence(
     {},
     "helper-validation-passed: adapter public helper probe",

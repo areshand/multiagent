@@ -808,6 +808,10 @@ def _helper_preservation_window_has_evidence(helper_lower: str, text_lower: str)
             for marker in (
                 "preserv",
                 "unchanged",
+                "already-satisfied-by",
+                "already satisfied",
+                "source inspection",
+                "source-level",
                 "contract-checked:",
                 "validated",
                 "validation passed",
