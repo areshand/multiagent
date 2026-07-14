@@ -2863,14 +2863,41 @@ if candidates:
 PY
 }
 
+active_verifiers() {
+  local subagents_base="$STATE_DIR/subagents"
+  [[ -d "$subagents_base" ]] || return 0
+  require_cmd python3
+  python3 - "$subagents_base" <<'PY'
+import pathlib
+import sys
+
+base = pathlib.Path(sys.argv[1])
+for agent_dir in sorted(path for path in base.iterdir() if path.is_dir()):
+    name = agent_dir.name.lower()
+    if "verifier" not in name and "review" not in name:
+        continue
+    try:
+        status = agent_dir.joinpath("status").read_text(encoding="utf-8", errors="replace").strip().lower()
+    except OSError:
+        continue
+    if status in {"running", "starting", "pending"}:
+        print(f"{agent_dir.name}\t{status}")
+PY
+}
+
 gate_check() {
   local failed=0
   local findings_base="$STATE_DIR/findings"
   local todos_base="$STATE_DIR/todos"
   local dir finding_id severity todo_dir_path todo_id source status found_todo
-  local verifier_verdict verdict verifier_name verifier_evidence final_diff_hash
+  local verifier_verdict verdict verifier_name verifier_evidence final_diff_hash active_verifier
 
   final_diff_hash="$(current_final_diff_sha256)"
+  while IFS= read -r active_verifier; do
+    [[ -n "$active_verifier" ]] || continue
+    printf 'reject\tactive-verifier\t%s\n' "$active_verifier"
+    failed=1
+  done < <(active_verifiers)
   verifier_verdict="$(latest_verifier_verdict)"
   if [[ -n "$verifier_verdict" ]]; then
     IFS=$'\t' read -r verdict verifier_name verifier_evidence <<<"$verifier_verdict"

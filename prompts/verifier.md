@@ -335,6 +335,9 @@ framework gate.
 Prefer the exact line marker above. If structured JSON is also emitted, use
 `final_diff_sha256`, `compile_clean: true`, and a non-empty `commands` array
 whose every entry records `rc: 0`; the gate treats that as equivalent evidence.
+The orchestrator must poll or finalize every launched verifier before the final
+gate; any verifier still marked `running`, `starting`, or `pending` blocks
+submission even when an earlier verifier accepted.
 
 ## Miss Taxonomy
 

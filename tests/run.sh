@@ -452,6 +452,15 @@ MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIA
 assert_file_contains "$TMPDIR/gate-verifier-bound-hash.out" "accepted"
 printf 'ACCEPTED\n{"verdict":"ACCEPTED","final_diff_sha256":"%s","build_verification_passed":{"final_diff_sha256":"%s","compile_clean":true,"commands":[{"cmd":"test -f source.txt","rc":0}]}}\n' \
   "$HASH_GATE_DIFF_SHA" "$HASH_GATE_DIFF_SHA" >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
+printf 'running\n' >"$HASH_GATE_STATE/subagents/verifier-01-hash/status"
+if MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
+  "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-verifier-active.out" 2>&1; then
+  echo "expected an active verifier to block the final gate" >&2
+  cat "$TMPDIR/gate-verifier-active.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/gate-verifier-active.out" $'reject\tactive-verifier\tverifier-01-hash\trunning'
+printf 'done\n' >"$HASH_GATE_STATE/subagents/verifier-01-hash/status"
 MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
   "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-verifier-structured-hash.out"
 assert_file_contains "$TMPDIR/gate-verifier-structured-hash.out" "accepted"
