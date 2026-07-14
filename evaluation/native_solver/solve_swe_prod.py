@@ -2886,7 +2886,10 @@ def persisted_subagent_final_acceptance_evidence(
     evidence_texts = persisted_subagent_final_acceptance_texts(diff, runtime_root)
     if not evidence_texts:
         return ""
-    excerpt = " ".join(evidence_texts[0][:1800].split())
+    # Keep enough of the accepted verifier report to preserve contract ledgers
+    # and the hash-bound build marker. Short truncation can retain ACCEPTED while
+    # dropping the evidence that made the acceptance machine-checkable.
+    excerpt = " ".join(evidence_texts[0][:8000].split())
     return excerpt
 
 
@@ -3239,7 +3242,8 @@ def claimed_changed_path_blockers(diff: str, text: str) -> list[str]:
     if not changed:
         return []
     claimed = claimed_changed_source_paths(text)
-    missing = sorted(path for path in claimed if path not in changed)
+    changed_casefold = {path.casefold() for path in changed}
+    missing = sorted(path for path in claimed if path.casefold() not in changed_casefold)
     if not missing:
         return []
     return [

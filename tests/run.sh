@@ -1393,6 +1393,24 @@ with tempfile.TemporaryDirectory() as td:
     final_acceptance = solve_swe_prod.persisted_subagent_final_acceptance_evidence(go_diff, runtime_root)
     assert "persisted verifier verifier-01-fix last-message.txt" in final_acceptance, final_acceptance
     assert "build-verification-passed" in final_acceptance, final_acceptance
+    js_verifier = runtime_root / "subagents" / "verifier-02-ui"
+    js_verifier.mkdir(parents=True)
+    js_diff = (
+        "diff --git a/src/KeyBindingsManager.ts b/src/KeyBindingsManager.ts\n"
+        "+export const fixed = true;\n"
+    )
+    js_hash = solve_swe_prod.final_diff_sha256(js_diff)
+    (js_verifier / "last-message.txt").write_text(
+        "ACCEPTED\n"
+        + "issue-coverage-ledger: "
+        + ("independent-public-contract-covered " * 120)
+        + "\n"
+        + f"build-verification-passed: final-diff-sha256={js_hash} "
+        + "changed-files=1 compile_clean=true returncode=0 command=\"yarn lint:types\"\n",
+        encoding="utf-8",
+    )
+    js_acceptance = solve_swe_prod.persisted_subagent_final_acceptance_evidence(js_diff, runtime_root)
+    assert solve_swe_prod.build_verification_has_evidence(js_acceptance, js_diff), js_acceptance
 
 captured_worker_commands = []
 try:
@@ -3498,6 +3516,12 @@ claim_diff_with_mock = claim_diff + (
     "+func (m *evaluationStoreMock) ListFlags() {}\n"
 )
 assert not solve_swe_prod.claimed_changed_path_blockers(claim_diff_with_mock, claim_text_with_diff)
+case_claim_diff = (
+    "diff --git a/src/KeyBindingsManager.ts b/src/KeyBindingsManager.ts\n"
+    "+export const fixed = true;\n"
+)
+case_claim_text = "Changed source files:\n- `src/keybindingsmanager.ts`\n"
+assert not solve_swe_prod.claimed_changed_path_blockers(case_claim_diff, case_claim_text)
 assert solve_swe_prod.verifier_exact_followup_available(
     "BLOCKING FINDINGS with exact follow-up instructions: update middleware validation and rerun go test ./pkg"
 )

@@ -101,6 +101,13 @@ blocking finding/todo instead of `ACCEPTED`. Examples of separate clauses
 include initialization plus cache state, request context, error logging,
 config/field API shape, concurrency, persistence, fallback, or adapter parity.
 
+When two or more issue clauses constrain the same input or state transition,
+verify their interaction as well as each clause in isolation. Build at least a
+pairwise source-derived case for coupled dimensions such as normalization plus
+flags, fallback plus empty input, ordering plus duplicates, or retry plus
+partial state. Separate probes that each exercise only one dimension do not
+prove the combined contract; an uncovered interaction is a blocking finding.
+
 For tasks that name multiple formats, implementations, clients, adapters,
 parsers, serializers, storage backends, or runtimes, verify parity for each named path.
 Do not accept source review alone for one named path when a nearby

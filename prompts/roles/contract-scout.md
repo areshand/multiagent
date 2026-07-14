@@ -167,6 +167,11 @@ focus, input, paste, keyboard, accessibility, and form integration behavior
 unless the issue explicitly asks to change it. Name the full nearby interaction
 test file/package that must pass if those behaviors are touched.
 
+When several issue clauses constrain the same input or transition, include a
+pairwise interaction case in the contract ledger and validation plan. Do not
+treat isolated checks for each clause as proof that their combined behavior is
+correct.
+
 ## Output Format
 
 Return only:
