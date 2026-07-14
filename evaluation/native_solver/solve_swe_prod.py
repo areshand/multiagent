@@ -5826,6 +5826,42 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         if (
                             not diff.strip()
                             and ownership_paths
+                            and adapter_helper_workers_spawned < adapter_helper_worker_limit
+                            and adapter_helper_repair_allowed("ownership-boundary no-diff worker")
+                        ):
+                            adapter_helper_workers_spawned += 1
+                            helper_blockers = [
+                                *blockers,
+                                *[
+                                    f"worker reported required-path-outside-owned:{path}; include this source path in the next bounded worker owned set"
+                                    for path in ownership_paths[:8]
+                                ],
+                                "The previous worker stopped at a source ownership boundary without producing a diff; implement from public issue/source evidence over the expanded owned paths or report a concrete source-visible blocker.",
+                            ]
+                            try:
+                                helper_worker = spawn_adapter_helper_worker(
+                                    repo_root,
+                                    workdir,
+                                    env,
+                                    issue,
+                                    diff,
+                                    helper_blockers,
+                                    list(dict.fromkeys([*ownership_paths, *assignment_owned_paths(RUNTIME_ROOT)])),
+                                    adapter_helper_workers_spawned,
+                                    probe_report,
+                                    launch_reason="ownership-boundary no-diff recovery",
+                                )
+                                log(f"adapter helper worker spawned after ownership-boundary no-diff worker: {helper_worker}")
+                                adapter_helper_last_spawn_at = time.monotonic()
+                                adapter_helper_reprobe_done = False
+                                adapter_helper_last_probe_digest = None
+                                time.sleep(5)
+                                continue
+                            except Exception as exc:
+                                log(f"adapter helper worker spawn failed after ownership-boundary no-diff worker: {exc}")
+                        if (
+                            not diff.strip()
+                            and ownership_paths
                             and orchestrator_resume_attempts < orchestrator_resume_limit
                             and int(deadline - time.monotonic()) > 240
                             and relaunch_orchestrator_for_blockers(

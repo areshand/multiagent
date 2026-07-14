@@ -1350,6 +1350,9 @@ assert "blocked_no_diff_subagent_summaries" in solver_source and "blocked subage
 assert "no_diff_blocked_subagent_blockers" in solver_source and "orchestrator exited after no-diff blocked worker" in solver_source, (
     "coverage-follow-up exits with blocked no-diff workers should get a bounded implementation handoff before terminal rejection"
 )
+assert "ownership-boundary no-diff recovery" in solver_source and "adapter helper worker spawned after ownership-boundary no-diff worker" in solver_source, (
+    "ownership-boundary no-diff workers should get a direct bounded helper handoff, not only an orchestrator nudge"
+)
 assert "FAILURE_DIAGNOSTICS_PATH" in solver_source and "failure-diagnostics.txt" in solver_source, (
     "native wrapper should persist structured failure diagnostics for the eval runner"
 )
