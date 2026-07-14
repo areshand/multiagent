@@ -173,9 +173,11 @@ When several live agents touch the same package/path or expensive validation is
 already running, the orchestrator can spawn a read-only validation coordinator.
 This role maps active workers, verifiers, owned paths, running test commands,
 and validation leases so the orchestrator can keep one active validator per
-package/path. Use `bin/subagent.sh validation-lease-acquire` before expensive
-commands and `bin/subagent.sh validation-lease-status` when the command passes,
-fails, times out, becomes stale, or is released.
+package/path. Prefer `bin/subagent.sh validation-run LEASE_ID --owner NAME
+--target TARGET -- COMMAND...` for expensive commands; it acquires the lease,
+runs the command, records stdout/stderr tails and return code, and marks the
+lease passed or failed. Use `bin/subagent.sh validation-lease-acquire` and
+`bin/subagent.sh validation-lease-status` for externally managed commands.
 
 Use the verifier CLI:
 

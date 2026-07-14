@@ -369,6 +369,35 @@ MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease-li
 assert_file_contains "$TMPDIR/lease-list.out" $'go-ofrep-followup\trunning\tverifier-01-ofrep-build'
 MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease-show go-ofrep >"$TMPDIR/lease-show.out"
 assert_file_contains "$TMPDIR/lease-show.out" '"returncode": 0'
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-run validation-run-ok \
+  --owner worker-02-ofrep-build \
+  --target "unit-target" \
+  --resource-risk "cheap test command" \
+  -- bash -lc 'printf validation-ok' >"$TMPDIR/validation-run-ok.out"
+assert_file_contains "$TMPDIR/validation-run-ok.out" "validation-ok"
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease-show validation-run-ok >"$TMPDIR/validation-run-ok-lease.out"
+assert_file_contains "$TMPDIR/validation-run-ok-lease.out" '"state": "passed"'
+assert_file_contains "$TMPDIR/validation-run-ok-lease.out" '"returncode": 0'
+if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-run validation-run-fail \
+  --owner worker-02-ofrep-build \
+  --target "unit-target-fail" \
+  -- bash -lc 'printf validation-fail >&2; exit 7' >"$TMPDIR/validation-run-fail.out" 2>"$TMPDIR/validation-run-fail.err"; then
+  echo "expected validation-run to return the command failure rc" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/validation-run-fail.err" "validation-fail"
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease-show validation-run-fail >"$TMPDIR/validation-run-fail-lease.out"
+assert_file_contains "$TMPDIR/validation-run-fail-lease.out" '"state": "failed"'
+assert_file_contains "$TMPDIR/validation-run-fail-lease.out" '"returncode": 7'
+if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-run validation-run-conflict \
+  --owner verifier-01-ofrep-build \
+  --target "./internal/server/ofrep ./internal/server/evaluation" \
+  -- bash -lc 'true' >"$TMPDIR/validation-run-conflict.out" 2>&1; then
+  echo "expected validation-run to reject duplicate active validation target" >&2
+  cat "$TMPDIR/validation-run-conflict.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/validation-run-conflict.out" "validation lease conflict"
 
 assert_file_contains "$ROOT/orchestrator_prompt.md" "Do not inspect recovery state"
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'When `MULTIAGENT_RESUME=1`'
@@ -393,6 +422,7 @@ assert_file_contains "$ROOT/prompts/worker.md" "return shape, or package placeme
 assert_file_contains "$ROOT/prompts/worker.md" "additive public surface"
 assert_file_contains "$ROOT/prompts/worker.md" "one expensive validation command"
 assert_file_contains "$ROOT/prompts/worker.md" "validation lease"
+assert_file_contains "$ROOT/prompts/worker.md" "validation-run"
 assert_file_contains "$ROOT/prompts/worker.md" "validation-lease-acquire"
 assert_file_contains "$ROOT/prompts/worker.md" "legitimate product or visible-test paths"
 assert_file_contains "$ROOT/prompts/worker.md" "validation-repair-needed:"
@@ -438,6 +468,7 @@ assert_file_contains "$ROOT/prompts/playbooks/parallel-execution.md" "Default to
 assert_file_contains "$ROOT/prompts/playbooks/parallel-execution.md" "If one subtree is blocked"
 assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "Validation Scheduling Playbook"
 assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "Validation Lease"
+assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "validation-run"
 assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "validation-lease-acquire"
 assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "validation-lease-status"
 assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "next-validation-owner"
@@ -476,6 +507,7 @@ assert_file_contains "$ROOT/README.md" "Launches are clean by default"
 assert_file_contains "$ROOT/README.md" "./launch.sh --resume"
 assert_file_contains "$ROOT/README.md" "Prompt Modules"
 assert_file_contains "$ROOT/README.md" "validation lease table"
+assert_file_contains "$ROOT/README.md" "validation-run"
 assert_file_contains "$ROOT/README.md" "validation-lease-acquire"
 assert_file_contains "$ROOT/README.md" "Contract Scout Workflow"
 assert_file_contains "$ROOT/README.md" "acceptance-scout.md"
@@ -504,6 +536,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "Re
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "hidden-test-shaped commands"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "One active validator per package/path"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "validation lease table"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "validation-run"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "validation-lease-acquire"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Do not spawn a verifier while a worker still owns"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Fixture/testdata"

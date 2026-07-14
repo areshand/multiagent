@@ -49,6 +49,7 @@ Usage:
   bin/subagent.sh validation-lease-status LEASE_ID planned|running|passed|failed|timed-out|stale|released [--result-json JSON]
   bin/subagent.sh validation-lease-show LEASE_ID
   bin/subagent.sh validation-lease-list [--state STATE]
+  bin/subagent.sh validation-run LEASE_ID --owner NAME --target TEXT [--resource-risk TEXT] -- COMMAND [ARG ...]
   bin/subagent.sh gate-check
   bin/subagent.sh poll NAME
   bin/subagent.sh inspect NAME [--lines N]
@@ -2191,6 +2192,106 @@ validation_lease_list() {
   done
 }
 
+validation_run_result_json() {
+  local command_json="$1"
+  local return_code="$2"
+  local started_at="$3"
+  local finished_at="$4"
+  local stdout_path="$5"
+  local stderr_path="$6"
+  require_cmd python3
+  python3 -c '
+import json
+import pathlib
+import sys
+
+command = json.loads(sys.argv[1])
+return_code = int(sys.argv[2])
+started_at = sys.argv[3]
+finished_at = sys.argv[4]
+stdout_path = pathlib.Path(sys.argv[5])
+stderr_path = pathlib.Path(sys.argv[6])
+
+def tail(path):
+    text = path.read_text(errors="replace") if path.exists() else ""
+    return text[-4000:]
+
+print(json.dumps({
+    "command": command,
+    "command_text": " ".join(command),
+    "returncode": return_code,
+    "started_at": started_at,
+    "finished_at": finished_at,
+    "stdout_tail": tail(stdout_path),
+    "stderr_tail": tail(stderr_path),
+}, sort_keys=True))
+' "$command_json" "$return_code" "$started_at" "$finished_at" "$stdout_path" "$stderr_path"
+}
+
+validation_run() {
+  local lease_id="${1:-}"
+  [[ -n "$lease_id" ]] || die "validation-run requires LEASE_ID"
+  validate_name "$lease_id"
+  require_cmd python3
+  shift
+
+  local owner="" target="" resource_risk=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --owner)
+        owner="${2:-}"
+        shift 2
+        ;;
+      --target)
+        target="${2:-}"
+        shift 2
+        ;;
+      --resource-risk)
+        resource_risk="${2:-}"
+        shift 2
+        ;;
+      --)
+        shift
+        break
+        ;;
+      *)
+        die "unknown validation-run argument before --: $1"
+        ;;
+    esac
+  done
+
+  [[ -n "$owner" ]] || die "validation-run requires --owner NAME"
+  validate_name "$owner"
+  [[ -n "$target" ]] || die "validation-run requires --target TEXT"
+  [[ $# -gt 0 ]] || die "validation-run requires COMMAND after --"
+
+  local command_json command_text tmp_dir stdout_path stderr_path started_at finished_at rc result_json
+  command_json="$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1:]))' "$@")"
+  command_text="$(python3 -c 'import json, sys; print(" ".join(json.loads(sys.argv[1])))' "$command_json")"
+  validation_lease_acquire "$lease_id" --owner "$owner" --target "$target" --command "$command_text" --state running --resource-risk "$resource_risk" >/dev/null
+
+  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/multiagent-validation-run.XXXXXX")"
+  stdout_path="$tmp_dir/stdout"
+  stderr_path="$tmp_dir/stderr"
+  started_at="$(timestamp)"
+  set +e
+  "$@" >"$stdout_path" 2>"$stderr_path"
+  rc=$?
+  set -e
+  finished_at="$(timestamp)"
+
+  cat "$stdout_path"
+  cat "$stderr_path" >&2
+  result_json="$(validation_run_result_json "$command_json" "$rc" "$started_at" "$finished_at" "$stdout_path" "$stderr_path")"
+  if [[ "$rc" -eq 0 ]]; then
+    validation_lease_status "$lease_id" passed --result-json "$result_json" >/dev/null
+  else
+    validation_lease_status "$lease_id" failed --result-json "$result_json" >/dev/null
+  fi
+  rm -rf "$tmp_dir"
+  return "$rc"
+}
+
 gate_check() {
   local failed=0
   local findings_base="$STATE_DIR/findings"
@@ -2346,6 +2447,10 @@ case "$cmd" in
   validation-lease-list)
     shift
     validation_lease_list "$@"
+    ;;
+  validation-run)
+    shift
+    validation_run "$@"
     ;;
   gate-check)
     shift
