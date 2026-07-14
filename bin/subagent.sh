@@ -395,6 +395,38 @@ get_assignment_status() {
   fi
 }
 
+status_is_active_worker() {
+  local status="$1"
+  case "$status" in
+    starting|running|restoring)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+reject_parallel_generic_worker_spawn() {
+  local new_name="$1"
+  [[ "${MULTIAGENT_ALLOW_PARALLEL_WORKERS:-0}" != "1" ]] || return 0
+  [[ "$new_name" == worker-* ]] || return 0
+
+  local base="$STATE_DIR/subagents"
+  [[ -d "$base" ]] || return 0
+
+  local dir existing status
+  for dir in "$base"/worker-*; do
+    [[ -d "$dir" ]] || continue
+    existing="$(basename "$dir")"
+    [[ "$existing" != "$new_name" ]] || continue
+    status="$(get_status "$existing")"
+    status_is_active_worker "$status" || continue
+    window_exists "$existing" || continue
+    die "active generic worker already running: existing=$existing status=$status; wait, finalize/kill it, or set MULTIAGENT_ALLOW_PARALLEL_WORKERS=1 only with explicit disjoint ownership"
+  done
+}
+
 normalize_repo_path() {
   local path="$1"
   local root canonical rel
@@ -1013,6 +1045,7 @@ spawn_subagent() {
   require_cmd "$bin"
   tmux has-session -t "$SESSION" 2>/dev/null || die "missing tmux session: $SESSION"
   window_exists "$name" && die "subagent window already exists: $name"
+  reject_parallel_generic_worker_spawn "$name"
 
   local dir
   dir="$(subagent_dir "$name")"

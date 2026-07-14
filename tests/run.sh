@@ -2938,6 +2938,17 @@ assert_file_contains "$MOCK_TMUX_WINDOWS" "subagent-file"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-file/instruction.txt" "Watch from file"
 assert_file_contains "$MOCK_TMUX_LOG" "send-key test-session:subagent-file Read and follow the assignment in $MULTIAGENT_STATE_DIR/subagents/subagent-file/instruction.txt"
 
+printf 'Claude prompt ready\n' >"$MOCK_TMUX_CAPTURES/worker-generic-01.txt"
+"$ROOT/bin/subagent.sh" spawn worker-generic-01 --instruction "First generic worker"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/worker-generic-01/status" "running"
+printf 'Claude prompt ready\n' >"$MOCK_TMUX_CAPTURES/worker-generic-02.txt"
+if "$ROOT/bin/subagent.sh" spawn worker-generic-02 --instruction "Second generic worker" >"$TMPDIR/worker-generic-conflict.out" 2>&1; then
+  echo "expected generic worker spawn to reject active generic worker" >&2
+  cat "$TMPDIR/worker-generic-conflict.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/worker-generic-conflict.out" "active generic worker already running"
+
 printf 'Codex prompt ready\n' >"$MOCK_TMUX_CAPTURES/verifier-01-docs.txt"
 SUBAGENT_CLI="$VERIFIER_CLI" "$ROOT/bin/subagent.sh" spawn verifier-01-docs --instruction "Review worker-01-docs"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-01-docs/meta.env" "cli=codex"
