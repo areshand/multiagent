@@ -1634,6 +1634,12 @@ with tempfile.TemporaryDirectory() as td:
         )
         gate_blockers = solve_swe_prod.structured_repair_gate_blockers()
         assert gate_blockers and "status=resolved" in gate_blockers[0], gate_blockers
+        recovered = solve_swe_prod.recover_verifier_accepted_todo_closures(
+            "ACCEPTED\nValidation passed.\ntodo-recheck-passed: T-OPEN\n",
+            "diff --git a/pkg/service.go b/pkg/service.go\n+func Service() {}\n",
+        )
+        assert recovered and recovered[0].endswith(":T-OPEN"), recovered
+        assert solve_swe_prod.structured_repair_gate_blockers() == [], solve_swe_prod.structured_repair_gate_blockers()
     finally:
         solve_swe_prod.RUNTIME_ROOT = original_runtime
         solve_swe_prod.DEFAULT_WORKDIR = original_workdir

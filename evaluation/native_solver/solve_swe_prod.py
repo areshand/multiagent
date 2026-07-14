@@ -366,6 +366,111 @@ def structured_repair_gate_blockers() -> list[str]:
     return blockers
 
 
+def recover_verifier_accepted_todo_closures(text: str, diff: str) -> list[str]:
+    """Close resolved todos when a verifier transcript explicitly rechecked them.
+
+    This is a terminal-state recovery, not an acceptance shortcut: it translates
+    `todo-recheck-passed: TODO_ID` verifier evidence into the same `todo-close`
+    primitive the orchestrator should have called, then the regular gate-check
+    still decides whether the run can be accepted.
+    """
+
+    subagent = DEFAULT_MULTIAGENT_ROOT / "bin/subagent.sh"
+    if not text or not subagent.exists():
+        return []
+    lower = text.lower()
+    if "accepted" not in lower or "todo-recheck-passed:" not in lower:
+        return []
+
+    recovered: list[str] = []
+    seen_state_dirs: set[Path] = set()
+    for state_dir in (RUNTIME_ROOT, RUNTIME_ROOT / "state"):
+        if state_dir in seen_state_dirs:
+            continue
+        seen_state_dirs.add(state_dir)
+        todos_base = state_dir / "todos"
+        if not todos_base.exists():
+            continue
+        for todo_dir in sorted(path for path in todos_base.iterdir() if path.is_dir()):
+            todo_id = todo_dir.name
+            marker = f"todo-recheck-passed: {todo_id}".lower()
+            if marker not in lower:
+                continue
+            status_path = todo_dir / "status"
+            status = status_path.read_text(encoding="utf-8", errors="replace").strip().lower() if status_path.exists() else ""
+            if status != "resolved":
+                continue
+            try:
+                todo_payload = json.loads((todo_dir / "todo.json").read_text(encoding="utf-8"))
+                resolution = json.loads((todo_dir / "resolution.json").read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                log(f"verifier todo closure recovery skipped {todo_id}: invalid structured state: {exc}")
+                continue
+            validation = resolution.get("validation")
+            if not isinstance(validation, list) or not validation:
+                log(f"verifier todo closure recovery skipped {todo_id}: missing worker validation")
+                continue
+            commands: list[dict[str, object]] = []
+            for item in validation:
+                if not isinstance(item, dict):
+                    commands = []
+                    break
+                cmd = str(item.get("cmd", "")).strip()
+                try:
+                    rc = int(item.get("rc", item.get("returncode", 1)))
+                except (TypeError, ValueError):
+                    rc = 1
+                if not cmd or rc != 0:
+                    commands = []
+                    break
+                commands.append({"cmd": cmd, "rc": rc})
+            if not commands:
+                log(f"verifier todo closure recovery skipped {todo_id}: worker validation is not all rc=0")
+                continue
+            source_finding_id = str(todo_payload.get("source_finding_id", "")).strip()
+            source_finding_hash = str(todo_payload.get("source_finding_hash", "")).strip()
+            if not source_finding_id:
+                log(f"verifier todo closure recovery skipped {todo_id}: missing source finding id")
+                continue
+            recheck = {
+                "accepted": True,
+                "finding_rechecked": source_finding_id,
+                "source_finding_id": source_finding_id,
+                "source_finding_hash": source_finding_hash,
+                "commands": commands,
+                "evidence": f"recovered from verifier transcript marker {marker}",
+                "final_diff_hash": final_diff_sha256(diff),
+            }
+            env = os.environ.copy()
+            env.update(
+                {
+                    "MULTIAGENT_ROOT": str(DEFAULT_WORKDIR),
+                    "MULTIAGENT_STATE_DIR": str(state_dir),
+                }
+            )
+            result = run(
+                [
+                    str(subagent),
+                    "todo-close",
+                    todo_id,
+                    "--verified-by",
+                    "verifier-transcript-recovery",
+                    "--recheck-json",
+                    json.dumps(recheck, sort_keys=True),
+                ],
+                cwd=DEFAULT_MULTIAGENT_ROOT,
+                env=env,
+                timeout=30,
+            )
+            output = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+            if result.returncode == 0:
+                recovered.append(f"{state_dir}:{todo_id}")
+                log(f"verifier todo closure recovered {todo_id}: {output}")
+            else:
+                log(f"verifier todo closure recovery failed {todo_id}: {output[-1000:]}")
+    return recovered
+
+
 def completed_status_has_final_build_evidence(diff: str) -> bool:
     """Return true when status.json already proves the final diff passed build gate."""
 
@@ -5043,6 +5148,9 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
         final_status = status()
         final_state = str(final_status.get("status", "")).lower()
         final_text = captured_text()
+        if recover_verifier_accepted_todo_closures(final_text, final_diff):
+            final_status = status()
+            final_state = str(final_status.get("status", "")).lower()
         original_final_validation_blockers = validation_coverage_blockers(
             issue,
             final_diff,
