@@ -2926,6 +2926,19 @@ for path in base.glob("*/last-message.txt"):
             if verdict == "REJECTED":
                 verdict = "BLOCKING"
         break
+    if verdict == "MISSING":
+        for line in text.splitlines():
+            match = re.match(
+                r"\s*(?:final[- ]recommendation|recommendation)\s*[:=]\s*"
+                r"(accept|accepted|block|blocking|reject|rejected)\b",
+                line,
+                re.IGNORECASE,
+            )
+            if not match:
+                continue
+            value = match.group(1).lower()
+            verdict = "ACCEPTED" if value in {"accept", "accepted"} else "BLOCKING"
+            break
     candidates.append((mtime, path.parent.name, verdict, path))
 
 if candidates:
@@ -2990,6 +3003,19 @@ for agent_dir in sorted(path for path in base.iterdir() if path.is_dir()):
         if match:
             verdict = match.group(1).upper()
         break
+    if not verdict:
+        for line in report.splitlines():
+            match = re.match(
+                r"\s*(?:final[- ]recommendation|recommendation)\s*[:=]\s*"
+                r"(accept|accepted|block|blocking|reject|rejected)\b",
+                line,
+                re.IGNORECASE,
+            )
+            if not match:
+                continue
+            value = match.group(1).lower()
+            verdict = "ACCEPTED" if value in {"accept", "accepted"} else "BLOCKING"
+            break
     if verdict == "ACCEPTED":
         status_path.write_text("done\n", encoding="utf-8")
     elif verdict in {"BLOCKING", "REJECTED"}:
