@@ -4040,6 +4040,23 @@ def source_symbol_map_blocker_present(blockers: list[str]) -> bool:
     )
 
 
+def structured_repair_todo_blocker_present(blockers: list[str]) -> bool:
+    """Return true when durable repair work exists but has not reached closure."""
+
+    text = "\n".join(str(blocker).lower() for blocker in blockers)
+    if "structured repair gate rejects completed status" not in text:
+        return False
+    return any(
+        marker in text
+        for marker in (
+            "open-blocking-todo",
+            "open-todo",
+            "status=assigned",
+            "status=resolved",
+        )
+    )
+
+
 def source_symbol_map_resume_instructions(blockers: list[str]) -> str:
     if not source_symbol_map_blocker_present(blockers):
         return ""
@@ -4866,6 +4883,8 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     source_symbol_resume_attempts = 0
     verifier_infra_resume_limit = int(os.environ.get("EVAL_VERIFIER_INFRA_RESUME_LIMIT", "1"))
     verifier_infra_resume_attempts = 0
+    repair_todo_resume_limit = int(os.environ.get("EVAL_REPAIR_TODO_RESUME_LIMIT", "1"))
+    repair_todo_resume_attempts = 0
     adapter_helper_mode = os.environ.get("EVAL_ADAPTER_HELPER_MODE", "advisory").strip().lower()
     adapter_helper_source_edit_opt_in = os.environ.get("EVAL_ADAPTER_HELPER_ALLOW_SOURCE_EDITS", "").strip().lower() in {
         "1",
@@ -4911,6 +4930,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
         nonlocal orchestrator_resume_attempts
         nonlocal source_symbol_resume_attempts
         nonlocal verifier_infra_resume_attempts
+        nonlocal repair_todo_resume_attempts
         nonlocal coverage_followup_at
         nonlocal last_capture
         nonlocal missing_session_captures
@@ -4920,6 +4940,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
 
         use_source_symbol_extra_resume = False
         use_verifier_infra_extra_resume = False
+        use_repair_todo_extra_resume = False
         if orchestrator_resume_attempts >= orchestrator_resume_limit:
             if (
                 source_symbol_map_blocker_present(blockers)
@@ -4932,6 +4953,11 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 and verifier_infra_resume_attempts < verifier_infra_resume_limit
             ):
                 use_verifier_infra_extra_resume = True
+            elif (
+                structured_repair_todo_blocker_present(blockers)
+                and repair_todo_resume_attempts < repair_todo_resume_limit
+            ):
+                use_repair_todo_extra_resume = True
             else:
                 log(
                     "production orchestrator resume skipped for "
@@ -4956,7 +4982,24 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 f"{verifier_infra_resume_attempts + 1}/{verifier_infra_resume_limit} for {reason}"
             )
             verifier_infra_resume_attempts += 1
-            resume_attempt = orchestrator_resume_attempts + source_symbol_resume_attempts + verifier_infra_resume_attempts
+            resume_attempt = (
+                orchestrator_resume_attempts
+                + source_symbol_resume_attempts
+                + verifier_infra_resume_attempts
+                + repair_todo_resume_attempts
+            )
+        elif use_repair_todo_extra_resume:
+            log(
+                "production orchestrator repair-todo resume using extra bounded attempt "
+                f"{repair_todo_resume_attempts + 1}/{repair_todo_resume_limit} for {reason}"
+            )
+            repair_todo_resume_attempts += 1
+            resume_attempt = (
+                orchestrator_resume_attempts
+                + source_symbol_resume_attempts
+                + verifier_infra_resume_attempts
+                + repair_todo_resume_attempts
+            )
         else:
             orchestrator_resume_attempts += 1
             resume_attempt = orchestrator_resume_attempts

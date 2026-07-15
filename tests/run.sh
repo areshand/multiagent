@@ -1555,6 +1555,18 @@ assert "verifier_exact_followup_available" in solver_source and "Verifier exact-
 assert "EVAL_SOURCE_SYMBOL_RESUME_LIMIT" in solver_source and "source_symbol_map_resume_instructions" in solver_source, (
     "source-symbol blockers should get one bounded production-orchestrator recovery handoff with exact status marker instructions"
 )
+assert "EVAL_REPAIR_TODO_RESUME_LIMIT" in solver_source and "repair-todo resume using extra bounded attempt" in solver_source, (
+    "assigned or resolved structured repair todos need one bounded recovery handoff when their worker or verifier launch is dropped"
+)
+assert solve_swe_prod.structured_repair_todo_blocker_present(
+    [
+        "structured repair gate rejects completed status for /tmp/state: "
+        "reject open-blocking-todo finding=finding-1 todo=todo-1 status=assigned"
+    ]
+)
+assert not solve_swe_prod.structured_repair_todo_blocker_present(
+    ["source symbol contracts changed, but status does not include source-symbol-map-passed"]
+)
 assert "stale_patch_application_blockers" in solver_source and "could not find hunk context" in solver_source, (
     "stale patch application failures should be machine-gated before acceptance"
 )
