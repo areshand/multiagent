@@ -1680,6 +1680,22 @@ assert "active_verifier_subagent_summaries" in solver_source and "blocked_status
 assert "completed status enriched from hash-bound durable verifier acceptance before final gate" in solver_source, (
     "a hash-bound accepted verifier artifact and terminal status must form one gate transition"
 )
+assert "accepted completed status atomically published for post-cleanup recheck" in solver_source, (
+    "the enriched status that passes the live gate must be the status read by the post-cleanup gate"
+)
+with tempfile.TemporaryDirectory() as td:
+    original_status_path = solve_swe_prod.STATUS_PATH
+    solve_swe_prod.STATUS_PATH = Path(td) / "status.json"
+    try:
+        published = {
+            "status": "completed",
+            "validation": "hash-bound verifier and behavior evidence",
+        }
+        solve_swe_prod.publish_status(published)
+        assert json.loads(solve_swe_prod.STATUS_PATH.read_text(encoding="utf-8")) == published
+        assert not solve_swe_prod.STATUS_PATH.with_name("status.json.tmp").exists()
+    finally:
+        solve_swe_prod.STATUS_PATH = original_status_path
 assert "status.json.tmp" in solve_swe_prod.AUTONOMOUS_FINAL_OVERRIDE, (
     "terminal status publication should use an atomic temp-file rename"
 )

@@ -2165,6 +2165,15 @@ def status() -> dict[str, object]:
         return {"status": "invalid-json", "raw": STATUS_PATH.read_text(encoding="utf-8", errors="replace")[-1000:]}
 
 
+def publish_status(current_status: dict[str, object]) -> None:
+    """Atomically publish wrapper-owned terminal state."""
+
+    STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = STATUS_PATH.with_name(STATUS_PATH.name + ".tmp")
+    temporary_path.write_text(json.dumps(current_status), encoding="utf-8")
+    temporary_path.replace(STATUS_PATH)
+
+
 def capture_session(session: str) -> None:
     out_dir = RUNTIME_ROOT / "captures"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -5323,6 +5332,12 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                     exit_code = 2
                     outcome = "blocked"
                     break
+                # Persist the exact enriched object that passed the gate. The
+                # orchestrator's older status may not contain durable verifier
+                # evidence recovered above, and post-cleanup must not evaluate
+                # a different state object for the same final diff.
+                publish_status(current_status)
+                log("accepted completed status atomically published for post-cleanup recheck")
                 log(f"completion marker: {json.dumps(current_status, sort_keys=True)[:2000]}")
                 outcome = "completed"
                 break
