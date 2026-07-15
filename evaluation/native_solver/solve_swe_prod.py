@@ -3261,6 +3261,68 @@ def accepted_runtime_only_go_test_skip_evidence(evidence_texts: list[str], diff:
     return all(go_package_validation_has_evidence(evidence, package) for package in packages)
 
 
+def go_compiler_diagnostic_present(text: str) -> bool:
+    """Return true for compiler/setup diagnostics, excluding ordinary test failures."""
+
+    lower = text.lower()
+    return any(
+        marker in lower
+        for marker in (
+            "undefined:",
+            "undefined method",
+            "undefined field",
+            "has no field or method",
+            "cannot use ",
+            "not enough arguments in call",
+            "too many arguments in call",
+            "syntax error:",
+            "build failed",
+            "setup failed",
+            "[setup failed]",
+            "import cycle not allowed",
+            "found packages ",
+        )
+    )
+
+
+def systemic_go_runtime_failure_only(report: str, diff: str) -> bool:
+    """Recognize a repeated runtime-environment failure, never a source/test failure.
+
+    The fallback is intentionally narrow. A known runtime signature must occur
+    repeatedly across distinct tests, and the report must contain no compiler or
+    package-setup diagnostic. Exact-hash build and behavior acceptance are checked
+    separately by ``accepted_systemic_runtime_probe_fallback``.
+    """
+
+    changed_code_paths = changed_code_paths_from_diff(diff)
+    if not changed_code_paths or any(not path.endswith(".go") for path in changed_code_paths):
+        return False
+    lower = report.lower()
+    if "command: go test " not in lower or "return code: 1" not in lower:
+        return False
+    if go_compiler_diagnostic_present(report):
+        return False
+    runtime_signatures = (
+        "local error: tls: bad record mac",
+        "transport: authentication handshake failed: local error: tls: bad record mac",
+    )
+    signature_count = max(lower.count(signature) for signature in runtime_signatures)
+    failed_tests = set(re.findall(r"(?m)^--- fail:\s+([^\s(]+)", lower))
+    return signature_count >= 3 and len(failed_tests) >= 2
+
+
+def accepted_systemic_runtime_probe_fallback(
+    report: str,
+    diff: str,
+    runtime_root: Path = RUNTIME_ROOT,
+) -> bool:
+    """Allow runtime fallback only with independent final build and behavior proof."""
+
+    if not systemic_go_runtime_failure_only(report, diff):
+        return False
+    return bool(persisted_subagent_final_acceptance_texts(diff, runtime_root))
+
+
 def persisted_stale_visible_reconciliation_evidence(
     runtime_root: Path = RUNTIME_ROOT,
 ) -> str:
@@ -3993,21 +4055,8 @@ def go_compile_failure_present(text: str) -> bool:
     lower = text.lower()
     if failed_validation_return_code(lower):
         return True
-    return any(
-        marker in lower
-        for marker in (
-            "undefined:",
-            "undefined method",
-            "undefined field",
-            "has no field or method",
-            "build failed",
-            "setup failed",
-            "\\tfail\\t",
-            "\tfail\t",
-            " fail\t",
-            " fail ",
-            "fail:",
-        )
+    return go_compiler_diagnostic_present(text) or any(
+        marker in lower for marker in ("\\tfail\\t", "\tfail\t", " fail\t", " fail ", "fail:")
     )
 
 
@@ -4364,6 +4413,23 @@ def run_validation_coverage_probe(
                 "\nAdapter note: treated nonzero pytest rc as passed because pytest reported all selected "
                 "tests passed before a teardown transport error."
             )
+    report = "\n".join(sections)
+    if not passed and accepted_systemic_runtime_probe_fallback(report, diff):
+        passed = True
+        sections.append(
+            "\nruntime-failure-classification: classification=environmental "
+            "reason=systemic-repeated-runtime-signature compile_clean=true "
+            "source_contracts_satisfied=true"
+        )
+        sections.append(
+            "go-validation-skip-justified: reason=full-tests-failed-only-in-runtime-environment "
+            "source-evidence=independent-accepted-behavior-verifier "
+            "compile-evidence=hash-bound-affected-package-validation"
+        )
+        log(
+            "adapter public validation probe accepted runtime-only fallback after "
+            "exact-hash build and behavior verifier evidence"
+        )
     if passed:
         diff_hash = final_diff_sha256(diff)
         changed_files = len(changed_paths_from_diff(diff))

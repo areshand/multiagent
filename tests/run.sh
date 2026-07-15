@@ -3033,6 +3033,56 @@ assert not solve_swe_prod.accepted_runtime_only_go_test_skip_evidence(
     runtime_skip_diff,
 )
 
+systemic_runtime_report = """Adapter-selected public helper validation probe.
+Command: go test ./lib/auth
+Return code: 1
+Output tail:
+--- FAIL: TestMFADeviceManagement (0.35s)
+    Error: transport: authentication handshake failed: local error: tls: bad record MAC
+--- FAIL: TestGenerateUserSingleUseCert (0.58s)
+    Error: transport: authentication handshake failed: local error: tls: bad record MAC
+--- FAIL: TestIsMFARequired (0.31s)
+    Error: transport: authentication handshake failed: local error: tls: bad record MAC
+FAIL
+"""
+assert solve_swe_prod.systemic_go_runtime_failure_only(systemic_runtime_report, runtime_skip_diff)
+assert not solve_swe_prod.systemic_go_runtime_failure_only(
+    systemic_runtime_report + "\nundefined: types.MFADevice_TOTP\n",
+    runtime_skip_diff,
+)
+assert not solve_swe_prod.systemic_go_runtime_failure_only(
+    systemic_runtime_report.replace("--- FAIL: TestGenerateUserSingleUseCert", "--- PASS: TestGenerateUserSingleUseCert").replace("--- FAIL: TestIsMFARequired", "--- PASS: TestIsMFARequired"),
+    runtime_skip_diff,
+)
+with tempfile.TemporaryDirectory() as td:
+    runtime_fallback_root = Path(td)
+    verifier_dir = runtime_fallback_root / "state" / "subagents" / "verifier-01-runtime"
+    verifier_dir.mkdir(parents=True)
+    verifier_dir.joinpath("last-message.txt").write_text(
+        "ACCEPTED\n"
+        f"final-diff-sha256={runtime_skip_hash}\n"
+        f"build-verification-passed: final-diff-sha256={runtime_skip_hash} compile_clean=true returncode=0\n"
+        "go-package-validation-passed: package=./lib/auth command=compile-only returncode=0\n"
+        "issue-coverage-ledger: mfa implemented-by=lib/auth/grpcserver.go\n",
+        encoding="utf-8",
+    )
+    assert solve_swe_prod.accepted_systemic_runtime_probe_fallback(
+        systemic_runtime_report,
+        runtime_skip_diff,
+        runtime_fallback_root,
+    )
+    verifier_dir.joinpath("last-message.txt").write_text(
+        "ACCEPTED\n"
+        f"build-verification-passed: final-diff-sha256={runtime_skip_hash} compile_clean=true returncode=0\n"
+        "go-package-validation-passed: package=./lib/auth command=compile-only returncode=0\n",
+        encoding="utf-8",
+    )
+    assert not solve_swe_prod.accepted_systemic_runtime_probe_fallback(
+        systemic_runtime_report,
+        runtime_skip_diff,
+        runtime_fallback_root,
+    )
+
 real_helper_blockers = solve_swe_prod.implementation_scope_blockers(
     "The helper `load_config_value` must preserve config fallback behavior.",
     "diff --git a/src/config.js b/src/config.js\n+async function loadConfigValue() { return await db.get('config:key'); }\n",
