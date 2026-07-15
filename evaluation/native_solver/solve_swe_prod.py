@@ -2911,7 +2911,7 @@ def persisted_subagent_final_acceptance_texts(
                     continue
                 verdicts = list(
                     re.finditer(
-                        r"(?im)^[ \t]*(?:verdict:[ \t]*)?accepted[ \t]*$",
+                        r"(?im)^[ \t]*(?:verdict:[ \t]*)?accepted\b[^\r\n]*$",
                         raw,
                     )
                 )

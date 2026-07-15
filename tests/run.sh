@@ -1441,7 +1441,7 @@ with tempfile.TemporaryDirectory() as td:
     behavior_agent = runtime_root / "subagents" / "verifier-02-behavior"
     behavior_agent.mkdir(parents=True)
     (behavior_agent / "last-message.txt").write_text(
-        "VERDICT: ACCEPTED\n"
+        f"VERDICT: ACCEPTED final-diff-sha256={go_hash}\n"
         f"behavior-verification-passed: final-diff-sha256={go_hash} changed-files=1 public-clauses-covered=true\n"
         "issue-coverage-ledger: issue-forwarder implemented-by=lib/kube/proxy/forwarder.go\n"
         "All listed invariants are preserved. Public validation accepted after source review.\n",
