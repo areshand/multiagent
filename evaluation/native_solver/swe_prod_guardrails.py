@@ -941,12 +941,16 @@ def coverage_probe_commands(workdir: Path, issue: str, diff: str) -> list[list[s
     """
     commands: list[list[str]] = []
     go_packages = changed_go_package_args(diff)
-    if go_packages:
-        commands.append(["go", "test", *go_packages])
+    # Keep each changed package independently machine-checkable. A combined
+    # command can hide which package failed and is needlessly expensive when a
+    # stale pre-repair invocation is still draining in the background.
+    commands.extend(["go", "test", package] for package in go_packages)
     commands.extend(changed_go_related_feature_test_commands(workdir, issue, diff))
     commands.extend(changed_go_feature_test_commands(workdir, issue, diff))
     commands.extend(changed_python_test_commands(workdir, diff))
-    return _dedupe_commands(commands)[:4]
+    deduped = _dedupe_commands(commands)
+    mandatory_count = len(go_packages)
+    return deduped[: max(4, mandatory_count)]
 
 
 def changed_go_related_feature_test_commands(workdir: Path, issue: str, diff: str) -> list[list[str]]:

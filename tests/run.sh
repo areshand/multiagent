@@ -1272,6 +1272,30 @@ with tempfile.TemporaryDirectory() as td:
         stale_statuses = [path.read_text(encoding="utf-8").strip() for path in (Path(td) / "stale-locks" / "results").glob("*/status")]
         assert stale_statuses == ["stale-diff"], stale_statuses
 
+        stale_timeout_go = Path(td) / "go-stale-timeout-real"
+        stale_timeout_go.write_text(
+            "#!/usr/bin/env bash\n"
+            "printf '\\n// mutated before timeout\\n' >> tracked.go\n"
+            "sleep 2\n",
+            encoding="utf-8",
+        )
+        stale_timeout_go.chmod(0o755)
+        solve_swe_prod.write_go_singleflight_wrapper(str(stale_timeout_go))
+        stale_timeout_env = os.environ.copy()
+        stale_timeout_env["MULTIAGENT_GO_TEST_LOCK_ROOT"] = str(Path(td) / "stale-timeout-locks")
+        stale_timeout_env["MULTIAGENT_GO_TEST_TIMEOUT_SECONDS"] = "1"
+        stale_timeout = subprocess.run(
+            [str(go), "test", "./stale-timeout"],
+            cwd=workdir,
+            env=stale_timeout_env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert stale_timeout.returncode == 125, (stale_timeout.stdout, stale_timeout.stderr)
+        assert "go test timed out after 1 seconds" in stale_timeout.stderr, stale_timeout.stderr
+        assert "validation diff changed while command was running" in stale_timeout.stderr, stale_timeout.stderr
+
         solve_swe_prod.write_go_singleflight_wrapper(str(slow_go))
         wait_env = os.environ.copy()
         wait_env["MULTIAGENT_GO_TEST_LOCK_ROOT"] = str(Path(td) / "wait-locks")
@@ -2256,6 +2280,56 @@ with tempfile.TemporaryDirectory() as td:
         solve_swe_prod.HELPER_PROBE_PATH = original_probe_path
         solve_swe_prod.coverage_probe_commands = old_probe_commands
 with tempfile.TemporaryDirectory() as td:
+    runtime = Path(td) / "runtime"
+    runtime.mkdir()
+    original_runtime = solve_swe_prod.RUNTIME_ROOT
+    original_status = solve_swe_prod.STATUS_PATH
+    original_probe_path = solve_swe_prod.HELPER_PROBE_PATH
+    old_probe_commands = solve_swe_prod.coverage_probe_commands
+    old_git_diff = solve_swe_prod.git_diff
+    old_run = solve_swe_prod.run
+    try:
+        solve_swe_prod.RUNTIME_ROOT = runtime
+        solve_swe_prod.STATUS_PATH = runtime / "status.json"
+        solve_swe_prod.HELPER_PROBE_PATH = runtime / "helper-validation-probe.txt"
+        stale_diff = "diff --git a/pkg/old.go b/pkg/old.go\n+func Old() {}\n"
+        final_diff = "diff --git a/pkg/final.go b/pkg/final.go\n+func Final() {}\n"
+        calls = []
+        solve_swe_prod.coverage_probe_commands = lambda *_args: [["go", "test", "./pkg"]]
+        solve_swe_prod.git_diff = lambda *_args: final_diff
+
+        def stale_then_pass(args, **_kwargs):
+            calls.append(args)
+            if len(calls) == 1:
+                return SimpleNamespace(
+                    returncode=125,
+                    stdout="",
+                    stderr=(
+                        "go singleflight: go test timed out after 600 seconds\n"
+                        "go singleflight: validation diff changed while command was running"
+                    ),
+                )
+            return SimpleNamespace(returncode=0, stdout="ok  example/pkg  0.1s\n", stderr="")
+
+        solve_swe_prod.run = stale_then_pass
+        report, passed = solve_swe_prod.run_validation_coverage_probe(
+            Path(td),
+            "Package behavior should be repaired.",
+            stale_diff,
+            ["stale validation regression"],
+        )
+        assert passed, report
+        assert calls == [["go", "test", "./pkg"], ["go", "test", "./pkg"]], calls
+        assert solve_swe_prod.final_diff_sha256(final_diff) in report, report
+        assert "go-package-validation-passed: package=./pkg" in report, report
+    finally:
+        solve_swe_prod.RUNTIME_ROOT = original_runtime
+        solve_swe_prod.STATUS_PATH = original_status
+        solve_swe_prod.HELPER_PROBE_PATH = original_probe_path
+        solve_swe_prod.coverage_probe_commands = old_probe_commands
+        solve_swe_prod.git_diff = old_git_diff
+        solve_swe_prod.run = old_run
+with tempfile.TemporaryDirectory() as td:
     runtime = Path(td)
     original_runtime = solve_swe_prod.RUNTIME_ROOT
     try:
@@ -2314,6 +2388,15 @@ with tempfile.TemporaryDirectory() as td:
     )
     assert ["go", "test", "./components/scanner/pkg"] in go_commands, go_commands
     assert ["go", "test", "./components/scanner/..."] in go_commands, go_commands
+    multi_package_commands = solve_swe_prod.coverage_probe_commands(
+        repo,
+        "Changed packages must compile independently.",
+        "diff --git a/components/scanner/pkg/converter.go b/components/scanner/pkg/converter.go\n+func Convert() {}\n"
+        "diff --git a/components/scanner/parser/v2/parser.go b/components/scanner/parser/v2/parser.go\n+func Parse() {}\n",
+    )
+    assert ["go", "test", "./components/scanner/pkg"] in multi_package_commands, multi_package_commands
+    assert ["go", "test", "./components/scanner/parser/v2"] in multi_package_commands, multi_package_commands
+    assert ["go", "test", "./components/scanner/pkg", "./components/scanner/parser/v2"] not in multi_package_commands, multi_package_commands
 with tempfile.TemporaryDirectory() as td:
     repo = Path(td)
     (repo / "lib/service").mkdir(parents=True)

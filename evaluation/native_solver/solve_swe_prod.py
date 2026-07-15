@@ -1535,8 +1535,11 @@ def run_owner(lock_dir: Path, argv: list[str]) -> int:
                 "\\ngo singleflight: validation diff changed while command was running; "
                 f"start_diff_hash={{start_diff_hash}} finish_diff_hash={{finish_diff_hash}}\\n"
             )
-            if returncode == 0:
-                returncode = 125
+            # No command result can validate a diff other than the one it
+            # started against. Preserve timeout/failure details in the logs,
+            # but return the dedicated stale-evidence code so callers retry
+            # against the final diff instead of treating this as a patch miss.
+            returncode = 125
     (lock_dir / "returncode").write_text(f"{{returncode}}\\n")
     (lock_dir / "finish_diff_hash").write_text(f"{{finish_diff_hash}}\\n")
     (lock_dir / "finished.json").write_text(json.dumps({{"started": started, "finished": time.time(), "returncode": returncode, "timeout_seconds": RUN_TIMEOUT, "timed_out": timed_out, "start_diff_hash": start_diff_hash, "finish_diff_hash": finish_diff_hash, "stale_diff": stale_diff}}, sort_keys=True) + "\\n")
@@ -3861,7 +3864,14 @@ def pytest_teardown_after_success(output: str) -> bool:
 
 
 
-def run_validation_coverage_probe(workdir: Path, issue: str, diff: str, blockers: list[str]) -> tuple[str, bool]:
+def run_validation_coverage_probe(
+    workdir: Path,
+    issue: str,
+    diff: str,
+    blockers: list[str],
+    *,
+    stale_retry_limit: int = 1,
+) -> tuple[str, bool]:
     live_diff = git_diff(workdir)
     if live_diff.strip() and final_diff_sha256(live_diff) != final_diff_sha256(diff):
         log(
@@ -3895,39 +3905,36 @@ def run_validation_coverage_probe(workdir: Path, issue: str, diff: str, blockers
     passed = True
     for command in commands:
         label = " ".join(command)
-        attempts: list[tuple[int, str]] = []
-        for attempt in range(2):
-            try:
-                result = run(
-                    command,
-                    cwd=workdir,
-                    env=validation_probe_env(command, final_diff_sha256(diff)),
-                    timeout=env_positive_int("EVAL_VALIDATION_PROBE_TIMEOUT", 900),
+        try:
+            result = run(
+                command,
+                cwd=workdir,
+                env=validation_probe_env(command, final_diff_sha256(diff)),
+                timeout=env_positive_int("EVAL_VALIDATION_PROBE_TIMEOUT", 900),
+            )
+            returncode = result.returncode
+            output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
+        except subprocess.TimeoutExpired as exc:
+            returncode = 124
+            stdout = exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+            stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+            output = (stdout + "\n" + stderr).strip()
+            output = (output + "\n" if output else "") + f"adapter validation probe timed out after {exc.timeout} seconds"
+        if returncode == 125 and "validation diff changed while command was running" in output.lower():
+            live_diff = git_diff(workdir)
+            if stale_retry_limit > 0 and live_diff.strip():
+                log(
+                    "adapter public validation probe restarting after live diff changed during validation: "
+                    f"{final_diff_sha256(diff)} -> {final_diff_sha256(live_diff)}"
                 )
-                returncode = result.returncode
-                output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
-            except subprocess.TimeoutExpired as exc:
-                returncode = 124
-                stdout = exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
-                stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
-                output = (stdout + "\n" + stderr).strip()
-                output = (output + "\n" if output else "") + f"adapter validation probe timed out after {exc.timeout} seconds"
-            attempts.append((returncode, output))
-            if returncode == 125 and "validation diff changed while command was running" in output.lower() and attempt == 0:
-                live_diff = git_diff(workdir)
-                if live_diff.strip() and final_diff_sha256(live_diff) != final_diff_sha256(diff):
-                    log(
-                        "adapter public validation probe retrying after live diff changed during validation: "
-                        f"{final_diff_sha256(diff)} -> {final_diff_sha256(live_diff)}"
-                    )
-                    diff = live_diff
-                    commands = coverage_probe_commands(workdir, issue, diff)
-                    if command not in commands:
-                        break
                 time.sleep(2)
-                continue
-            break
-        returncode, output = attempts[-1]
+                return run_validation_coverage_probe(
+                    workdir,
+                    issue,
+                    live_diff,
+                    blockers,
+                    stale_retry_limit=stale_retry_limit - 1,
+                )
         teardown_success = returncode != 0 and pytest_teardown_after_success(output)
         no_test_evidence = validation_probe_has_no_test_evidence(label, output)
         if (returncode != 0 and not teardown_success) or no_test_evidence:
