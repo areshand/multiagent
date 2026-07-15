@@ -2852,6 +2852,33 @@ config_literal_blockers = solve_swe_prod.implementation_scope_blockers(
 )
 assert not any("auth_service" in blocker for blocker in config_literal_blockers), config_literal_blockers
 
+runtime_skip_diff = (
+    "diff --git a/lib/auth/grpcserver.go b/lib/auth/grpcserver.go\n"
+    "--- a/lib/auth/grpcserver.go\n"
+    "+++ b/lib/auth/grpcserver.go\n"
+    "@@ -1 +1 @@\n-old\n+new\n"
+)
+runtime_skip_hash = solve_swe_prod.final_diff_sha256(runtime_skip_diff)
+runtime_skip_evidence = [
+    (
+        "ACCEPTED\n"
+        f"build-verification-passed: final-diff-sha256={runtime_skip_hash} compile_clean=true returncode=0\n"
+        "go-package-validation-passed: package=./lib/auth command=compile-only returncode=0"
+    ),
+    (
+        "ACCEPTED\nissue-coverage-ledger: mfa implemented-by=lib/auth/grpcserver.go\n"
+        "compile-only affected-package validation is appropriate because full tests failed only in the runtime-environment"
+    ),
+]
+assert solve_swe_prod.accepted_runtime_only_go_test_skip_evidence(
+    runtime_skip_evidence,
+    runtime_skip_diff,
+)
+assert not solve_swe_prod.accepted_runtime_only_go_test_skip_evidence(
+    runtime_skip_evidence[:1],
+    runtime_skip_diff,
+)
+
 real_helper_blockers = solve_swe_prod.implementation_scope_blockers(
     "The helper `load_config_value` must preserve config fallback behavior.",
     "diff --git a/src/config.js b/src/config.js\n+async function loadConfigValue() { return await db.get('config:key'); }\n",

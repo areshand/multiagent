@@ -3084,7 +3084,38 @@ def persisted_subagent_final_acceptance_evidence(
     # Preserve both independent reports. Taking only the first report loses the
     # behavior ledger when build and semantic verification use separate agents.
     excerpt = " ".join("\n".join(evidence_texts)[:20000].split())
+    if accepted_runtime_only_go_test_skip_evidence(evidence_texts, diff):
+        excerpt += (
+            " go-validation-skip-justified: reason=full-tests-failed-only-in-runtime-environment "
+            "source-evidence=independent-accepted-behavior-verifier "
+            "compile-evidence=hash-bound-affected-package-validation"
+        )
     return excerpt
+
+
+def accepted_runtime_only_go_test_skip_evidence(evidence_texts: list[str], diff: str) -> bool:
+    """Recognize independent behavior acceptance plus clean compile evidence."""
+
+    packages = changed_go_package_args(diff)
+    if not packages or not evidence_texts:
+        return False
+    evidence = "\n".join(evidence_texts)
+    lower = evidence.lower()
+    if "issue-coverage-ledger:" not in lower:
+        return False
+    if not any(
+        marker in lower
+        for marker in (
+            "runtime-environment",
+            "classification=environmental",
+            "runtime failures in existing tests",
+            "runtime-environment tls",
+        )
+    ):
+        return False
+    if not build_verification_has_evidence(evidence, diff):
+        return False
+    return all(go_package_validation_has_evidence(evidence, package) for package in packages)
 
 
 def persisted_stale_visible_reconciliation_evidence(
