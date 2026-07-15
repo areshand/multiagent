@@ -4495,6 +4495,25 @@ def persisted_verifier_blocking_evidence(runtime_root: Path = RUNTIME_ROOT) -> s
     return max(candidates, key=lambda item: item[0])[1][:2400]
 
 
+def verifier_blocking_handoff_key(
+    current_status: dict[str, object],
+    diff: str,
+    seen_keys: set[str],
+    runtime_root: Path = RUNTIME_ROOT,
+) -> str:
+    """Identify one unhandled durable semantic finding on a terminal diff."""
+
+    if str(current_status.get("status", "")).lower() != "blocked" or not diff.strip():
+        return ""
+    evidence = persisted_verifier_blocking_evidence(runtime_root)
+    if not evidence:
+        return ""
+    key = hashlib.sha256(
+        (final_diff_sha256(diff) + "\n" + evidence).encode("utf-8", errors="replace")
+    ).hexdigest()
+    return "" if key in seen_keys else key
+
+
 def send_orchestrator_followup(session: str, blockers: list[str], probe_report: str, source_hints: list[str]) -> None:
     probe_excerpt = probe_report[-5000:] if probe_report else "No adapter helper probe output."
     hint_text = (
@@ -5152,6 +5171,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     verifier_infra_resume_attempts = 0
     repair_todo_resume_limit = int(os.environ.get("EVAL_REPAIR_TODO_RESUME_LIMIT", "1"))
     repair_todo_resume_attempts = 0
+    verifier_blocking_handoffs: set[str] = set()
     adapter_helper_mode = os.environ.get("EVAL_ADAPTER_HELPER_MODE", "advisory").strip().lower()
     adapter_helper_source_edit_opt_in = os.environ.get("EVAL_ADAPTER_HELPER_ALLOW_SOURCE_EDITS", "").strip().lower() in {
         "1",
@@ -5590,6 +5610,31 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                     ):
                         active_verifier_blocked_at = None
                         log("verifier-lifecycle blocked status resumed for durable terminal verdict")
+                        time.sleep(5)
+                        continue
+                semantic_handoff_key = verifier_blocking_handoff_key(
+                    current_status,
+                    diff,
+                    verifier_blocking_handoffs,
+                    RUNTIME_ROOT,
+                )
+                if semantic_handoff_key and int(deadline - time.monotonic()) > 300:
+                    verifier_evidence = persisted_verifier_blocking_evidence(RUNTIME_ROOT)
+                    if relaunch_orchestrator_for_blockers(
+                        "verifier-confirmed semantic finding requires structured repair",
+                        diff,
+                        [
+                            (
+                                "A completed verifier confirmed a semantic source defect on the live diff, but the "
+                                "orchestrator reached terminal blocked status before queuing and repairing it."
+                            ),
+                            verifier_evidence,
+                        ],
+                        "",
+                        force_live_handoff=True,
+                    ):
+                        verifier_blocking_handoffs.add(semantic_handoff_key)
+                        log("verifier-confirmed semantic finding handed back for structured repair")
                         time.sleep(5)
                         continue
                 no_diff_blocked = (

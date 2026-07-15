@@ -958,6 +958,26 @@ with tempfile.TemporaryDirectory() as td:
     assert "verifier already confirmed a semantic source defect" in routing, routing
     assert "Normalize the verifier evidence into finding-create" in routing, routing
     assert "do not launch another acceptance-only verifier over the unchanged diff" in routing, routing
+    blocked_status = {"status": "blocked", "reason": "verifier rejected the final diff"}
+    handoff_key = solve_swe_prod.verifier_blocking_handoff_key(
+        blocked_status,
+        structured_diff,
+        set(),
+        runtime,
+    )
+    assert handoff_key, handoff_key
+    assert not solve_swe_prod.verifier_blocking_handoff_key(
+        blocked_status,
+        structured_diff,
+        {handoff_key},
+        runtime,
+    )
+    assert not solve_swe_prod.verifier_blocking_handoff_key(
+        {"status": "completed"},
+        structured_diff,
+        set(),
+        runtime,
+    )
 
 with tempfile.TemporaryDirectory() as td:
     prompt_test_root = Path(td)
