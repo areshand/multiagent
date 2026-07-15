@@ -2676,9 +2676,14 @@ def active_verifier_subagent_summaries(
     return active_role_subagent_summaries("verifier", runtime_root, live_agent_names)
 
 
-def blocked_status_waits_for_verifier(current_status: dict[str, object]) -> bool:
+def blocked_status_waits_for_verifier(
+    current_status: dict[str, object],
+    active_verifiers: list[str] | None = None,
+) -> bool:
     """Identify terminal claims caused by verifier lifecycle, not a verifier rejection."""
 
+    if active_verifiers:
+        return True
     text = json.dumps(current_status, sort_keys=True).lower()
     if "verifier" not in text:
         return False
@@ -6228,9 +6233,12 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
             if state == "blocked":
                 diff = git_diff(workdir)
                 reason_text = json.dumps(current_status, sort_keys=True).lower()
-                verifier_lifecycle_blocked = diff.strip() and blocked_status_waits_for_verifier(current_status)
+                active_verifiers = active_verifier_subagent_summaries(RUNTIME_ROOT)
+                verifier_lifecycle_blocked = diff.strip() and blocked_status_waits_for_verifier(
+                    current_status,
+                    active_verifiers,
+                )
                 if verifier_lifecycle_blocked:
-                    active_verifiers = active_verifier_subagent_summaries(RUNTIME_ROOT)
                     if active_verifiers and active_verifier_blocked_at is None:
                         active_verifier_blocked_at = time.monotonic()
                     verifier_grace_elapsed = (

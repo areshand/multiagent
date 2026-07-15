@@ -1581,6 +1581,14 @@ with tempfile.TemporaryDirectory() as td:
             "blockers": ["verifier-03-final did not produce durable accepted status before completion"],
         }
     )
+    assert solve_swe_prod.blocked_status_waits_for_verifier(
+        {
+            "status": "blocked",
+            "reason": "orchestrator exited after coverage follow-up without writing valid completion status",
+            "blockers": ["missing final build evidence"],
+        },
+        verifier_summaries,
+    )
     assert not solve_swe_prod.blocked_status_waits_for_verifier(
         {"status": "blocked", "reason": "verifier rejected a compile failure"}
     )
