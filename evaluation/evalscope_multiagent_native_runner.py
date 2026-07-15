@@ -293,6 +293,10 @@ section git-diff-tail
 git diff HEAD -- | tail -c 30000 >> "$out" 2>&1
 copy_file_tail final-status.json /tmp/multiagent-prod-swe/status.json 12000
 copy_file_tail final-failure-diagnostics /tmp/multiagent-prod-swe/failure-diagnostics.txt 20000
+# The returned report is tail-bounded. Repeat process logs after the source
+# diff so a large patch cannot truncate the actual crash or exit cause.
+copy_file_tail final-native-stdout {_STDOUT_FILE} 12000
+copy_file_tail final-native-stderr {_STDERR_FILE} 12000
 tail -c 60000 "$out" 2>/dev/null || true
 """
         result = await env.exec(["bash", "-lc", script], timeout=90)

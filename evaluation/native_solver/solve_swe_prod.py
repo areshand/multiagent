@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import time
+import traceback
 from pathlib import Path
 
 try:
@@ -7106,7 +7107,21 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--multiagent-root", default=os.environ.get("MULTIAGENT_REPO_ROOT", str(DEFAULT_MULTIAGENT_ROOT)))
     parser.add_argument("--timeout", type=int, default=int(os.environ.get("EVAL_PROD_MULTIAGENT_TIMEOUT", "3300")))
     args = parser.parse_args(argv[1:])
-    return run_prod_solver(args.prompt, Path(args.workdir), Path(args.multiagent_root), args.timeout)
+    try:
+        return run_prod_solver(args.prompt, Path(args.workdir), Path(args.multiagent_root), args.timeout)
+    except Exception as exc:
+        RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
+        FAILURE_DIAGNOSTICS_PATH.write_text(traceback.format_exc(), encoding="utf-8")
+        publish_status(
+            {
+                "status": "blocked",
+                "reason": "production multiagent solver crashed before reaching a terminal state",
+                "blockers": [f"{type(exc).__name__}: {exc}"],
+                "failure_diagnostics": str(FAILURE_DIAGNOSTICS_PATH),
+            }
+        )
+        log(f"production solver crashed: {type(exc).__name__}: {exc}")
+        return 1
 
 
 if __name__ == "__main__":

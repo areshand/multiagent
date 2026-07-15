@@ -864,6 +864,8 @@ assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "/
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "helper-validation-probe.txt"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "git diff --stat HEAD --"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "diagnostics_tail"
+assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "final-native-stderr"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "production multiagent solver crashed before reaching a terminal state"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "solver_internal_timeout"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "EVAL_NATIVE_SOLVER_TIMEOUT_RESERVE"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "Never gate production solving on official expected-test metadata"
@@ -1003,6 +1005,32 @@ with tempfile.TemporaryDirectory() as td:
         encoding="utf-8",
     )
     assert solve_swe_prod.orchestrator_exited_without_status("", lifecycle_root)
+
+with tempfile.TemporaryDirectory() as td:
+    crash_root = Path(td)
+    original_runtime_root = solve_swe_prod.RUNTIME_ROOT
+    original_status_path = solve_swe_prod.STATUS_PATH
+    original_failure_path = solve_swe_prod.FAILURE_DIAGNOSTICS_PATH
+    original_solver = solve_swe_prod.run_prod_solver
+    try:
+        solve_swe_prod.RUNTIME_ROOT = crash_root
+        solve_swe_prod.STATUS_PATH = crash_root / "status.json"
+        solve_swe_prod.FAILURE_DIAGNOSTICS_PATH = crash_root / "failure-diagnostics.txt"
+
+        def crashing_solver(*_args, **_kwargs):
+            raise RuntimeError("synthetic lifecycle crash")
+
+        solve_swe_prod.run_prod_solver = crashing_solver
+        assert solve_swe_prod.main(["solve_swe_prod.py"]) == 1
+        crash_status = json.loads(solve_swe_prod.STATUS_PATH.read_text(encoding="utf-8"))
+        assert crash_status["status"] == "blocked", crash_status
+        assert "RuntimeError: synthetic lifecycle crash" in crash_status["blockers"], crash_status
+        assert "synthetic lifecycle crash" in solve_swe_prod.FAILURE_DIAGNOSTICS_PATH.read_text(encoding="utf-8")
+    finally:
+        solve_swe_prod.RUNTIME_ROOT = original_runtime_root
+        solve_swe_prod.STATUS_PATH = original_status_path
+        solve_swe_prod.FAILURE_DIAGNOSTICS_PATH = original_failure_path
+        solve_swe_prod.run_prod_solver = original_solver
 
 evalscope = SimpleNamespace()
 sys.modules.setdefault("evalscope", evalscope)
