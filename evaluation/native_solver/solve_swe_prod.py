@@ -5463,6 +5463,21 @@ def orchestrator_exited_without_status(
     )
 
 
+def orchestrator_infrastructure_handoff_needed(
+    current_status: dict[str, object],
+    aggregate_text: str,
+    runtime_root: Path = RUNTIME_ROOT,
+    workdir: Path = DEFAULT_WORKDIR,
+) -> bool:
+    """Detect a terminal orchestrator tool failure while no status was written."""
+
+    if str(current_status.get("status", "")).strip():
+        return False
+    return orchestrator_exited_without_status("", runtime_root) and verifier_infrastructure_failure_present(
+        aggregate_text, workdir
+    )
+
+
 def verifier_exact_followup_available(text: str) -> bool:
     lower = (text or "").lower()
     return (
@@ -6275,6 +6290,36 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 resolved_todos = resolved_repair_todo_ids(RUNTIME_ROOT, min_age_seconds=30)
                 active_repair_workers = active_repair_subagent_summaries(RUNTIME_ROOT)
                 active_verifiers = active_verifier_subagent_summaries(RUNTIME_ROOT)
+                if (
+                    orchestrator_infrastructure_handoff_needed(
+                        current_status,
+                        text,
+                        RUNTIME_ROOT,
+                        workdir,
+                    )
+                    and not has_live_agent_process()
+                    and remaining_seconds > 300
+                ):
+                    infrastructure_blockers = [
+                        *implementation_scope_blockers(issue, diff_snapshot, current_status, task_metadata),
+                        *validation_coverage_blockers(issue, diff_snapshot, text, current_status, task_metadata),
+                        *verifier_infrastructure_blockers(text, workdir),
+                        (
+                            "The production orchestrator exited without status.json after a tool/infrastructure failure. "
+                            "Preserve the live /app diff, reconcile terminal worker reports, then run independent exact-hash "
+                            "build and behavior verification before writing terminal status."
+                        ),
+                    ]
+                    if relaunch_orchestrator_for_blockers(
+                        "orchestrator exited without terminal status after tool infrastructure failure",
+                        diff_snapshot,
+                        list(dict.fromkeys(infrastructure_blockers)),
+                        "",
+                        force_live_handoff=True,
+                    ):
+                        log("terminal orchestrator infrastructure failure handed off immediately")
+                        time.sleep(5)
+                        continue
                 if (
                     not state
                     and diff_bytes > 0

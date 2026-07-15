@@ -1095,10 +1095,23 @@ with tempfile.TemporaryDirectory() as td:
         lifecycle_root,
     )
     (captures / "orchestrator.txt").write_text(
+        "failed to parse function arguments: missing field `cmd`\n"
         "[multiagent codex exec exited rc=0]\n",
         encoding="utf-8",
     )
     assert solve_swe_prod.orchestrator_exited_without_status("", lifecycle_root)
+    assert solve_swe_prod.orchestrator_infrastructure_handoff_needed(
+        {},
+        (captures / "orchestrator.txt").read_text(encoding="utf-8"),
+        lifecycle_root,
+        Path(td),
+    )
+    assert not solve_swe_prod.orchestrator_infrastructure_handoff_needed(
+        {"status": "completed"},
+        (captures / "orchestrator.txt").read_text(encoding="utf-8"),
+        lifecycle_root,
+        Path(td),
+    )
 
 with tempfile.TemporaryDirectory() as td:
     crash_root = Path(td)
