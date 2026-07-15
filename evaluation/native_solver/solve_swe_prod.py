@@ -896,6 +896,138 @@ def verifier_text_covers_resolution_commands(text: str, commands: list[dict[str,
     return True
 
 
+def verifier_passing_commands(text: str) -> list[dict[str, object]]:
+    """Extract explicit rc=0 commands from verifier protocol lines."""
+
+    commands: list[dict[str, object]] = []
+    for line in (text or "").splitlines():
+        if not re.search(r"\b(?:returncode|return-code|rc)\s*=\s*0\b", line, re.IGNORECASE):
+            continue
+        match = re.search(r"\b(?:command|cmd)\s*=\s*([\"'])(.+?)\1", line, re.IGNORECASE)
+        if not match:
+            continue
+        cmd = " ".join(match.group(2).split())
+        if cmd and not any(item["cmd"] == cmd for item in commands):
+            commands.append({"cmd": cmd, "rc": 0})
+    return commands
+
+
+def migrate_runtime_fallback_todo_resolution(
+    *,
+    todo_dir: Path,
+    todo_id: str,
+    todo_payload: dict[str, object],
+    resolution: dict[str, object],
+    evidence_texts: list[str],
+    diff: str,
+    subagent: Path,
+    state_dir: Path,
+) -> list[dict[str, object]]:
+    """Repair a contradictory runtime-test todo after exact verifier recheck.
+
+    Required commands are unconditional rc=0 closure conditions. Older agents
+    sometimes made a runtime-sensitive full test mandatory while the same todo's
+    done criteria allowed a compile fallback. Preserve that original state, then
+    normalize it only when an exact-hash ACCEPTED verifier report proves compile
+    success and explicitly classifies the mandatory full-test failure as runtime.
+    """
+
+    if str(resolution.get("status", "")).lower() != "blocked":
+        return []
+    finding_type = ""
+    finding_id = str(todo_payload.get("source_finding_id", "")).strip()
+    finding_path = state_dir / "findings" / finding_id / "finding.json"
+    try:
+        finding = json.loads(finding_path.read_text(encoding="utf-8"))
+        finding_type = str(finding.get("type", "")).lower()
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not any(marker in finding_type for marker in ("build", "compile", "validation")):
+        return []
+    done_text = "\n".join(str(item) for item in todo_payload.get("done_criteria", [])).lower()
+    if not (
+        "environment blocker" in done_text
+        or "runtime blocker" in done_text
+        or "runtime failure" in done_text
+        or "compile succeeds" in done_text
+    ):
+        return []
+    required = [str(item).strip() for item in todo_payload.get("required_commands", []) if str(item).strip()]
+    if not required:
+        return []
+
+    accepted_evidence = ""
+    passing_commands: list[dict[str, object]] = []
+    for candidate in evidence_texts:
+        lower = candidate.lower()
+        if not build_verification_has_evidence(candidate, diff):
+            continue
+        if "runtime-failure-classification:" not in lower:
+            continue
+        if not all(command.lower() in lower for command in required):
+            continue
+        extracted = verifier_passing_commands(candidate)
+        if not extracted:
+            continue
+        accepted_evidence = candidate
+        passing_commands = extracted
+        break
+    if not passing_commands:
+        return []
+
+    original_resolution_path = todo_dir / "resolution.json"
+    migration_path = todo_dir / "runtime-fallback-migration.json"
+    migration_path.write_text(
+        json.dumps(
+            {
+                "todo_id": todo_id,
+                "final_diff_hash": final_diff_sha256(diff),
+                "original_required_commands": required,
+                "original_resolution": resolution,
+                "replacement_required_commands": [item["cmd"] for item in passing_commands],
+                "reason": "hash-bound verifier accepted compile fallback and classified mandatory full-test failure as runtime-only",
+                "verifier_evidence_excerpt": accepted_evidence[-4000:],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    shutil.copy2(original_resolution_path, todo_dir / "resolution.pre-runtime-fallback.json")
+    (todo_dir / "required-commands").write_text(
+        "".join(f"{item['cmd']}\n" for item in passing_commands),
+        encoding="utf-8",
+    )
+    changed_paths = [str(path).strip() for path in resolution.get("changed_paths", []) if str(path).strip()]
+    args = [
+        str(subagent),
+        "resolution-create",
+        todo_id,
+        "--worker",
+        "verifier-transcript-recovery",
+        "--status",
+        "resolved",
+        "--validation-json",
+        json.dumps(passing_commands, sort_keys=True),
+        "--why",
+        "Exact-hash verifier recheck proved compile success and classified the mandatory full-test failure as runtime-only; normalized the contradictory todo to its achievable compile closure condition.",
+    ]
+    if changed_paths:
+        args.extend(["--changed", ",".join(changed_paths)])
+    env = os.environ.copy()
+    env.update({"MULTIAGENT_ROOT": str(DEFAULT_WORKDIR), "MULTIAGENT_STATE_DIR": str(state_dir)})
+    result = run(args, cwd=DEFAULT_MULTIAGENT_ROOT, env=env, timeout=30)
+    if result.returncode != 0:
+        log(
+            f"runtime fallback todo migration failed {todo_id}: "
+            + "\n".join(part for part in (result.stdout, result.stderr) if part).strip()[-1000:]
+        )
+        return []
+    log(f"runtime fallback todo migration recorded {todo_id}: {migration_path}")
+    return passing_commands
+
+
 def recover_verifier_accepted_todo_closures(text: str, diff: str) -> list[str]:
     """Close resolved todos when a verifier transcript explicitly rechecked them.
 
@@ -956,8 +1088,19 @@ def recover_verifier_accepted_todo_closures(text: str, diff: str) -> list[str]:
                     break
                 commands.append({"cmd": cmd, "rc": rc})
             if not commands:
-                log(f"verifier todo closure recovery skipped {todo_id}: worker validation is not all rc=0")
-                continue
+                commands = migrate_runtime_fallback_todo_resolution(
+                    todo_dir=todo_dir,
+                    todo_id=todo_id,
+                    todo_payload=todo_payload,
+                    resolution=resolution,
+                    evidence_texts=evidence_texts,
+                    diff=diff,
+                    subagent=subagent,
+                    state_dir=state_dir,
+                )
+                if not commands:
+                    log(f"verifier todo closure recovery skipped {todo_id}: worker validation is not all rc=0")
+                    continue
             has_explicit_marker = marker in lower
             if not has_explicit_marker and not (
                 hash_bound_acceptance

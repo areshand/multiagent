@@ -2428,6 +2428,85 @@ with tempfile.TemporaryDirectory() as td:
         )
         assert recovered_persisted and recovered_persisted[0].endswith(":issue-forwarder-exec-portforward"), recovered_persisted
         assert solve_swe_prod.structured_repair_gate_blockers() == [], solve_swe_prod.structured_repair_gate_blockers()
+        subprocess.run(
+            [
+                str(root / "bin/subagent.sh"),
+                "finding-create",
+                "finding-runtime-build",
+                "--severity",
+                "blocking",
+                "--type",
+                "build",
+                "--summary",
+                "generated type did not compile",
+                "--evidence-json",
+                '{"command":"go test ./lib/auth","returncode":2}',
+                "--required-resolution",
+                "repair compile failure and prove compile succeeds",
+                "--affected",
+                "lib/auth/grpcserver.go",
+            ],
+            env={**os.environ, "MULTIAGENT_STATE_DIR": str(runtime), "MULTIAGENT_ROOT": str(solve_swe_prod.DEFAULT_WORKDIR)},
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            [
+                str(root / "bin/subagent.sh"),
+                "todo-create",
+                "todo-runtime-build",
+                "--source-finding-id",
+                "finding-runtime-build",
+                "--task",
+                "repair generated type compile failure",
+                "--done-criteria",
+                "go test ./lib/auth returns 0, or an exact non-source environment blocker is reported after compile succeeds",
+                "--required-command",
+                "go test ./lib/auth",
+            ],
+            env={**os.environ, "MULTIAGENT_STATE_DIR": str(runtime), "MULTIAGENT_ROOT": str(solve_swe_prod.DEFAULT_WORKDIR)},
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            [
+                str(root / "bin/subagent.sh"),
+                "resolution-create",
+                "todo-runtime-build",
+                "--worker",
+                "worker-runtime-build",
+                "--status",
+                "blocked",
+                "--changed",
+                "lib/auth/grpcserver.go",
+                "--validation-json",
+                '[{"cmd":"go test ./lib/auth","rc":1,"note":"tls: bad record MAC after compile"}]',
+                "--why",
+                "source compile defect repaired; full runtime suite remains environment-blocked",
+            ],
+            env={**os.environ, "MULTIAGENT_STATE_DIR": str(runtime), "MULTIAGENT_ROOT": str(solve_swe_prod.DEFAULT_WORKDIR)},
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        (runtime / "todos" / "todo-runtime-build" / "status").write_text("resolved\n", encoding="utf-8")
+        runtime_diff = "diff --git a/lib/auth/grpcserver.go b/lib/auth/grpcserver.go\n+fixed generated type\n"
+        runtime_hash = solve_swe_prod.final_diff_sha256(runtime_diff)
+        runtime_verifier = (
+            "ACCEPTED\n"
+            f"build-verification-passed: final-diff-sha256={runtime_hash} changed-files=1 compile_clean=true returncode=0\n"
+            "go-package-validation-passed: package=./lib/auth command=\"go test -run '^$' ./lib/auth\" returncode=0\n"
+            "runtime-failure-classification: full-command=\"go test ./lib/auth\" failure=tls bad record MAC classification=runtime-test-suite-environment\n"
+        )
+        recovered_runtime = solve_swe_prod.recover_verifier_accepted_todo_closures(runtime_verifier, runtime_diff)
+        assert recovered_runtime and recovered_runtime[0].endswith(":todo-runtime-build"), recovered_runtime
+        runtime_todo_dir = runtime / "todos" / "todo-runtime-build"
+        assert runtime_todo_dir.joinpath("runtime-fallback-migration.json").exists()
+        assert runtime_todo_dir.joinpath("resolution.pre-runtime-fallback.json").exists()
+        assert runtime_todo_dir.joinpath("required-commands").read_text().strip() == "go test -run '^$' ./lib/auth"
+        assert solve_swe_prod.structured_repair_gate_blockers() == [], solve_swe_prod.structured_repair_gate_blockers()
     finally:
         solve_swe_prod.RUNTIME_ROOT = original_runtime
         solve_swe_prod.DEFAULT_WORKDIR = original_workdir
