@@ -541,6 +541,40 @@ def issue_coverage_blockers(issue: str, evidence_text: str) -> list[str]:
     return []
 
 
+def data_provenance_required(issue: str) -> bool:
+    """Return whether public task text requires state-to-output tracing."""
+
+    normalized = " ".join(issue.lower().split())
+    state_terms = r"(?:initial|original|existing|input|request|configuration|config|record|object|state)"
+    transfer_terms = r"(?:copy|copied|copies|preserve|preserved|retains?|retained|carry|carried|propagate|propagated|derive|derived)"
+    return bool(
+        re.search(rf"{transfer_terms}.{{0,100}}{state_terms}", normalized)
+        or re.search(rf"{state_terms}.{{0,100}}{transfer_terms}", normalized)
+    )
+
+
+def data_provenance_blockers(issue: str, evidence_text: str) -> list[str]:
+    """Require source-visible dataflow evidence for copied/preserved outputs."""
+
+    if not data_provenance_required(issue):
+        return []
+    lower = evidence_text.lower()
+    if "data-provenance-ledger:" not in lower:
+        return [
+            "public task requires output copied, preserved, or derived from initial/original state, but final validation lacks "
+            "`data-provenance-ledger:` with `source=`, `stored-as=`, `output=`, `field=`, and `analogue=` source evidence"
+        ]
+    ledger = lower.split("data-provenance-ledger:", 1)[1]
+    missing = [key for key in ("source=", "stored-as=", "output=", "field=", "analogue=") if key not in ledger]
+    if missing:
+        return [
+            "`data-provenance-ledger:` is incomplete; add "
+            + ", ".join(missing)
+            + " and trace every claimed copied/preserved output to stored input state plus the nearest source-visible analogous type/caller"
+        ]
+    return []
+
+
 def contract_ledger_text(issue: str, metadata: dict[str, object] | None = None) -> str:
     solver_metadata = public_solver_metadata(metadata or {})
     coverage_issue = issue_with_public_problem_text(issue, solver_metadata)
@@ -3409,6 +3443,7 @@ def validation_coverage_blockers(
             "complete after verifier closure plus hash-bound final validation"
         )
     blockers.extend(issue_coverage_blockers(coverage_issue, evidence_text))
+    blockers.extend(data_provenance_blockers(coverage_issue, evidence_text))
     status_json_text = json.dumps(current_status, sort_keys=True)
     stale_sensitive_text = status_json_text if build_verification_has_evidence(status_text, diff) else f"{text}\n{status_json_text}"
     blockers.extend(claimed_changed_path_blockers(diff, stale_sensitive_text))

@@ -307,6 +307,18 @@ tests/callers.
 For Go, added or removed struct fields are source-symbol contract changes even
 when the enclosing `type` line did not change; same-package tests can instantiate
 structs by field name, so reject `source-symbol-map-skip-justified:` for struct field diffs.
+When the task says an output is copied, preserved, carried, or derived from
+initial/original configuration, request, record, object, or state, require a
+source-level dataflow proof. Inspect where the initial object is stored, how
+each promised output field is read from it, and the nearest source-visible
+analogous struct/type, constructor, caller, or conversion path. New or moved
+configuration types must preserve source-visible analogue fields needed by
+callers even when the issue highlights only a subset. Acceptance must include
+`data-provenance-ledger:` with `source=...`, `stored-as=...`, `output=...`, one
+or more `field=...` mappings, and `analogue=PATH:TYPE` (or
+`analogue=none-after-source-search`). Reject a narrative “copied” claim when no
+stored source exists or when the output is reconstructed from an incomplete
+parallel field set.
 If the transcript contains `apply_patch` stale-hunk, missing-context, or patch
 failure output, verify the live final diff rather than the intended patch text.
 Reject unless the target files were re-read, the edit was reapplied to the live

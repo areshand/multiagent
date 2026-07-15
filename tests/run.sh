@@ -1635,13 +1635,25 @@ with tempfile.TemporaryDirectory() as td:
         diff=verifier_diff,
         compile_evidence="hash-bound-final-verifier-build",
     )
-    assert not solve_swe_prod.validation_coverage_blockers(
+assert not solve_swe_prod.validation_coverage_blockers(
         "Add lib/benchmark/linear.go with a Linear generator and validateConfig behavior.",
         verifier_diff,
         "",
         verifier_status,
         {},
     ), verifier_status
+provenance_issue = "Return a response copied from the initial request configuration."
+assert solve_swe_prod.data_provenance_required(provenance_issue)
+assert solve_swe_prod.data_provenance_blockers(provenance_issue, "validation passed")
+incomplete_provenance = solve_swe_prod.data_provenance_blockers(
+    provenance_issue,
+    "data-provenance-ledger: source=request output=response field=timeout analogue=pkg/request.go:Request",
+)
+assert any("stored-as=" in blocker for blocker in incomplete_provenance), incomplete_provenance
+assert not solve_swe_prod.data_provenance_blockers(
+    provenance_issue,
+    "data-provenance-ledger: source=request stored-as=job.request output=response field=timeout<-request.timeout analogue=pkg/request.go:Request",
+)
 assert 'validation_evidence_kind not in {"stale-visible", "final-verifier"}' in solver_source, (
     "hash-bound final verifier acceptance should not be rejected by a redundant no-test adapter behavior probe"
 )

@@ -199,6 +199,18 @@ and `validation-package=...`, do read-only owner discovery before editing source
 symbols and report the missing ledger instead of choosing by proximity to the
 first matching type.
 
+When the task says an output is copied, preserved, carried, or derived from an
+initial/original configuration, request, record, object, or state, prove the
+data path rather than only matching the output field names. Inspect the nearest
+source-visible analogous struct/type, constructor, caller, and conversion path;
+new or moved configuration types must preserve source-visible fields needed by
+that analogue unless the task explicitly removes them. Final validation must
+include one machine-readable `data-provenance-ledger:` line with `source=...`,
+`stored-as=...`, `output=...`, one or more `field=...` mappings, and
+`analogue=PATH:TYPE` (or `analogue=none-after-source-search`). A claim that
+fields are copied is blocking when the implementation has no stored source from
+which those fields can be copied.
+
 For UI/component tasks, classify the request before editing. If the issue asks
 for additive public surface such as a story, export, example, or named symbol,
 prefer adding that surface while preserving the existing component

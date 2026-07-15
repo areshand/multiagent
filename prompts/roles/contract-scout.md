@@ -148,6 +148,15 @@ terms, file/package names, imports, docs, callers, and nearby tests,
 clearly selected, say so and route more read-only discovery instead of letting a
 worker choose the first nearby type.
 
+If public task wording says outputs are copied, preserved, carried, or derived
+from initial/original state, add a data-provenance contract. Identify the source
+object, where it must be stored, every promised source-to-output field mapping,
+and the nearest source-visible analogous type/caller/conversion. Require final
+`data-provenance-ledger:` evidence with `source=`, `stored-as=`, `output=`,
+`field=`, and `analogue=` tokens. Treat an implementation with no stored source
+or an incomplete parallel re-declaration of the analogue as a blocking API-shape
+risk.
+
 For parser, serializer, importer/exporter, fixture-backed transformation, or
 data-shape tasks, route validation through the real production entrypoint and
 nearest visible fixture/test file when practical. Synthetic helper probes are

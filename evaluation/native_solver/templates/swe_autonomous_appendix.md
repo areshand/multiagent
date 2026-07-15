@@ -101,6 +101,10 @@ Before completion:
 - Preserve source-level symbol/package placement and declared receiver or
   interface compatibility. When symbols change, record source-owner and symbol
   evidence through the normal worker/verifier modules.
+- For outputs copied, preserved, carried, or derived from initial/original
+  state, require `data-provenance-ledger:` evidence tracing the stored source to
+  output fields and comparing the nearest source-visible analogous type/caller.
+  A parallel output struct with no stored source is not proof of copying.
 - A known relevant visible failure remains blocking unless public task/source
   evidence proves the expectation changed and a rerunnable exact replacement
   probe passes.
