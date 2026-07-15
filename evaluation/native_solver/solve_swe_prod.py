@@ -5393,6 +5393,23 @@ def blocked_without_status_marker(text: str) -> bool:
     return "blocked:" in text and any(phrase in text for phrase in blocker_phrases)
 
 
+def blocked_status_has_no_source_diff(current_status: dict[str, object], diff: str) -> bool:
+    """Classify terminal no-diff wording without depending on one exact phrase."""
+
+    if diff.strip() or str(current_status.get("status", "")).lower() != "blocked":
+        return False
+    text = json.dumps(current_status, sort_keys=True).lower()
+    return bool(
+        re.search(
+            r"\b(?:no|without|missing|lacks?|before producing any|failed before producing any)\b"
+            r"[^.\n]{0,80}\bsource diff\b|"
+            r"\bnon-empty source diff\b|"
+            r"\bsource diff\b[^.\n]{0,50}\b(?:absent|empty|missing)\b",
+            text,
+        )
+    )
+
+
 def verifier_infrastructure_failure_present(text: str, workdir: Path | None = None) -> bool:
     """Return true when the verifier failed to execute its review machinery.
 
@@ -6168,15 +6185,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         log("verifier-confirmed semantic finding handed back for structured repair")
                         time.sleep(5)
                         continue
-                no_diff_blocked = (
-                    not diff.strip()
-                    and (
-                        "no final source diff" in reason_text
-                        or "non-empty source diff" in reason_text
-                        or "no materialized source diff" in reason_text
-                        or "no source diff" in reason_text
-                    )
-                )
+                no_diff_blocked = blocked_status_has_no_source_diff(current_status, diff)
                 if (
                     no_diff_blocked
                     and no_diff_blocked_retries < no_diff_blocked_retry_limit

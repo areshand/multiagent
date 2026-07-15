@@ -4304,6 +4304,18 @@ with tempfile.TemporaryDirectory() as td:
 assert not solve_swe_prod.verifier_exact_followup_available(
     "Findings: reviewed source files and no blocker remains"
 )
+assert solve_swe_prod.blocked_status_has_no_source_diff(
+    {
+        "status": "blocked",
+        "reason": "workers failed before producing any accepted source diff",
+        "blockers": ["worker-02 produced no /app source diff"],
+    },
+    "",
+)
+assert not solve_swe_prod.blocked_status_has_no_source_diff(
+    {"status": "blocked", "reason": "source diff failed semantic verification"},
+    "diff --git a/pkg/a.go b/pkg/a.go\n+changed\n",
+)
 stale_patch_blockers = solve_swe_prod.stale_patch_application_blockers(
     "apply_patch: could not find hunk context in internal/server/ofrep/evaluation.go"
 )
