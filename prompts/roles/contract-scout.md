@@ -81,6 +81,14 @@ verifier handoff should require `issue-coverage-ledger:` with each item mapped
 to implementation evidence, already-satisfied source evidence, or a blocking
 todo.
 
+When source behavior combines a policy/mode enum with a collection or count,
+record a partition contract. List the source-visible data variants/categories,
+map each policy mode to the category that actually satisfies it, and require
+mixed-category, unknown-variant, empty, singleton, and multi-item cases in the
+verifier handoff. An aggregate collection length is not proof of a
+category-specific policy unless source evidence establishes that equivalence.
+Include the nearby error class and API-boundary conversion convention.
+
 When the task says behavior must be extensible, configurable, registered,
 overridden, or addable without core edits, record an architectural extension
 contract. Name the smallest repository-consistent extension surface, its

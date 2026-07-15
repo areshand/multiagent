@@ -753,6 +753,9 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_ap
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "build-verification-passed:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "go-package-validation-passed:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "status.json"
+assert_file_contains "$ROOT/prompts/verifier.md" "state-space partition audit"
+assert_file_contains "$ROOT/prompts/verifier.md" "mixed-category, unknown/forward-compatible variant"
+assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "partition contract"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "Post-Task Authority Fence"
 appendix_bytes="$(wc -c < "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md")"
 override_bytes="$(wc -c < "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md")"
@@ -3073,6 +3076,17 @@ with tempfile.TemporaryDirectory() as td:
     )
     verifier_dir.joinpath("last-message.txt").write_text(
         "ACCEPTED\n"
+        "final-diff-sha256=stale\n"
+        "issue-coverage-ledger: policy implemented-by=lib/auth/grpcserver.go\n",
+        encoding="utf-8",
+    )
+    assert not solve_swe_prod.accepted_systemic_runtime_probe_fallback(
+        systemic_runtime_report,
+        runtime_skip_diff,
+        runtime_fallback_root,
+    )
+    verifier_dir.joinpath("last-message.txt").write_text(
+        "ACCEPTED\n"
         f"build-verification-passed: final-diff-sha256={runtime_skip_hash} compile_clean=true returncode=0\n"
         "go-package-validation-passed: package=./lib/auth command=compile-only returncode=0\n",
         encoding="utf-8",
@@ -3082,6 +3096,58 @@ with tempfile.TemporaryDirectory() as td:
         runtime_skip_diff,
         runtime_fallback_root,
     )
+
+with tempfile.TemporaryDirectory() as td:
+    compile_repo = Path(td) / "repo"
+    compile_repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=compile_repo, check=True)
+    subprocess.run(["git", "config", "user.email", "eval@example.invalid"], cwd=compile_repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Eval Test"], cwd=compile_repo, check=True)
+    (compile_repo / "go.mod").write_text("module example.invalid/probe\n\ngo 1.22\n", encoding="utf-8")
+    package_dir = compile_repo / "pkg" / "foo"
+    package_dir.mkdir(parents=True)
+    source_path = package_dir / "foo.go"
+    source_path.write_text("package foo\n\nconst Value = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=compile_repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=compile_repo, check=True)
+    source_path.write_text("package foo\n\nconst Value = 2\n", encoding="utf-8")
+    compile_diff = solve_swe_prod.git_diff(compile_repo)
+
+    fake_bin = Path(td) / "bin"
+    fake_bin.mkdir()
+    fake_go = fake_bin / "go"
+    fake_go.write_text(
+        "#!/bin/sh\n"
+        "if [ \"${FAKE_GO_RC:-0}\" -ne 0 ]; then echo 'undefined: BrokenSymbol' >&2; exit \"$FAKE_GO_RC\"; fi\n"
+        "echo 'ok example.invalid/probe/pkg/foo [no tests to run]'\n",
+        encoding="utf-8",
+    )
+    fake_go.chmod(0o755)
+    old_path = os.environ.get("PATH", "")
+    try:
+        os.environ["PATH"] = str(fake_bin) + os.pathsep + old_path
+        os.environ["FAKE_GO_RC"] = "0"
+        compile_report, compile_passed = solve_swe_prod.run_final_changed_go_compile_probe(
+            compile_repo, compile_diff
+        )
+        assert compile_passed, compile_report
+        assert "go test -run ^$ ./pkg/foo" in compile_report, compile_report
+        assert "build-verification-passed:" in compile_report, compile_report
+        os.environ["FAKE_GO_RC"] = "1"
+        failed_report, failed_compile = solve_swe_prod.run_final_changed_go_compile_probe(
+            compile_repo, compile_diff
+        )
+        assert not failed_compile, failed_report
+        assert "undefined: BrokenSymbol" in failed_report, failed_report
+        source_path.write_text("package foo\n\nconst Value = 3\n", encoding="utf-8")
+        stale_report, stale_compile = solve_swe_prod.run_final_changed_go_compile_probe(
+            compile_repo, compile_diff
+        )
+        assert not stale_compile, stale_report
+        assert "changed before" in stale_report, stale_report
+    finally:
+        os.environ["PATH"] = old_path
+        os.environ.pop("FAKE_GO_RC", None)
 
 real_helper_blockers = solve_swe_prod.implementation_scope_blockers(
     "The helper `load_config_value` must preserve config fallback behavior.",

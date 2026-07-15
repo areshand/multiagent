@@ -3215,6 +3215,48 @@ def persisted_subagent_final_acceptance_texts(
     return list(dict.fromkeys([*build_evidence_texts, *behavior_evidence_texts]))
 
 
+def persisted_exact_hash_behavior_acceptance_texts(
+    diff: str,
+    runtime_root: Path = RUNTIME_ROOT,
+) -> list[str]:
+    """Return semantic verifier acceptances explicitly bound to the final diff."""
+
+    if not diff.strip():
+        return []
+    diff_hash_marker = f"final-diff-sha256={final_diff_sha256(diff).lower()}"
+    evidence_texts: list[str] = []
+    for subagents_dir in subagent_state_roots(runtime_root):
+        for agent_dir in sorted(path for path in subagents_dir.iterdir() if path.is_dir()):
+            agent_name = agent_dir.name.lower()
+            if "verifier" not in agent_name and "review" not in agent_name:
+                continue
+            for name in ("last-message.txt", "current.txt", "transcript.log"):
+                path = agent_dir / name
+                if not path.exists():
+                    continue
+                try:
+                    raw = path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                verdicts = list(
+                    re.finditer(r"(?im)^[ \t]*(?:verdict:[ \t]*)?accepted\b[^\r\n]*$", raw)
+                )
+                if not verdicts:
+                    continue
+                evidence_tail = raw[verdicts[-1].start() :]
+                lower = evidence_tail.lower().replace("\\n", "\n")
+                if diff_hash_marker not in lower:
+                    continue
+                if "issue-coverage-ledger:" not in lower and not behavior_verification_has_evidence(
+                    evidence_tail, diff
+                ):
+                    continue
+                evidence_texts.append(
+                    f"persisted behavior verifier {agent_dir.name} {name}:\n{evidence_tail}"
+                )
+    return list(dict.fromkeys(evidence_texts))
+
+
 def persisted_subagent_final_acceptance_evidence(
     diff: str,
     runtime_root: Path = RUNTIME_ROOT,
@@ -3316,11 +3358,62 @@ def accepted_systemic_runtime_probe_fallback(
     diff: str,
     runtime_root: Path = RUNTIME_ROOT,
 ) -> bool:
-    """Allow runtime fallback only with independent final build and behavior proof."""
+    """Allow a compile probe only after exact-hash semantic acceptance."""
 
     if not systemic_go_runtime_failure_only(report, diff):
         return False
-    return bool(persisted_subagent_final_acceptance_texts(diff, runtime_root))
+    return bool(persisted_exact_hash_behavior_acceptance_texts(diff, runtime_root))
+
+
+def run_final_changed_go_compile_probe(workdir: Path, diff: str) -> tuple[str, bool]:
+    """Compile every changed Go package under the exact final diff."""
+
+    packages = changed_go_package_args(diff)
+    if not packages:
+        return "No changed Go packages were available for compile verification.", False
+    expected_hash = final_diff_sha256(diff)
+    if final_diff_sha256(git_diff(workdir)) != expected_hash:
+        return "Final diff changed before adapter compile verification.", False
+
+    command = ["go", "test", "-run", "^$", *packages]
+    label = " ".join(command)
+    try:
+        result = run(
+            command,
+            cwd=workdir,
+            env=validation_probe_env(command, expected_hash),
+            timeout=env_positive_int("EVAL_VALIDATION_PROBE_TIMEOUT", 900),
+        )
+        returncode = result.returncode
+        output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
+    except subprocess.TimeoutExpired as exc:
+        returncode = 124
+        stdout = exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+        stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+        output = (stdout + "\n" + stderr).strip()
+
+    live_hash = final_diff_sha256(git_diff(workdir))
+    passed = returncode == 0 and live_hash == expected_hash and not go_compiler_diagnostic_present(output)
+    lines = [
+        "Adapter final changed-package compile verification.",
+        f"Command: {label}",
+        f"Return code: {returncode}",
+        f"Expected final diff: {expected_hash}",
+        f"Observed final diff: {live_hash}",
+        "Output tail:",
+        output[-6000:],
+    ]
+    if passed:
+        lines.append(
+            f"build-verification-passed: final-diff-sha256={expected_hash} "
+            f"changed-files={len(changed_code_paths_from_diff(diff))} compile_clean=true returncode=0"
+        )
+        for package in packages:
+            lines.append(
+                f"go-package-validation-passed: package={package} command={shlex.quote(label)} "
+                f"returncode=0 final-diff-sha256={expected_hash}"
+            )
+    return "\n".join(lines), passed
 
 
 def persisted_stale_visible_reconciliation_evidence(
@@ -4414,22 +4507,29 @@ def run_validation_coverage_probe(
                 "tests passed before a teardown transport error."
             )
     report = "\n".join(sections)
+    runtime_fallback = False
     if not passed and accepted_systemic_runtime_probe_fallback(report, diff):
-        passed = True
+        compile_report, compile_passed = run_final_changed_go_compile_probe(workdir, diff)
+        sections.append("\n" + compile_report)
+        if compile_passed:
+            passed = True
+            runtime_fallback = True
         sections.append(
             "\nruntime-failure-classification: classification=environmental "
-            "reason=systemic-repeated-runtime-signature compile_clean=true "
+            "reason=systemic-repeated-runtime-signature "
+            f"compile_clean={'true' if compile_passed else 'false'} "
             "source_contracts_satisfied=true"
         )
-        sections.append(
-            "go-validation-skip-justified: reason=full-tests-failed-only-in-runtime-environment "
-            "source-evidence=independent-accepted-behavior-verifier "
-            "compile-evidence=hash-bound-affected-package-validation"
-        )
-        log(
-            "adapter public validation probe accepted runtime-only fallback after "
-            "exact-hash build and behavior verifier evidence"
-        )
+        if compile_passed:
+            sections.append(
+                "go-validation-skip-justified: reason=full-tests-failed-only-in-runtime-environment "
+                "source-evidence=independent-exact-hash-behavior-verifier "
+                "compile-evidence=adapter-run-hash-bound-affected-package-validation"
+            )
+            log(
+                "adapter public validation probe accepted runtime-only fallback after "
+                "exact-hash behavior acceptance and adapter compile verification"
+            )
     if passed:
         diff_hash = final_diff_sha256(diff)
         changed_files = len(changed_paths_from_diff(diff))
@@ -4439,7 +4539,7 @@ def run_validation_coverage_probe(
         )
         go_packages = changed_go_package_args(diff)
         for package in go_packages:
-            go_command = next(
+            go_command = "go test -run '^$' " + " ".join(go_packages) if runtime_fallback else next(
                 (
                     " ".join(command)
                     for command in commands

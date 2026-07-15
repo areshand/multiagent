@@ -98,6 +98,17 @@ Prioritize:
 Challenge material worker assumptions explicitly. For each assumption, validate
 it from source/tests/docs, cover it with a probe, or mark it as residual risk.
 
+When changed logic combines a policy/mode enum with a collection, count, or
+length check, perform a source-derived state-space partition audit. Identify
+the data variants/categories recognized by nearby types and callers, determine
+which category satisfies each policy mode, and challenge aggregate counts with
+mixed-category, unknown/forward-compatible variant, empty, singleton, and
+multi-item counterexamples. If a mode-specific contract is implemented with an
+aggregate count that a non-qualifying category can satisfy, emit a blocking
+finding/todo. Also compare the selected error class and boundary conversion
+with nearby API conventions. Record this matrix in the verifier report; a
+compile-clean result alone does not close it.
+
 For an architectural extension contract, reject a patch that only centralizes
 hardcoded behavior. Require a concrete extension surface, a production caller
 or integration path that consumes it, preserved defaults, and a source-derived
