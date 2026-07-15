@@ -3262,6 +3262,11 @@ assert solve_swe_prod.source_required_go_validation_packages(
     ),
     {},
 ) == ["./lib/benchmark"]
+changed_required = solve_swe_prod.remove_truncated_go_package_prefixes(
+    ["./li", "./lib", "./lib/auth"],
+    ["./lib/auth"],
+)
+assert changed_required == ["./lib", "./lib/auth"], changed_required
 dependency_contract_diff = (
     "diff --git a/internal/server/ofrep/evaluation.go b/internal/server/ofrep/evaluation.go\n"
     "+type flagLister interface { ListFlags(ctx context.Context, namespace string) ([]string, error) }\n"
@@ -3996,6 +4001,9 @@ with tempfile.TemporaryDirectory() as td:
 
 assert solve_swe_prod.is_disallowed_patch_path("patch.txt")
 assert solve_swe_prod.is_disallowed_patch_path("candidate.patch")
+assert not solve_swe_prod.is_disallowed_patch_path("go.sum")
+assert solve_swe_prod.is_dependency_manifest_path("go.sum")
+assert "Go dependency metadata rule:" in solver_source
 
 with tempfile.TemporaryDirectory() as td:
     old_probe_commands = solve_swe_prod.coverage_probe_commands

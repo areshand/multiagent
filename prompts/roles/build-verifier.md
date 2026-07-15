@@ -28,6 +28,13 @@ Also require `returncode=0` evidence for any Go package named by
 plan, or a worker's attempted validation command. Changed-package validation is
 necessary but not sufficient when source evidence names additional contract
 packages.
+
+If a full package test command compiles and starts tests but fails only because
+runtime fixtures, assets, credentials, or services are unavailable, rerun
+`go test -run '^$' ./affected/package` (or the repository's compile-only
+equivalent). A zero compile-only return code may prove `compile_clean=true` for
+the build gate, but must not be reported as behavioral test success; preserve
+the runtime-environment failure for the behavior verifier to assess separately.
 If changed Go code wires service startup, adapters, helpers, parsers,
 converters, or shared feature plumbing, inspect source-visible sibling packages
 and issue/diff vocabulary for a related feature subtree. If that subtree has Go

@@ -1932,6 +1932,11 @@ def repo_discovery_snapshot(workdir: Path, issue: str) -> str:
             "partial-data, and injected-error behavior from visible docs, callers, and existing tests. Keep data structures "
             "minimal unless public source evidence requires broader fields."
         )
+        sections.append(
+            "Go dependency metadata rule: a minimal go.sum/go.work.sum change is allowed when changed production imports "
+            "directly require it for affected packages to compile. Reject unrelated module churn, and prove the final "
+            "checksum diff with focused affected-package validation."
+        )
 
     package_json = workdir / "package.json"
     if package_json.exists():
@@ -2040,8 +2045,6 @@ def is_disallowed_patch_path(path: str) -> bool:
             "pnpm-lock.yaml",
             "yarn.lock",
             "poetry.lock",
-            "go.sum",
-            "go.work.sum",
         }
     )
 
@@ -3607,6 +3610,12 @@ def validation_coverage_blockers(
             package for package in go_packages if not go_package_validation_has_evidence(go_evidence_text, package)
         ]
         required_source_go_packages = source_required_go_validation_packages(text, current_status)
+        # Tmux hard-wraps long ledger lines. A split inside a path segment can
+        # turn ``./lib/auth`` into a plausible but nonexistent ``./li`` token.
+        required_source_go_packages = remove_truncated_go_package_prefixes(
+            required_source_go_packages,
+            go_packages,
+        )
         missing_required_source_go_packages = [
             package
             for package in required_source_go_packages
@@ -3881,6 +3890,21 @@ def source_required_go_validation_packages(text: str, current_status: dict[str, 
         package
         for package in unique_packages
         if not any(other != package and other.startswith(package) for other in unique_packages)
+    ]
+
+
+def remove_truncated_go_package_prefixes(required: list[str], changed: list[str]) -> list[str]:
+    """Drop tmux-wrapped tokens split inside a changed package path segment."""
+
+    return [
+        package
+        for package in required
+        if not any(
+            candidate != package
+            and candidate.startswith(package)
+            and candidate[len(package) : len(package) + 1] != "/"
+            for candidate in changed
+        )
     ]
 
 
@@ -4715,7 +4739,7 @@ def spawn_adapter_helper_worker(
         f"You are a bounded source worker launched by {launch_reason}. "
         "Work in /app only. Do not submit PRs, push, or send external messages. "
         f"Assignment ID: {assignment_id}. Branch: benchmark. Stay inside these owned source paths: {owned_csv}. "
-        "Do not edit tests, lockfiles, generated assets, bundled assets, or unrelated config unless the visible task/source contract requires fixture assets.\n\n"
+        "Do not edit tests, generated assets, bundled assets, or unrelated config. A minimal dependency checksum file may change only when the visible source API migration directly requires it and affected-package validation proves the need.\n\n"
         "No-leak rule: do not rely on hidden tests, non-public evaluator rows, previous benchmark failures, or benchmark-only metadata as implementation guidance. "
         "Use only the issue text, visible source/tests/docs, public APIs, runtime behavior, and the current diff.\n\n"
         f"Durable contract ledger from `{CONTRACT_LEDGER_PATH}`:\n{ledger_excerpt}\n\n"

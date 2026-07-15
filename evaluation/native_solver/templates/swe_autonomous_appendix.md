@@ -24,8 +24,10 @@ diff in `/app`.
 - The orchestrator does not edit source. It may inspect source and git state,
   manage agents, remove generated artifacts, and materialize a worker commit
   with `git reset --mixed "$MULTIAGENT_START_HEAD"`.
-- Do not modify tests, lockfiles, generated/bundled assets, or unrelated config
-  unless the public task explicitly requires a legitimate product artifact.
+- Do not modify tests, generated/bundled assets, or unrelated config. A minimal
+  dependency checksum file may change only when a public source API migration
+  directly requires it and final affected-package validation proves the need;
+  unrelated install or lockfile churn remains forbidden.
 
 ### Evidence Boundary
 
@@ -102,6 +104,10 @@ Before completion:
   `go-package-validation-passed: package=... command=... returncode=0` per
   changed/contract package. `undefined:`, `has no field or method`, `FAIL`,
   `build failed`, any nonzero return code, or a no-test-only command blocks.
+  When a full test command fails only after compilation because runtime assets
+  or services are unavailable, run `go test -run '^$' ./affected/package` as a
+  separate compile check. Record compile success separately and leave the
+  runtime failure for behavior verification; never relabel it as a passing test.
 - Preserve source-level symbol/package placement and declared receiver or
   interface compatibility. When symbols change, record source-owner and symbol
   evidence through the normal worker/verifier modules.
