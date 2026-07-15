@@ -1600,6 +1600,12 @@ owned_index = assignment_commands[-1].index("--owned")
 assert assignment_commands[-1][owned_index + 1] == "evaluation/native_solver/solve_swe_prod.py", assignment_commands[-1]
 
 solver_source = (root / "evaluation/native_solver/solve_swe_prod.py").read_text(encoding="utf-8")
+assert ".removeprefix(" not in solver_source, "container-side solver must remain compatible with Python 3.8 task images"
+assert solve_swe_prod.remove_prefix("diff --git a/file.py", "diff --git a/") == "file.py"
+assert solve_swe_prod.remove_prefix("file.py", "diff --git a/") == "file.py"
+assert 'EVAL_VERIFIER_INFRA_RESUME_LIMIT", "2"' in solver_source, (
+    "transient verifier infrastructure failures should receive two bounded recovery attempts"
+)
 assert 'adapter_helper_repair_allowed("progress watchdog stale diff")' in solver_source, (
     "progress watchdog must not spawn source-editing adapter helpers by default"
 )

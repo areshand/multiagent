@@ -124,6 +124,12 @@ def log(message: str) -> None:
     print(f"[prod-multiagent-swe] {message}", flush=True)
 
 
+def remove_prefix(value: str, prefix: str) -> str:
+    """Python 3.8-compatible equivalent of ``str.removeprefix``."""
+
+    return value[len(prefix) :] if value.startswith(prefix) else value
+
+
 def read_prompt(path: str | None) -> str:
     if path:
         return Path(path).read_text(encoding="utf-8")
@@ -1196,7 +1202,7 @@ def main() -> int:
         if line == "*** End Patch":
             break
         if line.startswith("*** Update File: "):
-            path = Path(line.removeprefix("*** Update File: "))
+            path = Path(remove_prefix(line, "*** Update File: "))
             idx += 1
             hunks: list[list[str]] = []
             current: list[str] | None = None
@@ -1216,7 +1222,7 @@ def main() -> int:
             changed.append(path)
             continue
         if line.startswith("*** Add File: "):
-            path = Path(line.removeprefix("*** Add File: "))
+            path = Path(remove_prefix(line, "*** Add File: "))
             idx += 1
             new_lines: list[str] = []
             while idx < len(text) and not text[idx].startswith("*** "):
@@ -1229,7 +1235,7 @@ def main() -> int:
             changed.append(path)
             continue
         if line.startswith("*** Delete File: "):
-            path = Path(line.removeprefix("*** Delete File: "))
+            path = Path(remove_prefix(line, "*** Delete File: "))
             path.unlink()
             changed.append(path)
             idx += 1
@@ -1866,7 +1872,7 @@ def repo_discovery_snapshot(workdir: Path, issue: str) -> str:
         module = ""
         for line in go_mod.read_text(encoding="utf-8", errors="replace").splitlines():
             if line.startswith("module "):
-                module = line.removeprefix("module ").strip()
+                module = remove_prefix(line, "module ").strip()
                 break
         issue_lower = issue.lower()
         issue_terms = {
@@ -3270,7 +3276,7 @@ def changed_paths_from_diff(diff: str) -> set[str]:
         if not line.startswith("diff --git a/") or " b/" not in line:
             continue
         before_b, after_b = line.split(" b/", 1)
-        old_path = before_b.removeprefix("diff --git a/")
+        old_path = remove_prefix(before_b, "diff --git a/")
         new_path = after_b.split("\t", 1)[0].strip()
         for path in (old_path, new_path):
             if path and path != "/dev/null":
@@ -3427,7 +3433,7 @@ def claimed_changed_source_paths(text: str) -> set[str]:
                     )
                 )
                 if in_changed_section or has_nearby_change_verb:
-                    claimed.add(clean.removeprefix("./"))
+                    claimed.add(remove_prefix(clean, "./"))
     return claimed
 
 
@@ -3812,8 +3818,8 @@ def canonical_go_package(package: str) -> str:
 def go_package_identities_match(required: str, reported: str) -> bool:
     """Match a relative Go package to an equivalent module import path."""
 
-    required_package = canonical_go_package(required).removeprefix("./")
-    reported_package = canonical_go_package(reported).removeprefix("./")
+    required_package = remove_prefix(canonical_go_package(required), "./")
+    reported_package = remove_prefix(canonical_go_package(reported), "./")
     if required_package == reported_package:
         return True
     if not required_package or required_package in {".", "..."}:
@@ -3850,7 +3856,7 @@ def source_required_go_validation_packages(text: str, current_status: dict[str, 
         path = raw.strip().strip("`'\"")
         path = path.rstrip(".,;:)]}")
         path = path.lstrip("([{")
-        path = path.removeprefix("./")
+        path = remove_prefix(path, "./")
         if not path.endswith(".go"):
             return
         if "/" not in path:
@@ -5063,7 +5069,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     orchestrator_resume_attempts = 0
     source_symbol_resume_limit = int(os.environ.get("EVAL_SOURCE_SYMBOL_RESUME_LIMIT", "1"))
     source_symbol_resume_attempts = 0
-    verifier_infra_resume_limit = int(os.environ.get("EVAL_VERIFIER_INFRA_RESUME_LIMIT", "1"))
+    verifier_infra_resume_limit = int(os.environ.get("EVAL_VERIFIER_INFRA_RESUME_LIMIT", "2"))
     verifier_infra_resume_attempts = 0
     repair_todo_resume_limit = int(os.environ.get("EVAL_REPAIR_TODO_RESUME_LIMIT", "1"))
     repair_todo_resume_attempts = 0
