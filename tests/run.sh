@@ -2845,6 +2845,13 @@ false_helper_blockers = solve_swe_prod.implementation_scope_blockers(
 assert not any("helper/interface" in blocker for blocker in false_helper_blockers), false_helper_blockers
 assert not any("helper-layer validation" in blocker for blocker in false_helper_blockers), false_helper_blockers
 
+config_literal_blockers = solve_swe_prod.implementation_scope_blockers(
+    "Set `second_factor: on` on the `auth_service` configuration.",
+    "diff --git a/lib/auth/grpcserver.go b/lib/auth/grpcserver.go\n+func guardLastMFADevice() {}\n",
+    {"status": "completed", "validation": "visible source check passed"},
+)
+assert not any("auth_service" in blocker for blocker in config_literal_blockers), config_literal_blockers
+
 real_helper_blockers = solve_swe_prod.implementation_scope_blockers(
     "The helper `load_config_value` must preserve config fallback behavior.",
     "diff --git a/src/config.js b/src/config.js\n+async function loadConfigValue() { return await db.get('config:key'); }\n",

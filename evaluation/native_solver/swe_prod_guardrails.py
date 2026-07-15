@@ -1275,7 +1275,14 @@ def _issue_mentions_output_contract_change(issue_lower: str) -> bool:
 def _issue_named_helpers(issue: str) -> list[str]:
     helpers: list[str] = []
     for match in re.findall(r"`([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)`", issue):
-        if _looks_like_call_symbol(match) or _looks_like_constant_symbol(match):
+        # A bare snake_case literal is commonly a config key, service name, or
+        # serialized field. Require explicit helper/function context below
+        # before treating that shape as a source symbol.
+        if (
+            "." in match
+            or _looks_like_constant_symbol(match)
+            or "_" not in match and _looks_like_call_symbol(match)
+        ):
             helpers.append(match)
     for match in re.findall(
         r"\b(?:helper|function|method|interface|class|constant|symbol)\s+`?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)`?",
