@@ -1618,6 +1618,14 @@ assert not solve_swe_prod.structured_repair_todo_blocker_present(
 assert solve_swe_prod.canonical_go_package("./models/...") == "./models"
 assert solve_swe_prod.canonical_go_package("./models.") == "./models"
 assert solve_swe_prod.canonical_go_package("./...") == "./..."
+assert solve_swe_prod.go_package_identities_match(
+    "./contrib/trivy/pkg",
+    "github.com/future-architect/vuls/contrib/trivy/pkg",
+)
+assert not solve_swe_prod.go_package_identities_match(
+    "./internal/server/ofrep",
+    "github.com/example/project/internal/server/evaluation",
+)
 assert solve_swe_prod.go_package_validation_has_explicit_marker(
     "go-package-validation-passed: package=./models command='go test ./models/...' returncode=0",
     "./models/...",
@@ -1625,6 +1633,11 @@ assert solve_swe_prod.go_package_validation_has_explicit_marker(
 assert solve_swe_prod.go_package_validation_has_explicit_marker(
     "go-package-validation-passed: package=./models/... command='go test ./models/...' returncode=0",
     "./models",
+)
+assert solve_swe_prod.go_package_validation_has_explicit_marker(
+    "go-package-validation-passed: package=github.com/future-architect/vuls/contrib/trivy/pkg "
+    "command='go test ./contrib/trivy/pkg' returncode=0",
+    "./contrib/trivy/pkg",
 )
 hash_bound_source_map = solve_swe_prod.source_symbol_adapter_evidence(
     Path("/tmp"),

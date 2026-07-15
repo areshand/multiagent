@@ -3753,6 +3753,20 @@ def canonical_go_package(package: str) -> str:
     return normalized
 
 
+def go_package_identities_match(required: str, reported: str) -> bool:
+    """Match a relative Go package to an equivalent module import path."""
+
+    required_package = canonical_go_package(required).removeprefix("./")
+    reported_package = canonical_go_package(reported).removeprefix("./")
+    if required_package == reported_package:
+        return True
+    if not required_package or required_package in {".", "..."}:
+        return False
+    # Verifiers commonly report ``go list``'s full module import path while the
+    # adapter derives a repository-relative package from the changed file.
+    return reported_package.endswith("/" + required_package)
+
+
 def source_required_go_validation_packages(text: str, current_status: dict[str, object]) -> list[str]:
     """Extract package validation requirements from source/scout evidence.
 
@@ -3856,7 +3870,11 @@ def go_package_validation_has_evidence(text: str, package: str) -> bool:
     if "go-package-validation-passed:" in lower:
         for match in re.finditer("go-package-validation-passed:", lower):
             window = lower[match.start() : match.start() + 500]
-            if any(f"package={marker}" in window for marker in package_markers) and any(
+            reported = re.search(r"\bpackage\s*=\s*([^\s;]+)", window)
+            package_matches = bool(
+                reported and go_package_identities_match(package_lower, reported.group(1))
+            )
+            if (package_matches or any(f"package={marker}" in window for marker in package_markers)) and any(
                 ok in window for ok in ("returncode=0", "return-code=0", "rc=0", "passed")
             ):
                 return True
@@ -3893,7 +3911,11 @@ def go_package_validation_has_explicit_marker(text: str, package: str) -> bool:
             package_markers.add(package_lower[2:] + "/...")
     for match in re.finditer("go-package-validation-passed:", lower):
         window = lower[match.start() : match.start() + 700]
-        if any(f"package={marker}" in window for marker in package_markers) and any(
+        reported = re.search(r"\bpackage\s*=\s*([^\s;]+)", window)
+        package_matches = bool(
+            reported and go_package_identities_match(package_lower, reported.group(1))
+        )
+        if (package_matches or any(f"package={marker}" in window for marker in package_markers)) and any(
             ok in window for ok in ("returncode=0", "return-code=0", "rc=0", "passed")
         ):
             return True
