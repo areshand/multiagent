@@ -4981,6 +4981,25 @@ def persisted_verifier_blocking_evidence(runtime_root: Path = RUNTIME_ROOT) -> s
     """Return the newest durable verifier-confirmed semantic blocker."""
 
     candidates: list[tuple[int, str]] = []
+    for state_dir in (runtime_root, runtime_root / "state"):
+        findings_dir = state_dir / "findings"
+        if not findings_dir.is_dir():
+            continue
+        for path in findings_dir.glob("*/finding.json"):
+            try:
+                finding = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+                mtime = path.stat().st_mtime_ns
+            except (OSError, json.JSONDecodeError):
+                continue
+            if str(finding.get("severity", "")).lower() != "blocking":
+                continue
+            affected_paths = finding.get("affected_paths")
+            required_resolution = str(finding.get("required_resolution", "")).strip()
+            if not isinstance(affected_paths, list) or not affected_paths or not required_resolution:
+                continue
+            finding_id = str(finding.get("id") or path.parent.name)
+            excerpt = json.dumps(finding, sort_keys=True, separators=(",", ":"))
+            candidates.append((mtime, f"structured finding {finding_id}: {excerpt}"))
     for subagents_dir in subagent_state_roots(runtime_root):
         for agent_dir in subagents_dir.iterdir():
             if not agent_dir.is_dir():

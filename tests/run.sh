@@ -1004,6 +1004,23 @@ with tempfile.TemporaryDirectory() as td:
     assert "verifier already confirmed a semantic source defect" in routing, routing
     assert "Normalize the verifier evidence into finding-create" in routing, routing
     assert "do not launch another acceptance-only verifier over the unchanged diff" in routing, routing
+    finding_dir = runtime / "state" / "findings" / "MFA_MODE_AGGREGATE"
+    finding_dir.mkdir(parents=True)
+    finding_dir.joinpath("finding.json").write_text(
+        json.dumps(
+            {
+                "id": "MFA_MODE_AGGREGATE",
+                "severity": "blocking",
+                "type": "correctness",
+                "affected_paths": ["lib/auth/grpcserver.go"],
+                "required_resolution": "count devices usable by each required mode",
+            }
+        ),
+        encoding="utf-8",
+    )
+    structured_finding_evidence = solve_swe_prod.persisted_verifier_blocking_evidence(runtime)
+    assert "structured finding MFA_MODE_AGGREGATE" in structured_finding_evidence, structured_finding_evidence
+    assert "required_resolution" in structured_finding_evidence, structured_finding_evidence
     blocked_status = {"status": "blocked", "reason": "verifier rejected the final diff"}
     handoff_key = solve_swe_prod.verifier_blocking_handoff_key(
         blocked_status,
