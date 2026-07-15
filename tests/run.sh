@@ -2551,9 +2551,13 @@ with tempfile.TemporaryDirectory() as td:
             f"build-verification-passed: final-diff-sha256={runtime_hash} changed-files=1 compile_clean=true returncode=0\n"
             f"behavior-verification-passed: final-diff-sha256={runtime_hash} behavior_clean=true public-clauses-covered=true\n"
             "issue-coverage-ledger: issue-runtime-build implemented-by=lib/auth/grpcserver.go\n"
+            f"verifier-recheck-passed: todo=todo-runtime-build final-diff-sha256={runtime_hash}\n"
             "go-package-validation-passed: package=./lib/auth command=\"go test -run '^$' ./lib/auth\" returncode=0\n"
-            "runtime-failure-classification: full-command=\"go test ./lib/auth\" failure=tls bad record MAC classification=runtime-test-suite-environment\n"
+            "Command: go test ./lib/auth\nReturn code: 1\n--- FAIL: TestRuntime (0.01s)\nFAIL\n"
+            "runtime-failure-classification: full-command=\"go test ./lib/auth\" failure=tls bad record MAC classification=environment/runtime compile-only-fallback-adequate=true\n"
         )
+        assert solve_swe_prod.verifier_rechecked_todo(runtime_verifier, "todo-runtime-build")
+        assert solve_swe_prod.verifier_runtime_failure_is_classified_compile_clean(runtime_verifier, runtime_diff)
         recovered_runtime = solve_swe_prod.recover_verifier_accepted_todo_closures(runtime_verifier, runtime_diff)
         assert recovered_runtime and recovered_runtime[0].endswith(":todo-runtime-build"), recovered_runtime
         runtime_todo_dir = runtime / "todos" / "todo-runtime-build"
@@ -3106,6 +3110,30 @@ assert not solve_swe_prod.go_compile_failure_present(
 )
 assert solve_swe_prod.go_compile_failure_present("Command: go test ./pkg/foo\nReturn code: 1\nFAIL")
 assert solve_swe_prod.go_compile_failure_present("--- FAIL: TestBehavior (0.01s)\nFAIL")
+classified_runtime_evidence = (
+    "ACCEPTED\n"
+    f"build-verification-passed: final-diff-sha256={runtime_skip_hash} compile_clean=true returncode=0\n"
+    f"behavior-verification-passed: final-diff-sha256={runtime_skip_hash} behavior_clean=true public-clauses-covered=true\n"
+    "go-package-validation-passed: package=./lib/auth command=\"go test -run '^$' ./lib/auth\" returncode=0\n"
+    "Command: go test ./lib/auth\nReturn code: 1\n--- FAIL: TestRuntime (0.01s)\nFAIL\n"
+    "runtime-failure-classification: full-command=\"go test ./lib/auth\" failure=runtime-only classification=environment/runtime compile-only-fallback-adequate=true\n"
+    "go-validation-skip-justified: reason=full-tests-failed-only-in-runtime-environment\n"
+)
+assert solve_swe_prod.verifier_runtime_failure_is_classified_compile_clean(
+    classified_runtime_evidence,
+    runtime_skip_diff,
+)
+assert solve_swe_prod.accepted_verifier_build_has_equivalent_evidence(
+    classified_runtime_evidence,
+    runtime_skip_diff,
+)
+classified_runtime_blockers = solve_swe_prod.validation_coverage_blockers(
+    "Prevent deletion of the last MFA device.",
+    runtime_skip_diff,
+    "",
+    {"status": "completed", "validation": classified_runtime_evidence},
+)
+assert not any("compile/build failure evidence" in blocker for blocker in classified_runtime_blockers), classified_runtime_blockers
 partition_risk_diff = (
     "diff --git a/pkg/policy.go b/pkg/policy.go\n"
     "--- a/pkg/policy.go\n"

@@ -912,6 +912,20 @@ def verifier_passing_commands(text: str) -> list[dict[str, object]]:
     return commands
 
 
+def verifier_rechecked_todo(text: str, todo_id: str) -> bool:
+    """Recognize the supported verifier recheck protocol spellings."""
+
+    escaped_id = re.escape(todo_id.strip())
+    if not escaped_id:
+        return False
+    return bool(
+        re.search(
+            rf"(?im)^\s*(?:todo|verifier)-recheck-passed:\s*(?:todo\s*=\s*)?{escaped_id}(?:\s|$)",
+            text or "",
+        )
+    )
+
+
 def migrate_runtime_fallback_todo_resolution(
     *,
     todo_dir: Path,
@@ -1027,9 +1041,10 @@ def recover_verifier_accepted_todo_closures(text: str, diff: str) -> list[str]:
         return []
     evidence_texts = [text, *persisted_subagent_final_acceptance_texts(diff, RUNTIME_ROOT)]
     combined_text = "\n".join(evidence_texts)
-    lower = combined_text.lower()
     hash_bound_acceptance = any(build_verification_has_evidence(candidate, diff) for candidate in evidence_texts)
-    if "accepted" not in lower or ("todo-recheck-passed:" not in lower and not hash_bound_acceptance):
+    if "accepted" not in combined_text.lower() or (
+        "recheck-passed:" not in combined_text.lower() and not hash_bound_acceptance
+    ):
         return []
 
     recovered: list[str] = []
@@ -1043,7 +1058,6 @@ def recover_verifier_accepted_todo_closures(text: str, diff: str) -> list[str]:
             continue
         for todo_dir in sorted(path for path in todos_base.iterdir() if path.is_dir()):
             todo_id = todo_dir.name
-            marker = f"todo-recheck-passed: {todo_id}".lower()
             status_path = todo_dir / "status"
             status = status_path.read_text(encoding="utf-8", errors="replace").strip().lower() if status_path.exists() else ""
             if status not in {"resolved", "blocked", "reopened"}:
@@ -1088,7 +1102,7 @@ def recover_verifier_accepted_todo_closures(text: str, diff: str) -> list[str]:
                 if not commands:
                     log(f"verifier todo closure recovery skipped {todo_id}: worker validation is not all rc=0")
                     continue
-            has_explicit_marker = marker in lower
+            has_explicit_marker = any(verifier_rechecked_todo(candidate, todo_id) for candidate in evidence_texts)
             if not has_explicit_marker and not (
                 hash_bound_acceptance
                 and any(verifier_text_covers_resolution_commands(candidate, commands) for candidate in evidence_texts)
@@ -1107,7 +1121,7 @@ def recover_verifier_accepted_todo_closures(text: str, diff: str) -> list[str]:
                 "source_finding_hash": source_finding_hash,
                 "commands": commands,
                 "evidence": (
-                    f"recovered from verifier transcript marker {marker}"
+                    f"recovered from verifier recheck marker for todo {todo_id}"
                     if has_explicit_marker
                     else "recovered from hash-bound verifier ACCEPTED transcript covering worker validation commands"
                 ),
@@ -3107,7 +3121,10 @@ def accepted_verifier_build_has_equivalent_evidence(text: str, diff: str) -> boo
     lower = evidence_tail.lower().replace("\\n", "\n")
     if f"final-diff-sha256={final_diff_sha256(diff).lower()}" not in lower:
         return False
-    if go_compile_failure_present(evidence_tail):
+    if go_compile_failure_present(evidence_tail) and not verifier_runtime_failure_is_classified_compile_clean(
+        evidence_tail,
+        diff,
+    ):
         return False
     go_packages = changed_go_package_args(diff)
     if go_packages:
@@ -3194,7 +3211,11 @@ def persisted_subagent_final_acceptance_texts(
                         go_package_validation_has_evidence(labeled, package) for package in go_packages
                     ):
                         continue
-                    if touches_go_source and go_compile_failure_present(evidence_tail):
+                    if (
+                        touches_go_source
+                        and go_compile_failure_present(evidence_tail)
+                        and not verifier_runtime_failure_is_classified_compile_clean(evidence_tail, diff)
+                    ):
                         continue
                     build_evidence_texts.append(labeled)
                 if behavior_verification_has_evidence(evidence_tail, diff) or "issue-coverage-ledger:" in evidence_tail.lower():
@@ -3318,6 +3339,29 @@ def go_compiler_diagnostic_present(text: str) -> bool:
             "found packages ",
         )
     )
+
+
+def verifier_runtime_failure_is_classified_compile_clean(text: str, diff: str) -> bool:
+    """Allow runtime-test failures only beside independent exact-hash compile proof."""
+
+    lower = (text or "").lower().replace("\\n", "\n")
+    if "runtime-failure-classification:" not in lower:
+        return False
+    if not any(
+        marker in lower
+        for marker in (
+            "compile-only-fallback-adequate=true",
+            "classification=environmental",
+            "classification=environment/runtime",
+        )
+    ):
+        return False
+    if go_compiler_diagnostic_present(text):
+        return False
+    if not build_verification_has_evidence(text, diff):
+        return False
+    packages = changed_go_package_args(diff)
+    return bool(packages) and all(go_package_validation_has_evidence(text, package) for package in packages)
 
 
 def systemic_go_runtime_failure_only(report: str, diff: str) -> bool:
@@ -4103,9 +4147,10 @@ def validation_coverage_blockers(
             or "return code: 0" in go_evidence_text and "go test" in go_evidence_text
             or "go test" in go_evidence_text and any(marker in go_evidence_text for marker in (" passed", ": passed"))
         )
-        if go_compile_failure_present(go_evidence_text) and not go_failure_is_unaffected_unbuildable_root_target(
-            go_evidence_text,
-            go_packages,
+        if (
+            go_compile_failure_present(go_evidence_text)
+            and not verifier_runtime_failure_is_classified_compile_clean(go_evidence_text, diff)
+            and not go_failure_is_unaffected_unbuildable_root_target(go_evidence_text, go_packages)
         ):
             blockers.append(
                 "Go validation contains compile/build failure evidence such as `undefined:`, "
@@ -5937,6 +5982,8 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 capture_session(session)
                 diff = git_diff(workdir)
                 text = captured_text()
+                if recover_verifier_accepted_todo_closures(text, diff):
+                    current_status = status()
                 verifier_acceptance = persisted_subagent_final_acceptance_evidence(diff)
                 hash_bound_final_verifier_accepted = bool(verifier_acceptance)
                 if verifier_acceptance:
