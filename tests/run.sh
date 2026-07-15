@@ -3081,6 +3081,7 @@ partition_risk_diff = (
     "+++ b/pkg/policy.go\n"
     "@@ -1 +1,5 @@\n"
     "+if len(items) == 1 {\n"
+    "+  // source modes: required optional\n"
     "+  switch preference.Mode() {\n"
     "+  case PrimaryMode:\n"
     "+    primary := 0\n"
@@ -3117,6 +3118,7 @@ assert not solve_swe_prod.state_space_partition_audit_has_evidence(
 )
 aggregate_only_diff = (
     "diff --git a/pkg/policy.go b/pkg/policy.go\n"
+    "+// source modes: required optional\n"
     "+if policy.RequiresAny() && len(items) == 1 { return errRequired }\n"
 )
 aggregate_only_hash = solve_swe_prod.final_diff_sha256(aggregate_only_diff)
@@ -3127,6 +3129,24 @@ assert solve_swe_prod.state_space_partition_audit_has_evidence(
     "mode-category-map=required:all,optional:none "
     "mixed-category=all-items-equivalent unknown-variant=source-default "
     "aggregate-equivalent=true equivalence-source=pkg/policy.go:RequiresAny result=passed",
+    aggregate_only_diff,
+)
+assert not solve_swe_prod.state_space_partition_audit_has_evidence(
+    "state-space-partition-audit: "
+    f"final-diff-sha256={aggregate_only_hash} "
+    "modes=required-other,optional categories=primary,secondary "
+    "mode-category-map=required-other:all,optional:none "
+    "mixed-category=claimed-equivalent unknown-variant=claimed-equivalent "
+    "aggregate-equivalent=true equivalence-source=pkg/policy.go:RequiresAny result=passed",
+    aggregate_only_diff,
+)
+assert not solve_swe_prod.state_space_partition_audit_has_evidence(
+    "state-space-partition-audit: "
+    f"final-diff-sha256={aggregate_only_hash} "
+    "modes=required,optional categories=primary,secondary "
+    "mode-category-map=required:all,optional:none "
+    "mixed-category=claimed-equivalent unknown-variant=claimed-equivalent "
+    "aggregate-equivalent=true equivalence-source=pkg/policy.go:UnrelatedClassifier result=passed",
     aggregate_only_diff,
 )
 with tempfile.TemporaryDirectory() as td:
@@ -4911,6 +4931,15 @@ assert_file_contains "$MOCK_TMUX_LOG" "send-key test-session:verifier-01-docs Re
 verifier_spawn_line="$(grep -F "new-window -d test-session verifier-01-docs " "$MOCK_TMUX_LOG")"
 [[ "$verifier_spawn_line" == *"--cd $ROOT"* ]]
 [[ "$verifier_spawn_line" == *"--dangerously-bypass-approvals-and-sandbox --no-alt-screen"* ]]
+
+printf 'Codex prompt ready\n' >"$MOCK_TMUX_CAPTURES/verifier-owned-01.txt"
+SUBAGENT_CLI="$VERIFIER_CLI" "$ROOT/bin/subagent.sh" spawn verifier-owned-01 \
+  --own prompts/verifier.md --instruction "Review shared source"
+printf 'Codex prompt ready\n' >"$MOCK_TMUX_CAPTURES/build-verifier-owned-02.txt"
+SUBAGENT_CLI="$VERIFIER_CLI" "$ROOT/bin/subagent.sh" spawn build-verifier-owned-02 \
+  --own prompts/verifier.md --instruction "Compile shared source"
+assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/verifier-owned-01/assignment.env" "role=verifier"
+assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/build-verifier-owned-02/assignment.env" "role=verifier"
 
 printf 'Codex prompt ready\n' >"$MOCK_TMUX_CAPTURES/acceptance-scout-01-contract.txt"
 SUBAGENT_CLI="$VERIFIER_CLI" "$ROOT/bin/subagent.sh" spawn acceptance-scout-01-contract --instruction "Extract acceptance risks"

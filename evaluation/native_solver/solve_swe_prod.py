@@ -3785,6 +3785,48 @@ def partition_audit_field(window: str, name: str) -> str:
     return match.group(1).strip("`.,") if match else ""
 
 
+def partition_mode_is_source_grounded(mode: str, diff: str) -> bool:
+    """Reject synthetic catch-all modes that hide source enum variants."""
+
+    needle = mode.strip().lower()
+    if not needle:
+        return False
+    source_text = diff.lower()
+    try:
+        source_text += "\n" + CONTRACT_LEDGER_PATH.read_text(encoding="utf-8", errors="replace").lower()
+    except OSError:
+        pass
+    if needle in source_text:
+        return True
+    if DEFAULT_WORKDIR.is_dir():
+        result = subprocess.run(
+            ["git", "-C", str(DEFAULT_WORKDIR), "grep", "-I", "-i", "-F", "-q", "--", mode],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        return result.returncode == 0
+    return False
+
+
+def aggregate_equivalence_is_bound_to_changed_decision(equivalence_source: str, diff: str) -> bool:
+    """Require aggregate-equivalence proof to name code used by the new decision."""
+
+    if ":" not in equivalence_source:
+        return False
+    path, symbol = equivalence_source.rsplit(":", 1)
+    changed_paths = {item.casefold() for item in changed_paths_from_diff(diff)}
+    normalized_path = path[2:] if path.startswith("./") else path
+    if normalized_path.casefold() not in changed_paths or not symbol:
+        return False
+    added = "\n".join(
+        line[1:]
+        for line in diff.splitlines()
+        if line.startswith("+") and not line.startswith("+++")
+    )
+    return symbol.lower() in added.lower()
+
+
 def state_space_partition_audit_has_evidence(text: str, diff: str) -> bool:
     """Require a hash-bound, source-consistent mode/category matrix."""
 
@@ -3816,6 +3858,8 @@ def state_space_partition_audit_has_evidence(text: str, diff: str) -> bool:
         mode_map = dict(item.split(":", 1) for item in mapping_items if ":" in item)
         if not modes or not categories or any(mode not in mode_map for mode in modes):
             continue
+        if any(not partition_mode_is_source_grounded(mode, diff) for mode in modes):
+            continue
         cardinality_prefixes = ("zero", "one", "single", "multiple", "empty", "nonempty", "count", "mixed")
         special_categories = {"all", "any", "none", "na", "n/a", "disabled", "unknown"}
         data_categories = [
@@ -3831,6 +3875,7 @@ def state_space_partition_audit_has_evidence(text: str, diff: str) -> bool:
         if aggregate_equivalent and (
             not equivalence_source
             or equivalence_source in {"none", "unknown", "n/a", "na", "narrative"}
+            or not aggregate_equivalence_is_bound_to_changed_decision(equivalence_source, diff)
         ):
             continue
         category_specific = len(data_categories) >= 2 or len(mapped_categories - special_categories) >= 2

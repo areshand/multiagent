@@ -125,12 +125,15 @@ Acceptance for this risk requires one machine-readable line bound to the live
 diff:
 `state-space-partition-audit: final-diff-sha256=... modes=SOURCE_MODES categories=SOURCE_DATA_CATEGORIES mode-category-map=MODE:CATEGORY,... mixed-category=PROBE_OR_REASONING unknown-variant=PROBE_OR_REASONING aggregate-equivalent=true|false equivalence-source=PATH:SYMBOL result=passed`.
 `categories` must name source data variants, not cardinality states such as
-zero/one/multiple. Map every listed mode to a category, `all`, or `none`. When
+zero/one/multiple. `modes` must name concrete source enum/config values; do not
+collapse unreviewed variants into synthetic entries such as `required-other` or
+`default`. Map every listed mode to a category, `all`, or `none`. When
 different modes map to different data categories, acceptance requires source
 code that classifies each item before category-specific counting. A single
 aggregate length check is acceptable only with `aggregate-equivalent=true` and
-a concrete source declaration/caller proving every relevant mode accepts every
-category; verifier narrative alone is not equivalence proof.
+a concrete `PATH:SYMBOL` used by the changed policy decision and proving every
+relevant mode accepts every category. An unrelated classifier or nearby helper
+is not equivalence proof, and verifier narrative alone is not evidence.
 If the aggregate count is not equivalent for every mode/category partition,
 use `result=blocking`, create a blocking finding/todo, and do not accept.
 

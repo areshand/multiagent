@@ -176,6 +176,34 @@ role_prompt_path() {
   fi
 }
 
+assignment_role_for_spawn() {
+  local name="$1"
+  local role="$2"
+  local prompt_path
+  case "$role" in
+    verifier|reviewer)
+      printf '%s\n' verifier
+      return
+      ;;
+    scout)
+      printf '%s\n' scout
+      return
+      ;;
+  esac
+  prompt_path="$(role_prompt_path "$name" "$role")"
+  case "$prompt_path" in
+    */prompts/verifier.md|*/prompts/roles/build-verifier.md)
+      printf '%s\n' verifier
+      ;;
+    */prompts/roles/acceptance-scout.md|*/prompts/roles/contract-scout.md)
+      printf '%s\n' scout
+      ;;
+    *)
+      printf '%s\n' exploitation
+      ;;
+  esac
+}
+
 compose_role_instruction() {
   local name="$1"
   local role="$2"
@@ -1162,7 +1190,7 @@ spawn_subagent() {
   validate_name "$name"
   shift
 
-  local instruction="" instruction_file="" owned_csv="" role=""
+  local instruction="" instruction_file="" owned_csv="" role="" assignment_role=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --own|--owned-path)
@@ -1222,6 +1250,7 @@ spawn_subagent() {
   fi
   instruction="$(compose_role_instruction "$name" "$role" "$instruction")"
   instruction="$(append_verifier_diff_binding "$name" "$role" "$instruction")"
+  assignment_role="$(assignment_role_for_spawn "$name" "$role")"
 
   require_cmd tmux
   local cli bin
@@ -1255,7 +1284,8 @@ spawn_subagent() {
       assignment_create "$name" \
         --assignment-id "spawn-$name" \
         --branch "$current_branch" \
-        --owned "$owned_csv" >/dev/null
+        --owned "$owned_csv" \
+        --role "$assignment_role" >/dev/null
     fi
   fi
 
