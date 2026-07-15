@@ -645,6 +645,15 @@ assert_file_contains "$ROOT/prompts/verifier.md" "verify parity for each named p
 assert_file_contains "$ROOT/prompts/verifier.md" "reject first-match-only fixes"
 assert_file_contains "$ROOT/prompts/verifier.md" "machine-readable verifier finding"
 assert_file_contains "$ROOT/prompts/verifier.md" "finding-create"
+assert_file_contains "$ROOT/prompts/verifier.md" 'MULTIAGENT_HELPER:-/opt/multiagent/bin/subagent.sh'
+assert_file_contains "$ROOT/prompts/verifier.md" "finding-create FINDING_ID"
+assert_file_contains "$ROOT/prompts/verifier.md" "--severity blocking"
+assert_file_contains "$ROOT/prompts/verifier.md" "--affected PATH[,PATH...]"
+assert_file_contains "$ROOT/prompts/verifier.md" "--evidence-json"
+assert_file_contains "$ROOT/prompts/verifier.md" "do not invent"
+assert_file_contains "$ROOT/prompts/worker.md" 'Every entry in a `resolved` report'
+assert_file_contains "$ROOT/prompts/worker.md" 'must have `rc: 0`'
+assert_file_contains "$ROOT/prompts/playbooks/finding-todo-loop.md" 'All `validation-json` entries in a resolved report'
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "Contract Scout Role Prompt"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "must-preserve"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "mismatch-risk"
@@ -2448,13 +2457,13 @@ with tempfile.TemporaryDirectory() as td:
                 "--severity",
                 "blocking",
                 "--type",
-                "build",
+                "incomplete-implementation",
                 "--summary",
-                "generated type did not compile",
+                "category-specific behavior was incomplete",
                 "--evidence-json",
-                '{"command":"go test ./lib/auth","returncode":2}',
+                '{"source_evidence":"lib/auth/grpcserver.go:1733 aggregate count misses category-specific state"}',
                 "--required-resolution",
-                "repair compile failure and prove compile succeeds",
+                "repair the category-specific behavior and prove the final diff compiles",
                 "--affected",
                 "lib/auth/grpcserver.go",
             ],
@@ -2471,9 +2480,9 @@ with tempfile.TemporaryDirectory() as td:
                 "--source-finding-id",
                 "finding-runtime-build",
                 "--task",
-                "repair generated type compile failure",
+                "repair category-specific behavior",
                 "--done-criteria",
-                "go test ./lib/auth returns 0, or an exact non-source environment blocker is reported after compile succeeds",
+                "category-specific source behavior is independently reverified",
                 "--required-command",
                 "go test ./lib/auth",
             ],
@@ -2496,19 +2505,21 @@ with tempfile.TemporaryDirectory() as td:
                 "--validation-json",
                 '[{"cmd":"go test ./lib/auth","rc":1,"note":"tls: bad record MAC after compile"}]',
                 "--why",
-                "source compile defect repaired; full runtime suite remains environment-blocked",
+                "semantic source defect repaired; full runtime suite remains environment-blocked",
             ],
             env={**os.environ, "MULTIAGENT_STATE_DIR": str(runtime), "MULTIAGENT_ROOT": str(solve_swe_prod.DEFAULT_WORKDIR)},
             check=True,
             capture_output=True,
             text=True,
         )
-        (runtime / "todos" / "todo-runtime-build" / "status").write_text("resolved\n", encoding="utf-8")
+        assert (runtime / "todos" / "todo-runtime-build" / "status").read_text().strip() == "reopened"
         runtime_diff = "diff --git a/lib/auth/grpcserver.go b/lib/auth/grpcserver.go\n+fixed generated type\n"
         runtime_hash = solve_swe_prod.final_diff_sha256(runtime_diff)
         runtime_verifier = (
             "ACCEPTED\n"
             f"build-verification-passed: final-diff-sha256={runtime_hash} changed-files=1 compile_clean=true returncode=0\n"
+            f"behavior-verification-passed: final-diff-sha256={runtime_hash} behavior_clean=true public-clauses-covered=true\n"
+            "issue-coverage-ledger: issue-runtime-build implemented-by=lib/auth/grpcserver.go\n"
             "go-package-validation-passed: package=./lib/auth command=\"go test -run '^$' ./lib/auth\" returncode=0\n"
             "runtime-failure-classification: full-command=\"go test ./lib/auth\" failure=tls bad record MAC classification=runtime-test-suite-environment\n"
         )
@@ -4870,6 +4881,16 @@ assert_file_contains "$MOCK_TMUX_LOG" "send-key test-session:verifier-01-docs Re
 verifier_spawn_line="$(grep -F "new-window -d test-session verifier-01-docs " "$MOCK_TMUX_LOG")"
 [[ "$verifier_spawn_line" == *"--cd $ROOT"* ]]
 [[ "$verifier_spawn_line" == *"--dangerously-bypass-approvals-and-sandbox --no-alt-screen"* ]]
+
+printf 'Codex prompt ready\n' >"$MOCK_TMUX_CAPTURES/acceptance-scout-01-contract.txt"
+SUBAGENT_CLI="$VERIFIER_CLI" "$ROOT/bin/subagent.sh" spawn acceptance-scout-01-contract --instruction "Extract acceptance risks"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/acceptance-scout-01-contract/instruction.txt" "Acceptance Scout Role Prompt"
+assert_file_not_contains "$MULTIAGENT_STATE_DIR/subagents/acceptance-scout-01-contract/instruction.txt" "Contract Scout Role Prompt"
+
+printf 'Codex prompt ready\n' >"$MOCK_TMUX_CAPTURES/contract-scout-01-contract.txt"
+SUBAGENT_CLI="$VERIFIER_CLI" "$ROOT/bin/subagent.sh" spawn contract-scout-01-contract --instruction "Extract source contracts"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/contract-scout-01-contract/instruction.txt" "Contract Scout Role Prompt"
+assert_file_not_contains "$MULTIAGENT_STATE_DIR/subagents/contract-scout-01-contract/instruction.txt" "Acceptance Scout Role Prompt"
 
 printf 'Blocker: this line is stale prompt context\nfinal status: codex exec exited rc=0\n' >"$MOCK_TMUX_CAPTURES/verifier-01-docs.txt"
 cat >"$MULTIAGENT_STATE_DIR/subagents/verifier-01-docs/last-message.txt" <<'EOF'

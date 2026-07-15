@@ -93,6 +93,10 @@ from a task checkout such as `/app`, do not assume `bin/subagent.sh` exists in
 the current repo.
 
 `resolved` means ready for verifier review. It is not final acceptance.
+All `validation-json` entries in a resolved report must be objective passing
+evidence with `rc: 0`. Preserve an environment-failing full command in the
+resolution reason or a blocked report; do not mix it into a resolved validation
+array beside a passing compile fallback.
 
 ## Reverification And Gate
 

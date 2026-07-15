@@ -291,6 +291,13 @@ contract. If your workdir is the task repo, do not use a relative
 `bin/subagent.sh`; the helper may live outside the repo. A plain "fixed" summary
 does not close the todo; it only tells the orchestrator/verifier there is
 evidence to recheck.
+Every entry in a `resolved` report's `--validation-json` is acceptance evidence
+and therefore must have `rc: 0`. Put known environment-failing command attempts
+in `--why` or mark the resolution `blocked`; do not mix an `rc: 1` advisory
+attempt into an otherwise resolved validation array. If the todo incorrectly
+requires that known environment-failing command, report it as blocked so the
+orchestrator can replace the requirement with an exact-hash compile fallback
+only after independent behavior verification.
 
 Run only one expensive validation command per owned package at a time. Treat the
 orchestrator's validation lease as the authority for long compile/test commands.

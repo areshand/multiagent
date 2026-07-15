@@ -36,9 +36,22 @@ The verifier is a read-only reviewer, not an implementer.
 - Blocking verifier output must be structured. For every issue that should
   prevent acceptance, emit a machine-readable verifier finding with `id`,
   `severity`, `type`, `affected_paths`, `evidence`, and
-  `required_resolution`. Prefer recording it through
-  `bin/subagent.sh finding-create ...`; prose alone is not a blocking repair
-  contract.
+  `required_resolution`. Record it with this exact CLI schema; do not invent
+  `--worker`, `--assignment`, `--affected-paths`, or non-enum severity flags:
+  ```bash
+  "${MULTIAGENT_HELPER:-/opt/multiagent/bin/subagent.sh}" finding-create FINDING_ID \
+    --severity blocking \
+    --type TYPE \
+    --summary "SHORT SUMMARY" \
+    --affected PATH[,PATH...] \
+    --evidence-json '{"source_evidence":"PATH:LINE CONCRETE DEFECT"}' \
+    --required-resolution "OBJECTIVE DONE CONDITION"
+  ```
+  Prose alone is not a blocking repair contract. Use `MULTIAGENT_HELPER` because
+  the task checkout may not contain this framework. If the helper rejects the
+  command, run `${MULTIAGENT_HELPER:-/opt/multiagent/bin/subagent.sh}
+  finding-create` to read its usage and retry with the supported schema before
+  exiting.
 - If your tool call, shell invocation, or repository inspection fails before
   you can semantically recheck the final diff, report an infrastructure blocker
   and ask the orchestrator to requeue verification. Do not turn a malformed tool

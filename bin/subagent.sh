@@ -165,6 +165,10 @@ role_prompt_path() {
     printf '%s\n' "$PROMPT_MODULE_ROOT/prompts/roles/build-verifier.md"
   elif [[ "$role" == "verifier" || "$role" == "reviewer" || "$lower_name" == *verifier* || "$lower_name" == *review* ]]; then
     printf '%s\n' "$PROMPT_MODULE_ROOT/prompts/verifier.md"
+  elif [[ "$lower_name" == *acceptance-scout* ]]; then
+    printf '%s\n' "$PROMPT_MODULE_ROOT/prompts/roles/acceptance-scout.md"
+  elif [[ "$lower_name" == *contract-scout* ]]; then
+    printf '%s\n' "$PROMPT_MODULE_ROOT/prompts/roles/contract-scout.md"
   elif [[ "$role" == "scout" || "$lower_name" == *scout* ]]; then
     printf '%s\n' "$PROMPT_MODULE_ROOT/prompts/roles/contract-scout.md"
   elif [[ "$role" == "worker" || "$lower_name" == worker-* ]]; then

@@ -934,45 +934,30 @@ def migrate_runtime_fallback_todo_resolution(
 
     if str(resolution.get("status", "")).lower() != "blocked":
         return []
-    finding_type = ""
     finding_id = str(todo_payload.get("source_finding_id", "")).strip()
     finding_path = state_dir / "findings" / finding_id / "finding.json"
     try:
         finding = json.loads(finding_path.read_text(encoding="utf-8"))
-        finding_type = str(finding.get("type", "")).lower()
     except (OSError, json.JSONDecodeError):
         return []
-    if not any(marker in finding_type for marker in ("build", "compile", "validation")):
-        return []
-    done_text = "\n".join(str(item) for item in todo_payload.get("done_criteria", [])).lower()
-    if not (
-        "environment blocker" in done_text
-        or "runtime blocker" in done_text
-        or "runtime failure" in done_text
-        or "compile succeeds" in done_text
-    ):
-        return []
+    finding_type = str(finding.get("type", "")).lower()
+    semantic_finding = not any(marker in finding_type for marker in ("build", "compile", "validation"))
     required = [str(item).strip() for item in todo_payload.get("required_commands", []) if str(item).strip()]
     if not required:
         return []
 
-    accepted_evidence = ""
-    passing_commands: list[dict[str, object]] = []
-    for candidate in evidence_texts:
-        lower = candidate.lower()
-        if not build_verification_has_evidence(candidate, diff):
-            continue
-        if "runtime-failure-classification:" not in lower:
-            continue
-        if not all(command.lower() in lower for command in required):
-            continue
-        extracted = verifier_passing_commands(candidate)
-        if not extracted:
-            continue
-        accepted_evidence = candidate
-        passing_commands = extracted
-        break
-    if not passing_commands:
+    accepted_evidence = "\n".join(evidence_texts)
+    lower_evidence = accepted_evidence.lower()
+    passing_commands = verifier_passing_commands(accepted_evidence)
+    evidence_complete = (
+        build_verification_has_evidence(accepted_evidence, diff)
+        and "runtime-failure-classification:" in lower_evidence
+        and all(command.lower() in lower_evidence for command in required)
+        and bool(passing_commands)
+    )
+    if semantic_finding:
+        evidence_complete = evidence_complete and behavior_verification_has_evidence(accepted_evidence, diff)
+    if not evidence_complete:
         return []
 
     original_resolution_path = todo_dir / "resolution.json"
@@ -1061,7 +1046,7 @@ def recover_verifier_accepted_todo_closures(text: str, diff: str) -> list[str]:
             marker = f"todo-recheck-passed: {todo_id}".lower()
             status_path = todo_dir / "status"
             status = status_path.read_text(encoding="utf-8", errors="replace").strip().lower() if status_path.exists() else ""
-            if status != "resolved":
+            if status not in {"resolved", "blocked", "reopened"}:
                 continue
             try:
                 todo_payload = json.loads((todo_dir / "todo.json").read_text(encoding="utf-8"))
@@ -1087,6 +1072,8 @@ def recover_verifier_accepted_todo_closures(text: str, diff: str) -> list[str]:
                     commands = []
                     break
                 commands.append({"cmd": cmd, "rc": rc})
+            if status != "resolved":
+                commands = []
             if not commands:
                 commands = migrate_runtime_fallback_todo_resolution(
                     todo_dir=todo_dir,
@@ -4834,6 +4821,8 @@ def structured_repair_state_instructions(
             "A verifier already confirmed a semantic source defect. Preserve its public/source evidence exactly; "
             "do not relabel this as verifier infrastructure and do not launch another acceptance-only verifier over the unchanged diff. "
             "Normalize the verifier evidence into finding-create, create a todo whose done criteria include the stated required resolution, "
+            "and, when the handoff already records a systemic full-test runtime failure, make the exact-hash compile fallback the required "
+            "rc=0 command instead of the known environment-failing full suite. Keep that failed full command as context evidence only. "
             "assign one bounded source worker, require resolution-create with validation, then launch a fresh verifier over the repaired diff. "
             f"Verifier-confirmed evidence: {confirmed_finding}"
         )
