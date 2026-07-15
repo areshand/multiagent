@@ -6,7 +6,8 @@ The implementation is split by responsibility:
 - swe_prod_contracts sanitizes public task inputs and derives contracts.
 - swe_prod_bootstrap installs task-container helper tools.
 - swe_prod_repository owns source discovery and final-diff handling.
-- swe_prod_state owns structured evidence, validation, and gate state.
+- multiagent_framework owns exact-diff, verification, status, and coding guardrail primitives.
+- swe_prod_state adapts those primitives to SWE runtime artifacts and probes.
 - swe_prod_orchestration owns orchestrator repair and resume messages.
 - swe_prod_lifecycle runs the production solver lifecycle.
 

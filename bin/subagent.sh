@@ -13,6 +13,7 @@ VERIFIER_CLI="${VERIFIER_CLI:-codex}"
 MULTIAGENT_HELPER="${MULTIAGENT_HELPER:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")}"
 MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER="${MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER:-1}"
 PROMPT_MODULE_ROOT="${MULTIAGENT_PROMPT_MODULE_ROOT:-$ROOT}"
+FRAMEWORK_MODULE_ROOT="${MULTIAGENT_FRAMEWORK_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 if [[ -n "${MULTIAGENT_EXTRA_PATH:-}" ]]; then
   PATH="$MULTIAGENT_EXTRA_PATH:$PATH"
   export PATH
@@ -228,7 +229,7 @@ append_verifier_diff_binding() {
   local name="$1"
   local role="$2"
   local instruction="$3"
-  local role_prompt diff_hash changed_files
+  local role_prompt diff_hash changed_files snapshot
   role_prompt="$(role_prompt_path "$name" "$role")"
   case "$role_prompt" in
     */prompts/verifier.md|*/prompts/roles/build-verifier.md)
@@ -238,12 +239,14 @@ append_verifier_diff_binding() {
       return
       ;;
   esac
-  if git -C "$ROOT" diff --quiet --ignore-submodules=all HEAD --; then
+  snapshot="$(PYTHONPATH="$FRAMEWORK_MODULE_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+    python3 -m multiagent_framework.cli snapshot --root "$ROOT" --base HEAD --format shell)" || \
+    die "could not capture final diff through framework snapshot runtime"
+  read -r diff_hash changed_files <<<"$snapshot"
+  if [[ "$changed_files" -eq 0 ]]; then
     printf '%s' "$instruction"
     return
   fi
-  diff_hash="$(git -C "$ROOT" diff --binary --ignore-submodules=all HEAD -- | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')"
-  changed_files="$(git -C "$ROOT" diff --name-only --ignore-submodules=all HEAD -- | awk 'NF { count += 1 } END { print count + 0 }')"
   if [[ "$role_prompt" == */prompts/roles/build-verifier.md ]]; then
     printf '%s\n\n## Spawn-Time Final Diff Binding\n\nfinal-diff-sha256=%s\nchanged-files=%s\nAcceptance must repeat this hash in `build-verification-passed:` after rechecking the live diff.\n' \
       "$instruction" "$diff_hash" "$changed_files"

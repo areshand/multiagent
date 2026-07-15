@@ -109,14 +109,21 @@ entrypoint and compatibility facade. The implementation is split by ownership:
 - `swe_prod_contracts.py` sanitizes public task inputs and derives contracts.
 - `swe_prod_bootstrap.py` installs container-local Codex, patch, search, and Go helpers.
 - `swe_prod_repository.py` owns source discovery, cleanup, and final-diff handling.
-- `swe_prod_evidence.py` reads durable verifier, finding, todo, and resolution evidence.
+- `swe_prod_evidence.py` adapts framework evidence/state primitives to SWE runtime artifacts.
 - `swe_prod_validation.py` evaluates gates and runs adapter-selected public probes.
 - `swe_prod_orchestration.py` formats repair, convergence, and resume handoffs.
 - `swe_prod_checkpoints.py` implements ordered active-run recovery checkpoints.
 - `swe_prod_transitions.py` handles completed, blocked, and final-cleanup transitions.
 - `swe_prod_lifecycle.py` launches production multiagent and coordinates those transitions.
 - `swe_prod_types.py` defines explicit lifecycle state and bounded retry policy.
-- `swe_prod_guardrails.py` contains reusable source/diff guardrails.
+- `swe_prod_guardrails.py` is a compatibility facade over
+  `multiagent_framework/coding/guardrails.py`.
+
+Exact Git snapshots, final-diff hash verification, atomic terminal status, and
+generic coding guardrails are framework responsibilities under
+`multiagent_framework/`. The SWE adapter retains only task metadata
+sanitization, container bootstrap, issue-contract derivation, public probe
+selection, and EvalScope lifecycle policy.
 
 The entrypoint, lifecycle coordinator, and every transition handler have size
 regression checks in `tests/run.sh`. Adapter-selected probes catch weak

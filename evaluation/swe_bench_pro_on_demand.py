@@ -146,6 +146,12 @@ class OnDemandImageManager:
                 parts.append(
                     f"{path.relative_to(source_root)}:{stat.st_mtime_ns:x}:{stat.st_size:x}"
                 )
+            framework_root = source_root.parents[1]
+            for path in self._framework_file_bundle():
+                stat = path.stat()
+                parts.append(
+                    f"{path.relative_to(framework_root)}:{stat.st_mtime_ns:x}:{stat.st_size:x}"
+                )
             import hashlib
 
             return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:16]
@@ -178,6 +184,17 @@ class OnDemandImageManager:
         if template_dir.is_dir():
             bundle.extend(path for path in sorted(template_dir.rglob("*")) if path.is_file())
         return bundle
+
+    def _framework_file_bundle(self) -> list[Path]:
+        """Return reusable framework modules needed by a standalone solver."""
+
+        source = self.native_solver_source.resolve()
+        if not source.is_file() or source.name != "solve_swe_prod.py":
+            return []
+        framework_dir = source.parents[2] / "multiagent_framework"
+        if not framework_dir.is_dir():
+            raise RuntimeError(f"production native solver requires framework runtime: {framework_dir}")
+        return [path for path in sorted(framework_dir.rglob("*")) if path.is_file()]
 
     @staticmethod
     def _skip_repo_bake_path(path: Path) -> bool:
@@ -222,6 +239,11 @@ class OnDemandImageManager:
             for path in self._native_solver_file_bundle():
                 relative = path.relative_to(source_root)
                 target = standalone_dir / ("solve_swe.py" if path == source else relative)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(path, target)
+            framework_root = source_root.parents[1]
+            for path in self._framework_file_bundle():
+                target = standalone_dir / path.relative_to(framework_root)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(path, target)
             package_hint = self.native_solver_source.name

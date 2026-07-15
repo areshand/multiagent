@@ -15,41 +15,27 @@ try:
 except ImportError:  # pragma: no cover - direct execution in task containers
     from swe_prod_repository import *  # type: ignore  # noqa: F403
 
+from multiagent_framework import (
+    AtomicStatusStore,
+    behavior_verification_has_evidence as _framework_behavior_verification_has_evidence,
+    build_verification_has_evidence as _framework_build_verification_has_evidence,
+    changed_code_paths_from_diff as _framework_changed_code_paths_from_diff,
+    changed_paths_from_diff as _framework_changed_paths_from_diff,
+    final_diff_sha256 as _framework_final_diff_sha256,
+    is_test_path as _framework_is_test_path,
+    structured_repair_gate_blockers as _framework_structured_repair_gate_blockers,
+    verifier_passing_commands as _framework_verifier_passing_commands,
+    verifier_rechecked_todo as _framework_verifier_rechecked_todo,
+    verifier_text_covers_resolution_commands as _framework_verifier_text_covers_resolution_commands,
+)
+
 def structured_repair_gate_blockers() -> list[str]:
-    """Return blockers if runtime structured repair state does not pass gate-check."""
-
-    subagent = DEFAULT_MULTIAGENT_ROOT / "bin/subagent.sh"
-    if not subagent.exists():
-        return []
-
-    blockers: list[str] = []
-    seen_state_dirs: set[Path] = set()
-    for state_dir in (RUNTIME_ROOT, RUNTIME_ROOT / "state"):
-        if state_dir in seen_state_dirs:
-            continue
-        seen_state_dirs.add(state_dir)
-        if not any((state_dir / name).exists() for name in ("findings", "todos")):
-            continue
-        env = os.environ.copy()
-        env.update(
-            {
-                "MULTIAGENT_ROOT": str(DEFAULT_WORKDIR),
-                "MULTIAGENT_STATE_DIR": str(state_dir),
-            }
-        )
-        result = run(
-            [str(subagent), "gate-check"],
-            cwd=DEFAULT_MULTIAGENT_ROOT,
-            env=env,
-            timeout=30,
-        )
-        output = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
-        if result.returncode != 0:
-            blockers.append(
-                "structured repair gate rejects completed status for "
-                f"{state_dir}: {output[-2000:] or 'gate-check failed without output'}"
-            )
-    return blockers
+    return _framework_structured_repair_gate_blockers(
+        framework_root=DEFAULT_MULTIAGENT_ROOT,
+        worktree=DEFAULT_WORKDIR,
+        state_dirs=(RUNTIME_ROOT, RUNTIME_ROOT / "state"),
+        runner=run,
+    )
 
 
 def create_no_diff_stall_repair_state(
@@ -166,49 +152,15 @@ def create_no_diff_stall_repair_state(
 
 
 def verifier_text_covers_resolution_commands(text: str, commands: list[dict[str, object]]) -> bool:
-    lower = (text or "").lower().replace("\\n", "\n")
-    for command in commands:
-        cmd = str(command.get("cmd", "")).strip().lower()
-        if not cmd:
-            return False
-        if cmd in lower:
-            start = max(0, lower.find(cmd) - 250)
-            end = min(len(lower), lower.find(cmd) + len(cmd) + 700)
-            window = lower[start:end]
-            if any(marker in window for marker in ("returncode=0", "return-code=0", "rc=0", "passed")):
-                continue
-        return False
-    return True
+    return _framework_verifier_text_covers_resolution_commands(text, commands)
 
 
 def verifier_passing_commands(text: str) -> list[dict[str, object]]:
-    """Extract explicit rc=0 commands from verifier protocol lines."""
-
-    commands: list[dict[str, object]] = []
-    for line in (text or "").splitlines():
-        if not re.search(r"\b(?:returncode|return-code|rc)\s*=\s*0\b", line, re.IGNORECASE):
-            continue
-        match = re.search(r"\b(?:command|cmd)\s*=\s*([\"'])(.+?)\1", line, re.IGNORECASE)
-        if not match:
-            continue
-        cmd = " ".join(match.group(2).split())
-        if cmd and not any(item["cmd"] == cmd for item in commands):
-            commands.append({"cmd": cmd, "rc": 0})
-    return commands
+    return _framework_verifier_passing_commands(text)
 
 
 def verifier_rechecked_todo(text: str, todo_id: str) -> bool:
-    """Recognize the supported verifier recheck protocol spellings."""
-
-    escaped_id = re.escape(todo_id.strip())
-    if not escaped_id:
-        return False
-    return bool(
-        re.search(
-            rf"(?im)^\s*(?:todo|verifier)-recheck-passed:\s*(?:todo\s*=\s*)?{escaped_id}(?:\s|$)",
-            text or "",
-        )
-    )
+    return _framework_verifier_rechecked_todo(text, todo_id)
 
 
 def migrate_runtime_fallback_todo_resolution(
@@ -507,33 +459,12 @@ def completed_status_covers_adapter_validation(
 
 
 def status() -> dict[str, object]:
-    if not STATUS_PATH.exists():
-        return {}
-    try:
-        raw = STATUS_PATH.read_text(encoding="utf-8")
-        parsed = json.loads(raw)
-        if isinstance(parsed, dict) and str(parsed.get("status", "")).lower() in {
-            "blocked",
-            "completed",
-            "complete",
-            "done",
-        }:
-            # A direct shell write can briefly expose valid but incomplete JSON.
-            time.sleep(float(os.environ.get("EVAL_STATUS_SETTLE_SECONDS", "0.2")))
-            if STATUS_PATH.read_text(encoding="utf-8") != raw:
-                return {"status": "publishing"}
-        return parsed if isinstance(parsed, dict) else {}
-    except json.JSONDecodeError:
-        return {"status": "invalid-json", "raw": STATUS_PATH.read_text(encoding="utf-8", errors="replace")[-1000:]}
+    settle_seconds = float(os.environ.get("MULTIAGENT_STATUS_SETTLE_SECONDS", os.environ.get("EVAL_STATUS_SETTLE_SECONDS", "0.2")))
+    return AtomicStatusStore(STATUS_PATH, settle_seconds=settle_seconds).read()
 
 
 def publish_status(current_status: dict[str, object]) -> None:
-    """Atomically publish wrapper-owned terminal state."""
-
-    STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path = STATUS_PATH.with_name(STATUS_PATH.name + ".tmp")
-    temporary_path.write_text(json.dumps(current_status), encoding="utf-8")
-    temporary_path.replace(STATUS_PATH)
+    AtomicStatusStore(STATUS_PATH).publish(current_status)
 
 
 def capture_session(session: str) -> None:
@@ -1893,118 +1824,27 @@ SOURCE_CLAIM_EXTENSIONS = (
 
 
 def changed_paths_from_diff(diff: str) -> set[str]:
-    paths: set[str] = set()
-    for line in diff.splitlines():
-        if not line.startswith("diff --git a/") or " b/" not in line:
-            continue
-        before_b, after_b = line.split(" b/", 1)
-        old_path = remove_prefix(before_b, "diff --git a/")
-        new_path = after_b.split("\t", 1)[0].strip()
-        for path in (old_path, new_path):
-            if path and path != "/dev/null":
-                paths.add(path)
-    return paths
+    return _framework_changed_paths_from_diff(diff)
 
 
 def final_diff_sha256(diff: str) -> str:
-    return hashlib.sha256(diff.encode("utf-8")).hexdigest()
+    return _framework_final_diff_sha256(diff)
 
 
 def is_test_path(path: str) -> bool:
-    parts = Path(path).parts
-    name = Path(path).name.lower()
-    return (
-        "test" in parts
-        or "tests" in parts
-        or name.startswith("test_")
-        or name.endswith("_test.go")
-        or name.endswith(".test.ts")
-        or name.endswith(".test.tsx")
-        or name.endswith(".spec.ts")
-        or name.endswith(".spec.tsx")
-        or name.endswith(".test.js")
-        or name.endswith(".spec.js")
-        or "__tests__" in parts
-    )
+    return _framework_is_test_path(path)
 
 
 def changed_code_paths_from_diff(diff: str) -> list[str]:
-    return sorted(
-        path
-        for path in changed_paths_from_diff(diff)
-        if Path(path).suffix in SOURCE_CLAIM_EXTENSIONS
-        and not is_test_path(path)
-        and not path.startswith((".cache/", ".gomodcache/", "node_modules/", "vendor/"))
-    )
+    return _framework_changed_code_paths_from_diff(diff)
 
 
 def build_verification_has_evidence(text: str, diff: str) -> bool:
-    lower = text.lower().replace("\\n", "\n")
-    diff_hash = final_diff_sha256(diff).lower()
-    for match in re.finditer("build-verification-passed:", lower):
-        window = lower[match.start() : match.start() + 800]
-        if f"final-diff-sha256={diff_hash}" not in window and f'"final_diff_hash": "{diff_hash}"' not in window:
-            continue
-        if not any(marker in window for marker in ("compile_clean=true", '"compile_clean": true')):
-            continue
-        if not any(marker in window for marker in ("returncode=0", "rc=0", '"rc": 0', '"returncode": 0')):
-            continue
-        return True
-    decoder = json.JSONDecoder()
-    for offset, character in enumerate(text):
-        if character != "{":
-            continue
-        try:
-            payload, _ = decoder.raw_decode(text[offset:])
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(payload, dict):
-            continue
-        build = payload.get("build_verification_passed")
-        if not isinstance(build, dict):
-            continue
-        evidence_hash = str(
-            build.get("final_diff_sha256")
-            or build.get("final_diff_hash")
-            or payload.get("final_diff_sha256")
-            or payload.get("final_diff_hash")
-            or ""
-        ).lower()
-        if evidence_hash != diff_hash or build.get("compile_clean") is not True:
-            continue
-        commands = build.get("commands")
-        if isinstance(commands, list) and commands and all(
-            isinstance(command, dict)
-            and command.get("rc", command.get("returncode")) == 0
-            for command in commands
-        ):
-            return True
-        if build.get("rc", build.get("returncode")) == 0:
-            return True
-    return False
+    return _framework_build_verification_has_evidence(text, diff)
 
 
 def behavior_verification_has_evidence(text: str, diff: str) -> bool:
-    """Return true for semantic acceptance explicitly bound to the final diff."""
-
-    lower = text.lower().replace("\\n", "\n")
-    diff_hash = final_diff_sha256(diff).lower()
-    for match in re.finditer("behavior-verification-passed:", lower):
-        window = lower[match.start() : match.start() + 800]
-        if f"final-diff-sha256={diff_hash}" not in window and f'"final_diff_hash": "{diff_hash}"' not in window:
-            continue
-        if not any(
-            marker in window
-            for marker in (
-                "public-clauses-covered=true",
-                '"public_clauses_covered": true',
-                "behavior_clean=true",
-                '"behavior_clean": true',
-            )
-        ):
-            continue
-        return True
-    return False
+    return _framework_behavior_verification_has_evidence(text, diff)
 
 
 def policy_collection_partition_risk(diff: str) -> bool:

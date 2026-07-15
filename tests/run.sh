@@ -743,13 +743,15 @@ assert_file_contains "$ROOT/README.md" "Parallel DAG Discipline"
 assert_file_contains "$ROOT/README.md" "Structured Repair Loop"
 assert_file_contains "$ROOT/README.md" "finding-todo-loop.md"
 assert_file_contains "$ROOT/README.md" "todo-close"
+assert_file_contains "$ROOT/README.md" "multiagent_framework/"
 assert_file_contains "$ROOT/README.md" 'orchestration` adapter covers planning behavior'
 assert_file_contains "$ROOT/README.md" "evaluation/tasks"
 assert_file_contains "$ROOT/evaluation/README.md" "large-update-300"
 assert_file_contains "$ROOT/evaluation/README.md" "Low-signal orchestration cases"
 assert_file_contains "$ROOT/evaluation/README.md" "EVAL_VALIDATION_PROBE_TIMEOUT"
-assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "Return generic source-derived blockers without benchmark answer leakage"
-assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "hidden-test-shaped commands"
+assert_file_contains "$ROOT/multiagent_framework/coding/guardrails.py" "Return source-derived blockers without evaluator answer leakage"
+assert_file_contains "$ROOT/multiagent_framework/coding/guardrails.py" "hidden-test-shaped commands"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "Compatibility facade"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "MULTIAGENT_PROMPT_MODULE_ROOT"
 assert_file_contains "$ROOT/launch.sh" "MULTIAGENT_PROMPT_MODULE_ROOT"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_lifecycle.py" '"MULTIAGENT_PROMPT_MODULE_ROOT": str(repo_root)'
@@ -911,7 +913,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_transitions.py" "r
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_types.py" "EVAL_VERIFIER_INFRA_RESUME_LIMIT"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_evidence.py" "stale-visible-reconciliation-passed:"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_contracts.py" "STALE_VISIBLE_RECONCILIATION_PATH"
-assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "must not inject benchmark-row-specific probes"
+assert_file_contains "$ROOT/multiagent_framework/coding/guardrails.py" "must not inject evaluator-row-specific probes"
 assert_file_contains "$ROOT/evaluation/README.md" "adapter helper defaults to advisory mode"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "_public_solver_metadata(dict(task.metadata or {}))"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" '"fail_to_pass"'
@@ -931,13 +933,25 @@ assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_contracts.py" "pub
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_lifecycle.py" "solver metadata is public-only"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_checkpoints.py" "orchestrator exited with unverified source diff"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_checkpoints.py" "and not orchestrator_exited_without_status(text)"
-assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "changed_python_test_commands"
-assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "changed_go_feature_test_commands"
-for solver_module in "$ROOT/evaluation/native_solver/solve_swe_prod.py" "$ROOT"/evaluation/native_solver/swe_prod_*.py; do
+assert_file_contains "$ROOT/multiagent_framework/coding/guardrails.py" "changed_python_test_commands"
+assert_file_contains "$ROOT/multiagent_framework/coding/guardrails.py" "changed_go_feature_test_commands"
+for solver_module in \
+  "$ROOT/evaluation/native_solver/solve_swe_prod.py" \
+  "$ROOT"/evaluation/native_solver/swe_prod_*.py \
+  "$ROOT"/multiagent_framework/*.py \
+  "$ROOT"/multiagent_framework/coding/*.py
+do
   assert_file_not_contains "$solver_module" "EVAL_ALLOW_EXPECTED_TEST_GUIDANCE"
   assert_file_not_contains "$solver_module" "official_test_contract_text"
   assert_file_not_contains "$solver_module" "full official contract"
   assert_file_not_contains "$solver_module" "Official requirements/interface excerpt"
+done
+for framework_module in "$ROOT"/multiagent_framework/*.py "$ROOT"/multiagent_framework/coding/*.py; do
+  assert_file_not_contains "$framework_module" "SWE Bench"
+  assert_file_not_contains "$framework_module" "EvalScope"
+  assert_file_not_contains "$framework_module" "official expected"
+  assert_file_not_contains "$framework_module" "/tmp/multiagent-prod-swe"
+  assert_file_not_contains "$framework_module" "EVAL_"
 done
 for prompt_path in \
   "$ROOT/prompts/worker.md" \
@@ -970,6 +984,9 @@ from evaluation import swe_bench_pro_scaffold_parity
 from evaluation.swe_bench_pro_on_demand import OnDemandImageManager
 from evaluation import swe_bench_pro_run_parallel_shards
 from evaluation import swe_bench_pro_run_next_shard
+from multiagent_framework import AtomicStatusStore, RepositorySnapshot
+from multiagent_framework import build_verification_has_evidence as framework_build_evidence
+from multiagent_framework import structured_repair_gate_blockers as framework_gate_blockers
 
 structured_diff = "diff --git a/src/service.py b/src/service.py\n+def fixed():\n+    return True\n"
 structured_hash = solve_swe_prod.final_diff_sha256(structured_diff)
@@ -987,8 +1004,33 @@ structured_acceptance = "ACCEPTED\n" + json.dumps(
     }
 )
 assert solve_swe_prod.build_verification_has_evidence(structured_acceptance, structured_diff)
+assert framework_build_evidence(structured_acceptance, structured_diff)
 structured_failed = structured_acceptance.replace('"rc": 0', '"rc": 1')
 assert not solve_swe_prod.build_verification_has_evidence(structured_failed, structured_diff)
+
+with tempfile.TemporaryDirectory() as td:
+    status_path = Path(td) / "state" / "status.json"
+    store = AtomicStatusStore(status_path, settle_seconds=0)
+    store.publish({"status": "completed", "evidence": "framework-owned"})
+    assert store.read() == {"status": "completed", "evidence": "framework-owned"}
+assert RepositorySnapshot.from_diff(structured_diff).sha256 == structured_hash
+
+with tempfile.TemporaryDirectory() as td:
+    gate_state = Path(td)
+    (gate_state / "findings").mkdir()
+    gate_calls = []
+
+    def rejecting_gate_runner(args, **kwargs):
+        gate_calls.append((args, kwargs))
+        return SimpleNamespace(returncode=1, stdout="reject\topen-blocking-finding", stderr="")
+
+    gate_blockers = framework_gate_blockers(
+        framework_root=root,
+        worktree=root,
+        state_dirs=(gate_state,),
+        runner=rejecting_gate_runner,
+    )
+    assert gate_calls and "open-blocking-finding" in gate_blockers[0], gate_blockers
 
 with tempfile.TemporaryDirectory() as td:
     runtime = Path(td)
@@ -1749,13 +1791,15 @@ solver_modules = [
     root / "evaluation/native_solver/solve_swe_prod.py",
     *sorted((root / "evaluation/native_solver").glob("swe_prod_*.py")),
 ]
-combined_solver_source = "\n".join(path.read_text(encoding="utf-8") for path in solver_modules)
+framework_modules = sorted((root / "multiagent_framework").rglob("*.py"))
+runtime_modules = [*solver_modules, *framework_modules]
+combined_solver_source = "\n".join(path.read_text(encoding="utf-8") for path in runtime_modules)
 solver_source = combined_solver_source
 entrypoint_lines = len((root / "evaluation/native_solver/solve_swe_prod.py").read_text(encoding="utf-8").splitlines())
 lifecycle_lines = len((root / "evaluation/native_solver/swe_prod_lifecycle.py").read_text(encoding="utf-8").splitlines())
 assert entrypoint_lines <= 200, f"production solver entrypoint regressed to {entrypoint_lines} lines"
 assert lifecycle_lines <= 600, f"production solver lifecycle coordinator regressed to {lifecycle_lines} lines"
-for solver_module in solver_modules:
+for solver_module in runtime_modules:
     parsed_module = ast.parse(solver_module.read_text(encoding="utf-8"))
     function_sizes = [
         node.end_lineno - node.lineno + 1
@@ -2302,6 +2346,10 @@ for included in (
     "evaluation/native_solver/swe_prod_types.py",
     "evaluation/native_solver/swe_prod_validation.py",
     "evaluation/native_solver/templates/swe_autonomous_appendix.md",
+    "multiagent_framework",
+    "multiagent_framework/snapshot.py",
+    "multiagent_framework/verification.py",
+    "multiagent_framework/coding/guardrails.py",
 ):
     assert not OnDemandImageManager._skip_repo_bake_path(Path(included)), included
 
@@ -2326,12 +2374,19 @@ with tempfile.TemporaryDirectory() as td:
     assert "swe_prod_lifecycle.py" in bundle_names, bundle_names
     assert "swe_prod_validation.py" in bundle_names, bundle_names
     assert "templates/swe_autonomous_appendix.md" in bundle_names, bundle_names
+    framework_bundle_names = {
+        str(path.relative_to(root))
+        for path in standalone_manager._framework_file_bundle()
+    }
+    assert "multiagent_framework/snapshot.py" in framework_bundle_names, framework_bundle_names
+    assert "multiagent_framework/coding/guardrails.py" in framework_bundle_names, framework_bundle_names
     docker_lines, package_hint = standalone_manager._copy_native_solver_source(standalone_context)
     assert package_hint == "solve_swe_prod.py", package_hint
     assert docker_lines[0] == "COPY standalone-native/ /opt/multiagent/", docker_lines
     assert (standalone_context / "standalone-native/solve_swe.py").is_file()
     assert (standalone_context / "standalone-native/swe_prod_lifecycle.py").is_file()
     assert (standalone_context / "standalone-native/templates/swe_autonomous_appendix.md").is_file()
+    assert (standalone_context / "standalone-native/multiagent_framework/verification.py").is_file()
     standalone_help = subprocess.run(
         [sys.executable, str(standalone_context / "standalone-native/solve_swe.py"), "--help"],
         text=True,

@@ -123,6 +123,17 @@ exact current `final-diff-sha256`; closed todo rechecks are audited against that
 same hash. This is enabled by default through
 `MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1`.
 
+The Python runtime under `multiagent_framework/` is the shared implementation
+behind these invariants. `snapshot.py` captures staged and unstaged Git changes
+against `HEAD`, `verification.py` validates build and behavior evidence against
+that exact hash, `state.py` atomically publishes machine-readable lifecycle
+state, `gate.py` invokes the durable finding/todo submission gate, and
+`coding/guardrails.py` derives source/test/package risks from a
+coding task without evaluator answers. `bin/subagent.sh` uses this runtime when
+binding a verifier instruction to its spawn-time diff. Evaluation adapters may
+add benchmark-specific task discovery or probes, but they must consume these
+framework primitives instead of implementing a second acceptance protocol.
+
 `prompts/playbooks/orchestration-routing.md` contains the detailed role-routing
 workflow for contract scouts, scope guards, validation coordinators, worker
 first instructions, verifiers, status checks, and safety rules. The core
