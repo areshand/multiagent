@@ -153,6 +153,14 @@ When the target repository has a non-empty source diff, `ACCEPTED` and every
 closed todo recheck must name the exact current `final-diff-sha256`. The gate
 computes the live hash and rejects stale or unbound evidence.
 
+If a later independent verifier is explicitly assigned to adjudicate a
+persisted finding and proves that finding invalid, superseded by the public task,
+or not reproducible, it may call `finding-dismiss`. Dismissal requires an
+`ACCEPTED` verifier report, the exact current diff hash, the finding ID, a narrow
+disposition, and concrete source/command evidence. The gate revalidates the
+dismissal artifact and verifier transcript. Orchestrator prose cannot erase a
+finding, and findings with repair todos must use the normal resolution loop.
+
 ## Verifier Infrastructure Failures
 
 If a verifier cannot complete its review because a tool call failed, a command

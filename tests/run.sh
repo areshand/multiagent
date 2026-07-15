@@ -4961,6 +4961,20 @@ env "${CLOSED_HASH_ENV[@]}" "$ROOT/bin/subagent.sh" todo-close closed-hash-todo 
   --recheck-json "{\"accepted\":true,\"source_finding_id\":\"closed-hash-finding\",\"commands\":[{\"cmd\":\"test -f source.txt\",\"rc\":0}],\"final_diff_sha256\":\"$CLOSED_HASH_DIFF_SHA\"}" >/dev/null
 closed_hash_gate_output="$(env "${CLOSED_HASH_ENV[@]}" "$ROOT/bin/subagent.sh" gate-check)"
 [[ "$closed_hash_gate_output" == $'accepted\tfinal-gate' ]]
+env "${CLOSED_HASH_ENV[@]}" "$ROOT/bin/subagent.sh" finding-create superseded-visible-test \
+  --severity blocking --type test-gap --summary "Old visible expectation conflicts with the public task" \
+  --affected source.txt --evidence-json '{"source_evidence":"source.txt old expectation"}' \
+  --required-resolution "Edit the old expectation." >/dev/null
+if env "${CLOSED_HASH_ENV[@]}" "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-undismissed-finding.out" 2>&1; then
+  echo "expected gate-check to reject an undismissed blocking finding" >&2
+  exit 1
+fi
+env "${CLOSED_HASH_ENV[@]}" "$ROOT/bin/subagent.sh" finding-dismiss superseded-visible-test \
+  --verified-by verifier-closed-hash \
+  --recheck-json "{\"accepted\":true,\"source_finding_id\":\"superseded-visible-test\",\"disposition\":\"superseded\",\"evidence\":\"Public task and source.txt prove the old expectation changed.\",\"final_diff_sha256\":\"$CLOSED_HASH_DIFF_SHA\"}" >/dev/null
+dismissed_finding_gate_output="$(env "${CLOSED_HASH_ENV[@]}" "$ROOT/bin/subagent.sh" gate-check)"
+[[ "$dismissed_finding_gate_output" == $'accepted\tfinal-gate' ]]
+assert_file_contains "$CLOSED_HASH_STATE/findings/superseded-visible-test/dismissal.json" '"disposition": "superseded"'
 python3 - "$CLOSED_HASH_STATE/todos/closed-hash-todo/closure.json" <<'PY'
 import json
 import pathlib

@@ -41,6 +41,7 @@ Usage:
   bin/subagent.sh finding-create FINDING_ID --severity blocking|nonblocking|warning --type TYPE --summary TEXT --evidence-json JSON --required-resolution TEXT [--affected PATH[,PATH...]]
   bin/subagent.sh finding-show FINDING_ID
   bin/subagent.sh finding-list [--severity SEVERITY] [--type TYPE]
+  bin/subagent.sh finding-dismiss FINDING_ID --verified-by NAME --recheck-json JSON [--notes TEXT]
   bin/subagent.sh todo-create TODO_ID --source-finding-id FINDING_ID --task TEXT --done-criteria TEXT [--done-criteria TEXT ...] [--required-command CMD ...] [--context TEXT | --context-file PATH] [--assigned-to NAME]
   bin/subagent.sh todo-show TODO_ID
   bin/subagent.sh todo-list [--status STATUS]
@@ -2136,6 +2137,102 @@ finding_list() {
   done
 }
 
+finding_dismiss() {
+  local finding_id="${1:-}"
+  [[ -n "$finding_id" ]] || die "finding-dismiss requires FINDING_ID"
+  validate_name "$finding_id"
+  shift
+
+  local verified_by="" recheck_json="" notes=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --verified-by)
+        verified_by="${2:-}"
+        shift 2
+        ;;
+      --recheck-json)
+        recheck_json="${2:-}"
+        shift 2
+        ;;
+      --notes)
+        notes="${2:-}"
+        shift 2
+        ;;
+      *)
+        die "unknown finding-dismiss argument: $1"
+        ;;
+    esac
+  done
+
+  local dir verifier_evidence finding_hash final_diff_hash
+  dir="$(finding_dir "$finding_id")"
+  [[ -f "$dir/finding.json" ]] || die "no finding: $finding_id"
+  [[ ! -f "$dir/dismissal.json" ]] || die "finding already dismissed: $finding_id"
+  [[ -n "$verified_by" ]] || die "finding-dismiss requires --verified-by NAME"
+  validate_name "$verified_by"
+  verifier_evidence="$(subagent_dir "$verified_by")/last-message.txt"
+  [[ -f "$verifier_evidence" ]] || die "finding-dismiss requires verifier evidence: $verified_by"
+  [[ -n "$recheck_json" ]] || die "finding-dismiss requires --recheck-json JSON"
+  reject_newline "--notes" "$notes"
+  finding_hash="$(sha256_file "$dir/finding.json")"
+  final_diff_hash="$(current_final_diff_sha256)"
+  local todo_path todo_id source_finding
+  if [[ -d "$STATE_DIR/todos" ]]; then
+    for todo_path in "$STATE_DIR/todos"/*; do
+      [[ -d "$todo_path" ]] || continue
+      todo_id="$(basename "$todo_path")"
+      source_finding="$(read_todo_value "$todo_id" source_finding_id || true)"
+      [[ "$source_finding" != "$finding_id" ]] || die "finding-dismiss refuses finding with todo: $todo_id"
+    done
+  fi
+  require_cmd python3
+  python3 - "$finding_id" "$finding_hash" "$final_diff_hash" "$verified_by" "$verifier_evidence" "$recheck_json" "$notes" "$dir/dismissal.json" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+finding_id, finding_hash, final_hash, verifier, evidence_path, raw, notes, output_path = sys.argv[1:]
+payload = json.loads(raw)
+if not isinstance(payload, dict) or payload.get("accepted") is not True:
+    raise SystemExit("finding dismissal recheck must include accepted=true")
+named = {str(payload.get(key, "")).strip() for key in ("finding_rechecked", "source_finding_id")}
+if finding_id not in named:
+    raise SystemExit(f"finding dismissal recheck must name finding {finding_id}")
+if payload.get("disposition") not in {"invalid", "superseded", "not_reproducible"}:
+    raise SystemExit("finding dismissal disposition must be invalid, superseded, or not_reproducible")
+if not str(payload.get("evidence", "")).strip():
+    raise SystemExit("finding dismissal requires concrete recheck evidence")
+reported_hash = str(payload.get("final_diff_sha256") or payload.get("final_diff_hash") or "").lower()
+if final_hash and reported_hash != final_hash.lower():
+    raise SystemExit(f"finding dismissal must bind to final diff {final_hash}")
+text = pathlib.Path(evidence_path).read_text(encoding="utf-8", errors="replace")
+first = next((line.strip() for line in text.splitlines() if line.strip()), "")
+if not re.fullmatch(r"(?:verdict\s*[:=]\s*)?ACCEPTED(?:\s+.*)?", first, re.IGNORECASE):
+    raise SystemExit(f"finding dismissal verifier {verifier} did not ACCEPT")
+compact = re.sub(r"\s+", "", text.lower())
+if final_hash and not any(
+    marker in compact
+    for marker in (
+        f"final-diff-sha256={final_hash.lower()}",
+        f'"final_diff_sha256":"{final_hash.lower()}"',
+        f'"final_diff_hash":"{final_hash.lower()}"',
+    )
+):
+    raise SystemExit(f"finding dismissal verifier {verifier} is not bound to final diff {final_hash}")
+artifact = {
+    "finding_id": finding_id,
+    "finding_hash": finding_hash,
+    "verified_by": verifier,
+    "verifier_evidence": evidence_path,
+    "recheck": payload,
+    "notes": notes,
+}
+pathlib.Path(output_path).write_text(json.dumps(artifact, indent=2, sort_keys=True) + "\n")
+PY
+  printf 'finding dismissed\t%s\t%s\n' "$finding_id" "$verified_by"
+}
+
 todo_create() {
   local todo_id="${1:-}"
   [[ -n "$todo_id" ]] || die "todo-create requires TODO_ID"
@@ -3058,6 +3155,61 @@ if candidates:
 PY
 }
 
+audit_dismissed_finding() {
+  local finding_id="$1"
+  local expected_final_diff_hash="${2:-}"
+  local dir
+  dir="$(finding_dir "$finding_id")"
+  require_cmd python3
+  python3 - "$finding_id" "$dir/finding.json" "$dir/dismissal.json" "$expected_final_diff_hash" <<'PY'
+import hashlib
+import json
+import pathlib
+import re
+import sys
+
+finding_id, finding_path_raw, dismissal_path_raw, final_hash = sys.argv[1:]
+finding_path = pathlib.Path(finding_path_raw)
+dismissal_path = pathlib.Path(dismissal_path_raw)
+try:
+    finding_bytes = finding_path.read_bytes()
+    dismissal = json.loads(dismissal_path.read_text(encoding="utf-8"))
+    recheck = dismissal["recheck"]
+    evidence_path = pathlib.Path(dismissal["verifier_evidence"])
+    evidence = evidence_path.read_text(encoding="utf-8", errors="replace")
+except Exception as exc:
+    print(f"reject\tinvalid-finding-dismissal\tfinding={finding_id}\treason={exc}")
+    raise SystemExit(1)
+if dismissal.get("finding_id") != finding_id:
+    print(f"reject\tfinding-dismissal-id-mismatch\tfinding={finding_id}")
+    raise SystemExit(1)
+if dismissal.get("finding_hash") != hashlib.sha256(finding_bytes).hexdigest():
+    print(f"reject\tfinding-dismissal-hash-mismatch\tfinding={finding_id}")
+    raise SystemExit(1)
+named = {str(recheck.get(key, "")).strip() for key in ("finding_rechecked", "source_finding_id")}
+reported_hash = str(recheck.get("final_diff_sha256") or recheck.get("final_diff_hash") or "").lower()
+valid = (
+    recheck.get("accepted") is True
+    and finding_id in named
+    and recheck.get("disposition") in {"invalid", "superseded", "not_reproducible"}
+    and bool(str(recheck.get("evidence", "")).strip())
+    and (not final_hash or reported_hash == final_hash.lower())
+)
+first = next((line.strip() for line in evidence.splitlines() if line.strip()), "")
+compact = re.sub(r"\s+", "", evidence.lower())
+valid = valid and bool(re.fullmatch(r"(?:verdict\s*[:=]\s*)?ACCEPTED(?:\s+.*)?", first, re.IGNORECASE))
+valid = valid and (
+    not final_hash
+    or f"final-diff-sha256={final_hash.lower()}" in compact
+    or f'"final_diff_sha256":"{final_hash.lower()}"' in compact
+    or f'"final_diff_hash":"{final_hash.lower()}"' in compact
+)
+if not valid:
+    print(f"reject\tinvalid-finding-dismissal-evidence\tfinding={finding_id}")
+    raise SystemExit(1)
+PY
+}
+
 active_verifiers() {
   local subagents_base="$STATE_DIR/subagents"
   [[ -d "$subagents_base" ]] || return 0
@@ -3176,6 +3328,12 @@ gate_check() {
       finding_id="$(basename "$dir")"
       severity="$(read_finding_value "$finding_id" severity || true)"
       [[ "$severity" == "blocking" ]] || continue
+      if [[ -f "$dir/dismissal.json" ]]; then
+        if ! audit_dismissed_finding "$finding_id" "$final_diff_hash"; then
+          failed=1
+        fi
+        continue
+      fi
       found_todo=0
       if [[ -d "$todos_base" ]]; then
         for todo_dir_path in "$todos_base"/*; do
@@ -3275,6 +3433,10 @@ case "$cmd" in
   finding-list)
     shift
     finding_list "$@"
+    ;;
+  finding-dismiss)
+    shift
+    finding_dismiss "$@"
     ;;
   todo-create)
     shift

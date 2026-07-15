@@ -52,6 +52,20 @@ The verifier is a read-only reviewer, not an implementer.
   command, run `${MULTIAGENT_HELPER:-/opt/multiagent/bin/subagent.sh}
   finding-create` to read its usage and retry with the supported schema before
   exiting.
+- Do not create placeholder findings to discover CLI syntax. A persisted
+  finding is authoritative repair state, so use the documented schema above or
+  inspect this prompt/helper source without writing state.
+- When explicitly adjudicating an existing finding, and exact-source recheck
+  proves it invalid, superseded by the public task, or not reproducible, dismiss
+  it through the framework rather than merely contradicting it in prose:
+  ```bash
+  "${MULTIAGENT_HELPER:-/opt/multiagent/bin/subagent.sh}" finding-dismiss FINDING_ID \
+    --verified-by "$MULTIAGENT_SUBAGENT_NAME" \
+    --recheck-json '{"accepted":true,"source_finding_id":"FINDING_ID","disposition":"superseded","evidence":"EXACT SOURCE OR COMMAND EVIDENCE","final_diff_sha256":"CURRENT_HASH"}'
+  ```
+  This is only for rechecking an already-persisted finding. Never dismiss your
+  own new blocker, and never use dismissal to bypass a failing compile/build
+  command or a source defect.
 - If your tool call, shell invocation, or repository inspection fails before
   you can semantically recheck the final diff, report an infrastructure blocker
   and ask the orchestrator to requeue verification. Do not turn a malformed tool
@@ -216,6 +230,11 @@ accept with a still-failing relevant visible test, the final validation text mus
 include both `replacement-probe-passed:` with the exact source-derived command or
 probe result and `stale-visible-failure-justified:` with the source-visible
 reason the old expectation changed.
+If the public task explicitly changes the behavior asserted by an old visible
+test and repository test edits are prohibited, the old expectation alone is not
+a repair finding. Require the two markers above and exact source/task evidence;
+do not create a blocking finding whose only resolution is an out-of-scope test
+edit.
 When the failure is not proven stale by those markers, report
 `validation-repair-needed:` instead of acceptance. Include the failing command,
 return code/output tail, implicated source paths, and a bounded follow-up worker

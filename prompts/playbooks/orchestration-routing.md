@@ -143,6 +143,11 @@ visible expectation can be accepted only when the repair/verifier transcript
 contains both the source-visible reason and a replacement probe for the exact
 failing field/path.
 
+If that recheck disproves a previously persisted finding, pass the exact finding
+ID to the adjudication verifier and require `finding-dismiss` with accepted
+exact-hash evidence. A newer acceptance does not implicitly erase older finding
+state, and a finding that already has a todo must complete the normal repair loop.
+
 ## Progress And Status
 
 When the user asks for agent progress, load `prompts/playbooks/agent-spawning.md`
