@@ -2921,6 +2921,59 @@ def persisted_subagent_visible_validation_evidence(
     return ""
 
 
+def accepted_verifier_build_has_equivalent_evidence(text: str, diff: str) -> bool:
+    """Recognize strict build proof when a verifier omits only the label."""
+
+    if not diff.strip():
+        return False
+    verdicts = list(
+        re.finditer(
+            r"(?im)^[ \t]*(?:verdict:[ \t]*)?accepted\b[^\r\n]*$",
+            text,
+        )
+    )
+    if not verdicts:
+        return False
+    evidence_tail = text[verdicts[-1].start() :]
+    lower = evidence_tail.lower().replace("\\n", "\n")
+    if f"final-diff-sha256={final_diff_sha256(diff).lower()}" not in lower:
+        return False
+    if go_compile_failure_present(evidence_tail):
+        return False
+    go_packages = changed_go_package_args(diff)
+    if go_packages:
+        return all(go_package_validation_has_evidence(evidence_tail, package) for package in go_packages)
+    return any(
+        marker in lower
+        for marker in (
+            "returncode=0",
+            "return-code=0",
+            "return code: 0",
+            "rc=0",
+            "validation=passed",
+            "validation passed",
+        )
+    )
+
+
+def normalized_accepted_verifier_build_evidence(text: str, diff: str) -> str:
+    """Return canonical markers for equivalent accepted verifier build proof."""
+
+    if not accepted_verifier_build_has_equivalent_evidence(text, diff):
+        return ""
+    markers = [
+        "build-verification-passed: "
+        f"final-diff-sha256={final_diff_sha256(diff)} "
+        f"changed-files={len(changed_code_paths_from_diff(diff))} compile_clean=true returncode=0"
+    ]
+    for package in changed_go_package_args(diff):
+        markers.append(
+            "go-package-validation-passed: "
+            f"package={canonical_go_package(package)} command=verifier-recorded-package-validation returncode=0"
+        )
+    return "\n".join(markers)
+
+
 def persisted_subagent_final_acceptance_texts(
     diff: str,
     runtime_root: Path = RUNTIME_ROOT,
@@ -2963,10 +3016,13 @@ def persisted_subagent_final_acceptance_texts(
                     continue
                 accepted_at = verdicts[-1].start()
                 evidence_tail = raw[accepted_at:]
+                normalized_build = normalized_accepted_verifier_build_evidence(evidence_tail, diff)
                 labeled = f"persisted verifier {agent_dir.name} {name}:\n{evidence_tail}"
-                if build_verification_has_evidence(evidence_tail, diff):
+                if normalized_build:
+                    labeled += "\nnormalized-verifier-build-evidence:\n" + normalized_build
+                if build_verification_has_evidence(evidence_tail, diff) or normalized_build:
                     if touches_go_source and not all(
-                        go_package_validation_has_evidence(evidence_tail, package) for package in go_packages
+                        go_package_validation_has_evidence(labeled, package) for package in go_packages
                     ):
                         continue
                     if touches_go_source and go_compile_failure_present(evidence_tail):

@@ -1485,6 +1485,27 @@ with tempfile.TemporaryDirectory() as td:
         final_acceptance.replace(go_hash, "0" * 64),
         go_diff,
     )
+    equivalent_verifier = runtime_root / "subagents" / "verifier-03-equivalent-build"
+    equivalent_verifier.mkdir(parents=True)
+    (equivalent_verifier / "last-message.txt").write_text(
+        "ACCEPTED\n"
+        f"final-diff-sha256={go_hash}\n"
+        "validation=go test ./lib/kube/proxy passed\n"
+        "issue-coverage-ledger: issue-forwarder implemented-by=lib/kube/proxy/forwarder.go\n",
+        encoding="utf-8",
+    )
+    equivalent_acceptance = solve_swe_prod.persisted_subagent_final_acceptance_evidence(go_diff, runtime_root)
+    assert "normalized-verifier-build-evidence:" in equivalent_acceptance, equivalent_acceptance
+    assert solve_swe_prod.build_verification_has_evidence(equivalent_acceptance, go_diff), equivalent_acceptance
+    equivalent_text = (equivalent_verifier / "last-message.txt").read_text(encoding="utf-8")
+    assert not solve_swe_prod.accepted_verifier_build_has_equivalent_evidence(
+        equivalent_text.replace(go_hash, "0" * 64),
+        go_diff,
+    )
+    assert not solve_swe_prod.accepted_verifier_build_has_equivalent_evidence(
+        equivalent_text.replace("passed", "returncode=1 build failed"),
+        go_diff,
+    )
     js_verifier = runtime_root / "subagents" / "verifier-02-ui"
     js_verifier.mkdir(parents=True)
     js_diff = (
