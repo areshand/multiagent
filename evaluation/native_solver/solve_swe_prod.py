@@ -2894,7 +2894,8 @@ def persisted_subagent_final_acceptance_texts(
 
     go_packages = changed_go_package_args(diff)
     touches_go_source = bool(go_packages)
-    evidence_texts: list[str] = []
+    build_evidence_texts: list[str] = []
+    behavior_evidence_texts: list[str] = []
     for subagents_dir in subagent_state_roots(runtime_root):
         for agent_dir in sorted(path for path in subagents_dir.iterdir() if path.is_dir()):
             agent_name = agent_dir.name.lower()
@@ -2912,21 +2913,25 @@ def persisted_subagent_final_acceptance_texts(
                 if "accepted" not in lower:
                     continue
                 accepted_at = lower.rfind("accepted")
-                build_at = lower.rfind("build-verification-passed:")
-                if build_at < 0:
-                    continue
-                start = min(idx for idx in (accepted_at, build_at) if idx >= 0)
-                evidence_tail = raw[start:]
-                if not build_verification_has_evidence(evidence_tail, diff):
-                    continue
-                if touches_go_source and not all(
-                    go_package_validation_has_evidence(evidence_tail, package) for package in go_packages
-                ):
-                    continue
-                if touches_go_source and go_compile_failure_present(evidence_tail):
-                    continue
-                evidence_texts.append(f"persisted verifier {agent_dir.name} {name}:\n{evidence_tail}")
-    return evidence_texts
+                evidence_tail = raw[accepted_at:]
+                labeled = f"persisted verifier {agent_dir.name} {name}:\n{evidence_tail}"
+                if build_verification_has_evidence(evidence_tail, diff):
+                    if touches_go_source and not all(
+                        go_package_validation_has_evidence(evidence_tail, package) for package in go_packages
+                    ):
+                        continue
+                    if touches_go_source and go_compile_failure_present(evidence_tail):
+                        continue
+                    build_evidence_texts.append(labeled)
+                if behavior_verification_has_evidence(evidence_tail, diff) or "issue-coverage-ledger:" in evidence_tail.lower():
+                    behavior_evidence_texts.append(labeled)
+
+    # Build and behavior acceptance are independent contracts. A compile-only
+    # verifier cannot stand in for semantic review, and a behavior report cannot
+    # prove that the final changed packages compile.
+    if not build_evidence_texts or not behavior_evidence_texts:
+        return []
+    return list(dict.fromkeys([*build_evidence_texts, *behavior_evidence_texts]))
 
 
 def persisted_subagent_final_acceptance_evidence(
@@ -2938,10 +2943,9 @@ def persisted_subagent_final_acceptance_evidence(
     evidence_texts = persisted_subagent_final_acceptance_texts(diff, runtime_root)
     if not evidence_texts:
         return ""
-    # Keep enough of the accepted verifier report to preserve contract ledgers
-    # and the hash-bound build marker. Short truncation can retain ACCEPTED while
-    # dropping the evidence that made the acceptance machine-checkable.
-    excerpt = " ".join(evidence_texts[0][:8000].split())
+    # Preserve both independent reports. Taking only the first report loses the
+    # behavior ledger when build and semantic verification use separate agents.
+    excerpt = " ".join("\n".join(evidence_texts)[:20000].split())
     return excerpt
 
 
@@ -3244,6 +3248,29 @@ def build_verification_has_evidence(text: str, diff: str) -> bool:
             return True
         if build.get("rc", build.get("returncode")) == 0:
             return True
+    return False
+
+
+def behavior_verification_has_evidence(text: str, diff: str) -> bool:
+    """Return true for semantic acceptance explicitly bound to the final diff."""
+
+    lower = text.lower().replace("\\n", "\n")
+    diff_hash = final_diff_sha256(diff).lower()
+    for match in re.finditer("behavior-verification-passed:", lower):
+        window = lower[match.start() : match.start() + 800]
+        if f"final-diff-sha256={diff_hash}" not in window and f'"final_diff_hash": "{diff_hash}"' not in window:
+            continue
+        if not any(
+            marker in window
+            for marker in (
+                "public-clauses-covered=true",
+                '"public_clauses_covered": true',
+                "behavior_clean=true",
+                '"behavior_clean": true',
+            )
+        ):
+            continue
+        return True
     return False
 
 
@@ -5111,12 +5138,19 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 diff = git_diff(workdir)
                 text = captured_text()
                 verifier_acceptance = persisted_subagent_final_acceptance_evidence(diff)
+                hash_bound_final_verifier_accepted = bool(verifier_acceptance)
                 if verifier_acceptance:
                     current_status = status_with_recovered_public_evidence(
                         current_status,
                         verifier_acceptance,
                         issue,
                         text,
+                    )
+                    current_status = append_adapter_probe_evidence(
+                        current_status,
+                        workdir=workdir,
+                        diff=diff,
+                        compile_evidence="hash-bound-final-verifier-build",
                     )
                     log("completed status enriched from hash-bound durable verifier acceptance before final gate")
                 if completed_status_covers_adapter_validation(workdir, issue, diff, current_status):
@@ -5133,6 +5167,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                     coverage_blockers = []
                 if (
                     not blockers
+                    and not hash_bound_final_verifier_accepted
                     and not coverage_probe_satisfied
                     and not completed_status_covers_adapter_validation(workdir, issue, diff, current_status)
                     and coverage_probe_commands(workdir, issue, diff)
@@ -5160,7 +5195,9 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                         blockers = [*scope_blockers, *coverage_blockers]
                 if blockers and coverage_followups_sent < coverage_followup_limit and tmux_has_session(session):
                     probe_report = ""
-                    if coverage_blockers or coverage_probe_commands(workdir, issue, diff):
+                    if not hash_bound_final_verifier_accepted and (
+                        coverage_blockers or coverage_probe_commands(workdir, issue, diff)
+                    ):
                         probe_report, probe_passed = run_validation_coverage_probe(workdir, issue, diff, coverage_blockers)
                     else:
                         probe_passed = False
@@ -6924,8 +6961,13 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                     diff=final_diff,
                     marker=(
                         f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})"
-                        if validation_evidence_kind != "stale-visible"
+                        if validation_evidence_kind == "visible"
                         else None
+                    ),
+                    compile_evidence=(
+                        "hash-bound-final-verifier-build"
+                        if validation_evidence_kind == "final-verifier"
+                        else "adapter-public-probe-passed"
                     ),
                 )
                 STATUS_PATH.write_text(

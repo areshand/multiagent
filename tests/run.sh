@@ -1435,9 +1435,28 @@ with tempfile.TemporaryDirectory() as td:
         "go-package-validation-passed: package=./lib/kube/proxy command=\"go test ./lib/kube/proxy\" returncode=0\n",
         encoding="utf-8",
     )
+    assert not solve_swe_prod.persisted_subagent_final_acceptance_evidence(go_diff, runtime_root), (
+        "compile-only acceptance must not substitute for behavior verification"
+    )
+    behavior_agent = runtime_root / "subagents" / "verifier-02-behavior"
+    behavior_agent.mkdir(parents=True)
+    (behavior_agent / "last-message.txt").write_text(
+        "VERDICT: ACCEPTED\n"
+        f"behavior-verification-passed: final-diff-sha256={go_hash} changed-files=1 public-clauses-covered=true\n"
+        "issue-coverage-ledger: issue-forwarder implemented-by=lib/kube/proxy/forwarder.go\n"
+        "All listed invariants are preserved.\n",
+        encoding="utf-8",
+    )
     final_acceptance = solve_swe_prod.persisted_subagent_final_acceptance_evidence(go_diff, runtime_root)
     assert "persisted verifier verifier-01-fix last-message.txt" in final_acceptance, final_acceptance
+    assert "persisted verifier verifier-02-behavior last-message.txt" in final_acceptance, final_acceptance
     assert "build-verification-passed" in final_acceptance, final_acceptance
+    assert "behavior-verification-passed" in final_acceptance, final_acceptance
+    assert solve_swe_prod.behavior_verification_has_evidence(final_acceptance, go_diff)
+    assert not solve_swe_prod.behavior_verification_has_evidence(
+        final_acceptance.replace(go_hash, "0" * 64),
+        go_diff,
+    )
     js_verifier = runtime_root / "subagents" / "verifier-02-ui"
     js_verifier.mkdir(parents=True)
     js_diff = (
@@ -1451,7 +1470,8 @@ with tempfile.TemporaryDirectory() as td:
         + ("independent-public-contract-covered " * 120)
         + "\n"
         + f"build-verification-passed: final-diff-sha256={js_hash} "
-        + "changed-files=1 compile_clean=true returncode=0 command=\"yarn lint:types\"\n",
+        + "changed-files=1 compile_clean=true returncode=0 command=\"yarn lint:types\"\n"
+        + "All listed invariants are preserved.\n",
         encoding="utf-8",
     )
     js_acceptance = solve_swe_prod.persisted_subagent_final_acceptance_evidence(js_diff, runtime_root)
@@ -1585,6 +1605,43 @@ hash_bound_source_map = solve_swe_prod.source_symbol_adapter_evidence(
 )
 assert "compile=hash-bound-final-verifier-build" in hash_bound_source_map, hash_bound_source_map
 assert "compile=adapter-public-probe-passed" not in hash_bound_source_map, hash_bound_source_map
+with tempfile.TemporaryDirectory() as td:
+    verifier_repo = Path(td)
+    (verifier_repo / "lib/benchmark").mkdir(parents=True)
+    (verifier_repo / "lib/benchmark/linear.go").write_text(
+        "package benchmark\ntype Linear struct{}\n",
+        encoding="utf-8",
+    )
+    verifier_diff = (
+        "diff --git a/lib/benchmark/linear.go b/lib/benchmark/linear.go\n"
+        "new file mode 100644\n--- /dev/null\n+++ b/lib/benchmark/linear.go\n"
+        "@@ -0,0 +1,2 @@\n+package benchmark\n+type Linear struct{}\n"
+    )
+    verifier_hash = solve_swe_prod.final_diff_sha256(verifier_diff)
+    verifier_status = solve_swe_prod.append_adapter_probe_evidence(
+        {
+            "status": "completed",
+            "validation": (
+                f"build-verification-passed: final-diff-sha256={verifier_hash} "
+                "changed-files=1 compile_clean=true returncode=0; "
+                "go-package-validation-passed: package=./lib/benchmark "
+                'command="go test ./lib/benchmark" returncode=0; '
+                f"behavior-verification-passed: final-diff-sha256={verifier_hash} "
+                "changed-files=1 public-clauses-covered=true; "
+                "issue-coverage-ledger: issue-linear implemented-by=lib/benchmark/linear.go"
+            ),
+        },
+        workdir=verifier_repo,
+        diff=verifier_diff,
+        compile_evidence="hash-bound-final-verifier-build",
+    )
+    assert not solve_swe_prod.validation_coverage_blockers(
+        "Add lib/benchmark/linear.go with a Linear generator and validateConfig behavior.",
+        verifier_diff,
+        "",
+        verifier_status,
+        {},
+    ), verifier_status
 assert 'validation_evidence_kind not in {"stale-visible", "final-verifier"}' in solver_source, (
     "hash-bound final verifier acceptance should not be rejected by a redundant no-test adapter behavior probe"
 )
