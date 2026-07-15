@@ -81,6 +81,18 @@ verifier handoff should require `issue-coverage-ledger:` with each item mapped
 to implementation evidence, already-satisfied source evidence, or a blocking
 todo.
 
+When a regression is attributed to an upgrade, migration, compatibility
+transition, or recently changed behavior, reconstruct the last known-good state
+from legitimate repository evidence before proposing a fix. Inspect local git
+history, the parent/pre-change implementation, release notes, or neighboring
+tests when available. Enumerate every output mutated by the transition, such as
+user records, metadata labels, role mappings, persisted config, and generated
+session state; do not reduce a multi-output historical transition to the first
+downstream symptom. Record a `historical-contract-ledger:` with
+`baseline-source=`, `transition-path=`, `mutated-outputs=`, and
+`compatibility-invariant=`. If repository history is unavailable, say so and
+derive the same ledger from visible source callers and tests.
+
 When source behavior combines a policy/mode enum with a collection or count,
 record a partition contract. List the source-visible data variants/categories,
 map each policy mode to the category that actually satisfies it, and require

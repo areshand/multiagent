@@ -55,6 +55,15 @@ visible source proves the requested extension point exists. Require a concrete
 registration/configuration API, its production integration path, and a
 source-derived probe of default plus overridden behavior.
 
+When the public issue identifies an upgrade, migration, or compatibility
+transition as the regression source, reconstruct the last known-good behavior
+from local git history or the immediately preceding implementation when
+available. Enumerate all outputs changed by that transition and require a
+`historical-contract-ledger:` with `baseline-source=`, `transition-path=`,
+`mutated-outputs=`, and `compatibility-invariant=`. Do not accept a fix for only
+the first downstream symptom when the same transition also changes persisted
+metadata, mappings, config, or emitted identity/session state.
+
 ### Solve Loop
 
 1. Inspect the public task and generated ledger. If ownership or the behavioral

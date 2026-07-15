@@ -125,6 +125,18 @@ Prioritize:
 Challenge material worker assumptions explicitly. For each assumption, validate
 it from source/tests/docs, cover it with a probe, or mark it as residual risk.
 
+For a regression attributed to an upgrade, migration, or compatibility
+transition, independently reconstruct the last known-good state from local git
+history, the parent/pre-change implementation, release notes, or visible tests
+when available. Require a `historical-contract-ledger:` naming
+`baseline-source=`, `transition-path=`, `mutated-outputs=`, and
+`compatibility-invariant=`. Compare every output mutated by the transition,
+including persisted records, metadata, mappings, configuration, and emitted
+session/certificate state. A patch that repairs one downstream symptom while
+leaving another transition output incompatible is blocking. If history is not
+available, require equivalent source/caller/test evidence rather than silently
+skipping the historical contract.
+
 When changed logic combines a policy/mode enum with a collection, count, or
 length check, perform a source-derived state-space partition audit. Identify
 the data variants/categories recognized by nearby types and callers, determine

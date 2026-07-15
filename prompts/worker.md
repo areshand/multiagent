@@ -89,6 +89,13 @@ Also include:
 - Do not rely on leaked evaluator tests, hidden test names, non-public evaluator
   rows, or benchmark-only metadata as implementation guidance. Infer unstated
   contracts from legitimate task/source/product evidence.
+- For regressions caused by an upgrade, migration, or compatibility transition,
+  inspect local git history or the immediately preceding implementation when
+  available. Before editing, enumerate every persisted or emitted output the
+  transition changes, not only the first failing downstream symptom. Preserve
+  that evidence in `historical-contract-ledger: baseline-source=...`
+  `transition-path=... mutated-outputs=... compatibility-invariant=...`; when
+  history is unavailable, derive the ledger from visible callers and tests.
 - If legitimate product or visible-test paths reference missing fixture assets
   under paths such as `testdata/`, `fixtures/`, `golden/`, or snapshots, add the
   minimal required assets instead of dismissing the path as fixture-mismatched.
