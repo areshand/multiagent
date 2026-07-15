@@ -62,6 +62,15 @@ command. For commands that are not naturally phrased as a `run ...` done
 criterion, add `--required-command "exact command"` so the worker resolution
 and verifier recheck must both cover it.
 
+Required commands must be achievable rc=0 closure conditions. Do not make a
+full test command mandatory after it has been classified as failing only because
+of unavailable runtime fixtures, assets, credentials, services, or platform
+support while simultaneously allowing a compile-only fallback. In that case,
+record the full failure in finding/context evidence, make the hash-bound
+compile-only command mandatory, and require an independent behavior verifier to
+accept or identify a concrete source defect. A source worker must not be asked
+to repair the environment by changing product code.
+
 Todo creation snapshots the source finding hash. This prevents the orchestrator
 from closing a task against stale, mutated, or prose-reconstructed verifier
 state; the gate rechecks the current finding artifact against that hash.

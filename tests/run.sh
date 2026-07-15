@@ -978,6 +978,30 @@ with tempfile.TemporaryDirectory() as td:
         set(),
         runtime,
     )
+    runtime_only = (
+        "BLOCKING\n"
+        "type: validation\n"
+        "affected_paths: lib/auth/grpcserver.go\n"
+        "evidence: go test ./lib/auth failed with local error: tls: bad record MAC\n"
+        "source review found no contract miss; all public source-level clauses are implemented\n"
+        "required_resolution: preserve runtime failure evidence and recheck source behavior\n"
+        "build-verification-passed: final-diff-sha256=abc compile_clean=true returncode=0\n"
+    )
+    assert solve_swe_prod.verifier_evidence_is_runtime_validation_only(runtime_only)
+    verifier.joinpath("last-message.txt").write_text(runtime_only, encoding="utf-8")
+    original_runtime = solve_swe_prod.RUNTIME_ROOT
+    try:
+        solve_swe_prod.RUNTIME_ROOT = runtime
+        runtime_routing = solve_swe_prod.structured_repair_state_instructions(
+            summary="resume",
+            blockers=["missing verifier acceptance"],
+            source_hints=["lib/auth/grpcserver.go"],
+        )
+    finally:
+        solve_swe_prod.RUNTIME_ROOT = original_runtime
+    assert "Do not create a source-repair todo" in runtime_routing, runtime_routing
+    assert "known environment-failing full test" in runtime_routing, runtime_routing
+    assert "fresh read-only behavior verifier" in runtime_routing, runtime_routing
 
 with tempfile.TemporaryDirectory() as td:
     prompt_test_root = Path(td)

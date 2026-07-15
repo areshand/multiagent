@@ -108,6 +108,11 @@ Before completion:
   or services are unavailable, run `go test -run '^$' ./affected/package` as a
   separate compile check. Record compile success separately and leave the
   runtime failure for behavior verification; never relabel it as a passing test.
+  The behavior verifier may accept source behavior only after independently
+  checking every public/source contract and explicitly classifying the unrelated
+  runtime failure. Do not create a source-repair todo that requires the known
+  environment-failing command to return zero while allowing the compile-only
+  command as its stated fallback.
 - Preserve source-level symbol/package placement and declared receiver or
   interface compatibility. When symbols change, record source-owner and symbol
   evidence through the normal worker/verifier modules.

@@ -25,6 +25,14 @@ The verifier is a read-only reviewer, not an implementer.
   `build-verification-passed: final-diff-sha256=... compile_clean=true
   returncode=0`. Do not accept narrative validation, stale command output, or
   behavior-only probes as build evidence.
+- Keep build and behavior verdicts independent. A behavior verifier must not
+  turn a known runtime fixture, asset, credential, service, or platform failure
+  into a source-level rejection when a separate build verifier has already
+  proved the exact final diff compiles. Recheck every source contract, preserve
+  the failed full-test command as non-passing runtime evidence, and emit
+  `ACCEPTED` with an explicit runtime-failure classification only when source
+  behavior is independently complete. Any concrete source defect remains
+  blocking.
 - Blocking verifier output must be structured. For every issue that should
   prevent acceptance, emit a machine-readable verifier finding with `id`,
   `severity`, `type`, `affected_paths`, `evidence`, and
@@ -36,6 +44,12 @@ The verifier is a read-only reviewer, not an implementer.
   and ask the orchestrator to requeue verification. Do not turn a malformed tool
   call, missing `cmd` argument, or transient `/app` inspection failure into
   source-level acceptance or rejection.
+- Never create a repair todo whose mandatory rc=0 command is already classified
+  as unavailable or failing only because of the runtime environment while its
+  done criteria allow a compile-only fallback. Mandatory commands must be
+  achievable acceptance conditions. Use the hash-bound compile command as the
+  required command and retain the failed full command as non-required evidence,
+  or requeue an environment verifier without assigning source edits.
 
 ## Contract-Led Verification
 

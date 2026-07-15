@@ -4441,6 +4441,16 @@ def structured_repair_state_instructions(
     hint_text = ", ".join(source_hints[:8]) or "derive exact paths from the live diff"
     confirmed_finding = persisted_verifier_blocking_evidence(RUNTIME_ROOT)
     if confirmed_finding:
+        if verifier_evidence_is_runtime_validation_only(confirmed_finding):
+            return (
+                "The durable verifier evidence reports no source contract miss and blocks only on a runtime-environment "
+                "test failure after hash-bound compile success. Do not create a source-repair todo and do not make the "
+                "known environment-failing full test a mandatory rc=0 command. Spawn one fresh read-only behavior "
+                "verifier over the unchanged final diff. It must independently recheck every public/source contract, "
+                "preserve the full-test failure as runtime evidence, and either ACCEPT with explicit runtime-failure "
+                "classification plus the existing build proof or emit a concrete source-level finding. "
+                f"Verifier evidence: {confirmed_finding}"
+            )
         return (
             "A verifier already confirmed a semantic source defect. Preserve its public/source evidence exactly; "
             "do not relabel this as verifier infrastructure and do not launch another acceptance-only verifier over the unchanged diff. "
@@ -4459,6 +4469,39 @@ def structured_repair_state_instructions(
         "--worker NAME --status resolved|blocked --validation-json JSON --why TEXT, and a later verifier must close it. "
         "Never call resolution-create for an evidence-only handoff or for a todo that no worker repaired."
     )
+
+
+def verifier_evidence_is_runtime_validation_only(evidence: str) -> bool:
+    """Return true for verifier blockers that explicitly clear source behavior."""
+
+    lower = evidence.lower()
+    validation_finding = "type: validation" in lower or "type=validation" in lower
+    runtime_failure = any(
+        marker in lower
+        for marker in (
+            "runtime-environment",
+            "runtime fixture",
+            "tls bad-record-mac",
+            "tls bad record mac",
+            "local error: tls: bad record mac",
+            "missing runtime asset",
+            "missing runtime fixture",
+        )
+    )
+    source_cleared = any(
+        marker in lower
+        for marker in (
+            "source review found no contract miss",
+            "no source contract miss",
+            "all public source-level clauses",
+            "all listed source-level clauses",
+            "source_contracts_satisfied=true",
+        )
+    )
+    compile_clean = "build-verification-passed:" in lower and any(
+        marker in lower for marker in ("returncode=0", "return code: 0", "rc=0")
+    )
+    return validation_finding and runtime_failure and source_cleared and compile_clean
 
 
 def persisted_verifier_blocking_evidence(runtime_root: Path = RUNTIME_ROOT) -> str:
