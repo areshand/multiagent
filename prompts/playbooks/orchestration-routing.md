@@ -27,6 +27,12 @@ SUBAGENT_CLI="$VERIFIER_CLI" bin/subagent.sh spawn contract-scout-01-task --inst
 Paste the scout's compact contract ledger, must-preserve list, validation plan,
 and mismatch risks into worker and verifier first instructions. If the scout
 finds a fundamental mismatch, surface it before spawning implementation.
+Copy any `historical-contract-ledger:` block verbatim, including all mutated
+outputs. A task-specific hypothesis may refine how those outputs are repaired,
+but it must not narrow, replace, or contradict the scout's historical ledger.
+If the proposed worker scope cannot address every output in that ledger, widen
+the bounded ownership to the actual transition owner or create explicit todos
+for the remaining outputs before implementation.
 Before spawning the edit-capable implementation worker, poll or inspect any
 active scout once, persist useful findings, then finalize or kill the scout if it
 is still running. Do not let an active generic scout block the implementation

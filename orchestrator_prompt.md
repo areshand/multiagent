@@ -153,6 +153,10 @@ Core routing rules:
   lease owner per package/path.
 - Before spawning workers, include `prompts/playbooks/agent-spawning.md` and
   `prompts/worker.md` in the first instruction.
+- Preserve a scout's `historical-contract-ledger:` verbatim in worker, repair,
+  and verifier instructions. Never override its multi-output transition
+  contract with a narrower task-specific hypothesis; route uncovered outputs
+  as explicit blocking todos.
 - Before spawning verifiers, include `prompts/playbooks/agent-spawning.md`,
   `prompts/verifier.md`, and the verifier contract ledger. Respect
   `MULTIAGENT_VERIFIER_MAX_ITERATIONS`.

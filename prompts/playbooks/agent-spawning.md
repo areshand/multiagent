@@ -10,6 +10,11 @@ task-specific assignment. Also pass assignment ID, branch, owned paths, task
 statement, and the relevant contract ledger. For high-risk coding tasks,
 include the contract scout's `must-preserve` list and validation plan. The
 worker module contains shared worker rules and Ponytail implementation discipline.
+When the scout emits `historical-contract-ledger:`, copy that block verbatim
+into every implementation, repair, and verifier assignment. Do not replace it
+with a narrower locked hypothesis. Worker ownership and done criteria must
+cover every listed mutated output or explicitly preserve an open blocking todo
+for outputs assigned elsewhere.
 
 ## Worker Spawn Skill
 

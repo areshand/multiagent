@@ -771,6 +771,9 @@ assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "historical-contrac
 assert_file_contains "$ROOT/prompts/worker.md" "historical-contract-ledger:"
 assert_file_contains "$ROOT/prompts/verifier.md" "historical-contract-ledger:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "historical-contract-ledger:"
+assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "historical-contract-ledger:"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "historical-contract-ledger:"
+assert_file_contains "$ROOT/orchestrator_prompt.md" "historical-contract-ledger:"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "Post-Task Authority Fence"
 appendix_bytes="$(wc -c < "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md")"
 override_bytes="$(wc -c < "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md")"
@@ -1853,6 +1856,18 @@ assert any("stored-as=" in blocker for blocker in incomplete_provenance), incomp
 assert not solve_swe_prod.data_provenance_blockers(
     provenance_issue,
     "data-provenance-ledger: source=request stored-as=job.request output=response field=timeout<-request.timeout analogue=pkg/request.go:Request",
+)
+historical_issue = "After upgrading, the migration breaks compatibility and users lose access."
+assert solve_swe_prod.historical_contract_required(historical_issue)
+assert solve_swe_prod.historical_contract_blockers(historical_issue, "validation passed")
+incomplete_historical = solve_swe_prod.historical_contract_blockers(
+    historical_issue,
+    "historical-contract-ledger: baseline-source=git^ transition-path=upgrade compatibility-invariant=preserve-access",
+)
+assert any("mutated-outputs=" in blocker for blocker in incomplete_historical), incomplete_historical
+assert not solve_swe_prod.historical_contract_blockers(
+    historical_issue,
+    "historical-contract-ledger: baseline-source=git^ transition-path=upgrade mutated-outputs=user,mapping compatibility-invariant=preserve-access",
 )
 assert 'validation_evidence_kind not in {"stale-visible", "final-verifier"}' in solver_source, (
     "hash-bound final verifier acceptance should not be rejected by a redundant no-test adapter behavior probe"

@@ -582,6 +582,45 @@ def data_provenance_blockers(issue: str, evidence_text: str) -> list[str]:
     return []
 
 
+def historical_contract_required(issue: str) -> bool:
+    """Return whether the public issue describes a transition-caused regression."""
+
+    normalized = " ".join(issue.lower().split())
+    transition = re.search(r"\b(upgrad(?:e|ed|ing)|migrat(?:e|ed|ion|ing)|compatibility transition|version)\b", normalized)
+    regression = re.search(
+        r"\b(regression|breaks?|broke|broken|lose|loses|lost|no longer|stale|after upgrading|introduced)\b",
+        normalized,
+    )
+    return bool(transition and regression)
+
+
+def historical_contract_blockers(issue: str, evidence_text: str) -> list[str]:
+    """Require complete source-history evidence for transition regressions."""
+
+    if not historical_contract_required(issue):
+        return []
+    lower = evidence_text.lower()
+    if "historical-contract-ledger:" not in lower:
+        return [
+            "public task describes an upgrade/migration regression, but final validation lacks "
+            "`historical-contract-ledger:` with `baseline-source=`, `transition-path=`, "
+            "`mutated-outputs=`, and `compatibility-invariant=` source evidence"
+        ]
+    ledger = lower.split("historical-contract-ledger:", 1)[1]
+    missing = [
+        key
+        for key in ("baseline-source=", "transition-path=", "mutated-outputs=", "compatibility-invariant=")
+        if key not in ledger
+    ]
+    if missing:
+        return [
+            "`historical-contract-ledger:` is incomplete; add "
+            + ", ".join(missing)
+            + " and enumerate every persisted or emitted output changed by the transition"
+        ]
+    return []
+
+
 def contract_ledger_text(issue: str, metadata: dict[str, object] | None = None) -> str:
     solver_metadata = public_solver_metadata(metadata or {})
     coverage_issue = issue_with_public_problem_text(issue, solver_metadata)
@@ -4053,6 +4092,7 @@ def validation_coverage_blockers(
         )
     blockers.extend(issue_coverage_blockers(coverage_issue, evidence_text))
     blockers.extend(data_provenance_blockers(coverage_issue, evidence_text))
+    blockers.extend(historical_contract_blockers(coverage_issue, evidence_text))
     status_json_text = json.dumps(current_status, sort_keys=True)
     stale_sensitive_text = status_json_text if build_verification_has_evidence(status_text, diff) else f"{text}\n{status_json_text}"
     blockers.extend(claimed_changed_path_blockers(diff, stale_sensitive_text))
