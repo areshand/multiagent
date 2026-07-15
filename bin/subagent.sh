@@ -1093,16 +1093,27 @@ spawn_subagent() {
   validate_name "$name"
   shift
 
-  local instruction="" instruction_file="" owned_csv=""
+  local instruction="" instruction_file="" owned_csv="" role=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --own)
+      --own|--owned-path)
         [[ $# -ge 2 && -n "${2:-}" ]] || die "spawn --own requires PATH[,PATH...]"
         if [[ -n "$owned_csv" ]]; then
           owned_csv="$owned_csv,${2:-}"
         else
           owned_csv="${2:-}"
         fi
+        shift 2
+        ;;
+      --role)
+        role="${2:-}"
+        case "$role" in
+          worker|verifier|reviewer|scout)
+            ;;
+          *)
+            die "spawn --role must be worker, verifier, reviewer, or scout"
+            ;;
+        esac
         shift 2
         ;;
       --instruction)
@@ -2030,7 +2041,7 @@ todo_create() {
   local source_finding_id="" task="" context="" context_file="" assigned_to="" done_joined="" required_commands_joined="" criterion required_command
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --source-finding-id)
+      --source-finding-id|--finding)
         source_finding_id="${2:-}"
         shift 2
         ;;

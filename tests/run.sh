@@ -836,6 +836,9 @@ assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "prompts
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "build-verification-passed:"
 assert_file_contains "$ROOT/prompts/playbooks/finding-todo-loop.md" "Do not create or reopen a todo from command evidence bound"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Process evidence by final"
+assert_file_contains "$ROOT/bin/subagent.sh" '--own|--owned-path)'
+assert_file_contains "$ROOT/bin/subagent.sh" '--source-finding-id|--finding)'
+assert_file_contains "$ROOT/bin/subagent.sh" '--role)'
 assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "declared-type ownership risk"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "declared type at that call site"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "visible tests"
