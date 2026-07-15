@@ -12,6 +12,7 @@ SUBAGENT_CLI="${SUBAGENT_CLI:-$WORKER_CLI}"
 VERIFIER_CLI="${VERIFIER_CLI:-codex}"
 MULTIAGENT_HELPER="${MULTIAGENT_HELPER:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")}"
 MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER="${MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER:-1}"
+PROMPT_MODULE_ROOT="${MULTIAGENT_PROMPT_MODULE_ROOT:-$ROOT}"
 if [[ -n "${MULTIAGENT_EXTRA_PATH:-}" ]]; then
   PATH="$MULTIAGENT_EXTRA_PATH:$PATH"
   export PATH
@@ -153,6 +154,41 @@ call. If a tool call fails with `missing field cmd`, immediately retry the same
 operation as a shell tool call whose arguments include exactly one `cmd` string.
 
 EOF
+}
+
+role_prompt_path() {
+  local name="$1"
+  local role="$2"
+  local lower_name
+  lower_name="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$lower_name" == *build-verifier* ]]; then
+    printf '%s\n' "$PROMPT_MODULE_ROOT/prompts/roles/build-verifier.md"
+  elif [[ "$role" == "verifier" || "$role" == "reviewer" || "$lower_name" == *verifier* || "$lower_name" == *review* ]]; then
+    printf '%s\n' "$PROMPT_MODULE_ROOT/prompts/verifier.md"
+  elif [[ "$role" == "scout" || "$lower_name" == *scout* ]]; then
+    printf '%s\n' "$PROMPT_MODULE_ROOT/prompts/roles/contract-scout.md"
+  elif [[ "$role" == "worker" || "$lower_name" == worker-* ]]; then
+    printf '%s\n' "$PROMPT_MODULE_ROOT/prompts/worker.md"
+  fi
+}
+
+compose_role_instruction() {
+  local name="$1"
+  local role="$2"
+  local instruction="$3"
+  local role_prompt heading
+  role_prompt="$(role_prompt_path "$name" "$role")"
+  if [[ -z "$role_prompt" || ! -f "$role_prompt" ]]; then
+    printf '%s' "$instruction"
+    return
+  fi
+  heading="$(head -n 1 "$role_prompt")"
+  if [[ -n "$heading" && "$instruction" == *"$heading"* ]]; then
+    printf '%s' "$instruction"
+    return
+  fi
+  cat "$role_prompt"
+  printf '\n\n## Task Assignment\n\n%s' "$instruction"
 }
 
 read_subagent_meta_value() {
@@ -1148,6 +1184,10 @@ spawn_subagent() {
     [[ -f "$instruction_file" ]] || die "instruction file not found: $instruction_file"
     instruction="$(cat "$instruction_file")"
   fi
+  if [[ "${MULTIAGENT_CODEX_EXEC:-0}" == "1" && "$SUBAGENT_CLI" == "codex" && -z "$instruction" ]]; then
+    die "codex exec subagent spawn requires --instruction or --instruction-file: $name"
+  fi
+  instruction="$(compose_role_instruction "$name" "$role" "$instruction")"
 
   require_cmd tmux
   local cli bin

@@ -3057,6 +3057,11 @@ assert not solve_swe_prod.systemic_go_runtime_failure_only(
     systemic_runtime_report.replace("--- FAIL: TestGenerateUserSingleUseCert", "--- PASS: TestGenerateUserSingleUseCert").replace("--- FAIL: TestIsMFARequired", "--- PASS: TestIsMFARequired"),
     runtime_skip_diff,
 )
+assert not solve_swe_prod.go_compile_failure_present(
+    "Risk: full package tests may fail in this environment; compile-only validation passed with returncode=0."
+)
+assert solve_swe_prod.go_compile_failure_present("Command: go test ./pkg/foo\nReturn code: 1\nFAIL")
+assert solve_swe_prod.go_compile_failure_present("--- FAIL: TestBehavior (0.01s)\nFAIL")
 with tempfile.TemporaryDirectory() as td:
     runtime_fallback_root = Path(td)
     verifier_dir = runtime_fallback_root / "state" / "subagents" / "verifier-01-runtime"
@@ -3148,6 +3153,32 @@ with tempfile.TemporaryDirectory() as td:
     finally:
         os.environ["PATH"] = old_path
         os.environ.pop("FAKE_GO_RC", None)
+
+with tempfile.TemporaryDirectory() as td:
+    helper_root = Path(td)
+    helper_path = helper_root / "apply_patch"
+    stable_helper_path = helper_root / "stable-apply_patch"
+    old_helper = solve_swe_prod.APPLY_PATCH_WRAPPER
+    old_stable_helper = solve_swe_prod.STABLE_APPLY_PATCH
+    try:
+        solve_swe_prod.APPLY_PATCH_WRAPPER = helper_path
+        solve_swe_prod.STABLE_APPLY_PATCH = stable_helper_path
+        solve_swe_prod.write_apply_patch_helper()
+        target = helper_root / "sample.txt"
+        target.write_text("before\n", encoding="utf-8")
+        helper_result = subprocess.run(
+            [str(helper_path)],
+            cwd=helper_root,
+            input="*** Begin Patch\n*** Update File: sample.txt\n@@\n-before\n+after\n*** End Patch\n",
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert helper_result.returncode == 0, helper_result.stderr
+        assert target.read_text(encoding="utf-8") == "after\n"
+    finally:
+        solve_swe_prod.APPLY_PATCH_WRAPPER = old_helper
+        solve_swe_prod.STABLE_APPLY_PATCH = old_stable_helper
 
 real_helper_blockers = solve_swe_prod.implementation_scope_blockers(
     "The helper `load_config_value` must preserve config fallback behavior.",
@@ -4806,7 +4837,10 @@ assert_file_contains "$TMPDIR/worker-generic-conflict.out" "active generic worke
 printf 'Codex prompt ready\n' >"$MOCK_TMUX_CAPTURES/verifier-01-docs.txt"
 SUBAGENT_CLI="$VERIFIER_CLI" "$ROOT/bin/subagent.sh" spawn verifier-01-docs --instruction "Review worker-01-docs"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-01-docs/meta.env" "cli=codex"
-assert_file_contains "$MOCK_TMUX_LOG" "send-key test-session:verifier-01-docs Review worker-01-docs"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-01-docs/instruction.txt" "Verifier Role Prompt"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-01-docs/instruction.txt" "Review worker-01-docs"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-01-docs/instruction.txt" "state-space partition audit"
+assert_file_contains "$MOCK_TMUX_LOG" "send-key test-session:verifier-01-docs Read and follow the assignment in"
 verifier_spawn_line="$(grep -F "new-window -d test-session verifier-01-docs " "$MOCK_TMUX_LOG")"
 [[ "$verifier_spawn_line" == *"--cd $ROOT"* ]]
 [[ "$verifier_spawn_line" == *"--dangerously-bypass-approvals-and-sandbox --no-alt-screen"* ]]
@@ -4836,6 +4870,12 @@ assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/codex-exec-protocol/instru
 codex_exec_spawn_line="$(grep -F "new-window -d test-session codex-exec-protocol " "$MOCK_TMUX_LOG")"
 [[ "$codex_exec_spawn_line" == *"exec --cd $ROOT"* ]]
 [[ "$codex_exec_spawn_line" == *"--output-last-message"* ]]
+
+printf 'Codex exec prompt ready\n' >"$MOCK_TMUX_CAPTURES/verifier-exec-role.txt"
+MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$ROOT/bin/subagent.sh" spawn verifier-exec-role --instruction "Review the final diff"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-exec-role/instruction.txt" "Verifier Role Prompt"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-exec-role/instruction.txt" "state-space partition audit"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-exec-role/instruction.txt" "Review the final diff"
 
 printf 'Login required before Claude can start\n' >"$MOCK_TMUX_CAPTURES/subagent-auth.txt"
 if "$ROOT/bin/subagent.sh" spawn subagent-auth --instruction "Should not send" >"$TMPDIR/auth-spawn.out" 2>&1; then

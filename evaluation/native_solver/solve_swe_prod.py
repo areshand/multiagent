@@ -1295,6 +1295,12 @@ def strip_prefix(line: str) -> str:
     return line[1:]
 
 
+def remove_prefix(value: str, prefix: str) -> str:
+    if not value.startswith(prefix):
+        die(f"expected prefix {prefix!r}: {value!r}")
+    return value[len(prefix):]
+
+
 def find_sequence(lines: list[str], needle: list[str], start: int) -> int:
     if not needle:
         return start
@@ -4148,8 +4154,13 @@ def go_compile_failure_present(text: str) -> bool:
     lower = text.lower()
     if failed_validation_return_code(lower):
         return True
-    return go_compiler_diagnostic_present(text) or any(
-        marker in lower for marker in ("\\tfail\\t", "\tfail\t", " fail\t", " fail ", "fail:")
+    if go_compiler_diagnostic_present(text):
+        return True
+    return bool(
+        re.search(r"(?m)^\s*fail(?:\s|$)", lower)
+        or re.search(r"(?m)^---\s+fail:\s+", lower)
+        or "\\tfail\\t" in lower
+        or "\tfail\t" in lower
     )
 
 
