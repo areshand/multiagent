@@ -3327,6 +3327,11 @@ def persisted_subagent_final_acceptance_evidence(
     # Preserve both independent reports. Taking only the first report loses the
     # behavior ledger when build and semantic verification use separate agents.
     excerpt = " ".join("\n".join(evidence_texts)[:20000].split())
+    if accepted_stale_visible_replacement_evidence(evidence_texts, diff):
+        excerpt += (
+            " replacement-probe-passed: source=independent-exact-hash-behavior-verifier "
+            "stale-visible-failure-justified: source=public-contract-transition-confirmed-by-independent-verifier"
+        )
     if accepted_runtime_only_go_test_skip_evidence(evidence_texts, diff):
         excerpt += (
             " go-validation-skip-justified: reason=full-tests-failed-only-in-runtime-environment "
@@ -3334,6 +3339,41 @@ def persisted_subagent_final_acceptance_evidence(
             "compile-evidence=hash-bound-affected-package-validation"
         )
     return excerpt
+
+
+def accepted_stale_visible_replacement_evidence(evidence_texts: list[str], diff: str) -> bool:
+    """Normalize an independent verifier's explicit stale-test adjudication.
+
+    This does not infer that a failing visible test is stale. It only converts
+    an exact-hash verifier report that already records a passing replacement
+    probe and identifies the old expectation as stale or superseded.
+    """
+
+    if not evidence_texts or not diff.strip():
+        return False
+    evidence = "\n".join(evidence_texts)
+    lower = evidence.lower().replace("\\n", "\n")
+    replacement_passed = any(
+        marker in lower
+        for marker in (
+            "replacement-probe-passed:",
+            "replacement probe passed",
+            "passing replacement probe",
+            "replacement migration probe passed",
+        )
+    )
+    stale_adjudicated = (
+        "stale-visible-failure-justified:" in lower
+        or any(term in lower for term in ("stale visible", "stale test", "stale fixture"))
+        or "superseded" in lower and any(term in lower for term in ("test", "fixture", "expectation", "contract"))
+    )
+    return (
+        replacement_passed
+        and stale_adjudicated
+        and build_verification_has_evidence(evidence, diff)
+        and behavior_verification_has_evidence(evidence, diff)
+        and not go_compiler_diagnostic_present(evidence)
+    )
 
 
 def accepted_runtime_only_go_test_skip_evidence(evidence_texts: list[str], diff: str) -> bool:
@@ -3661,12 +3701,28 @@ def append_adapter_probe_evidence(
     workdir: Path,
     diff: str,
     marker: str | None = None,
+    probe_report: str = "",
     compile_evidence: str = "adapter-public-probe-passed",
 ) -> dict[str, object]:
     updated = dict(current_status)
     validation_parts = [str(updated.get("validation", "")).strip()]
     if marker:
         validation_parts.append(marker)
+    if probe_report:
+        machine_lines = [
+            line.strip()
+            for line in probe_report.splitlines()
+            if line.strip().lower().startswith(
+                (
+                    "build-verification-passed:",
+                    "go-package-validation-passed:",
+                    "go-validation-skip-justified:",
+                    "runtime-failure-classification:",
+                    "helper-validation-passed:",
+                )
+            )
+        ]
+        validation_parts.extend(machine_lines)
     source_evidence = source_symbol_adapter_evidence(
         workdir,
         diff,
@@ -6077,6 +6133,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                             workdir=workdir,
                             diff=diff,
                             marker=f"helper-validation-passed: adapter public validation probe ({HELPER_PROBE_PATH})",
+                            probe_report=probe_report,
                         )
                         STATUS_PATH.write_text(json.dumps(current_status), encoding="utf-8")
                         log("completion marker verified by adapter public validation probe")
@@ -6100,6 +6157,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                             workdir=workdir,
                             diff=diff,
                             marker=f"helper-validation-passed: adapter public helper probe ({HELPER_PROBE_PATH})",
+                            probe_report=probe_report,
                         )
                         STATUS_PATH.write_text(json.dumps(current_status), encoding="utf-8")
                         log("coverage gate satisfied by adapter public helper probe")

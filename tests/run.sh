@@ -1844,8 +1844,19 @@ with tempfile.TemporaryDirectory() as td:
         },
         workdir=verifier_repo,
         diff=verifier_diff,
+        probe_report=(
+            f"build-verification-passed: final-diff-sha256={verifier_hash} "
+            "changed-files=1 compile_clean=true returncode=0\n"
+            "go-package-validation-passed: package=./lib/benchmark "
+            "command=adapter-compile returncode=0\n"
+            "go-validation-skip-justified: reason=runtime-environment "
+            "source-evidence=independent-verifier\n"
+            "Output tail that must not be copied into status.json"
+        ),
         compile_evidence="hash-bound-final-verifier-build",
     )
+assert "go-validation-skip-justified:" in verifier_status["validation"], verifier_status
+assert "Output tail" not in verifier_status["validation"], verifier_status
 assert not solve_swe_prod.validation_coverage_blockers(
         "Add lib/benchmark/linear.go with a Linear generator and validateConfig behavior.",
         verifier_diff,
@@ -3108,6 +3119,29 @@ assert solve_swe_prod.accepted_runtime_only_go_test_skip_evidence(
 )
 assert not solve_swe_prod.accepted_runtime_only_go_test_skip_evidence(
     runtime_skip_evidence[:1],
+    runtime_skip_diff,
+)
+stale_replacement_evidence = [
+    runtime_skip_evidence[0],
+    (
+        f"ACCEPTED final-diff-sha256={runtime_skip_hash}\n"
+        f"behavior-verification-passed: final-diff-sha256={runtime_skip_hash} "
+        "public-clauses-covered=true\n"
+        "issue-coverage-ledger: migration implemented-by=lib/auth/grpcserver.go\n"
+        "The replacement migration probe passed. The visible test expectation is superseded "
+        "by the public upgrade contract."
+    ),
+]
+assert solve_swe_prod.accepted_stale_visible_replacement_evidence(
+    stale_replacement_evidence,
+    runtime_skip_diff,
+)
+assert not solve_swe_prod.accepted_stale_visible_replacement_evidence(
+    [text.replace("probe passed", "probe was not run") for text in stale_replacement_evidence],
+    runtime_skip_diff,
+)
+assert not solve_swe_prod.accepted_stale_visible_replacement_evidence(
+    [text.replace(runtime_skip_hash, "0" * 64) for text in stale_replacement_evidence],
     runtime_skip_diff,
 )
 
