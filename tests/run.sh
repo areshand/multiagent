@@ -900,6 +900,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "nonzero
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "status.json already records completed final-diff build verification"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "coverage follow-up recovery yielded to completed status with accepted final build and adapter validation gate"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "verifier infrastructure failed before semantic recheck"
+assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "rejected completion handed directly to a fresh orchestrator"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_VERIFIER_INFRA_RESUME_LIMIT"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "stale-visible-reconciliation-passed:"
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "STALE_VISIBLE_RECONCILIATION_PATH"

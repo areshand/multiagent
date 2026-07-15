@@ -6034,6 +6034,17 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                                 continue
                             except Exception as exc:
                                 log(f"adapter recovery worker spawn failed after weak completion: {exc}")
+                        if orchestrator_exited_without_status(text) and not has_live_agent_process():
+                            if relaunch_orchestrator_for_blockers(
+                                "rejected completion has no live orchestrator for repair follow-up",
+                                diff,
+                                blockers,
+                                probe_report,
+                                force_live_handoff=True,
+                            ):
+                                log("rejected completion handed directly to a fresh orchestrator")
+                                time.sleep(5)
+                                continue
                         send_orchestrator_followup(session, blockers, probe_report, helper_scope_hints(workdir, issue, diff, blockers))
                         log(f"coverage gate follow-up {coverage_followups_sent}: {'; '.join(blockers)}")
                         coverage_followup_at = time.monotonic()
