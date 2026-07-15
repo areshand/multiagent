@@ -80,7 +80,11 @@ source-derived probe of default plus overridden behavior.
    completion. Do not close a todo from worker narrative alone. The gate also
    rejects a latest durable `BLOCKING` verifier verdict even if the verifier
    failed to persist its finding; route repair and a later accepted recheck
-   instead of writing contradictory completed status.
+   instead of writing contradictory completed status. Process evidence by final
+   diff hash: an accepted current-diff recheck that covers a resolved todo's
+   original finding and commands closes that todo before older blocking
+   transcripts are considered. Never create a new todo from a failure bound to
+   an older diff after the current accepted recheck proves that command passed.
 7. Stop exploration once evidence supports one of four terminal actions:
    accepted completion, one concrete repair worker, one verifier recheck, or a
    blocked status with the exact source/environment reason.

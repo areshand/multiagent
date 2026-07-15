@@ -107,6 +107,15 @@ reopen the todo:
 bin/subagent.sh todo-status todo-017 reopened
 ```
 
+Process verifier artifacts in final-diff order. Once a newer verifier accepts
+the exact current diff and explicitly rechecks a resolved todo's original
+finding and required commands, close that todo before considering any earlier
+blocking transcript. Do not create or reopen a todo from command evidence bound
+to an older diff hash after the same command has passed in that accepted current
+diff recheck. Earlier evidence remains history; it is not a new finding unless
+the current diff reproduces the failure. Pass `--recheck-json` a complete JSON
+object using the shape above, then rerun `gate-check`.
+
 Before final acceptance, run:
 
 ```bash
