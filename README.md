@@ -67,6 +67,78 @@ prompt is still loaded from this launcher's directory, so cross-repo launches do
 not need an `orchestrator_prompt.md` in the target repo. Set
 `MULTIAGENT_PROMPT=/path/to/prompt.md` to override that default.
 
+## System Flow
+
+`launch.sh` is the general framework entrypoint. A normal project launch calls
+it directly. SWE evaluation adds a thin adapter in front of the same entrypoint
+to prepare the task container and prompt; it does not launch a separate solver
+implementation.
+
+```mermaid
+flowchart TD
+    User["Normal use: user runs ./launch.sh"] --> Launch
+    Eval["Optional SWE evaluation runner"] --> Adapter["SWE adapter: prepare /app, prompt, auth, and timeout"]
+    Adapter --> Launch
+
+    subgraph Framework["General multiagent framework"]
+        Launch["launch.sh: export config and initialize state"] --> Tmux["tmux session with orchestrator window"]
+        Prompts["orchestrator_prompt.md plus role/playbook modules"] --> Orchestrator["Orchestrator CLI process"]
+        Tmux --> Orchestrator
+        Orchestrator --> Helper["bin/subagent.sh control plane"]
+
+        Helper --> Worker["Worker tmux windows"]
+        Helper --> Verifier["Scout and verifier tmux windows"]
+        Helper --> Runtime["multiagent_framework library and CLI"]
+        Runtime --> Snapshot["Exact Git snapshot and final-diff hash"]
+        Runtime --> Evidence["Build and behavior evidence checks"]
+        Runtime --> Guardrails["Generic coding and hidden-contract guardrails"]
+        Runtime --> Status["Atomic status and structured gate integration"]
+
+        Worker --> Durable[("assignments, checkpoints, resolutions")]
+        Verifier --> Durable
+        Verifier --> Findings[("findings, todos, verifier closures")]
+        Helper --> Durable
+        Helper --> Findings
+        Snapshot --> Verifier
+
+        Orchestrator --> Gate["bin/subagent.sh gate-check"]
+        Durable --> Gate
+        Findings --> Gate
+        Evidence --> Gate
+        Status --> Gate
+        Gate --> Decision{"All blocking work closed and evidence matches final diff?"}
+        Decision -- "No: queue repair" --> Orchestrator
+    end
+
+    Worker --> Repo[("Target project repository and git diff")]
+    Verifier --> Repo
+    Repo --> Snapshot
+    Decision -- "Yes: accept" --> Result["Accepted final patch"]
+    Result --> AdapterResult["In evaluation only: adapter returns patch to official scorer"]
+```
+
+The invocation sequence is:
+
+1. `launch.sh` exports the session, target root, prompt, CLI choices, state
+   directory, and write policy, then starts the orchestrator in tmux.
+2. The orchestrator reads the dispatcher prompt and loads role/playbook modules
+   only when needed.
+3. The orchestrator calls `bin/subagent.sh` to create assignments, spawn tmux
+   workers/scouts/verifiers, monitor them, and persist structured artifacts.
+4. `subagent.sh` invokes `python3 -m multiagent_framework.cli snapshot` when
+   binding a verifier to the exact staged and unstaged diff. Evaluation adapters
+   also import the same framework evidence, state, gate, and guardrail APIs.
+5. Workers edit the target repository. Verifiers independently inspect the
+   live diff and write findings or hash-bound acceptance evidence.
+6. `gate-check` accepts only when blocking findings/todos are closed, required
+   command evidence passes, and verifier evidence matches the current diff.
+   Rejection routes another bounded repair cycle through the orchestrator.
+
+`multiagent_framework` is not a daemon. It is shared in-process Python code and
+a short-lived CLI used by the shell control plane and adapters. The long-lived
+execution units are the orchestrator, worker, scout, and verifier CLI processes
+inside tmux.
+
 ## Prompt Modules
 
 The core `orchestrator_prompt.md` is a dispatcher prompt. Detailed role and

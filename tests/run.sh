@@ -744,6 +744,9 @@ assert_file_contains "$ROOT/README.md" "Structured Repair Loop"
 assert_file_contains "$ROOT/README.md" "finding-todo-loop.md"
 assert_file_contains "$ROOT/README.md" "todo-close"
 assert_file_contains "$ROOT/README.md" "multiagent_framework/"
+assert_file_contains "$ROOT/README.md" "## System Flow"
+assert_file_contains "$ROOT/README.md" "flowchart TD"
+assert_file_contains "$ROOT/README.md" '`multiagent_framework` is not a daemon'
 assert_file_contains "$ROOT/README.md" 'orchestration` adapter covers planning behavior'
 assert_file_contains "$ROOT/README.md" "evaluation/tasks"
 assert_file_contains "$ROOT/evaluation/README.md" "large-update-300"
