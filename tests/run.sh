@@ -4903,6 +4903,54 @@ assert_file_contains "$MULTIAGENT_STATE_DIR/todos/todo-017/closure.json" '"accep
 gate_closed_output="$("$ROOT/bin/subagent.sh" gate-check)"
 [[ "$gate_closed_output" == $'accepted\tfinal-gate' ]]
 
+CLOSED_HASH_ROOT="$TMPDIR/closed-hash-root"
+CLOSED_HASH_STATE="$TMPDIR/closed-hash-state"
+mkdir -p "$CLOSED_HASH_ROOT" "$CLOSED_HASH_STATE/subagents/verifier-closed-hash"
+git -C "$CLOSED_HASH_ROOT" init -q
+git -C "$CLOSED_HASH_ROOT" config user.email test@example.com
+git -C "$CLOSED_HASH_ROOT" config user.name Test
+printf 'before\n' >"$CLOSED_HASH_ROOT/source.txt"
+git -C "$CLOSED_HASH_ROOT" add source.txt
+git -C "$CLOSED_HASH_ROOT" commit -qm initial
+printf 'after\n' >"$CLOSED_HASH_ROOT/source.txt"
+CLOSED_HASH_DIFF_SHA="$(git -C "$CLOSED_HASH_ROOT" diff --binary --ignore-submodules=all | shasum -a 256 | awk '{print $1}')"
+printf 'ACCEPTED\nbehavior-verification-passed: final-diff-sha256=%s behavior_clean=true public-clauses-covered=true\n' \
+  "$CLOSED_HASH_DIFF_SHA" >"$CLOSED_HASH_STATE/subagents/verifier-closed-hash/last-message.txt"
+printf 'done\n' >"$CLOSED_HASH_STATE/subagents/verifier-closed-hash/status"
+CLOSED_HASH_ENV=(MULTIAGENT_ROOT="$CLOSED_HASH_ROOT" MULTIAGENT_STATE_DIR="$CLOSED_HASH_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1)
+env "${CLOSED_HASH_ENV[@]}" "$ROOT/bin/subagent.sh" finding-create closed-hash-finding \
+  --severity blocking --type behavior --summary "Verify final diff" --affected source.txt \
+  --evidence-json '{"source_evidence":"source.txt changed"}' --required-resolution "Bind closure to the final diff." >/dev/null
+env "${CLOSED_HASH_ENV[@]}" "$ROOT/bin/subagent.sh" todo-create closed-hash-todo \
+  --source-finding-id closed-hash-finding --task "Verify final diff." \
+  --done-criteria "Bind closure evidence to the final diff." >/dev/null
+env "${CLOSED_HASH_ENV[@]}" "$ROOT/bin/subagent.sh" resolution-create closed-hash-todo \
+  --worker worker-closed-hash --status resolved --changed source.txt \
+  --validation-json "[{\"cmd\":\"test -f source.txt\",\"rc\":0,\"final_diff_sha256\":\"$CLOSED_HASH_DIFF_SHA\"}]" \
+  --why "Final diff reviewed." >/dev/null
+env "${CLOSED_HASH_ENV[@]}" "$ROOT/bin/subagent.sh" todo-close closed-hash-todo \
+  --verified-by verifier-closed-hash \
+  --recheck-json "{\"accepted\":true,\"source_finding_id\":\"closed-hash-finding\",\"commands\":[{\"cmd\":\"test -f source.txt\",\"rc\":0}],\"final_diff_sha256\":\"$CLOSED_HASH_DIFF_SHA\"}" >/dev/null
+closed_hash_gate_output="$(env "${CLOSED_HASH_ENV[@]}" "$ROOT/bin/subagent.sh" gate-check)"
+[[ "$closed_hash_gate_output" == $'accepted\tfinal-gate' ]]
+python3 - "$CLOSED_HASH_STATE/todos/closed-hash-todo/closure.json" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+payload = json.loads(path.read_text())
+payload["recheck"]["final_diff_sha256"] = "stale"
+path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+PY
+if env "${CLOSED_HASH_ENV[@]}" "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-closed-hash-stale.out" 2>&1; then
+  echo "expected gate-check to reject stale closed-todo final diff evidence" >&2
+  cat "$TMPDIR/gate-closed-hash-stale.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/gate-closed-hash-stale.out" $'reject\tclosed-todo-final-diff-hash-mismatch\ttodo=closed-hash-todo'
+assert_file_not_contains "$TMPDIR/gate-closed-hash-stale.out" $'accepted\tfinal-gate'
+
 mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-structured"
 printf 'Final status: completed according to stale transcript text\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-structured/current.txt"
 printf 'Done and finished, but this is fallback context only\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-structured/transcript.log"

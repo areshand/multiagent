@@ -2559,7 +2559,10 @@ if closure.get("todo_id") != todo_id or not isinstance(recheck, dict) or recheck
 if closure.get("source_finding_hash") != expected_finding_hash:
     print(f"reject\tclosed-todo-closure-finding-hash-mismatch\ttodo={todo_id}")
     raise SystemExit(1)
-if expected_final_diff_hash and str(recheck.get("final_diff_hash", "")).lower() != expected_final_diff_hash.lower():
+recheck_final_diff_hash = str(
+    recheck.get("final_diff_sha256") or recheck.get("final_diff_hash") or ""
+).lower()
+if expected_final_diff_hash and recheck_final_diff_hash != expected_final_diff_hash.lower():
     print(f"reject\tclosed-todo-final-diff-hash-mismatch\ttodo={todo_id}")
     raise SystemExit(1)
 source_finding_id = closure.get("source_finding_id")
@@ -2583,7 +2586,7 @@ missing = sorted(resolution_commands - recheck_commands)
 if missing:
     print(f"reject\tclosed-todo-recheck-missing-worker-command\ttodo={todo_id}\tcmd={missing[0]}")
     raise SystemExit(1)
-' "$dir" "$todo_id" "$source_finding_hash" "$expected_final_diff_hash"
+' "$dir" "$todo_id" "$source_finding_hash" "$expected_final_diff_hash" || return 1
   validate_required_commands_covered "$todo_id" "closed todo resolution" "$(cat "$dir/resolution.json")" || return 1
   validate_required_commands_covered "$todo_id" "closed todo verifier recheck" "$(cat "$dir/recheck.json")" || return 1
 }
