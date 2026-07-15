@@ -755,6 +755,8 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_ap
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "status.json"
 assert_file_contains "$ROOT/prompts/verifier.md" "state-space partition audit"
 assert_file_contains "$ROOT/prompts/verifier.md" "mixed-category, unknown/forward-compatible variant"
+assert_file_contains "$ROOT/prompts/verifier.md" "state-space-partition-audit:"
+assert_file_contains "$ROOT/prompts/verifier.md" "behavior-verification-passed:"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "partition contract"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_final_override.md" "Post-Task Authority Fence"
 appendix_bytes="$(wc -c < "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md")"
@@ -3062,6 +3064,30 @@ assert not solve_swe_prod.go_compile_failure_present(
 )
 assert solve_swe_prod.go_compile_failure_present("Command: go test ./pkg/foo\nReturn code: 1\nFAIL")
 assert solve_swe_prod.go_compile_failure_present("--- FAIL: TestBehavior (0.01s)\nFAIL")
+partition_risk_diff = (
+    "diff --git a/pkg/policy.go b/pkg/policy.go\n"
+    "--- a/pkg/policy.go\n"
+    "+++ b/pkg/policy.go\n"
+    "@@ -1 +1,5 @@\n"
+    "+if len(items) == 1 {\n"
+    "+  switch preference.Mode() {\n"
+    "+  case RequiredMode: return errRequired\n"
+    "+  }\n"
+    "+}\n"
+)
+partition_risk_hash = solve_swe_prod.final_diff_sha256(partition_risk_diff)
+assert solve_swe_prod.policy_collection_partition_risk(partition_risk_diff)
+assert not solve_swe_prod.state_space_partition_audit_has_evidence(
+    "state-space-partition-audit: modes=required categories=primary result=passed",
+    partition_risk_diff,
+)
+assert solve_swe_prod.state_space_partition_audit_has_evidence(
+    "state-space-partition-audit: "
+    f"final-diff-sha256={partition_risk_hash} "
+    "modes=required,optional categories=primary,secondary "
+    "mixed-category=source-counterexample unknown-variant=source-counterexample result=passed",
+    partition_risk_diff,
+)
 with tempfile.TemporaryDirectory() as td:
     runtime_fallback_root = Path(td)
     verifier_dir = runtime_fallback_root / "state" / "subagents" / "verifier-01-runtime"
@@ -4876,6 +4902,8 @@ MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$ROOT/bin/subagent.sh" spawn verifie
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-exec-role/instruction.txt" "Verifier Role Prompt"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-exec-role/instruction.txt" "state-space partition audit"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-exec-role/instruction.txt" "Review the final diff"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-exec-role/instruction.txt" "Spawn-Time Final Diff Binding"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-exec-role/instruction.txt" "behavior-verification-passed:"
 
 printf 'Login required before Claude can start\n' >"$MOCK_TMUX_CAPTURES/subagent-auth.txt"
 if "$ROOT/bin/subagent.sh" spawn subagent-auth --instruction "Should not send" >"$TMPDIR/auth-spawn.out" 2>&1; then

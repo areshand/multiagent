@@ -191,6 +191,35 @@ compose_role_instruction() {
   printf '\n\n## Task Assignment\n\n%s' "$instruction"
 }
 
+append_verifier_diff_binding() {
+  local name="$1"
+  local role="$2"
+  local instruction="$3"
+  local role_prompt diff_hash changed_files
+  role_prompt="$(role_prompt_path "$name" "$role")"
+  case "$role_prompt" in
+    */prompts/verifier.md|*/prompts/roles/build-verifier.md)
+      ;;
+    *)
+      printf '%s' "$instruction"
+      return
+      ;;
+  esac
+  if git -C "$ROOT" diff --quiet --ignore-submodules=all --; then
+    printf '%s' "$instruction"
+    return
+  fi
+  diff_hash="$(git -C "$ROOT" diff --binary --ignore-submodules=all -- | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')"
+  changed_files="$(git -C "$ROOT" diff --name-only --ignore-submodules=all -- | awk 'NF { count += 1 } END { print count + 0 }')"
+  if [[ "$role_prompt" == */prompts/roles/build-verifier.md ]]; then
+    printf '%s\n\n## Spawn-Time Final Diff Binding\n\nfinal-diff-sha256=%s\nchanged-files=%s\nAcceptance must repeat this hash in `build-verification-passed:` after rechecking the live diff.\n' \
+      "$instruction" "$diff_hash" "$changed_files"
+  else
+    printf '%s\n\n## Spawn-Time Final Diff Binding\n\nfinal-diff-sha256=%s\nchanged-files=%s\nAcceptance must repeat this hash in `behavior-verification-passed:` after rechecking the live diff.\n' \
+      "$instruction" "$diff_hash" "$changed_files"
+  fi
+}
+
 read_subagent_meta_value() {
   local name="$1"
   local key="$2"
@@ -1188,6 +1217,7 @@ spawn_subagent() {
     die "codex exec subagent spawn requires --instruction or --instruction-file: $name"
   fi
   instruction="$(compose_role_instruction "$name" "$role" "$instruction")"
+  instruction="$(append_verifier_diff_binding "$name" "$role" "$instruction")"
 
   require_cmd tmux
   local cli bin

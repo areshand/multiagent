@@ -3747,6 +3747,54 @@ def behavior_verification_has_evidence(text: str, diff: str) -> bool:
     return False
 
 
+def policy_collection_partition_risk(diff: str) -> bool:
+    """Detect changed logic that couples a policy/mode branch to aggregate size."""
+
+    added = "\n".join(
+        line[1:]
+        for line in diff.splitlines()
+        if line.startswith("+") and not line.startswith("+++")
+    ).lower()
+    if not added:
+        return False
+    has_aggregate_size = bool(
+        re.search(r"\blen\s*\(", added)
+        or re.search(r"\.length\b", added)
+        or re.search(r"\bcount\s*\(", added)
+        or re.search(r"\.size\s*\(?", added)
+    )
+    has_policy_branch = bool(
+        re.search(r"\bswitch\b", added)
+        or re.search(r"\bcase\s+[^:]+:", added)
+        or re.search(r"\b(?:policy|mode|preference|strategy|kind|type)\b", added)
+    )
+    return has_aggregate_size and has_policy_branch
+
+
+def state_space_partition_audit_has_evidence(text: str, diff: str) -> bool:
+    """Require a hash-bound mode/category counterexample matrix."""
+
+    lower = text.lower().replace("\\n", "\n")
+    diff_hash = final_diff_sha256(diff).lower()
+    for match in re.finditer("state-space-partition-audit:", lower):
+        window = lower[match.start() : match.start() + 1600]
+        if f"final-diff-sha256={diff_hash}" not in window:
+            continue
+        if not all(
+            marker in window
+            for marker in (
+                "modes=",
+                "categories=",
+                "mixed-category=",
+                "unknown-variant=",
+                "result=passed",
+            )
+        ):
+            continue
+        return True
+    return False
+
+
 def claimed_changed_source_paths(text: str) -> set[str]:
     claimed: set[str] = set()
     in_changed_section = False
@@ -3873,6 +3921,17 @@ def validation_coverage_blockers(
     stale_sensitive_text = status_json_text if build_verification_has_evidence(status_text, diff) else f"{text}\n{status_json_text}"
     blockers.extend(claimed_changed_path_blockers(diff, stale_sensitive_text))
     blockers.extend(stale_patch_application_blockers(stale_sensitive_text))
+    if policy_collection_partition_risk(diff):
+        partition_evidence = status_json_text + "\n" + "\n".join(
+            persisted_exact_hash_behavior_acceptance_texts(diff, RUNTIME_ROOT)
+        )
+        if not state_space_partition_audit_has_evidence(partition_evidence, diff):
+            blockers.append(
+                "changed logic combines a policy/mode branch with aggregate collection size, but final behavior verification lacks "
+                "a hash-bound `state-space-partition-audit:` covering source modes/categories, mixed-category and unknown-variant "
+                "counterexamples; rerun the behavior verifier and create a blocking finding/todo if aggregate size is not equivalent "
+                "for every category-specific mode"
+            )
     changed_code_paths = changed_code_paths_from_diff(diff)
     if changed_code_paths and not build_verification_has_evidence(evidence_text, diff):
         blockers.append(

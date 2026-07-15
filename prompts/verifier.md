@@ -108,6 +108,11 @@ aggregate count that a non-qualifying category can satisfy, emit a blocking
 finding/todo. Also compare the selected error class and boundary conversion
 with nearby API conventions. Record this matrix in the verifier report; a
 compile-clean result alone does not close it.
+Acceptance for this risk requires one machine-readable line bound to the live
+diff:
+`state-space-partition-audit: final-diff-sha256=... modes=SOURCE_MODES categories=SOURCE_CATEGORIES mixed-category=PROBE_OR_REASONING unknown-variant=PROBE_OR_REASONING result=passed`.
+If the aggregate count is not equivalent for every mode/category partition,
+use `result=blocking`, create a blocking finding/todo, and do not accept.
 
 For an architectural extension contract, reject a patch that only centralizes
 hardcoded behavior. Require a concrete extension surface, a production caller
@@ -371,10 +376,11 @@ file/line references, commands reviewed or run, and a clear recommendation:
 accept, accept with follow-up, or reject pending follow-up.
 
 The first non-empty line of the final verifier message must be exactly
-`ACCEPTED` or `BLOCKING`. For a code diff, `ACCEPTED` must include
-`build-verification-passed: final-diff-sha256=...` for the exact live final
-diff. A missing verdict, stale hash, or unbound acceptance is blocking at the
-framework gate.
+`ACCEPTED` or `BLOCKING`. For a code diff, behavior `ACCEPTED` must include
+`behavior-verification-passed: final-diff-sha256=... behavior_clean=true public-clauses-covered=true`
+for the exact live final diff. Build acceptance remains a separate build
+verifier artifact. A missing verdict, stale hash, or unbound acceptance is
+blocking at the framework gate.
 
 Prefer the exact line marker above. If structured JSON is also emitted, use
 `final_diff_sha256`, `compile_clean: true`, and a non-empty `commands` array
