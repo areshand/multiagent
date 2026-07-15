@@ -2956,6 +2956,47 @@ for agent_dir in sorted(path for path in base.iterdir() if path.is_dir()):
 PY
 }
 
+reconcile_terminal_verifier_statuses() {
+  local subagents_base="$STATE_DIR/subagents"
+  [[ -d "$subagents_base" ]] || return 0
+  require_cmd python3
+  python3 - "$subagents_base" <<'PY'
+import pathlib
+import re
+import sys
+
+base = pathlib.Path(sys.argv[1])
+for agent_dir in sorted(path for path in base.iterdir() if path.is_dir()):
+    name = agent_dir.name.lower()
+    if "verifier" not in name and "review" not in name:
+        continue
+    status_path = agent_dir / "status"
+    try:
+        status = status_path.read_text(encoding="utf-8", errors="replace").strip().lower()
+        report = agent_dir.joinpath("last-message.txt").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        continue
+    if status not in {"running", "starting", "pending"}:
+        continue
+    verdict = ""
+    for line in report.splitlines():
+        if not line.strip():
+            continue
+        match = re.fullmatch(
+            r"\s*(?:verdict\s*[:=]\s*)?(ACCEPTED|BLOCKING|REJECTED)\s*",
+            line,
+            re.IGNORECASE,
+        )
+        if match:
+            verdict = match.group(1).upper()
+        break
+    if verdict == "ACCEPTED":
+        status_path.write_text("done\n", encoding="utf-8")
+    elif verdict in {"BLOCKING", "REJECTED"}:
+        status_path.write_text("blocked\n", encoding="utf-8")
+PY
+}
+
 gate_check() {
   local failed=0
   local findings_base="$STATE_DIR/findings"
@@ -2963,6 +3004,10 @@ gate_check() {
   local dir finding_id severity todo_dir_path todo_id source status found_todo
   local verifier_verdict verdict verifier_name verifier_evidence final_diff_hash active_verifier
 
+  # Codex writes last-message.txt only after its invocation has terminated. If
+  # the orchestrator misses a final poll, reconcile that durable verdict before
+  # deciding whether a verifier is still active.
+  reconcile_terminal_verifier_statuses
   final_diff_hash="$(current_final_diff_sha256)"
   while IFS= read -r active_verifier; do
     [[ -n "$active_verifier" ]] || continue
