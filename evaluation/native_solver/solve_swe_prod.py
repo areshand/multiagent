@@ -3025,7 +3025,12 @@ def go_package_name_for_path(workdir: Path, path: str) -> str:
     return parent.replace("-", "_") or "unknown"
 
 
-def source_symbol_adapter_evidence(workdir: Path, diff: str) -> str:
+def source_symbol_adapter_evidence(
+    workdir: Path,
+    diff: str,
+    *,
+    compile_evidence: str = "adapter-public-probe-passed",
+) -> str:
     """Return final-diff source-symbol evidence after public validation passes.
 
     This uses only the current diff and repository source. It deliberately does
@@ -3061,7 +3066,7 @@ def source_symbol_adapter_evidence(workdir: Path, diff: str) -> str:
     map_parts = [
         "source-symbol-map-passed:",
         "owner-evidence=adapter-final-diff-package-declaration",
-        "compile=adapter-public-probe-passed",
+        f"compile={evidence_token(compile_evidence)}",
         "caller=changed-source-paths",
         f"candidate-owner={evidence_token(selected_owner)}",
     ]
@@ -3104,12 +3109,17 @@ def append_adapter_probe_evidence(
     workdir: Path,
     diff: str,
     marker: str | None = None,
+    compile_evidence: str = "adapter-public-probe-passed",
 ) -> dict[str, object]:
     updated = dict(current_status)
     validation_parts = [str(updated.get("validation", "")).strip()]
     if marker:
         validation_parts.append(marker)
-    source_evidence = source_symbol_adapter_evidence(workdir, diff)
+    source_evidence = source_symbol_adapter_evidence(
+        workdir,
+        diff,
+        compile_evidence=compile_evidence,
+    )
     if source_evidence:
         validation_parts.append(source_evidence)
     dependency_evidence = dependency_contract_adapter_evidence(diff)
@@ -6860,8 +6870,23 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 issue,
                 final_text,
             )
+            if validation_evidence_kind == "final-verifier":
+                # The verifier owns semantic acceptance and final-diff build
+                # proof. Normalize only source-map bookkeeping from the live
+                # diff so harmless key-shape variation cannot discard that
+                # machine-checkable acceptance.
+                final_status_for_blockers = append_adapter_probe_evidence(
+                    final_status_for_blockers,
+                    workdir=workdir,
+                    diff=final_diff,
+                    compile_evidence="hash-bound-final-verifier-build",
+                )
             final_probe_blockers: list[str] = []
-            if validation_evidence_kind != "stale-visible" and coverage_probe_commands(workdir, issue, final_diff):
+            if validation_evidence_kind not in {"stale-visible", "final-verifier"} and coverage_probe_commands(
+                workdir,
+                issue,
+                final_diff,
+            ):
                 probe_report, probe_passed = run_validation_coverage_probe(
                     workdir,
                     issue,

@@ -1578,6 +1578,16 @@ assert solve_swe_prod.go_package_validation_has_explicit_marker(
     "go-package-validation-passed: package=./models/... command='go test ./models/...' returncode=0",
     "./models",
 )
+hash_bound_source_map = solve_swe_prod.source_symbol_adapter_evidence(
+    Path("/tmp"),
+    "diff --git a/lib/benchmark/linear.go b/lib/benchmark/linear.go\n+type Linear struct{}\n",
+    compile_evidence="hash-bound-final-verifier-build",
+)
+assert "compile=hash-bound-final-verifier-build" in hash_bound_source_map, hash_bound_source_map
+assert "compile=adapter-public-probe-passed" not in hash_bound_source_map, hash_bound_source_map
+assert 'validation_evidence_kind not in {"stale-visible", "final-verifier"}' in solver_source, (
+    "hash-bound final verifier acceptance should not be rejected by a redundant no-test adapter behavior probe"
+)
 assert "stale_patch_application_blockers" in solver_source and "could not find hunk context" in solver_source, (
     "stale patch application failures should be machine-gated before acceptance"
 )
