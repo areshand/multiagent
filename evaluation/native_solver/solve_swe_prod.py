@@ -3655,6 +3655,17 @@ def go_compile_failure_present(text: str) -> bool:
     )
 
 
+def canonical_go_package(package: str) -> str:
+    """Normalize a Go package identity without weakening command coverage."""
+
+    normalized = package.strip().strip("`'\"").rstrip(",;:)]}").lstrip("([{")
+    if normalized != "./..." and normalized.endswith("/..."):
+        normalized = normalized[:-4]
+    elif normalized != "./...":
+        normalized = normalized.rstrip(".")
+    return normalized
+
+
 def source_required_go_validation_packages(text: str, current_status: dict[str, object]) -> list[str]:
     """Extract package validation requirements from source/scout evidence.
 
@@ -3667,14 +3678,12 @@ def source_required_go_validation_packages(text: str, current_status: dict[str, 
     packages: list[str] = []
 
     def add_package(raw: str) -> None:
-        package = raw.strip().strip("`'\"")
-        package = package.rstrip(".,;:)]}")
-        package = package.lstrip("([{")
+        package = canonical_go_package(raw)
         if not package.startswith("./"):
             return
         if package in {"./affected/package", "./changed/pkg", "./pkg", "./package"}:
             return
-        if any(token in package for token in ("...",)):
+        if package == "./...":
             packages.append(package)
             return
         if re.fullmatch(r"\./[a-z0-9_./-]+", package):
@@ -3746,10 +3755,14 @@ def go_failure_is_unaffected_unbuildable_root_target(text: str, go_packages: lis
 
 def go_package_validation_has_evidence(text: str, package: str) -> bool:
     lower = text.lower().replace("\\n", "\n")
-    package_lower = package.lower()
+    package_lower = canonical_go_package(package.lower())
     package_markers = {package_lower}
     if package_lower.startswith("./"):
         package_markers.add(package_lower[2:])
+    if package_lower not in {".", "./..."}:
+        package_markers.add(package_lower + "/...")
+        if package_lower.startswith("./"):
+            package_markers.add(package_lower[2:] + "/...")
     if package_lower == ".":
         package_markers.add("./...")
 
@@ -3783,10 +3796,14 @@ def go_package_validation_has_explicit_marker(text: str, package: str) -> bool:
     """Return true only for explicit machine-readable package validation."""
 
     lower = text.lower().replace("\\n", "\n")
-    package_lower = package.lower()
+    package_lower = canonical_go_package(package.lower())
     package_markers = {package_lower}
     if package_lower.startswith("./"):
         package_markers.add(package_lower[2:])
+    if package_lower not in {".", "./..."}:
+        package_markers.add(package_lower + "/...")
+        if package_lower.startswith("./"):
+            package_markers.add(package_lower[2:] + "/...")
     for match in re.finditer("go-package-validation-passed:", lower):
         window = lower[match.start() : match.start() + 700]
         if any(f"package={marker}" in window for marker in package_markers) and any(

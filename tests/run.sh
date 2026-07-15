@@ -1567,6 +1567,17 @@ assert solve_swe_prod.structured_repair_todo_blocker_present(
 assert not solve_swe_prod.structured_repair_todo_blocker_present(
     ["source symbol contracts changed, but status does not include source-symbol-map-passed"]
 )
+assert solve_swe_prod.canonical_go_package("./models/...") == "./models"
+assert solve_swe_prod.canonical_go_package("./models.") == "./models"
+assert solve_swe_prod.canonical_go_package("./...") == "./..."
+assert solve_swe_prod.go_package_validation_has_explicit_marker(
+    "go-package-validation-passed: package=./models command='go test ./models/...' returncode=0",
+    "./models/...",
+)
+assert solve_swe_prod.go_package_validation_has_explicit_marker(
+    "go-package-validation-passed: package=./models/... command='go test ./models/...' returncode=0",
+    "./models",
+)
 assert "stale_patch_application_blockers" in solver_source and "could not find hunk context" in solver_source, (
     "stale patch application failures should be machine-gated before acceptance"
 )
