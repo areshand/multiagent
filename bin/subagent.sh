@@ -2914,7 +2914,11 @@ for path in base.glob("*/last-message.txt"):
     for line in text.splitlines()[:80]:
         if not line.strip():
             continue
-        match = re.fullmatch(r"\s*(ACCEPTED|BLOCKING)\s*", line, re.IGNORECASE)
+        match = re.fullmatch(
+            r"\s*(ACCEPTED|BLOCKING)(?:\s+(?:final[_-]diff[_-]sha256|final[_-]diff[_-]hash)=[0-9a-f]{64})*\s*",
+            line,
+            re.IGNORECASE,
+        )
         if not match:
             match = re.fullmatch(
                 r"\s*(?:verdict\s*[:=]\s*)?(ACCEPTED|BLOCKING|REJECTED)\s*",
@@ -2996,7 +3000,8 @@ for agent_dir in sorted(path for path in base.iterdir() if path.is_dir()):
         if not line.strip():
             continue
         match = re.fullmatch(
-            r"\s*(?:verdict\s*[:=]\s*)?(ACCEPTED|BLOCKING|REJECTED)\s*",
+            r"\s*(?:verdict\s*[:=]\s*)?(ACCEPTED|BLOCKING|REJECTED)"
+            r"(?:\s+(?:final[_-]diff[_-]sha256|final[_-]diff[_-]hash)=[0-9a-f]{64})*\s*",
             line,
             re.IGNORECASE,
         )

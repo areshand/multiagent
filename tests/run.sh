@@ -479,6 +479,13 @@ MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIA
   "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-verifier-final-recommendation.out"
 assert_file_contains "$HASH_GATE_STATE/subagents/verifier-01-hash/status" "done"
 assert_file_contains "$TMPDIR/gate-verifier-final-recommendation.out" "accepted"
+printf 'ACCEPTED final_diff_sha256=%s\nbuild-verification-passed: final-diff-sha256=%s compile_clean=true returncode=0\n' \
+  "$HASH_GATE_DIFF_SHA" "$HASH_GATE_DIFF_SHA" >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
+printf 'running\n' >"$HASH_GATE_STATE/subagents/verifier-01-hash/status"
+MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
+  "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-verifier-inline-hash.out"
+assert_file_contains "$HASH_GATE_STATE/subagents/verifier-01-hash/status" "done"
+assert_file_contains "$TMPDIR/gate-verifier-inline-hash.out" "accepted"
 printf 'policy-gate: source owner checked\nfinal-recommendation: block; source contract missing\n' >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
 printf 'running\n' >"$HASH_GATE_STATE/subagents/verifier-01-hash/status"
 if MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
