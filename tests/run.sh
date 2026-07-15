@@ -752,7 +752,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "Re
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "hidden-test-shaped commands"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "MULTIAGENT_PROMPT_MODULE_ROOT"
 assert_file_contains "$ROOT/launch.sh" "MULTIAGENT_PROMPT_MODULE_ROOT"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" '"MULTIAGENT_PROMPT_MODULE_ROOT": str(repo_root)'
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_lifecycle.py" '"MULTIAGENT_PROMPT_MODULE_ROOT": str(repo_root)'
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "production prompt modules"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Do not rely on leaked evaluator tests"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "architectural contract"
@@ -781,18 +781,18 @@ if (( appendix_bytes > 10000 || override_bytes > 1500 )); then
   echo "benchmark prompt overlays exceed compactness budget: appendix=$appendix_bytes override=$override_bytes" >&2
   exit 1
 fi
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "Convergence checkpoint"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_CONVERGENCE_FOLLOWUP_AFTER"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "No-diff planning checkpoint"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_NO_DIFF_CHECKPOINT_AFTER"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_PROGRESS_REPAIR_ENABLED"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "progress watchdog spawned bounded repair worker"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "validation_text_has_no_test_evidence"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "treated this command as insufficient because it did not execute real selected tests"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "source-owner-candidates.md"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "go-mod-cache-adapter"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "\"GOMODCACHE\": ensure_cache_dir(RUNTIME_ROOT / \"go-mod-cache\")"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_VALIDATION_PROBE_TIMEOUT\", 900"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_orchestration.py" "Convergence checkpoint"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_types.py" "EVAL_CONVERGENCE_FOLLOWUP_AFTER"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_orchestration.py" "No-diff planning checkpoint"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_types.py" "EVAL_NO_DIFF_CHECKPOINT_AFTER"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_types.py" "EVAL_PROGRESS_REPAIR_ENABLED"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_checkpoints.py" "progress watchdog spawned bounded repair worker"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_evidence.py" "validation_text_has_no_test_evidence"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_validation.py" "treated this command as insufficient because it did not execute real selected tests"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_contracts.py" "source-owner-candidates.md"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_evidence.py" "go-mod-cache-adapter"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_lifecycle.py" "\"GOMODCACHE\": ensure_cache_dir(RUNTIME_ROOT / \"go-mod-cache\")"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_validation.py" "EVAL_VALIDATION_PROBE_TIMEOUT\", 900"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "source-owner-candidates"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "git diff --name-only"
 assert_file_contains "$ROOT/evaluation/README.md" "production-native progress watchdog"
@@ -892,25 +892,25 @@ assert_file_contains "$ROOT/bin/subagent.sh" '--own|--owned-path)'
 assert_file_contains "$ROOT/bin/subagent.sh" '--source-finding-id|--finding)'
 assert_file_contains "$ROOT/bin/subagent.sh" '--role)'
 assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "declared-type ownership risk"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "declared type at that call site"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_contracts.py" "declared type at that call site"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "visible tests"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "real production entrypoint"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "overreach boundary"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "adapter-parity contract"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_ADAPTER_HELPER_MODE"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "adapter helper advisory mode: not spawning source-editing helper"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "completion marker refused because coverage blockers remain after follow-ups"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "final cleanup recovery requires adapter public validation before accepting visible-validation text"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "final cleanup recovery found a source diff but no durable worker validation evidence"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "completion marker recovered at final cleanup after adapter public probe passed without durable worker evidence"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "nonzero wrapper exit overridden because status.json already records completed final-diff build verification and adapter validation accepted by the structured repair gate"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "status.json already records completed final-diff build verification"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "coverage follow-up recovery yielded to completed status with accepted final build and adapter validation gate"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "verifier infrastructure failed before semantic recheck"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "rejected completion handed directly to a fresh orchestrator"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_VERIFIER_INFRA_RESUME_LIMIT"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "stale-visible-reconciliation-passed:"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "STALE_VISIBLE_RECONCILIATION_PATH"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_lifecycle.py" "EVAL_ADAPTER_HELPER_MODE"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_lifecycle.py" "adapter helper advisory mode: not spawning source-editing helper"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_transitions.py" "completion marker refused because coverage blockers remain after follow-ups"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_transitions.py" "final cleanup recovery requires adapter public validation before accepting visible-validation text"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_transitions.py" "final cleanup recovery found a source diff but no durable worker validation evidence"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_transitions.py" "completion marker recovered at final cleanup after adapter public probe passed without durable worker evidence"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_transitions.py" "nonzero wrapper exit overridden because status.json already records completed final-diff build verification and adapter validation accepted by the structured repair gate"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_transitions.py" "status.json already records completed final-diff build verification"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_checkpoints.py" "coverage follow-up recovery yielded to completed status with accepted final build and adapter validation gate"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_checkpoints.py" "verifier infrastructure failed before semantic recheck"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_transitions.py" "rejected completion handed directly to a fresh orchestrator"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_types.py" "EVAL_VERIFIER_INFRA_RESUME_LIMIT"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_evidence.py" "stale-visible-reconciliation-passed:"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_contracts.py" "STALE_VISIBLE_RECONCILIATION_PATH"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "must not inject benchmark-row-specific probes"
 assert_file_contains "$ROOT/evaluation/README.md" "adapter helper defaults to advisory mode"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "_public_solver_metadata(dict(task.metadata or {}))"
@@ -926,17 +926,19 @@ assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "f
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "production multiagent solver crashed before reaching a terminal state"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "solver_internal_timeout"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "EVAL_NATIVE_SOLVER_TIMEOUT_RESERVE"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "Never gate production solving on official expected-test metadata"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "public solver inputs"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "solver metadata is public-only"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "orchestrator exited with unverified source diff"
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "and not orchestrator_exited_without_status(text)"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_contracts.py" "Never gate production solving on official expected-test metadata"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_contracts.py" "public solver inputs"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_lifecycle.py" "solver metadata is public-only"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_checkpoints.py" "orchestrator exited with unverified source diff"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_checkpoints.py" "and not orchestrator_exited_without_status(text)"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "changed_python_test_commands"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "changed_go_feature_test_commands"
-assert_file_not_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "EVAL_ALLOW_EXPECTED_TEST_GUIDANCE"
-assert_file_not_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "official_test_contract_text"
-assert_file_not_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "full official contract"
-assert_file_not_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "Official requirements/interface excerpt"
+for solver_module in "$ROOT/evaluation/native_solver/solve_swe_prod.py" "$ROOT"/evaluation/native_solver/swe_prod_*.py; do
+  assert_file_not_contains "$solver_module" "EVAL_ALLOW_EXPECTED_TEST_GUIDANCE"
+  assert_file_not_contains "$solver_module" "official_test_contract_text"
+  assert_file_not_contains "$solver_module" "full official contract"
+  assert_file_not_contains "$solver_module" "Official requirements/interface excerpt"
+done
 for prompt_path in \
   "$ROOT/prompts/worker.md" \
   "$ROOT/prompts/verifier.md" \
@@ -950,6 +952,7 @@ do
   assert_file_not_contains "$prompt_path" "hidden-test failures as post-hoc diagnostics"
 done
 python3 - "$ROOT" <<'PY'
+import ast
 import os
 import json
 import re
@@ -1742,8 +1745,29 @@ assert assignment_commands, captured_worker_commands
 owned_index = assignment_commands[-1].index("--owned")
 assert assignment_commands[-1][owned_index + 1] == "evaluation/native_solver/solve_swe_prod.py", assignment_commands[-1]
 
-solver_source = (root / "evaluation/native_solver/solve_swe_prod.py").read_text(encoding="utf-8")
-assert ".removeprefix(" not in solver_source, "container-side solver must remain compatible with Python 3.8 task images"
+solver_modules = [
+    root / "evaluation/native_solver/solve_swe_prod.py",
+    *sorted((root / "evaluation/native_solver").glob("swe_prod_*.py")),
+]
+combined_solver_source = "\n".join(path.read_text(encoding="utf-8") for path in solver_modules)
+solver_source = combined_solver_source
+entrypoint_lines = len((root / "evaluation/native_solver/solve_swe_prod.py").read_text(encoding="utf-8").splitlines())
+lifecycle_lines = len((root / "evaluation/native_solver/swe_prod_lifecycle.py").read_text(encoding="utf-8").splitlines())
+assert entrypoint_lines <= 200, f"production solver entrypoint regressed to {entrypoint_lines} lines"
+assert lifecycle_lines <= 600, f"production solver lifecycle coordinator regressed to {lifecycle_lines} lines"
+for solver_module in solver_modules:
+    parsed_module = ast.parse(solver_module.read_text(encoding="utf-8"))
+    function_sizes = [
+        node.end_lineno - node.lineno + 1
+        for node in ast.walk(parsed_module)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    assert not function_sizes or max(function_sizes) <= 550, (
+        f"{solver_module.name} contains a monolithic {max(function_sizes)}-line function"
+    )
+assert ".removeprefix(" not in combined_solver_source, (
+    "container-side solver modules must remain compatible with Python 3.8 task images"
+)
 assert solve_swe_prod.remove_prefix("diff --git a/file.py", "diff --git a/") == "file.py"
 assert solve_swe_prod.remove_prefix("file.py", "diff --git a/") == "file.py"
 assert 'EVAL_VERIFIER_INFRA_RESUME_LIMIT", "2"' in solver_source, (
@@ -2265,10 +2289,57 @@ for included in (
     "evaluation",
     "evaluation/native_solver",
     "evaluation/native_solver/solve_swe_prod.py",
+    "evaluation/native_solver/swe_prod_bootstrap.py",
+    "evaluation/native_solver/swe_prod_checkpoints.py",
+    "evaluation/native_solver/swe_prod_contracts.py",
+    "evaluation/native_solver/swe_prod_evidence.py",
     "evaluation/native_solver/swe_prod_guardrails.py",
+    "evaluation/native_solver/swe_prod_lifecycle.py",
+    "evaluation/native_solver/swe_prod_orchestration.py",
+    "evaluation/native_solver/swe_prod_repository.py",
+    "evaluation/native_solver/swe_prod_state.py",
+    "evaluation/native_solver/swe_prod_transitions.py",
+    "evaluation/native_solver/swe_prod_types.py",
+    "evaluation/native_solver/swe_prod_validation.py",
     "evaluation/native_solver/templates/swe_autonomous_appendix.md",
 ):
     assert not OnDemandImageManager._skip_repo_bake_path(Path(included)), included
+
+with tempfile.TemporaryDirectory() as td:
+    standalone_context = Path(td)
+    standalone_manager = OnDemandImageManager(
+        archive_dir=standalone_context,
+        status_path=standalone_context / "status.json",
+        platform="linux/amd64",
+        image_timeout=60,
+        retries=1,
+        backoff_s=0,
+        min_free_gb=0,
+        prune_after_sample=False,
+        bake_native_solver=True,
+        native_solver_source=root / "evaluation/native_solver/solve_swe_prod.py",
+    )
+    bundle_names = {
+        str(path.relative_to(root / "evaluation/native_solver"))
+        for path in standalone_manager._native_solver_file_bundle()
+    }
+    assert "swe_prod_lifecycle.py" in bundle_names, bundle_names
+    assert "swe_prod_validation.py" in bundle_names, bundle_names
+    assert "templates/swe_autonomous_appendix.md" in bundle_names, bundle_names
+    docker_lines, package_hint = standalone_manager._copy_native_solver_source(standalone_context)
+    assert package_hint == "solve_swe_prod.py", package_hint
+    assert docker_lines[0] == "COPY standalone-native/ /opt/multiagent/", docker_lines
+    assert (standalone_context / "standalone-native/solve_swe.py").is_file()
+    assert (standalone_context / "standalone-native/swe_prod_lifecycle.py").is_file()
+    assert (standalone_context / "standalone-native/templates/swe_autonomous_appendix.md").is_file()
+    standalone_help = subprocess.run(
+        [sys.executable, str(standalone_context / "standalone-native/solve_swe.py"), "--help"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert standalone_help.returncode == 0, standalone_help.stderr
+    assert "--multiagent-root" in standalone_help.stdout, standalone_help.stdout
 
 with tempfile.TemporaryDirectory() as td:
     repo = Path(td)
@@ -4301,8 +4372,12 @@ assert any(
     "final product-facing output" in blocker
     for blocker in solve_swe_prod.blockers_after_passing_public_probe(multi_value_mismatched_count_blockers)
 ), "public helper probes must not clear final-output cardinality blockers"
-solver_source_after_recovery_fix = (root / "evaluation/native_solver/solve_swe_prod.py").read_text(encoding="utf-8")
-assert "and not coverage_followup_at" in solver_source_after_recovery_fix, "coverage follow-up recovery must not use generic no-status recovery first"
+solver_source_after_recovery_fix = (
+    root / "evaluation/native_solver/swe_prod_checkpoints.py"
+).read_text(encoding="utf-8")
+assert "and not progress.coverage_followup_at" in solver_source_after_recovery_fix, (
+    "coverage follow-up recovery must not use generic no-status recovery first"
+)
 assert "coverage_blockers = [] if coverage_probe_satisfied" not in solver_source_after_recovery_fix
 
 ui_blockers = solve_swe_prod.validation_coverage_blockers(
@@ -5172,11 +5247,25 @@ codex_exec_spawn_line="$(grep -F "new-window -d test-session codex-exec-protocol
 [[ "$codex_exec_spawn_line" == *"--output-last-message"* ]]
 
 printf 'Codex exec prompt ready\n' >"$MOCK_TMUX_CAPTURES/verifier-exec-role.txt"
-MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$ROOT/bin/subagent.sh" spawn verifier-exec-role --instruction "Review the final diff"
+VERIFIER_DIFF_ROOT="$TMPDIR/verifier-diff-root"
+mkdir -p "$VERIFIER_DIFF_ROOT"
+git -C "$VERIFIER_DIFF_ROOT" init -q
+git -C "$VERIFIER_DIFF_ROOT" config user.email test@example.com
+git -C "$VERIFIER_DIFF_ROOT" config user.name Test
+printf 'before\n' >"$VERIFIER_DIFF_ROOT/source.txt"
+git -C "$VERIFIER_DIFF_ROOT" add source.txt
+git -C "$VERIFIER_DIFF_ROOT" commit -qm initial
+printf 'after\n' >"$VERIFIER_DIFF_ROOT/source.txt"
+git -C "$VERIFIER_DIFF_ROOT" add source.txt
+VERIFIER_STAGED_DIFF_SHA="$(git -C "$VERIFIER_DIFF_ROOT" diff HEAD --binary --ignore-submodules=all -- | shasum -a 256 | awk '{print $1}')"
+MULTIAGENT_ROOT="$VERIFIER_DIFF_ROOT" MULTIAGENT_PROMPT_MODULE_ROOT="$ROOT" \
+  MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex \
+  "$ROOT/bin/subagent.sh" spawn verifier-exec-role --instruction "Review the final diff"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-exec-role/instruction.txt" "Verifier Role Prompt"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-exec-role/instruction.txt" "state-space partition audit"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-exec-role/instruction.txt" "Review the final diff"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-exec-role/instruction.txt" "Spawn-Time Final Diff Binding"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-exec-role/instruction.txt" "final-diff-sha256=$VERIFIER_STAGED_DIFF_SHA"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-exec-role/instruction.txt" "behavior-verification-passed:"
 
 printf 'Login required before Claude can start\n' >"$MOCK_TMUX_CAPTURES/subagent-auth.txt"

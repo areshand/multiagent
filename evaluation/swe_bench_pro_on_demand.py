@@ -139,8 +139,16 @@ class OnDemandImageManager:
 
     def _native_solver_fingerprint(self) -> str:
         if self.native_solver_source.is_file():
-            stat = self.native_solver_source.stat()
-            return f"{stat.st_mtime_ns:x}{stat.st_size:x}"[-16:]
+            parts: list[str] = []
+            source_root = self.native_solver_source.parent
+            for path in self._native_solver_file_bundle():
+                stat = path.stat()
+                parts.append(
+                    f"{path.relative_to(source_root)}:{stat.st_mtime_ns:x}:{stat.st_size:x}"
+                )
+            import hashlib
+
+            return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:16]
         parts: list[str] = []
         for path in sorted(self.native_solver_source.rglob("*")):
             if not path.is_file():
@@ -153,6 +161,23 @@ class OnDemandImageManager:
         import hashlib
 
         return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:16]
+
+    def _native_solver_file_bundle(self) -> list[Path]:
+        """Return every file required by a standalone production entrypoint."""
+
+        source = self.native_solver_source.resolve()
+        bundle = [source]
+        if source.name != "solve_swe_prod.py":
+            return bundle
+        bundle.extend(
+            path
+            for path in sorted(source.parent.glob("swe_prod_*.py"))
+            if path.resolve() != source
+        )
+        template_dir = source.parent / "templates"
+        if template_dir.is_dir():
+            bundle.extend(path for path in sorted(template_dir.rglob("*")) if path.is_file())
+        return bundle
 
     @staticmethod
     def _skip_repo_bake_path(path: Path) -> bool:
@@ -170,16 +195,14 @@ class OnDemandImageManager:
                 return False
             if len(path.parts) < 2 or path.parts[1] != "native_solver":
                 return True
-            allowed_native_solver = {
-                Path("evaluation/native_solver"),
-                Path("evaluation/native_solver/solve_swe_prod.py"),
-                Path("evaluation/native_solver/swe_prod_guardrails.py"),
-                Path("evaluation/native_solver/templates"),
-                Path("evaluation/native_solver/templates/swe_autonomous_appendix.md"),
-                Path("evaluation/native_solver/templates/swe_autonomous_final_override.md"),
-            }
-            if path not in allowed_native_solver and not (
-                len(path.parts) >= 3 and Path(*path.parts[:3]) == Path("evaluation/native_solver/templates")
+            native_solver_root = Path("evaluation/native_solver")
+            is_solver_module = path.parent == native_solver_root and path.suffix == ".py"
+            is_solver_template = (
+                len(path.parts) >= 3
+                and Path(*path.parts[:3]) == native_solver_root / "templates"
+            )
+            if path not in {native_solver_root, native_solver_root / "templates"} and not (
+                is_solver_module or is_solver_template
             ):
                 return True
         if len(path.parts) >= 2 and path.parts[0] == "evaluation" and path.parts[1] in {"reports", "runs"}:
@@ -190,9 +213,25 @@ class OnDemandImageManager:
 
     def _copy_native_solver_source(self, context_dir: Path) -> tuple[list[str], str]:
         if self.native_solver_source.is_file():
-            shutil.copyfile(self.native_solver_source, context_dir / "solve_swe.py")
+            source = self.native_solver_source.resolve()
+            source_root = source.parent
+            standalone_dir = context_dir / "standalone-native"
+            if standalone_dir.exists():
+                shutil.rmtree(standalone_dir)
+            standalone_dir.mkdir()
+            for path in self._native_solver_file_bundle():
+                relative = path.relative_to(source_root)
+                target = standalone_dir / ("solve_swe.py" if path == source else relative)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(path, target)
             package_hint = self.native_solver_source.name
-            return ["COPY --chmod=755 solve_swe.py /opt/multiagent/solve_swe.py"], package_hint
+            return (
+                [
+                    "COPY standalone-native/ /opt/multiagent/",
+                    "RUN chmod +x /opt/multiagent/solve_swe.py",
+                ],
+                package_hint,
+            )
 
         source_root = self.native_solver_source.resolve()
         if not (source_root / "launch.sh").exists():

@@ -103,16 +103,27 @@ consolidation at a size where sequential planning is visible.
 
 ## SWE Bench Pro Native Solver Tuning
 
-`evaluation/native_solver/solve_swe_prod.py` runs the production multiagent
-workflow inside the task container, then may run adapter-selected public probes
-before returning a diff to the official verifier. Those probes catch weak
+`evaluation/native_solver/solve_swe_prod.py` is the production container
+entrypoint and compatibility facade. The implementation is split by ownership:
+
+- `swe_prod_contracts.py` sanitizes public task inputs and derives contracts.
+- `swe_prod_bootstrap.py` installs container-local Codex, patch, search, and Go helpers.
+- `swe_prod_repository.py` owns source discovery, cleanup, and final-diff handling.
+- `swe_prod_evidence.py` reads durable verifier, finding, todo, and resolution evidence.
+- `swe_prod_validation.py` evaluates gates and runs adapter-selected public probes.
+- `swe_prod_orchestration.py` formats repair, convergence, and resume handoffs.
+- `swe_prod_checkpoints.py` implements ordered active-run recovery checkpoints.
+- `swe_prod_transitions.py` handles completed, blocked, and final-cleanup transitions.
+- `swe_prod_lifecycle.py` launches production multiagent and coordinates those transitions.
+- `swe_prod_types.py` defines explicit lifecycle state and bounded retry policy.
+- `swe_prod_guardrails.py` contains reusable source/diff guardrails.
+
+The entrypoint, lifecycle coordinator, and every transition handler have size
+regression checks in `tests/run.sh`. Adapter-selected probes catch weak
 completion markers, but they are not a replacement for official scoring and can
 be expensive under amd64 emulation.
 
-The production SWE adapter is split so the entrypoint stays focused on
-orchestration state: reusable source/diff guardrails live in
-`evaluation/native_solver/swe_prod_guardrails.py`, while the benchmark bootstrap
-instructions live under `evaluation/native_solver/templates/`.
+Benchmark bootstrap instructions live under `evaluation/native_solver/templates/`.
 Those guardrails are intentionally no-leak: they may use visible source, issue
 text, local tests, docs, public APIs, and runtime evidence, but they must not
 encode benchmark-row-specific hidden tests, prior official failures, or exact

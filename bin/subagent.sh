@@ -238,12 +238,12 @@ append_verifier_diff_binding() {
       return
       ;;
   esac
-  if git -C "$ROOT" diff --quiet --ignore-submodules=all --; then
+  if git -C "$ROOT" diff --quiet --ignore-submodules=all HEAD --; then
     printf '%s' "$instruction"
     return
   fi
-  diff_hash="$(git -C "$ROOT" diff --binary --ignore-submodules=all -- | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')"
-  changed_files="$(git -C "$ROOT" diff --name-only --ignore-submodules=all -- | awk 'NF { count += 1 } END { print count + 0 }')"
+  diff_hash="$(git -C "$ROOT" diff --binary --ignore-submodules=all HEAD -- | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')"
+  changed_files="$(git -C "$ROOT" diff --name-only --ignore-submodules=all HEAD -- | awk 'NF { count += 1 } END { print count + 0 }')"
   if [[ "$role_prompt" == */prompts/roles/build-verifier.md ]]; then
     printf '%s\n\n## Spawn-Time Final Diff Binding\n\nfinal-diff-sha256=%s\nchanged-files=%s\nAcceptance must repeat this hash in `build-verification-passed:` after rechecking the live diff.\n' \
       "$instruction" "$diff_hash" "$changed_files"
