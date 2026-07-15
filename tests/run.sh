@@ -1444,7 +1444,7 @@ with tempfile.TemporaryDirectory() as td:
         "VERDICT: ACCEPTED\n"
         f"behavior-verification-passed: final-diff-sha256={go_hash} changed-files=1 public-clauses-covered=true\n"
         "issue-coverage-ledger: issue-forwarder implemented-by=lib/kube/proxy/forwarder.go\n"
-        "All listed invariants are preserved.\n",
+        "All listed invariants are preserved. Public validation accepted after source review.\n",
         encoding="utf-8",
     )
     final_acceptance = solve_swe_prod.persisted_subagent_final_acceptance_evidence(go_diff, runtime_root)

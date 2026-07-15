@@ -2909,10 +2909,15 @@ def persisted_subagent_final_acceptance_texts(
                     raw = path.read_text(encoding="utf-8", errors="replace")
                 except OSError:
                     continue
-                lower = raw.lower()
-                if "accepted" not in lower:
+                verdicts = list(
+                    re.finditer(
+                        r"(?im)^[ \t]*(?:verdict:[ \t]*)?accepted[ \t]*$",
+                        raw,
+                    )
+                )
+                if not verdicts:
                     continue
-                accepted_at = lower.rfind("accepted")
+                accepted_at = verdicts[-1].start()
                 evidence_tail = raw[accepted_at:]
                 labeled = f"persisted verifier {agent_dir.name} {name}:\n{evidence_tail}"
                 if build_verification_has_evidence(evidence_tail, diff):
