@@ -2519,6 +2519,30 @@ def unresolved_repair_state_exists(runtime_root: Path = RUNTIME_ROOT) -> bool:
     return False
 
 
+def resolved_repair_todo_ids(
+    runtime_root: Path = RUNTIME_ROOT,
+    *,
+    min_age_seconds: float = 0,
+) -> list[str]:
+    """Return resolved todos that are waiting for verifier closure."""
+
+    now = time.time()
+    resolved: list[str] = []
+    for state_dir in (runtime_root, runtime_root / "state"):
+        todos_base = state_dir / "todos"
+        if not todos_base.exists():
+            continue
+        for status_file in sorted(todos_base.glob("*/status")):
+            try:
+                status = status_file.read_text(encoding="utf-8", errors="replace").strip().lower()
+                age_seconds = max(0.0, now - status_file.stat().st_mtime)
+            except OSError:
+                continue
+            if status == "resolved" and age_seconds >= min_age_seconds:
+                resolved.append(f"{state_dir}:{status_file.parent.name}")
+    return resolved
+
+
 def required_path_outside_owned_reports(runtime_root: Path = RUNTIME_ROOT) -> list[str]:
     reports: list[str] = []
     pattern = re.compile(r"required-path-outside-owned:\s*([^\s`'\",;)]+)")
@@ -5656,6 +5680,36 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
                 text = captured_text()
                 log(f"waiting status={state or 'none'} diff_bytes={diff_bytes}")
                 remaining_seconds = int(deadline - time.monotonic())
+                resolved_todos = resolved_repair_todo_ids(RUNTIME_ROOT, min_age_seconds=30)
+                active_repair_workers = active_repair_subagent_summaries(RUNTIME_ROOT)
+                active_verifiers = active_verifier_subagent_summaries(RUNTIME_ROOT)
+                if (
+                    not state
+                    and diff_bytes > 0
+                    and resolved_todos
+                    and not active_repair_workers
+                    and not active_verifiers
+                    and remaining_seconds > 300
+                ):
+                    repair_gate_blockers = structured_repair_gate_blockers()
+                    if repair_gate_blockers and relaunch_orchestrator_for_blockers(
+                        "resolved repair todo is waiting for verifier closure",
+                        diff_snapshot,
+                        [
+                            *repair_gate_blockers,
+                            (
+                                "Resolved worker todo(s) are ready for objective reverification: "
+                                + ", ".join(resolved_todos)
+                                + ". Spawn one fresh read-only verifier over the exact current diff, close or reopen each "
+                                "todo from its original finding and done criteria, then rerun gate-check."
+                            ),
+                        ],
+                        "",
+                        force_live_handoff=True,
+                    ):
+                        log("resolved repair todo handoff launched before terminal deadline")
+                        time.sleep(5)
+                        continue
                 blocked_no_diff_subagents = blocked_no_diff_subagent_summaries(RUNTIME_ROOT)
                 if (
                     not state

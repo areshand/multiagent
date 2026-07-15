@@ -1424,6 +1424,9 @@ with tempfile.TemporaryDirectory() as td:
     active_todo = runtime_root / "state" / "todos" / "todo-forwarder-audit-request-context"
     active_todo.mkdir(parents=True)
     (active_todo / "status").write_text("resolved\n", encoding="utf-8")
+    assert solve_swe_prod.resolved_repair_todo_ids(runtime_root) == [
+        f"{runtime_root / 'state'}:todo-forwarder-audit-request-context"
+    ]
     active_summaries = solve_swe_prod.active_repair_subagent_summaries(
         runtime_root,
         live_agent_names={"worker-04-forwarder-contracts"},
