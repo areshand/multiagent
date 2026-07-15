@@ -123,7 +123,14 @@ with nearby API conventions. Record this matrix in the verifier report; a
 compile-clean result alone does not close it.
 Acceptance for this risk requires one machine-readable line bound to the live
 diff:
-`state-space-partition-audit: final-diff-sha256=... modes=SOURCE_MODES categories=SOURCE_CATEGORIES mixed-category=PROBE_OR_REASONING unknown-variant=PROBE_OR_REASONING result=passed`.
+`state-space-partition-audit: final-diff-sha256=... modes=SOURCE_MODES categories=SOURCE_DATA_CATEGORIES mode-category-map=MODE:CATEGORY,... mixed-category=PROBE_OR_REASONING unknown-variant=PROBE_OR_REASONING aggregate-equivalent=true|false equivalence-source=PATH:SYMBOL result=passed`.
+`categories` must name source data variants, not cardinality states such as
+zero/one/multiple. Map every listed mode to a category, `all`, or `none`. When
+different modes map to different data categories, acceptance requires source
+code that classifies each item before category-specific counting. A single
+aggregate length check is acceptable only with `aggregate-equivalent=true` and
+a concrete source declaration/caller proving every relevant mode accepts every
+category; verifier narrative alone is not equivalence proof.
 If the aggregate count is not equivalent for every mode/category partition,
 use `result=blocking`, create a blocking finding/todo, and do not accept.
 

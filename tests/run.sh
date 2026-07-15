@@ -3082,7 +3082,12 @@ partition_risk_diff = (
     "@@ -1 +1,5 @@\n"
     "+if len(items) == 1 {\n"
     "+  switch preference.Mode() {\n"
-    "+  case RequiredMode: return errRequired\n"
+    "+  case PrimaryMode:\n"
+    "+    primary := 0\n"
+    "+    for _, item := range items {\n"
+    "+      if item.GetPrimary() != nil { primary++ }\n"
+    "+    }\n"
+    "+    if primary == 1 { return errRequired }\n"
     "+  }\n"
     "+}\n"
 )
@@ -3096,8 +3101,33 @@ assert solve_swe_prod.state_space_partition_audit_has_evidence(
     "state-space-partition-audit: "
     f"final-diff-sha256={partition_risk_hash} "
     "modes=required,optional categories=primary,secondary "
-    "mixed-category=source-counterexample unknown-variant=source-counterexample result=passed",
+    "mode-category-map=required:primary,optional:none "
+    "mixed-category=source-counterexample unknown-variant=source-counterexample "
+    "aggregate-equivalent=false equivalence-source=pkg/policy.go:item.GetPrimary result=passed",
     partition_risk_diff,
+)
+assert not solve_swe_prod.state_space_partition_audit_has_evidence(
+    "state-space-partition-audit: "
+    f"final-diff-sha256={partition_risk_hash} "
+    "modes=required,optional categories=zero,one-target,multiple,mixed-items "
+    "mode-category-map=required:all,optional:none "
+    "mixed-category=len-items-allows-deletion unknown-variant=default "
+    "aggregate-equivalent=false equivalence-source=pkg/policy.go result=passed",
+    partition_risk_diff,
+)
+aggregate_only_diff = (
+    "diff --git a/pkg/policy.go b/pkg/policy.go\n"
+    "+if policy.RequiresAny() && len(items) == 1 { return errRequired }\n"
+)
+aggregate_only_hash = solve_swe_prod.final_diff_sha256(aggregate_only_diff)
+assert solve_swe_prod.state_space_partition_audit_has_evidence(
+    "state-space-partition-audit: "
+    f"final-diff-sha256={aggregate_only_hash} "
+    "modes=required,optional categories=all "
+    "mode-category-map=required:all,optional:none "
+    "mixed-category=all-items-equivalent unknown-variant=source-default "
+    "aggregate-equivalent=true equivalence-source=pkg/policy.go:RequiresAny result=passed",
+    aggregate_only_diff,
 )
 with tempfile.TemporaryDirectory() as td:
     runtime_fallback_root = Path(td)

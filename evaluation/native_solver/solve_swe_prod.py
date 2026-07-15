@@ -3758,8 +3758,35 @@ def policy_collection_partition_risk(diff: str) -> bool:
     return has_aggregate_size and has_policy_branch
 
 
+def category_specific_collection_evidence(diff: str) -> bool:
+    """Return true when added code classifies collection items before counting."""
+
+    added = "\n".join(
+        line[1:]
+        for line in diff.splitlines()
+        if line.startswith("+") and not line.startswith("+++")
+    ).lower()
+    has_iteration = bool(
+        re.search(r"\bfor\b[^\n]*(?:\brange\b|\bin\b)", added)
+        or ".filter(" in added
+        or re.search(r"\b(?:count_if|countby|count_by|groupby|group_by)\b", added)
+    )
+    has_item_classifier = bool(
+        re.search(
+            r"\b(?:if|switch|match)\b[^\n]*(?:\.get[a-z0-9_]*\s*\(|\.(?:kind|type|category|variant)\b|\binstanceof\b|\bis\s+[a-z_])",
+            added,
+        )
+    )
+    return has_iteration and has_item_classifier
+
+
+def partition_audit_field(window: str, name: str) -> str:
+    match = re.search(rf"\b{re.escape(name)}=([^\s]+)", window)
+    return match.group(1).strip("`.,") if match else ""
+
+
 def state_space_partition_audit_has_evidence(text: str, diff: str) -> bool:
-    """Require a hash-bound mode/category counterexample matrix."""
+    """Require a hash-bound, source-consistent mode/category matrix."""
 
     lower = text.lower().replace("\\n", "\n")
     diff_hash = final_diff_sha256(diff).lower()
@@ -3772,11 +3799,44 @@ def state_space_partition_audit_has_evidence(text: str, diff: str) -> bool:
             for marker in (
                 "modes=",
                 "categories=",
+                "mode-category-map=",
                 "mixed-category=",
                 "unknown-variant=",
+                "aggregate-equivalent=",
+                "equivalence-source=",
                 "result=passed",
             )
         ):
+            continue
+        modes = [item for item in partition_audit_field(window, "modes").split(",") if item]
+        categories = [item for item in partition_audit_field(window, "categories").split(",") if item]
+        mapping_items = [
+            item for item in re.split(r"[,;]", partition_audit_field(window, "mode-category-map")) if item
+        ]
+        mode_map = dict(item.split(":", 1) for item in mapping_items if ":" in item)
+        if not modes or not categories or any(mode not in mode_map for mode in modes):
+            continue
+        cardinality_prefixes = ("zero", "one", "single", "multiple", "empty", "nonempty", "count", "mixed")
+        special_categories = {"all", "any", "none", "na", "n/a", "disabled", "unknown"}
+        data_categories = [
+            category
+            for category in categories
+            if category not in special_categories and not category.startswith(cardinality_prefixes)
+        ]
+        mapped_categories = set(mode_map.values())
+        if any(category not in categories and category not in special_categories for category in mapped_categories):
+            continue
+        aggregate_equivalent = partition_audit_field(window, "aggregate-equivalent") == "true"
+        equivalence_source = partition_audit_field(window, "equivalence-source")
+        if aggregate_equivalent and (
+            not equivalence_source
+            or equivalence_source in {"none", "unknown", "n/a", "na", "narrative"}
+        ):
+            continue
+        category_specific = len(data_categories) >= 2 or len(mapped_categories - special_categories) >= 2
+        if category_specific and not category_specific_collection_evidence(diff):
+            continue
+        if not data_categories and not aggregate_equivalent:
             continue
         return True
     return False
