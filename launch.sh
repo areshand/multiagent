@@ -24,6 +24,11 @@ Usage: ./launch.sh [--session NAME] [--root DIR] [--resume] [--attach|--no-attac
 Starts a tmux multi-agent session with one window:
   - orchestrator: Codex commander that spawns and manages workers
 
+Requirements:
+  - tmux
+  - Python 3.8 or newer (standard library only)
+  - the selected orchestrator CLI (Codex or Claude)
+
 By default the orchestrator starts clean and does not inspect recovery state.
 Pass --resume to allow the orchestrator to inspect recovery state and consider
 restoring/resuming persisted subagents.
@@ -91,6 +96,14 @@ require_cmd() {
   fi
 }
 
+require_python_runtime() {
+  require_cmd python3
+  if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 8) else 1)'; then
+    echo "Python 3.8 or newer is required (found: $(python3 --version 2>&1))" >&2
+    exit 1
+  fi
+}
+
 normalize_cli() {
   case "$1" in
     codex|claude)
@@ -150,6 +163,7 @@ if ! [[ "$VERIFIER_MAX_ITERATIONS" =~ ^[1-9][0-9]*$ ]]; then
   echo "MULTIAGENT_VERIFIER_MAX_ITERATIONS must be a positive integer" >&2
   exit 2
 fi
+require_python_runtime
 require_cmd tmux
 require_cmd "$(cli_bin "$ORCHESTRATOR_CLI")"
 

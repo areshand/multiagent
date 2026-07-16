@@ -12,6 +12,17 @@ This project launches a tmux session with one `orchestrator` window. The orchest
 - **Structured Repair Loop**: Verifier findings become queued todos, workers attach resolution evidence, and final gates require hash-bound verifier closure
 - **Parallel DAG Discipline**: Ready workers with disjoint ownership fan out in parallel and consolidate later
 
+## Requirements
+
+- `tmux`
+- Python 3.8 or newer; the framework control plane uses only the Python standard library, so no `pip install` or virtual environment is required
+- Codex CLI or Claude CLI, according to the configured orchestrator and agent roles
+
+`launch.sh` checks these executable prerequisites before creating the tmux
+session. Python is a runtime dependency of the general framework, not only of
+the SWE evaluation adapter: structured state, findings, verification evidence,
+and exact Git snapshot binding use it.
+
 ## Launch
 
 ```bash
@@ -88,7 +99,7 @@ flowchart TD
 
         Helper --> Worker["Worker tmux windows"]
         Helper --> Verifier["Scout and verifier tmux windows"]
-        Helper --> Runtime["multiagent_framework library and CLI"]
+        Helper --> Runtime["multiagent_framework Python 3.8+ stdlib runtime"]
         Runtime --> Snapshot["Exact Git snapshot and final-diff hash"]
         Runtime --> Evidence["Build and behavior evidence checks"]
         Runtime --> Guardrails["Generic coding and hidden-contract guardrails"]
@@ -135,9 +146,10 @@ The invocation sequence is:
    Rejection routes another bounded repair cycle through the orchestrator.
 
 `multiagent_framework` is not a daemon. It is shared in-process Python code and
-a short-lived CLI used by the shell control plane and adapters. The long-lived
-execution units are the orchestrator, worker, scout, and verifier CLI processes
-inside tmux.
+a short-lived CLI used by the shell control plane and adapters. It requires
+Python 3.8 or newer but has no third-party Python package dependency. The
+long-lived execution units are the orchestrator, worker, scout, and verifier CLI
+processes inside tmux.
 
 ## Prompt Modules
 

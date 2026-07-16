@@ -720,6 +720,9 @@ assert_file_contains "$ROOT/prompts/playbooks/dag.md" "DAG Workflow Playbook"
 assert_file_contains "$ROOT/prompts/playbooks/recovery.md" "Recovery Playbook"
 assert_file_contains "$ROOT/prompts/playbooks/write-policy.md" "Write Policy Playbook"
 assert_file_contains "$ROOT/README.md" "Launches are clean by default"
+assert_file_contains "$ROOT/README.md" "## Requirements"
+assert_file_contains "$ROOT/README.md" "Python 3.8 or newer"
+assert_file_contains "$ROOT/README.md" "no third-party Python package dependency"
 assert_file_contains "$ROOT/README.md" "./launch.sh --resume"
 assert_file_contains "$ROOT/README.md" "Prompt Modules"
 assert_file_contains "$ROOT/README.md" "validation lease table"
@@ -757,6 +760,8 @@ assert_file_contains "$ROOT/multiagent_framework/coding/guardrails.py" "hidden-t
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "Compatibility facade"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "MULTIAGENT_PROMPT_MODULE_ROOT"
 assert_file_contains "$ROOT/launch.sh" "MULTIAGENT_PROMPT_MODULE_ROOT"
+assert_file_contains "$ROOT/launch.sh" "require_python_runtime"
+assert_file_contains "$ROOT/launch.sh" "sys.version_info >= (3, 8)"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_lifecycle.py" '"MULTIAGENT_PROMPT_MODULE_ROOT": str(repo_root)'
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "production prompt modules"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Do not rely on leaked evaluator tests"
@@ -1803,7 +1808,9 @@ lifecycle_lines = len((root / "evaluation/native_solver/swe_prod_lifecycle.py").
 assert entrypoint_lines <= 200, f"production solver entrypoint regressed to {entrypoint_lines} lines"
 assert lifecycle_lines <= 600, f"production solver lifecycle coordinator regressed to {lifecycle_lines} lines"
 for solver_module in runtime_modules:
-    parsed_module = ast.parse(solver_module.read_text(encoding="utf-8"))
+    module_source = solver_module.read_text(encoding="utf-8")
+    parsed_module = ast.parse(module_source)
+    ast.parse(module_source, feature_version=(3, 8))
     function_sizes = [
         node.end_lineno - node.lineno + 1
         for node in ast.walk(parsed_module)

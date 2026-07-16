@@ -239,6 +239,7 @@ append_verifier_diff_binding() {
       return
       ;;
   esac
+  require_cmd python3
   snapshot="$(PYTHONPATH="$FRAMEWORK_MODULE_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
     python3 -m multiagent_framework.cli snapshot --root "$ROOT" --base HEAD --format shell)" || \
     die "could not capture final diff through framework snapshot runtime"
