@@ -61,13 +61,13 @@ Position the project as:
 
 ### Small Upstream Contributions
 
-- [ ] Propose a benchmark runner, trace/evidence format, verifier gate, or
+- [x] Propose a benchmark runner, trace/evidence format, verifier gate, or
   regression harness to SWE-agent or OpenHands.
-- [ ] Propose a minimal external coding-agent worker adapter to opencode or the
+- [x] Propose a minimal external coding-agent worker adapter to opencode or the
   Claude/Codex CLI ecosystem.
 - [ ] Extract diff-hash binding, tool-execution audit, or permission/evidence
   gates for relevant security and runtime projects.
-- [ ] Keep each upstream contribution independently reviewable and mergeable.
+- [x] Keep each upstream contribution independently reviewable and mergeable.
 
 ### Technical Note
 
@@ -85,10 +85,10 @@ Position the project as:
 
 ### Upstream Discovery
 
-- [ ] Open design or feedback issues before sending upstream code.
-- [ ] Ask maintainers whether a minimal external-agent adapter or evidence-gate
+- [x] Open design or feedback issues before sending upstream code.
+- [x] Ask maintainers whether a minimal external-agent adapter or evidence-gate
   contribution fits their project.
-- [ ] Avoid leading with the complete multiagent framework implementation.
+- [x] Avoid leading with the complete multiagent framework implementation.
 
 Suggested issue framing:
 
