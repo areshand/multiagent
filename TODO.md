@@ -117,5 +117,6 @@ Suggested issue framing:
 
 - [x] Add an explicit open-source license.
 - [x] Make the README concise and clearly state the project positioning.
-- [ ] Add a reproducible benchmark section with exact commands and provenance.
-- [ ] Complete these credibility basics before significant external promotion.
+- [x] Add a reproducible benchmark section with exact commands and a compact,
+  relocatable provenance validator built on reusable framework primitives.
+- [x] Complete these credibility basics before significant external promotion.

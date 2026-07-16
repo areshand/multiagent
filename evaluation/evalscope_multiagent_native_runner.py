@@ -41,6 +41,7 @@ _STDOUT_FILE = "/tmp/evalscope-native-multiagent-stdout.log"
 _STDERR_FILE = "/tmp/evalscope-native-multiagent-stderr.log"
 _DIAGNOSTICS_FILE = "/tmp/evalscope-native-multiagent-diagnostics.txt"
 _TERMINAL_OUTCOME_FILE = "/tmp/multiagent-prod-swe/terminal-outcome.json"
+_RUNTIME_IDENTITY_FILE = "/tmp/multiagent-prod-swe/runtime-identity.json"
 _DEFAULT_SOLVER_COMMAND = "/tmp/evalscope-native-multiagent-solver.sh"
 _PUBLIC_METADATA_KEYS = {
     "language",
@@ -175,13 +176,22 @@ class MultiagentNativeRunner(AgentRunner):
             f"multiagent-native launching: sample={sample_id} timeout={task.timeout}s "
             f"cwd={self._working_dir} command={command!r}"
         )
+        runtime_identity: dict[str, Any] = {}
         try:
             result = await env.exec(["bash", "-lc", shell_command], timeout=task.timeout, env=env_vars, cwd=self._working_dir)
         finally:
+            try:
+                runtime_identity = await self._read_json_file(env, _RUNTIME_IDENTITY_FILE)
+            except Exception as exc:
+                logger.warning(f"multiagent-native could not read runtime identity: {exc!r}")
             await self._scrub_codex_auth(env)
         logger.info(
             f"multiagent-native exited: sample={sample_id} rc={result.returncode} "
             f"wall={result.duration:.1f}s timed_out={result.timed_out}"
+        )
+        logger.info(
+            f"multiagent-native runtime: sample={sample_id} "
+            f"identity={json.dumps(runtime_identity, sort_keys=True, separators=(',', ':'))}"
         )
         stdout = await env.exec(["bash", "-lc", f"tail -c 4000 {shlex.quote(_STDOUT_FILE)} 2>/dev/null || true"])
         stderr = await env.exec(["bash", "-lc", f"tail -c 4000 {shlex.quote(_STDERR_FILE)} 2>/dev/null || true"])
@@ -209,6 +219,7 @@ class MultiagentNativeRunner(AgentRunner):
                     stderr_tail=stderr_tail,
                     diagnostics=diagnostics,
                     reason=SUBMISSION_GATE_REJECTION,
+                    runtime_identity=runtime_identity,
                 )
             tail = (stderr_tail + "\n" + stdout_tail + "\n" + diagnostics).strip()[-12000:]
             raise RuntimeError(
@@ -222,11 +233,12 @@ class MultiagentNativeRunner(AgentRunner):
                 "timed_out": result.timed_out,
                 "stderr_tail": stderr_tail,
                 "diagnostics_tail": diagnostics[-4000:],
+                "runtime_identity": runtime_identity,
             },
         )
 
-    async def _read_terminal_outcome(self, env: AgentEnvironment) -> dict[str, Any]:
-        result = await env.exec(["bash", "-lc", f"cat {_TERMINAL_OUTCOME_FILE} 2>/dev/null || true"], timeout=30)
+    async def _read_json_file(self, env: AgentEnvironment, path: str) -> dict[str, Any]:
+        result = await env.exec(["bash", "-lc", f"cat {shlex.quote(path)} 2>/dev/null || true"], timeout=30)
         raw = (result.stdout or "").strip()
         if not raw:
             return {}
@@ -235,6 +247,9 @@ class MultiagentNativeRunner(AgentRunner):
         except json.JSONDecodeError:
             return {}
         return payload if isinstance(payload, dict) else {}
+
+    async def _read_terminal_outcome(self, env: AgentEnvironment) -> dict[str, Any]:
+        return await self._read_json_file(env, _TERMINAL_OUTCOME_FILE)
 
     async def _score_no_submission(
         self,
@@ -246,6 +261,7 @@ class MultiagentNativeRunner(AgentRunner):
         stderr_tail: str,
         diagnostics: str,
         reason: str,
+        runtime_identity: dict[str, Any],
     ) -> AgentRunResult:
         cleanup = await env.exec(
             ["bash", "-lc", "git reset --hard HEAD && git clean -fd"],
@@ -270,6 +286,7 @@ class MultiagentNativeRunner(AgentRunner):
                 "stderr_tail": stderr_tail,
                 "stdout_tail": stdout_tail,
                 "diagnostics_tail": diagnostics[-4000:],
+                "runtime_identity": runtime_identity,
             },
         )
 

@@ -134,6 +134,11 @@ python3 -m evaluation.swe_bench_pro_run_parallel_shards \
   --persistent-cache
 ```
 
+Capture and revalidate a completed run with
+`python3 -m evaluation.swe_bench_pro_provenance`. The benchmark-specific
+semantic checks consume reusable Git and artifact-integrity primitives from
+`multiagent_framework.provenance`; see `docs/benchmark.md` for the full command.
+
 The evaluator accepts only the production repository root as bake input. It
 does not support noop, devnull, proxy, single-agent, standalone-file, or custom
 solver-command modes. The Codex auth file is copied into a live task container

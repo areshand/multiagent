@@ -9,6 +9,7 @@ sample starts and optionally remove it after scoring.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -22,6 +23,79 @@ from evaluation.swe_bench_pro_image_preload import (
     free_disk_gib,
     preload_image_with_retries,
 )
+
+
+SOLVER_SOURCE_LABEL = "org.multiagent.solver-source-sha256"
+
+
+def inspect_image_identity(image: str) -> dict[str, Any]:
+    """Return content-addressed local identity for a runnable Docker image."""
+
+    result = subprocess.run(
+        ["docker", "image", "inspect", image, "--format", "{{json .}}"],
+        text=True,
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"docker image identity inspection failed for {image}: {result.stderr.strip()}")
+    payload = json.loads(result.stdout)
+    image_id = str(payload.get("Id") or "")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+        raise RuntimeError(f"docker image identity is missing for {image}: {image_id!r}")
+    return {
+        "reference": image,
+        "image_id": image_id,
+        "repo_digests": list(payload.get("RepoDigests") or []),
+        "os": str(payload.get("Os") or ""),
+        "architecture": str(payload.get("Architecture") or ""),
+        "labels": dict(((payload.get("Config") or {}).get("Labels") or {})),
+    }
+
+
+def skip_repo_bake_path(path: Path) -> bool:
+    """Return whether a repository path is excluded from task-image source."""
+
+    parts = set(path.parts)
+    if parts & {".git", ".multiagent", "__pycache__", ".pytest_cache", "node_modules"}:
+        return True
+    if path.parts and path.parts[0] in {"tests", "docs"}:
+        return True
+    if len(path.parts) == 1 and path.suffix == ".md" and path.name != "orchestrator_prompt.md":
+        return True
+    if path.parts and path.parts[0] == "evaluation":
+        if path in {Path("evaluation"), Path("evaluation/__init__.py")}:
+            return False
+        native_solver_root = Path("evaluation/native_solver")
+        is_solver_module = path.parent == native_solver_root and path.suffix == ".py"
+        is_solver_template = len(path.parts) >= 3 and Path(*path.parts[:3]) == native_solver_root / "templates"
+        if path not in {native_solver_root, native_solver_root / "templates"} and not (
+            is_solver_module or is_solver_template
+        ):
+            return True
+    if len(path.parts) >= 2 and path.parts[0] == "evaluation" and path.parts[1] in {"reports", "runs"}:
+        return True
+    return path.name.endswith((".pyc", ".pyo", ".log"))
+
+
+def native_solver_source_digest(source_root: Path) -> str:
+    """Hash the exact source bytes copied into production task images."""
+
+    digest = hashlib.sha256()
+    for path in sorted(source_root.rglob("*")):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(source_root)
+        if skip_repo_bake_path(relative):
+            continue
+        digest.update(relative.as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(format(path.stat().st_mode & 0o7777, "o").encode("ascii"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 class OnDemandImageManager:
@@ -129,59 +203,18 @@ class OnDemandImageManager:
         self._write("failed")
         raise RuntimeError(f"failed to preload {image}: {record.get('status')}")
 
-    def _native_solver_tag(self, image: str) -> str:
-        fingerprint = self._native_solver_fingerprint()
+    def _native_solver_tag(self, image: str, fingerprint: str | None = None) -> str:
+        fingerprint = fingerprint or self._native_solver_fingerprint()
         safe = re.sub(r"[^a-z0-9_.-]+", "-", image.lower()).strip("-")
         safe = safe[:90].strip("-") or "image"
         return f"multiagent-native-swe:{safe}-{fingerprint}"
 
     def _native_solver_fingerprint(self) -> str:
-        parts: list[str] = []
-        for path in sorted(self.native_solver_source.rglob("*")):
-            if not path.is_file():
-                continue
-            rel = path.relative_to(self.native_solver_source)
-            if self._skip_repo_bake_path(rel):
-                continue
-            stat = path.stat()
-            parts.append(f"{rel}:{stat.st_mtime_ns:x}:{stat.st_size:x}")
-        import hashlib
-
-        return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:16]
+        return native_solver_source_digest(self.native_solver_source)[:16]
 
     @staticmethod
     def _skip_repo_bake_path(path: Path) -> bool:
-        parts = set(path.parts)
-        if parts & {".git", ".multiagent", "__pycache__", ".pytest_cache", "node_modules"}:
-            return True
-        if path.parts and path.parts[0] == "tests":
-            return True
-        if path.parts and path.parts[0] == "docs":
-            return True
-        if len(path.parts) == 1 and path.suffix == ".md" and path.name != "orchestrator_prompt.md":
-            return True
-        if path.parts and path.parts[0] == "evaluation":
-            if path == Path("evaluation"):
-                return False
-            if path == Path("evaluation/__init__.py"):
-                return False
-            if len(path.parts) < 2 or path.parts[1] != "native_solver":
-                return True
-            native_solver_root = Path("evaluation/native_solver")
-            is_solver_module = path.parent == native_solver_root and path.suffix == ".py"
-            is_solver_template = (
-                len(path.parts) >= 3
-                and Path(*path.parts[:3]) == native_solver_root / "templates"
-            )
-            if path not in {native_solver_root, native_solver_root / "templates"} and not (
-                is_solver_module or is_solver_template
-            ):
-                return True
-        if len(path.parts) >= 2 and path.parts[0] == "evaluation" and path.parts[1] in {"reports", "runs"}:
-            return True
-        if path.name.endswith((".pyc", ".pyo", ".log")):
-            return True
-        return False
+        return skip_repo_bake_path(path)
 
     def _copy_native_solver_source(self, context_dir: Path) -> tuple[list[str], str]:
         source_root = self.native_solver_source.resolve()
@@ -232,18 +265,31 @@ class OnDemandImageManager:
             self._write("failed")
             raise FileNotFoundError(f"native solver source missing: {self.native_solver_source}")
 
-        baked_image = self._native_solver_tag(image)
+        solver_digest = native_solver_source_digest(self.native_solver_source)
+        baked_image = self._native_solver_tag(image, solver_digest[:16])
         present, _ = docker_image_present(baked_image)
         if present:
+            record = {
+                "instance_id": instance_id,
+                "image": image,
+                "baked_image": baked_image,
+                "status": "bake_reused",
+            }
+            try:
+                record["base_identity"] = inspect_image_identity(image)
+                record["baked_identity"] = inspect_image_identity(baked_image)
+                if record["baked_identity"]["labels"].get(SOLVER_SOURCE_LABEL) != solver_digest:
+                    raise RuntimeError(f"reused image is not bound to current solver source: {baked_image}")
+                record["solver_source_sha256"] = solver_digest
+            except Exception as exc:
+                record["status"] = "image_identity_failed"
+                record["identity_error"] = repr(exc)
+                self.records.append(record)
+                self.counts["bake_failed"] += 1
+                self._write("failed")
+                raise
             self.counts["bake_reused"] += 1
-            self.records.append(
-                {
-                    "instance_id": instance_id,
-                    "image": image,
-                    "baked_image": baked_image,
-                    "status": "bake_reused",
-                }
-            )
+            self.records.append(record)
             self._write("running")
             return baked_image
 
@@ -251,7 +297,7 @@ class OnDemandImageManager:
         context_dir.mkdir(parents=True, exist_ok=True)
         copy_lines, package_hint = self._copy_native_solver_source(context_dir)
         dockerfile = context_dir / "Dockerfile"
-        dockerfile_lines = [f"FROM {image}"]
+        dockerfile_lines = [f"FROM {image}", f'LABEL {SOLVER_SOURCE_LABEL}="{solver_digest}"']
         if "tmux" in package_hint or "prod" in package_hint:
             dockerfile_lines.append(
                 "RUN if ! command -v tmux >/dev/null 2>&1; then "
@@ -429,11 +475,25 @@ class OnDemandImageManager:
             "stdout_tail": result.stdout[-4000:],
             "stderr_tail": result.stderr[-4000:],
         }
-        self.records.append(record)
         if result.returncode == 0:
+            try:
+                record["base_identity"] = inspect_image_identity(image)
+                record["baked_identity"] = inspect_image_identity(baked_image)
+                if record["baked_identity"]["labels"].get(SOLVER_SOURCE_LABEL) != solver_digest:
+                    raise RuntimeError(f"built image is not bound to current solver source: {baked_image}")
+                record["solver_source_sha256"] = solver_digest
+            except Exception as exc:
+                record["status"] = "image_identity_failed"
+                record["identity_error"] = repr(exc)
+                self.records.append(record)
+                self.counts["bake_failed"] += 1
+                self._write("failed")
+                raise
+            self.records.append(record)
             self.counts["baked"] += 1
             self._write("running")
             return baked_image
+        self.records.append(record)
         self.counts["bake_failed"] += 1
         self._write("failed")
         raise RuntimeError(f"failed to bake native solver into {image}: {result.stderr[-2000:]}")

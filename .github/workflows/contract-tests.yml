@@ -23,5 +23,7 @@ jobs:
       - name: Run framework and native-solver boundary tests
         run: |
           python -m unittest discover -s tests -p 'test_contracts.py' -v
+          python -m unittest discover -s tests -p 'test_provenance.py' -v
           python -m unittest discover -s tests -p 'test_native_solver_import_model.py' -v
           python -m unittest discover -s tests -p 'test_swe_outcomes.py' -v
+          python -m unittest discover -s tests -p 'test_swe_provenance.py' -v

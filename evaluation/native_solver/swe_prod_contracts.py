@@ -49,6 +49,7 @@ STALE_VISIBLE_RECONCILIATION_PATH = RUNTIME_ROOT / "stale-visible-reconciliation
 CONTRACT_LEDGER_PATH = RUNTIME_ROOT / "contract-ledger.md"
 SOURCE_OWNER_CANDIDATES_PATH = RUNTIME_ROOT / "source-owner-candidates.md"
 FAILURE_DIAGNOSTICS_PATH = RUNTIME_ROOT / "failure-diagnostics.txt"
+RUNTIME_IDENTITY_PATH = RUNTIME_ROOT / "runtime-identity.json"
 TASK_METADATA_PATH = Path(os.environ.get("EVAL_TASK_METADATA_FILE", "/tmp/evalscope-native-multiagent-metadata.json"))
 CODEX_WRAPPER = RUNTIME_ROOT / "codex-bridge"
 CODEX_HOME = Path(os.environ.get("CODEX_HOME", "/root/.codex-multiagent-prod"))

@@ -92,6 +92,7 @@ class NativeOutcomeTest(unittest.TestCase):
                 stderr_tail="",
                 diagnostics="typed gate rejection",
                 reason="submission_gate_rejection",
+                runtime_identity={"codex_version": "codex-cli 0.144.1", "node_version": "v22.12.0"},
             )
         )
 
@@ -165,6 +166,7 @@ class NativeOutcomeTest(unittest.TestCase):
             report_path.write_text('{"score": 0.0, "num": 1}\n', encoding="utf-8")
             (log_dir / "eval_log.log").write_text(
                 "multiagent-native exited: sample=0 rc=3 wall=1.5s timed_out=False\n"
+                'multiagent-native runtime: sample=0 identity={"codex_version":"codex-cli 0.144.1","node_version":"v22.12.0"}\n'
                 "multiagent-native no-submission: sample=0 original_rc=3 reason=submission_gate_rejection\n",
                 encoding="utf-8",
             )
@@ -191,6 +193,10 @@ class NativeOutcomeTest(unittest.TestCase):
             self.assertEqual(payload["end_to_end_score"], 0.0)
             self.assertTrue(payload["official_verifier_evidence"])
             self.assertEqual(payload["native_runner"]["outcome_counts"]["no_submission"], 1)
+            self.assertEqual(
+                payload["native_runner"]["latest"]["runtime_identity"]["codex_version"],
+                "codex-cli 0.144.1",
+            )
 
     @staticmethod
     def _summary_args(root: Path, work_dir: Path) -> SimpleNamespace:

@@ -372,14 +372,13 @@ def find_evalscope_report(work_dir: Path, model_id: str) -> Path | None:
     return None
 
 
-def native_runner_summary(work_dir: Path) -> dict[str, Any] | None:
-    log_path = work_dir / "logs" / "eval_log.log"
-    if not log_path.exists():
-        return None
+def native_runner_summary_from_text(text: str) -> dict[str, Any] | None:
+    """Parse structured native-runner events from an EvalScope log."""
 
     exit_events: list[dict[str, Any]] = []
     no_submission_events: list[dict[str, Any]] = []
-    for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+    runtime_identities: dict[str, dict[str, Any]] = {}
+    for line in text.splitlines():
         match = re.search(
             r"multiagent-native exited: sample=(?P<sample>\S+) rc=(?P<rc>-?\d+) "
             r"wall=(?P<wall>[0-9.]+)s timed_out=(?P<timed_out>True|False)",
@@ -408,6 +407,18 @@ def native_runner_summary(work_dir: Path) -> dict[str, Any] | None:
                     "reason": no_submission.group("reason"),
                 }
             )
+            continue
+        runtime = re.search(
+            r"multiagent-native runtime: sample=(?P<sample>\S+) identity=(?P<identity>\{.*\})$",
+            line,
+        )
+        if runtime:
+            try:
+                identity = json.loads(runtime.group("identity"))
+            except json.JSONDecodeError:
+                continue
+            if isinstance(identity, dict):
+                runtime_identities[runtime.group("sample")] = identity
     if not exit_events:
         return None
 
@@ -425,7 +436,13 @@ def native_runner_summary(work_dir: Path) -> dict[str, Any] | None:
             outcome = "no_submission"
         else:
             outcome = "runner_error"
-        outcomes.append({**event, "outcome": outcome})
+        outcomes.append(
+            {
+                **event,
+                "outcome": outcome,
+                "runtime_identity": runtime_identities.get(event["sample"], {}),
+            }
+        )
     latest = outcomes[-1]
     clean = bool(outcomes) and all(event["outcome"] == "clean_patch" for event in outcomes)
     end_to_end_scored = bool(outcomes) and all(
@@ -435,6 +452,7 @@ def native_runner_summary(work_dir: Path) -> dict[str, Any] | None:
         "latest": latest,
         "all_exit_events": outcomes,
         "no_submission_events": no_submission_events,
+        "runtime_identities": runtime_identities,
         "outcome_counts": {
             name: sum(event["outcome"] == name for event in outcomes)
             for name in ("clean_patch", "no_submission", "runner_error")
@@ -445,6 +463,13 @@ def native_runner_summary(work_dir: Path) -> dict[str, Any] | None:
         "clean_native_completion": clean,
         "end_to_end_scored": end_to_end_scored,
     }
+
+
+def native_runner_summary(work_dir: Path) -> dict[str, Any] | None:
+    log_path = work_dir / "logs" / "eval_log.log"
+    if not log_path.exists():
+        return None
+    return native_runner_summary_from_text(log_path.read_text(encoding="utf-8", errors="replace"))
 
 
 def read_failure_artifact_text(work_dir: Path, run_result: dict[str, Any] | None, evalscope_report: dict[str, Any] | None) -> str:

@@ -20,6 +20,7 @@ from .swe_prod_contracts import (
     CODEX_HOME,
     CODEX_WRAPPER,
     RUNTIME_ROOT,
+    RUNTIME_IDENTITY_PATH,
     STATUS_PATH,
     TERMINAL_OUTCOME_PATH,
     env_truthy,
@@ -89,6 +90,26 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     cleanup_initial_environment_diff(workdir, start_head)
     RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
     TERMINAL_OUTCOME_PATH.unlink(missing_ok=True)
+    RUNTIME_IDENTITY_PATH.unlink(missing_ok=True)
+    codex_version_result = run([real_codex, "--version"], timeout=30)
+    if codex_version_result.returncode != 0:
+        raise RuntimeError(f"could not read Codex CLI version: {codex_version_result.stderr[-1000:]}")
+    node_path = str(Path(real_codex).with_name("node"))
+    if not Path(node_path).is_file():
+        node_path = shutil.which("node") or ""
+    node_version = ""
+    if node_path:
+        node_result = run([node_path, "--version"], timeout=30)
+        if node_result.returncode == 0:
+            node_version = (node_result.stdout or "").strip()
+    runtime_identity = {
+        "codex_version": (codex_version_result.stdout or "").strip(),
+        "node_version": node_version,
+    }
+    runtime_identity_tmp = RUNTIME_IDENTITY_PATH.with_name(RUNTIME_IDENTITY_PATH.name + ".tmp")
+    runtime_identity_tmp.write_text(json.dumps(runtime_identity, sort_keys=True), encoding="utf-8")
+    runtime_identity_tmp.replace(RUNTIME_IDENTITY_PATH)
+    log("runtime identity recorded: " + json.dumps(runtime_identity, sort_keys=True))
     write_codex_bridge(real_codex, os.environ.get("EVAL_NATIVE_SOLVER_MODEL", "gpt-5"), auth_mode)
     write_apply_patch_helper()
     write_rg_fallback()

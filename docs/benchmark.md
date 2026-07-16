@@ -190,13 +190,35 @@ python3 -m evaluation.swe_bench_pro \
   --persistent-cache-mode rw
 ```
 
-This is an exact solver/evaluator command, but it is not yet a publication-grade
-reproduction command. Before publishing a fresh score, the missing compact
-provenance boundary must bind clean solver/EvalScope/verifier commits, dataset
-hash, actual in-container Codex version, per-row base and baked image IDs, exact
-configuration, authoritative EvalScope report, native event log, and all result
-artifacts. It must recompute these facts from unique hash-bound artifacts rather
-than trust manifest booleans, and the evidence bundle must remain relocatable.
+After the run completes, capture a relocatable evidence bundle. The command
+fails if any source checkout is dirty, any row lacks official verifier/native
+outcome evidence, image identity is incomplete, runtime Codex/Node identity is
+missing, or the effective config used `ignore_errors`:
+
+```bash
+python3 -m evaluation.swe_bench_pro_provenance capture \
+  --bundle "$RUN_ROOT/provenance" \
+  --solver-repo "$SOLVER" \
+  --evalscope-repo /private/tmp/evalscope-v1.8.1 \
+  --swe-bench-pro-repo /private/tmp/swe-bench-pro-ca10a60 \
+  --summary "$RUN_ROOT/summary.json" \
+  --config-json "$RUN_ROOT/config.json" \
+  --config-yaml "$RUN_ROOT/config.yaml" \
+  --preflight "$RUN_ROOT/preflight.json" \
+  --image-status "$RUN_ROOT/images.json" \
+  --evalscope-report \
+    "$RUN_ROOT/work/reports/production-multiagent/swe_bench_pro.json" \
+  --eval-log "$RUN_ROOT/work/logs/eval_log.log"
+
+python3 -m evaluation.swe_bench_pro_provenance validate \
+  "$RUN_ROOT/provenance"
+```
+
+The generic framework module copies each required artifact to one fixed,
+kind-bound relative path and rejects duplicates, traversal, missing kinds, and
+hash mismatches. The SWE adapter then recomputes the sample selection, score,
+native outcomes, runtime versions, image IDs, platform, model, and solver-source
+digest from those bound artifacts. It does not trust manifest booleans.
 
 A production submission-gate rejection is an end-to-end solver miss, not a
 missing benchmark row. The production lifecycle must first publish a typed,
@@ -210,9 +232,10 @@ remain fail-closed instead of being guessed from prose or silently converted to
 zero.
 
 The command does not reproduce the tuned historical `36/50` aggregate by
-construction. The current image baker still requests unpinned `@openai/codex`,
-so bit-for-bit replay additionally requires preserving the derived images or
-changing the baker to install an explicit Codex package version.
+construction. The current image baker still requests unpinned `@openai/codex`;
+the bundle records the actual installed version and content-addressed derived
+image ID, but bit-for-bit replay additionally requires preserving the derived
+images or pinning the Codex package specification.
 
 ## Failure Analysis
 
