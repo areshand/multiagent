@@ -1,10 +1,11 @@
 """Focused tests for the framework contract boundary."""
 
 import ast
+import tempfile
 import unittest
 from pathlib import Path
 
-from multiagent_framework.coding import contracts
+from multiagent_framework.coding import contracts, outcomes
 from evaluation.native_solver import swe_prod_contracts
 
 
@@ -12,6 +13,23 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ContractFrameworkTest(unittest.TestCase):
+    def test_terminal_outcome_is_atomic_and_typed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "terminal-outcome.json"
+            payload = outcomes.publish_terminal_outcome(
+                path,
+                outcome=outcomes.SUBMISSION_GATE_REJECTION,
+                reason="final build gate rejected the patch",
+                blockers=["go test failed"],
+            )
+
+            self.assertEqual(outcomes.load_terminal_outcome(path), payload)
+            self.assertFalse(path.with_name(path.name + ".tmp").exists())
+            path.write_text('{"schema_version": 2, "outcome": "submission_gate_rejection"}')
+            self.assertEqual(outcomes.load_terminal_outcome(path), {})
+            with self.assertRaises(ValueError):
+                outcomes.publish_terminal_outcome(path, outcome="runner_error", reason="boom")
+
     def test_extracts_explicit_and_sentence_requirements(self):
         issue = (
             "Requirements:\n"

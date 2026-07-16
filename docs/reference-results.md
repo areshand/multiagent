@@ -5,9 +5,48 @@ It is intentionally a template, not a claim that a live agent run has happened.
 The built-in `--reference-report` command scores authored good/bad fixtures; it
 calibrates scorers but does **not** measure an agent or prove orchestration gains.
 
-## Pinned Reproduction Point
+## SWE Bench Pro Publication Gate
 
-The reference implementation inspected for this protocol is
+The historical `36/50` first-50 number is a cumulative tuned aggregate, not a
+single immutable run. Its recovered evidence and limitations are documented in
+[Benchmark And Provenance](benchmark.md). Do not convert it into a fresh-run or
+comparative claim.
+
+A new SWE Bench Pro claim is not publication-ready yet. The exact fresh-run
+command is documented in [Benchmark And Provenance](benchmark.md), but the
+compact automated provenance boundary remains an open OSS-readiness item. That
+boundary must require:
+
+| Evidence | Required proof |
+| --- | --- |
+| Source identity | Clean 40-character commits for solver, EvalScope, and SWE Bench Pro checkouts |
+| Runtime identity | EvalScope, Python, Git, Docker client/server, model, and auth mode without credential material |
+| Task images | Base and baked image IDs and manifest digests for every selected row |
+| Agent CLI | Actual in-container `codex-cli` version captured from every baked task image before pruning |
+| Configuration | Exact redacted command plus JSON/YAML config, row offset/count, platform, limits, and output paths |
+| Result artifacts | Summary, preflight, image status, stdout, and stderr files bound by SHA-256 |
+| Completion | Evaluation `rc=0`, completed summary, matching sample size, completed image status, and no missing image captures |
+
+The validator must reject dirty or changed checkouts, diagnostic scoring,
+duplicate or kind-mismatched artifact paths, stale summaries, missing
+authoritative reports, incomplete image records, and any manifest assertion it
+cannot recompute. No complete fresh first-50 provenance manifest is currently
+published. Because the task-image baker still installs unpinned
+`@openai/codex`, a complete manifest makes a run auditable but bit-for-bit replay
+also requires preserved derived images or a pinned Codex package specification.
+
+Do not publish raw EvalScope work directories, configs, predictions, reviews,
+HTML reports, container logs, prompts, traces, or copied image-build contexts.
+They can contain host paths, auth-file locations, benchmark gold/test data, and
+credential-shaped test fixtures even when they contain no live credential.
+Build any public result bundle from an explicit schema allowlist containing
+only run identity, aggregate/per-row outcome, failure category, patch digest,
+version/commit identity, resource settings, and image identity. Generated
+patches require a separate repository-license and secret review.
+
+## No-Agent Calibration Point
+
+The no-agent fixture implementation inspected for this protocol is
 `areshand/multiagent` at commit
 `f4e23920f6a519bc72790f66eaa8c7bb57804925` (2026-07-15). Reproduce the
 no-agent scorer checks from a clean checkout:
@@ -78,6 +117,12 @@ Publish or retain an access-controlled bundle with:
 | `cells/*/review.json` | named reviewer verdict and failure category |
 | `results.json`, `report.md` | generated row data and human-readable summary |
 | `SHA256SUMS` | digest of every published artifact |
+
+For SWE Bench Pro, the provenance `manifest.json` is the top-level index for the
+run-specific files above. Preserve the complete EvalScope work directory and
+per-row native solver logs alongside that manifest even when they are too large
+for Git. A manifest validates identity and required outputs; it does not replace
+the detailed traces needed for failure analysis.
 
 The pilot evidence schema is specified in
 `examples/internal-pilot/evidence.schema.json`. Redact credentials before

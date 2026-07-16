@@ -21,6 +21,8 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+from multiagent_framework.coding.outcomes import SUBMISSION_GATE_REJECTION_EXIT_CODE
+
 
 DEFAULT_REPORT_DIR = Path("evaluation/reports")
 DEFAULT_EVALSCOPE_PATH = Path("/private/tmp/evalscope_tmp")
@@ -47,7 +49,7 @@ COMPILE_FAILURE_PATTERNS = (
 )
 
 SUBMISSION_GATE_REJECTION_PATTERNS = (
-    "refusing to score rejected git diff",
+    "multiagent-native no-submission",
     "coverage blockers remain",
     "validation coverage gate remained unresolved",
     "final patch changes code, but submission lacks hash-bound build verification",
@@ -312,7 +314,7 @@ def build_preflight_report(args: argparse.Namespace, *, inspect_docker: bool) ->
     official_scaffold_ready = dataset_complete and run_scripts_complete
 
     return {
-        "generated_at": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
+        "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
         "benchmark": "swe-bench-pro",
         "swe_bench_pro_repo_path": str(args.swe_bench_pro_repo_path),
         "dataset_jsonl": str(args.swe_bench_pro_repo_path / "helper_code" / "sweap_eval_full_v2.jsonl"),
@@ -376,6 +378,7 @@ def native_runner_summary(work_dir: Path) -> dict[str, Any] | None:
         return None
 
     exit_events: list[dict[str, Any]] = []
+    no_submission_events: list[dict[str, Any]] = []
     for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
         match = re.search(
             r"multiagent-native exited: sample=(?P<sample>\S+) rc=(?P<rc>-?\d+) "
@@ -391,15 +394,56 @@ def native_runner_summary(work_dir: Path) -> dict[str, Any] | None:
                     "timed_out": match.group("timed_out") == "True",
                 }
             )
+            continue
+        no_submission = re.search(
+            r"multiagent-native no-submission: sample=(?P<sample>\S+) "
+            r"original_rc=(?P<rc>-?\d+) reason=(?P<reason>[a-z_]+)",
+            line,
+        )
+        if no_submission:
+            no_submission_events.append(
+                {
+                    "sample": no_submission.group("sample"),
+                    "returncode": int(no_submission.group("rc")),
+                    "reason": no_submission.group("reason"),
+                }
+            )
     if not exit_events:
         return None
 
-    latest = exit_events[-1] if exit_events else None
-    clean = bool(latest and latest["returncode"] == 0 and not latest["timed_out"])
+    no_submission_samples = {
+        event["sample"]
+        for event in no_submission_events
+        if event["returncode"] == SUBMISSION_GATE_REJECTION_EXIT_CODE
+        and event["reason"] == "submission_gate_rejection"
+    }
+    outcomes: list[dict[str, Any]] = []
+    for event in exit_events:
+        if event["returncode"] == 0 and not event["timed_out"]:
+            outcome = "clean_patch"
+        elif event["sample"] in no_submission_samples:
+            outcome = "no_submission"
+        else:
+            outcome = "runner_error"
+        outcomes.append({**event, "outcome": outcome})
+    latest = outcomes[-1]
+    clean = bool(outcomes) and all(event["outcome"] == "clean_patch" for event in outcomes)
+    end_to_end_scored = bool(outcomes) and all(
+        event["outcome"] in {"clean_patch", "no_submission"} for event in outcomes
+    )
     return {
         "latest": latest,
-        "all_exit_events": exit_events,
+        "all_exit_events": outcomes,
+        "no_submission_events": no_submission_events,
+        "outcome_counts": {
+            name: sum(event["outcome"] == name for event in outcomes)
+            for name in ("clean_patch", "no_submission", "runner_error")
+        },
+        "scored_outcome_count": sum(
+            event["outcome"] in {"clean_patch", "no_submission"} for event in outcomes
+        ),
         "clean_native_completion": clean,
+        "end_to_end_scored": end_to_end_scored,
     }
 
 
@@ -440,7 +484,10 @@ def failure_postmortem(
     native_clean = bool(native_summary and native_summary.get("clean_native_completion"))
     latest_native = native_summary.get("latest") if isinstance(native_summary, dict) else None
     native_returncode = latest_native.get("returncode") if isinstance(latest_native, dict) else None
-    native_rejected = bool(native_summary and not native_clean and submission_gate_markers)
+    no_submission_events = native_summary.get("no_submission_events") if isinstance(native_summary, dict) else None
+    latest_no_submission = no_submission_events[-1] if isinstance(no_submission_events, list) and no_submission_events else {}
+    no_submission_reason = latest_no_submission.get("reason") if isinstance(latest_no_submission, dict) else None
+    native_rejected = no_submission_reason == "submission_gate_rejection"
 
     if compile_markers and score == 0 and native_clean:
         return {
@@ -452,25 +499,24 @@ def failure_postmortem(
                 "A patch that fails compile/build must not reach the official verifier."
             ),
         }
-    if native_returncode == 124:
+    if native_returncode == 124 or no_submission_reason == "task_timeout":
         return {
             "category": "native_timeout_without_submission",
-            "root_cause": "terminal_state_gap",
+            "root_cause": "production_solver_timeout",
             "markers": submission_gate_markers[:4],
             "required_response": (
-                "Treat this as a production orchestration terminal-state failure. If repository-visible "
-                "validation passed, the native wrapper must either recover a machine-readable completed "
-                "status before timeout or write an explicit blocked status with remaining blockers."
+                "Do not infer a scored result from this ambiguous timeout. Inspect the production orchestration "
+                "trace, classify the terminal-state or process-lifecycle defect, and rerun the row."
             ),
         }
     if native_rejected:
         return {
             "category": "native_submission_gate_rejection",
-            "root_cause": "pre_official_acceptance_invariant_blocked_submission",
+            "root_cause": "production_solver_no_accepted_submission",
             "markers": submission_gate_markers[:4],
             "required_response": (
-                "Do not count this as an official solver miss. Inspect the blocked invariants, then fix the "
-                "orchestrator/verifier structured evidence or source patch before rerunning."
+                "Count this end-to-end task outcome as zero. Inspect whether the rejection came from the source "
+                "patch or verifier/orchestrator evidence plumbing, then fix the general root cause before rerunning."
             ),
         }
     if compile_markers and score == 0:
@@ -507,7 +553,13 @@ def summarize_result(
         sample_size = evalscope_report.get("num")
     native_summary = native_runner_summary(args.work_dir)
     native_clean = bool(native_summary and native_summary.get("clean_native_completion"))
+    native_scored = bool(
+        native_summary
+        and native_summary.get("end_to_end_scored")
+        and native_summary.get("scored_outcome_count") == sample_size
+    )
     clean_native_score = score if native_clean else None
+    end_to_end_score = score if native_scored else None
 
     postmortem = failure_postmortem(
         work_dir=args.work_dir,
@@ -538,7 +590,7 @@ def summarize_result(
         )
     official_ready = (
         status == "completed"
-        and native_clean
+        and native_scored
         and sample_size is not None
         and sample_size > 0
         and (sample_shard_enabled(args) or (args.limit is not None and args.limit >= 1))
@@ -547,7 +599,7 @@ def summarize_result(
     )
     full_official = (
         production_native
-        and native_clean
+        and native_scored
         and args.limit is None
         and not sample_shard_enabled(args)
         and official_scaffold_ready
@@ -567,6 +619,7 @@ def summarize_result(
         "status": status,
         "score": score,
         "clean_native_score": clean_native_score,
+        "end_to_end_score": end_to_end_score,
         "sample_size": sample_size,
         "official": full_official,
         "official_verifier_evidence": official_ready,
@@ -609,6 +662,7 @@ def summarize_result(
             "native_solver_source": str(args.native_solver_source),
             "native_codex_auth_mode": "chatgpt-auth-json",
             "native_codex_auth_container_home": args.native_codex_auth_container_home,
+            "no_submission_policy": "discard rejected diff and score clean workspace as zero",
         },
         "on_demand_image_status": (
             {
@@ -807,7 +861,7 @@ def main() -> int:
         print(f"wrote {args.preflight_output}")
         return 0
 
-    started_at = dt.datetime.now(dt.UTC)
+    started_at = dt.datetime.now(dt.timezone.utc)
     status = "completed"
     run_result: dict[str, Any] | None = None
     if args.summarize_only:
@@ -818,7 +872,7 @@ def main() -> int:
         except Exception as exc:
             status = "failed"
             run_result = {"error": repr(exc), "traceback": traceback.format_exc()}
-    completed_at = dt.datetime.now(dt.UTC)
+    completed_at = dt.datetime.now(dt.timezone.utc)
 
     evalscope_report_path = find_evalscope_report(args.work_dir, args.model_id)
     payload = summarize_result(

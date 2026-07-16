@@ -187,11 +187,11 @@ def main() -> int:
 
     processes = [subprocess.Popen(command) for command in commands]
     codes = [process.wait() for process in processes]
-    if not args.no_refresh_after:
-        refresh_aggregate(args)
     if any(code != 0 for code in codes):
         print(f"parallel shard failures: {codes}", file=sys.stderr)
         return 1
+    if not args.no_refresh_after:
+        refresh_aggregate(args)
     return 0
 
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -73,7 +74,23 @@ def report_matches(summary: dict[str, Any]) -> bool:
         return False
     if not summary.get("official_verifier_evidence"):
         return False
-    if not selected_indices(summary):
+    indices = selected_indices(summary)
+    if not indices:
+        return False
+    sample_size = summary.get("sample_size")
+    end_to_end_score = summary.get("end_to_end_score")
+    native_runner = summary.get("native_runner") or {}
+    if (
+        not isinstance(sample_size, int)
+        or isinstance(sample_size, bool)
+        or sample_size < 1
+        or not isinstance(end_to_end_score, (int, float))
+        or isinstance(end_to_end_score, bool)
+        or not math.isfinite(float(end_to_end_score))
+        or sample_size != len(indices)
+        or native_runner.get("end_to_end_scored") is not True
+        or native_runner.get("scored_outcome_count") != sample_size
+    ):
         return False
     agent_config = str((summary.get("parity") or {}).get("agent_config") or "")
     if agent_config != "external multiagent-native":
@@ -140,8 +157,8 @@ def aggregate(args: argparse.Namespace) -> dict[str, Any]:
                 }
             )
             continue
-        sample_size = int(summary.get("sample_size") or 0)
-        score = float(summary.get("score") or 0.0)
+        sample_size = int(summary["sample_size"])
+        score = float(summary["end_to_end_score"])
         weighted_score_sum += score * sample_size
         weighted_num_sum += sample_size
         for index in indices:
@@ -151,6 +168,7 @@ def aggregate(args: argparse.Namespace) -> dict[str, Any]:
                 "path": str(path),
                 "scope": summary.get("scope"),
                 "score": score,
+                "official_verifier_score": summary.get("score"),
                 "sample_size": sample_size,
                 "agent_config": (summary.get("parity") or {}).get("agent_config"),
                 "selected_indices": indices,
@@ -175,7 +193,7 @@ def aggregate(args: argparse.Namespace) -> dict[str, Any]:
     aggregate_score = None if weighted_num_sum == 0 else weighted_score_sum / weighted_num_sum
 
     return {
-        "generated_at": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
+        "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
         "benchmark": "swe-bench-pro",
         "swe_bench_pro_repo_path": str(args.swe_bench_pro_repo_path),
         "dockerhub_username": args.dockerhub_username,

@@ -49,13 +49,60 @@ itself establish an unbiased comparative model result.
   official verifier evidence was present, and official score was `1.0`.
   Rejected, timed-out, and diagnostic scored diffs were not counted as passes.
 
+The retained evaluator evidence resolves the following historical components:
+
+| Component | Recovered identity | Evidence strength |
+| --- | --- | --- |
+| EvalScope | Version `1.8.1`; tag commit [`fce1d21391dc2d7b45c9cf0edb9b9e40d526aed3`](https://github.com/modelscope/evalscope/commit/fce1d21391dc2d7b45c9cf0edb9b9e40d526aed3) | The logs record `evalscope_version: 1.8.1`. All 815 retained Python files were byte-identical to that tag; both sorted file-hash manifests produce SHA-256 `0bcef54377e85941a75bb7eb16e48af4b096d566d6621c227918cf4e79c29379`. |
+| SWE Bench Pro verifier source | Upstream commit [`ca10a60a5fcae51e6948ffe1485d4153d421e6c5`](https://github.com/scaleapi/SWE-bench_Pro-os/commit/ca10a60a5fcae51e6948ffe1485d4153d421e6c5) | All 3,060 retained `run_scripts` files were byte-identical to the corresponding files at that commit; their sorted file-hash manifest is `2e361238c59240d35976a5f78cd8ed41befd3ef23fbf9ede3c2102a21fbdefce`. |
+| Historical dataset copy | 731 rows in the same instance order; SHA-256 `b2d0824b443be47a55dc1ec47136676fdc8fb45b7292f2b578413c61b72067d3` | This was a transformed public JSONL, not a clean checkout file. The upstream `ca10a60` JSONL hash is `b5b2462bfbf5aeb2cb7ba7d215778a1768b85f9d7ad7f748546c7f80a0ad1510`. |
+| GitHub CI | PR checks only | PR 4 retained no Actions artifacts. The CI checks prove framework tests, not benchmark results. |
+
+The SWE Bench Pro tree used for the focused runs was therefore a derivative of
+`ca10a60`, not a clean checkout of it: 4,496 retained files matched, the JSONL
+was transformed, and 89 upstream files were absent. This distinction matters
+even though the retained official verifier scripts match byte for byte.
+
 The final three recoveries in the historical aggregate were:
 
-| Row | Repository | Baked solver commit | Run prefix | Native wall | Score |
+| Row | Repository | Solver commit | Model / auth | Native wall | Score |
 | ---: | --- | --- | --- | ---: | ---: |
-| 2 | NodeBB/NodeBB | [`d94100dd27e7dd77fa4f7f9a0517ae00a3094fb7`](https://github.com/areshand/multiagent/commit/d94100dd27e7dd77fa4f7f9a0517ae00a3094fb7) | `swe-bench-pro-prod-pr4-d941-fsm-w0-offset2-count1` | 1233.1s | 1.0 |
-| 14 | element-hq/element-web | [`11e8f4a96aa4dbc410ea7409e79746476cc1c188`](https://github.com/areshand/multiagent/commit/11e8f4a96aa4dbc410ea7409e79746476cc1c188) | `swe-bench-pro-prod-pr4-11e-fsm-offset14-count1` | 754.3s | 1.0 |
-| 38 | gravitational/teleport | [`a577eba6f7d275004e0eca0b8f459ec5c315f494`](https://github.com/areshand/multiagent/commit/a577eba6f7d275004e0eca0b8f459ec5c315f494) | `swe-bench-pro-prod-pr4-a577-verifier-wait-row38-gpt54` | 1425.5s | 1.0 |
+| 2 | NodeBB/NodeBB | [`d94100dd27e7dd77fa4f7f9a0517ae00a3094fb7`](https://github.com/areshand/multiagent/commit/d94100dd27e7dd77fa4f7f9a0517ae00a3094fb7) | `gpt-5` / `bridge` | 1233.1s | 1.0 |
+| 14 | element-hq/element-web | [`11e8f4a96aa4dbc410ea7409e79746476cc1c188`](https://github.com/areshand/multiagent/commit/11e8f4a96aa4dbc410ea7409e79746476cc1c188) | `gpt-5` / `bridge` | 754.3s | 1.0 |
+| 38 | gravitational/teleport | [`a577eba6f7d275004e0eca0b8f459ec5c315f494`](https://github.com/areshand/multiagent/commit/a577eba6f7d275004e0eca0b8f459ec5c315f494) | `gpt-5.4` / `chatgpt-auth-json` | 1425.5s | 1.0 |
+
+The three detailed configs, logs, summaries, and image-status files survive in
+the local ignored `evaluation/reports/` directory; they are not tracked by Git.
+The following concise log facts are reproduced here so the published document
+does not depend on those local paths:
+
+| Row | Native exit log | Retained summary |
+| ---: | --- | --- |
+| 2 | `2026-07-14 15:18:42 ... rc=0 wall=1233.1s timed_out=False` | `score=1.0`, `official_verifier_evidence=true` |
+| 14 | `2026-07-14 15:55:43 ... rc=0 wall=754.3s timed_out=False` | `score=1.0`, `official_verifier_evidence=true` |
+| 38 | `2026-07-15 06:52:08 ... rc=0 wall=1425.5s timed_out=False` | `score=1.0`, `official_verifier_evidence=true` |
+
+The surviving local image-status files contain these baked-image manifest-list
+digests:
+
+| Row | Run prefix | Baked image manifest digest |
+| ---: | --- | --- |
+| 2 | `swe-bench-pro-prod-pr4-d941-fsm-w0-offset2-count1` | `sha256:3dd143c85e5b093e410df9e7b44c5661cf0d07a0e89a91355f79b726c95705e2` |
+| 14 | `swe-bench-pro-prod-pr4-11e-fsm-offset14-count1` | `sha256:6792905509a50d7dd0711d3e13dad7d8725546c32bf4ac52b553ace4d9b1995f` |
+| 38 | `swe-bench-pro-prod-pr4-a577-verifier-wait-row38-gpt54` | `sha256:ffe220c85b2f16ee72e622ac23a36e3f4bc15a618954c9c9b2c28e4974ffaae9` |
+
+The surviving Docker daemon currently resolves the corresponding base tags as
+follows:
+
+| Row | Base image digest | Last tag time |
+| ---: | --- | --- |
+| 2 | `sha256:c8017caeba773aa6d61fc05f5751f09f97715dc4d262c08d963562aa6abadf02` | `2026-07-10T23:01:48Z` |
+| 14 | `sha256:0dac02327fe1fb1cb7d6a7c0745bff2d08af652ad274199e16e8a1326974ae0b` | `2026-07-06T22:38:00Z` |
+| 38 | `sha256:ca78c578e77038573f9624768cd9ef5f540edd194ccacf3ba438e9cfc3d9324f` | `2026-07-11T23:27:39Z` |
+
+Those timestamps predate the runs, but the digests were recovered after the
+fact and were not hash-bound into the historical run manifests. They are
+corroborating local evidence, not portable historical provenance.
 
 The earlier 33 passes were also accumulated across the run journal, not
 produced by the report commit in one batch. The journal is the authoritative
@@ -68,57 +115,67 @@ Independent build verification compiled both changed Go packages, independent
 behavior verification accepted the same hash, and the official verifier scored
 the patch `1.0`.
 
-The repository does not retain the raw EvalScope work directories, container
-logs, and official JSON for every historical focused rerun. The committed run
-journal is available, but those absent raw artifacts cannot be independently
-reconstructed from Git. A new run should retain the output paths listed below
-before publishing a comparative result.
+The historical aggregate still lacks a uniform model/auth configuration, the
+original shell command for every focused run, the in-container Codex CLI
+version, a run-time Docker version, base-image digests bound at execution time,
+and raw artifacts for every contributing pass. The runner installed unpinned
+`@openai/codex` into task images, so the missing historical CLI version cannot
+be inferred from the solver commit. These gaps prevent the `36/50` aggregate
+from being an independently reproducible single benchmark run.
 
-## Pinned Solver Fresh-Run Command
+## Fresh-Run Command
 
-The current production-only benchmark implementation was pinned at
+The production-only benchmark implementation was established at
 [`f4e23920f6a519bc72790f66eaa8c7bb57804925`](https://github.com/areshand/multiagent/commit/f4e23920f6a519bc72790f66eaa8c7bb57804925).
-That commit removed scaffold, proxy, noop, and alternate solver fallbacks. The
-following command evaluates official-order rows 0-49 from that exact solver
-source. It is a clean new run; it does not recreate the cumulative historical
-`36/50` by construction. The two external evaluator checkouts and task-image
-digests were not retained with the historical aggregate, so this is not a fully
-immutable reproduction until the operator pins and records them before launch.
+That commit removed scaffold, proxy, noop, and alternate solver fallbacks. Use a
+newer immutable commit containing the typed terminal-outcome contract described
+below, and record its full SHA rather than relying on a branch name.
 
 Prerequisites:
 
 - Docker with `linux/amd64` support and at least 20 GB available to the active
   task container;
 - at least 50 GB free disk for image and cache preflight;
-- EvalScope checkout at `/private/tmp/evalscope_tmp`;
-- SWE Bench Pro OS checkout at `/private/tmp/SWE-bench_Pro-os-complete`;
+- clean EvalScope checkout at commit `fce1d21391dc2d7b45c9cf0edb9b9e40d526aed3`;
+- clean SWE Bench Pro checkout at commit `ca10a60a5fcae51e6948ffe1485d4153d421e6c5`;
 - valid Codex auth at `$HOME/.codex/auth.json`;
 - Python dependencies required by EvalScope and SWE Bench Pro.
 
-Before launching, record and freeze both external checkout commits with
-`git -C PATH rev-parse HEAD`, require clean checkouts, and retain every resolved
-task image digest. A report without those values is a solver-pinned experiment,
-not a fully reproducible benchmark publication.
-
-Run from a clean clone:
+From a clean solver checkout, install EvalScope into an isolated environment and
+run the official-order first 50:
 
 ```bash
-git checkout --detach f4e23920f6a519bc72790f66eaa8c7bb57804925
-test "$(git rev-parse HEAD)" = "f4e23920f6a519bc72790f66eaa8c7bb57804925"
+git clone https://github.com/modelscope/evalscope.git /private/tmp/evalscope-v1.8.1
+git -C /private/tmp/evalscope-v1.8.1 checkout --detach \
+  fce1d21391dc2d7b45c9cf0edb9b9e40d526aed3
+git clone https://github.com/scaleapi/SWE-bench_Pro-os.git \
+  /private/tmp/swe-bench-pro-ca10a60
+git -C /private/tmp/swe-bench-pro-ca10a60 checkout --detach \
+  ca10a60a5fcae51e6948ffe1485d4153d421e6c5
+
+python3 -m venv /private/tmp/evalscope-v1.8.1-venv
+/private/tmp/evalscope-v1.8.1-venv/bin/pip install \
+  'evalscope[sandbox]==1.8.1'
+source /private/tmp/evalscope-v1.8.1-venv/bin/activate
+
+SOLVER="$PWD"
+RUN_ID="swe-bench-pro-$(git rev-parse --short=12 HEAD)-first50"
+RUN_ROOT="/private/tmp/$RUN_ID"
+test -z "$(git status --porcelain)"
 
 NATIVE_CODEX_AUTH_JSON="$HOME/.codex/auth.json" \
 python3 -m evaluation.swe_bench_pro \
-  --native-solver-source "$PWD" \
-  --evalscope-path /private/tmp/evalscope_tmp \
-  --swe-bench-pro-repo-path /private/tmp/SWE-bench_Pro-os-complete \
-  --work-dir /private/tmp/evalscope-swe-bench-pro-f4e2392-first50 \
-  --output evaluation/reports/swe-bench-pro-f4e2392-first50.json \
-  --config-json evaluation/reports/swe-bench-pro-f4e2392-first50-config.json \
-  --config-yaml evaluation/reports/swe-bench-pro-f4e2392-first50-config.yaml \
-  --preflight-output evaluation/reports/swe-bench-pro-f4e2392-first50-preflight.json \
-  --on-demand-image-status evaluation/reports/swe-bench-pro-f4e2392-first50-images.json \
-  --report-prefix swe-bench-pro-f4e2392-first50 \
-  --agent-model-name gpt-5 \
+  --native-solver-source "$SOLVER" \
+  --evalscope-path /private/tmp/evalscope-v1.8.1 \
+  --swe-bench-pro-repo-path /private/tmp/swe-bench-pro-ca10a60 \
+  --work-dir "$RUN_ROOT/work" \
+  --output "$RUN_ROOT/summary.json" \
+  --config-json "$RUN_ROOT/config.json" \
+  --config-yaml "$RUN_ROOT/config.yaml" \
+  --preflight-output "$RUN_ROOT/preflight.json" \
+  --on-demand-image-status "$RUN_ROOT/images.json" \
+  --report-prefix "$RUN_ID" \
+  --agent-model-name gpt-5.4 \
   --sample-offset 0 \
   --sample-count 50 \
   --eval-batch-size 1 \
@@ -129,23 +186,33 @@ python3 -m evaluation.swe_bench_pro \
   --eval-timeout 3600 \
   --seed 42 \
   --persistent-cache \
-  --persistent-cache-root /private/tmp/swe-bench-pro-persistent-cache-f4e2392 \
+  --persistent-cache-root "$RUN_ROOT/cache" \
   --persistent-cache-mode rw
 ```
 
-The command intentionally omits `--ignore-errors` and does not enable any
-diagnostic path that scores a native-gate-rejected or timed-out diff. Those
-diagnostic CLI options may exist for infrastructure investigation, but results
-produced through them must not be counted as production-solver passes.
+This is an exact solver/evaluator command, but it is not yet a publication-grade
+reproduction command. Before publishing a fresh score, the missing compact
+provenance boundary must bind clean solver/EvalScope/verifier commits, dataset
+hash, actual in-container Codex version, per-row base and baked image IDs, exact
+configuration, authoritative EvalScope report, native event log, and all result
+artifacts. It must recompute these facts from unique hash-bound artifacts rather
+than trust manifest booleans, and the evidence bundle must remain relocatable.
 
-Retain at minimum:
+A production submission-gate rejection is an end-to-end solver miss, not a
+missing benchmark row. The production lifecycle must first publish a typed,
+machine-readable `submission_gate_rejection` outcome and its dedicated exit
+code. The native runner then preserves diagnostics, resets the task checkout so
+the rejected diff cannot reach the verifier, and lets the official verifier
+score the resulting no-submission workspace. The summary records that row as
+`no_submission`; it stays in the denominator. Legacy `rc=2`, malformed or
+missing outcome evidence, timeouts, and process/container/evaluator failures
+remain fail-closed instead of being guessed from prose or silently converted to
+zero.
 
-- `evaluation/reports/swe-bench-pro-f4e2392-first50.json`;
-- the config, preflight, and image-status JSON files named above;
-- `/private/tmp/evalscope-swe-bench-pro-f4e2392-first50/reports/`;
-- per-row native solver logs and final diff hashes;
-- `git rev-parse HEAD`, Docker version, EvalScope commit, SWE Bench Pro commit,
-  model name, and run timestamps.
+The command does not reproduce the tuned historical `36/50` aggregate by
+construction. The current image baker still requests unpinned `@openai/codex`,
+so bit-for-bit replay additionally requires preserving the derived images or
+changing the baker to install an explicit Codex package version.
 
 ## Failure Analysis
 

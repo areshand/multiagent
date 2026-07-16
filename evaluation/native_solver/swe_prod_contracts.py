@@ -42,6 +42,7 @@ DEFAULT_MULTIAGENT_ROOT = Path("/opt/multiagent")
 DEFAULT_WORKDIR = Path("/app")
 RUNTIME_ROOT = Path("/tmp/multiagent-prod-swe")
 STATUS_PATH = RUNTIME_ROOT / "status.json"
+TERMINAL_OUTCOME_PATH = RUNTIME_ROOT / "terminal-outcome.json"
 HELPER_PROBE_PATH = RUNTIME_ROOT / "helper-validation-probe.txt"
 MULTI_VALUE_PROBE_PATH = RUNTIME_ROOT / "multi-value-probe.txt"
 STALE_VISIBLE_RECONCILIATION_PATH = RUNTIME_ROOT / "stale-visible-reconciliation.txt"

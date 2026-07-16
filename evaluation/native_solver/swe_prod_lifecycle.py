@@ -21,6 +21,7 @@ from .swe_prod_contracts import (
     CODEX_WRAPPER,
     RUNTIME_ROOT,
     STATUS_PATH,
+    TERMINAL_OUTCOME_PATH,
     env_truthy,
     log,
     read_prompt,
@@ -87,6 +88,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     _repository.ACTIVE_START_HEAD = start_head
     cleanup_initial_environment_diff(workdir, start_head)
     RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
+    TERMINAL_OUTCOME_PATH.unlink(missing_ok=True)
     write_codex_bridge(real_codex, os.environ.get("EVAL_NATIVE_SOLVER_MODEL", "gpt-5"), auth_mode)
     write_apply_patch_helper()
     write_rg_fallback()

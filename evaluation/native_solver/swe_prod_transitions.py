@@ -4,10 +4,17 @@ import json
 import time
 from pathlib import Path
 
+from multiagent_framework.coding.outcomes import (
+    SUBMISSION_GATE_REJECTION,
+    SUBMISSION_GATE_REJECTION_EXIT_CODE,
+    publish_terminal_outcome,
+)
+
 from .swe_prod_contracts import (
     HELPER_PROBE_PATH,
     RUNTIME_ROOT,
     STATUS_PATH,
+    TERMINAL_OUTCOME_PATH,
     log,
 )
 from .swe_prod_evidence import (
@@ -265,6 +272,7 @@ def handle_completed_status(
         STATUS_PATH.write_text(json.dumps(current_status), encoding="utf-8")
         progress.exit_code = 2
         progress.outcome = "blocked"
+        progress.terminal_outcome = SUBMISSION_GATE_REJECTION
         return "break"
     if blockers:
         progress.coverage_gate_unresolved = True
@@ -277,6 +285,7 @@ def handle_completed_status(
         STATUS_PATH.write_text(json.dumps(current_status), encoding="utf-8")
         progress.exit_code = 2
         progress.outcome = "blocked"
+        progress.terminal_outcome = SUBMISSION_GATE_REJECTION
         return "break"
     # Persist the exact enriched object that passed the gate. The
     # orchestrator's older status may not contain durable verifier
@@ -578,6 +587,7 @@ def finalize_solver_run(
             )
             progress.exit_code = 2
             progress.outcome = "blocked"
+            progress.terminal_outcome = SUBMISSION_GATE_REJECTION
     if progress.exit_code != 0 and final_diff.strip():
         final_status = status()
         final_state = str(final_status.get("status", "")).lower()
@@ -748,4 +758,16 @@ def finalize_solver_run(
     log(f"final /app diff bytes={len(final_diff.encode('utf-8'))}")
     if progress.exit_code != 0:
         emit_failure_diagnostics(session)
+        if progress.terminal_outcome == SUBMISSION_GATE_REJECTION:
+            final_status = status()
+            raw_blockers = final_status.get("blockers")
+            blockers = raw_blockers if isinstance(raw_blockers, list) else []
+            publish_terminal_outcome(
+                TERMINAL_OUTCOME_PATH,
+                outcome=SUBMISSION_GATE_REJECTION,
+                reason=str(final_status.get("reason") or "production submission gate rejected the final patch"),
+                blockers=[str(blocker) for blocker in blockers],
+            )
+            log("terminal outcome: submission_gate_rejection")
+            return SUBMISSION_GATE_REJECTION_EXIT_CODE
     return progress.exit_code

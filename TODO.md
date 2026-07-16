@@ -15,10 +15,17 @@ Position the project as:
 ### Reference Implementation
 
 - [x] Keep `areshand/multiagent` as the reference implementation.
-- [ ] Document an exact benchmark command and commit.
-- [ ] Publish a concise result table, relevant logs, and failure analysis.
+- [x] Document an exact benchmark command and commit.
+- [x] Publish a concise result table, relevant log facts, and failure analysis,
+  while labeling the historical `36/50` as a tuned cumulative aggregate rather
+  than a reproducible single run.
 - [x] Add an architecture diagram and a three-minute demonstration.
 - [x] Prioritize orchestration, evaluation, and runtime rigor over UI work.
+- [x] Preserve the benchmark denominator when the production solver rejects its
+  own patch through a typed production-owned terminal outcome: discard the
+  rejected diff, score an explicit no-submission workspace through the official
+  verifier, and keep ambiguous exits, timeouts, and runner/infra failures
+  fail-closed.
 
 ### Framework Contract Boundary
 
@@ -65,8 +72,10 @@ Position the project as:
   regression harness to SWE-agent or OpenHands.
 - [x] Propose a minimal external coding-agent worker adapter to opencode or the
   Claude/Codex CLI ecosystem.
-- [ ] Extract diff-hash binding, tool-execution audit, or permission/evidence
-  gates for relevant security and runtime projects.
+- [x] Extract diff-hash binding, tool-execution audit, or permission/evidence
+  gates for relevant security and runtime projects. The focused OpenHands SDK
+  draft PR links tool spans to persisted action/observation events without
+  requiring adoption of this framework.
 - [x] Keep each upstream contribution independently reviewable and mergeable.
 
 ### Technical Note

@@ -46,6 +46,7 @@ class LifecycleProgress:
     adapter_helper_advisory_logs: set[str] = field(default_factory=set)
     exit_code: int = 0
     outcome: str = "timeout"
+    terminal_outcome: str = ""
 
 
 @dataclass(frozen=True)

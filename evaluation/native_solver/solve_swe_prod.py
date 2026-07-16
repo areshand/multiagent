@@ -67,6 +67,7 @@ _COMPATIBLE_OVERRIDES = {
     "STABLE_APPLY_PATCH",
     "STALE_VISIBLE_RECONCILIATION_PATH",
     "STATUS_PATH",
+    "TERMINAL_OUTCOME_PATH",
     "coverage_probe_commands",
     "git_diff",
     "run",

@@ -933,12 +933,18 @@ assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "h
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "git diff --stat HEAD --"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "diagnostics_tail"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "final-native-stderr"
+assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "multiagent-native no-submission"
+assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "git reset --hard HEAD && git clean -fd"
+assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "SUBMISSION_GATE_REJECTION_EXIT_CODE"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_transitions.py" "publish_terminal_outcome"
+assert_file_contains "$ROOT/evaluation/swe_bench_pro.py" '"end_to_end_score"'
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "production multiagent solver crashed before reaching a terminal state"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "solver_internal_timeout"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "EVAL_NATIVE_SOLVER_TIMEOUT_RESERVE"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "python3 -m evaluation.native_solver.solve_swe_prod"
 PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 "$ROOT/tests/test_contracts.py"
 PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 "$ROOT/tests/test_native_solver_import_model.py"
+PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 "$ROOT/tests/test_swe_outcomes.py"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "multiagent-native requires runtime Codex auth JSON"
 assert_file_not_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" '"OPENAI_API_KEY": bridge.trial_token'
 assert_file_not_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" '"OPENAI_BASE_URL": f"{bridge.base_url}'
@@ -2144,6 +2150,7 @@ with tempfile.TemporaryDirectory() as td:
     )
     assert payload["score"] == 1.0, json.dumps(payload, indent=2)
     assert payload["clean_native_score"] == 1.0, json.dumps(payload, indent=2)
+    assert payload["end_to_end_score"] == 1.0, json.dumps(payload, indent=2)
     assert payload["native_runner"]["latest"]["returncode"] == 0, payload["native_runner"]
     assert payload["native_runner"]["clean_native_completion"], payload["native_runner"]
     (log_dir / "eval_log.log").unlink()
@@ -3752,7 +3759,7 @@ with tempfile.TemporaryDirectory() as td:
     assert compile_postmortem and compile_postmortem["category"] == "official_compile_failure", compile_postmortem
 
     (postmortem_root / "logs" / "eval_log.log").write_text(
-        "multiagent-native exited with code 2; refusing to score rejected git diff: "
+        "multiagent-native no-submission: sample=0 original_rc=3 reason=submission_gate_rejection "
         "final patch changes code, but submission lacks hash-bound build verification\n",
         encoding="utf-8",
     )
@@ -3761,7 +3768,12 @@ with tempfile.TemporaryDirectory() as td:
         run_result={"status": "completed"},
         evalscope_report=None,
         score=None,
-        native_summary={"clean_native_completion": False},
+        native_summary={
+            "clean_native_completion": False,
+            "no_submission_events": [
+                {"sample": "0", "returncode": 3, "reason": "submission_gate_rejection"}
+            ],
+        },
     )
     assert gate_postmortem and gate_postmortem["category"] == "native_submission_gate_rejection", gate_postmortem
     timeout_postmortem = swe_bench_pro.failure_postmortem(

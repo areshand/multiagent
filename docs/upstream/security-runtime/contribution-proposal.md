@@ -1,5 +1,18 @@
 # Proposal: portable security and runtime evidence gates for agent runners
 
+## Upstream status
+
+A first independently reviewable extraction is open as
+[OpenHands SDK draft PR #4131](https://github.com/OpenHands/software-agent-sdk/pull/4131).
+It does not attempt to land this whole proposal. It adds `action_event_id` to
+the SDK's existing tool-span metadata and verifies that the ID correlates the
+span with persisted `ActionEvent` and `ObservationEvent` records. This is the
+smallest useful tool-execution audit primitive found in the target project.
+
+The PR is still a draft. It must not be described as upstream acceptance or as
+implementing diff-hash binding, permission enforcement, or the full decision
+schema below.
+
 ## Summary
 
 Add an opt-in submission-gate library or runner module with four independently

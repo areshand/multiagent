@@ -1,10 +1,14 @@
-# Issue draft for `anomalyco/opencode`: external agent adapter
+# Posted issue for `anomalyco/opencode`: external agent adapter
 
 ## Proposed title
 
-Design feedback: capability-based external CLI agent adapter and conformance tests
+[FEATURE]: Capability-based external CLI agent adapter and conformance tests
 
-## Enhancement
+## Required Feature Verification
+
+- [x] I have verified this feature I'm about to request hasn't been suggested before.
+
+## Describe The Enhancement
 
 Add an opt-in, process-based external-agent adapter to the current
 `anomalyco/opencode` ecosystem, subject to maintainer confirmation of the proper
