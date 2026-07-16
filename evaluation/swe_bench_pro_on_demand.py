@@ -36,7 +36,6 @@ class OnDemandImageManager:
         backoff_s: int,
         min_free_gb: float,
         prune_after_sample: bool,
-        bake_native_solver: bool = False,
         native_solver_source: Path | None = None,
     ) -> None:
         self.archive_dir = archive_dir
@@ -47,7 +46,6 @@ class OnDemandImageManager:
         self.backoff_s = backoff_s
         self.min_free_gb = min_free_gb
         self.prune_after_sample = prune_after_sample
-        self.bake_native_solver = bake_native_solver
         self.native_solver_source = native_solver_source or Path(__file__).resolve().parents[1]
         self.records: list[dict[str, Any]] = []
         self.counts = {
@@ -73,8 +71,8 @@ class OnDemandImageManager:
                     "platform": self.platform,
                     "min_free_gb": self.min_free_gb,
                     "prune_after_sample": self.prune_after_sample,
-                    "bake_native_solver": self.bake_native_solver,
-                    "native_solver_source": str(self.native_solver_source) if self.bake_native_solver else None,
+                    "bake_native_solver": True,
+                    "native_solver_source": str(self.native_solver_source),
                     "counts": self.counts,
                     "records": self.records,
                 },
@@ -138,23 +136,6 @@ class OnDemandImageManager:
         return f"multiagent-native-swe:{safe}-{fingerprint}"
 
     def _native_solver_fingerprint(self) -> str:
-        if self.native_solver_source.is_file():
-            parts: list[str] = []
-            source_root = self.native_solver_source.parent
-            for path in self._native_solver_file_bundle():
-                stat = path.stat()
-                parts.append(
-                    f"{path.relative_to(source_root)}:{stat.st_mtime_ns:x}:{stat.st_size:x}"
-                )
-            framework_root = source_root.parents[1]
-            for path in self._framework_file_bundle():
-                stat = path.stat()
-                parts.append(
-                    f"{path.relative_to(framework_root)}:{stat.st_mtime_ns:x}:{stat.st_size:x}"
-                )
-            import hashlib
-
-            return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:16]
         parts: list[str] = []
         for path in sorted(self.native_solver_source.rglob("*")):
             if not path.is_file():
@@ -167,34 +148,6 @@ class OnDemandImageManager:
         import hashlib
 
         return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:16]
-
-    def _native_solver_file_bundle(self) -> list[Path]:
-        """Return every file required by a standalone production entrypoint."""
-
-        source = self.native_solver_source.resolve()
-        bundle = [source]
-        if source.name != "solve_swe_prod.py":
-            return bundle
-        bundle.extend(
-            path
-            for path in sorted(source.parent.glob("swe_prod_*.py"))
-            if path.resolve() != source
-        )
-        template_dir = source.parent / "templates"
-        if template_dir.is_dir():
-            bundle.extend(path for path in sorted(template_dir.rglob("*")) if path.is_file())
-        return bundle
-
-    def _framework_file_bundle(self) -> list[Path]:
-        """Return reusable framework modules needed by a standalone solver."""
-
-        source = self.native_solver_source.resolve()
-        if not source.is_file() or source.name != "solve_swe_prod.py":
-            return []
-        framework_dir = source.parents[2] / "multiagent_framework"
-        if not framework_dir.is_dir():
-            raise RuntimeError(f"production native solver requires framework runtime: {framework_dir}")
-        return [path for path in sorted(framework_dir.rglob("*")) if path.is_file()]
 
     @staticmethod
     def _skip_repo_bake_path(path: Path) -> bool:
@@ -229,32 +182,6 @@ class OnDemandImageManager:
         return False
 
     def _copy_native_solver_source(self, context_dir: Path) -> tuple[list[str], str]:
-        if self.native_solver_source.is_file():
-            source = self.native_solver_source.resolve()
-            source_root = source.parent
-            standalone_dir = context_dir / "standalone-native"
-            if standalone_dir.exists():
-                shutil.rmtree(standalone_dir)
-            standalone_dir.mkdir()
-            for path in self._native_solver_file_bundle():
-                relative = path.relative_to(source_root)
-                target = standalone_dir / ("solve_swe.py" if path == source else relative)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(path, target)
-            framework_root = source_root.parents[1]
-            for path in self._framework_file_bundle():
-                target = standalone_dir / path.relative_to(framework_root)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(path, target)
-            package_hint = self.native_solver_source.name
-            return (
-                [
-                    "COPY standalone-native/ /opt/multiagent/",
-                    "RUN chmod +x /opt/multiagent/solve_swe.py",
-                ],
-                package_hint,
-            )
-
         source_root = self.native_solver_source.resolve()
         if not (source_root / "launch.sh").exists():
             raise RuntimeError(
@@ -279,15 +206,12 @@ class OnDemandImageManager:
             [
                 "COPY multiagent/ /opt/multiagent/",
                 "RUN chmod +x /opt/multiagent/launch.sh /opt/multiagent/bin/*.sh "
-                "/opt/multiagent/evaluation/native_solver/solve_swe_prod.py && "
-                "ln -sf /opt/multiagent/evaluation/native_solver/solve_swe_prod.py /opt/multiagent/solve_swe.py",
+                "/opt/multiagent/evaluation/native_solver/solve_swe_prod.py",
             ],
             "solve_swe_prod.py",
         )
 
     def _ensure_baked_image(self, image: str, instance_id: str) -> str:
-        if not self.bake_native_solver:
-            return image
         if not self.native_solver_source.exists():
             self.counts["bake_failed"] += 1
             self.records.append(

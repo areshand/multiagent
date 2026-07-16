@@ -936,6 +936,27 @@ assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "f
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "production multiagent solver crashed before reaching a terminal state"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "solver_internal_timeout"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "EVAL_NATIVE_SOLVER_TIMEOUT_RESERVE"
+assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "/opt/multiagent/evaluation/native_solver/solve_swe_prod.py"
+assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "multiagent-native requires runtime Codex auth JSON"
+assert_file_not_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" '"OPENAI_API_KEY": bridge.trial_token'
+assert_file_not_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" '"OPENAI_BASE_URL": f"{bridge.base_url}'
+assert_file_not_contains "$ROOT/evaluation/swe_bench_pro.py" "--native-solver-command"
+assert_file_contains "$ROOT/evaluation/README.md" "There is one supported SWE Bench Pro implementation"
+for obsolete_eval_path in \
+  "$ROOT/evaluation/evalscope_codex_devnull_runner.py" \
+  "$ROOT/evaluation/evalscope_noop_runner.py" \
+  "$ROOT/evaluation/native_solver/solve_swe.py" \
+  "$ROOT/evaluation/native_solver/solve_swe_tmux.py" \
+  "$ROOT/evaluation/openai_codex_proxy.py" \
+  "$ROOT/evaluation/swe_bench_pro_direct.py" \
+  "$ROOT/evaluation/swe_bench_pro_run_next_shard.py" \
+  "$ROOT/evaluation/swe_bench_pro_scaffold_parity.py"
+do
+  [[ ! -e "$obsolete_eval_path" ]] || {
+    echo "obsolete SWE evaluation path was reintroduced: $obsolete_eval_path" >&2
+    exit 1
+  }
+done
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_contracts.py" "Never gate production solving on official expected-test metadata"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_contracts.py" "public solver inputs"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_lifecycle.py" "solver metadata is public-only"
@@ -988,10 +1009,9 @@ from types import SimpleNamespace
 root = Path(sys.argv[1])
 sys.path.insert(0, str(root))
 from evaluation.native_solver import solve_swe_prod
-from evaluation import swe_bench_pro_scaffold_parity
+from evaluation import swe_bench_pro
 from evaluation.swe_bench_pro_on_demand import OnDemandImageManager
 from evaluation import swe_bench_pro_run_parallel_shards
-from evaluation import swe_bench_pro_run_next_shard
 from multiagent_framework import AtomicStatusStore, RepositorySnapshot
 from multiagent_framework import build_verification_has_evidence as framework_build_evidence
 from multiagent_framework import structured_repair_gate_blockers as framework_gate_blockers
@@ -1236,7 +1256,7 @@ sys.modules["evalscope.utils.logger"] = SimpleNamespace(
     get_logger=lambda: SimpleNamespace(info=lambda *args, **kwargs: None, warning=lambda *args, **kwargs: None)
 )
 from evaluation import evalscope_multiagent_native_runner
-from evaluation import swe_bench_pro_scaffold_parity
+from evaluation import swe_bench_pro
 
 assert evalscope_multiagent_native_runner.solver_internal_timeout(3600) == 3000
 os.environ["EVAL_NATIVE_SOLVER_TIMEOUT_RESERVE"] = "900"
@@ -2072,8 +2092,7 @@ with tempfile.TemporaryDirectory() as td:
     report_path = report_dir / "swe_bench_pro.json"
     report_path.write_text('{"score": 1.0, "num": 1}\n', encoding="utf-8")
     (log_dir / "eval_log.log").write_text(
-        "2026-07-11 12:15:01 - evalscope - INFO: multiagent-native exited: sample=0 rc=2 wall=2074.8s timed_out=False\n"
-        "2026-07-11 12:15:01 - evalscope - WARNING: multiagent-native exited with code 2; scoring current git diff by explicit config\n",
+        "2026-07-11 12:15:01 - evalscope - INFO: multiagent-native exited: sample=0 rc=0 wall=2074.8s timed_out=False\n",
         encoding="utf-8",
     )
     args = SimpleNamespace(
@@ -2092,7 +2111,6 @@ with tempfile.TemporaryDirectory() as td:
         command_timeout=60.0,
         agent_timeout=3600.0,
         eval_timeout=3600,
-        no_auto_install=False,
         agent_model_name="gpt-5",
         agent_working_dir="/app",
         on_demand_prune_after_sample=False,
@@ -2100,12 +2118,9 @@ with tempfile.TemporaryDirectory() as td:
         persistent_cache=False,
         persistent_cache_root=Path("/tmp/cache"),
         persistent_cache_mode="rw",
-        bake_native_solver=True,
         native_solver_source=root,
         native_codex_auth_json="",
         native_codex_auth_container_home="/root/.codex-multiagent-prod",
-        score_failed_native_diff=True,
-        score_timed_out_native_diff=False,
     )
     config = {
         "agent_config": {"mode": "external", "framework": "multiagent-native"},
@@ -2115,21 +2130,33 @@ with tempfile.TemporaryDirectory() as td:
             }
         },
     }
-    payload = swe_bench_pro_scaffold_parity.summarize_result(
+    payload = swe_bench_pro.summarize_result(
         args=args,
         config=config,
         run_result={"status": "completed"},
         evalscope_report_path=report_path,
         preflight={"official_scaffold_ready": True, "official_image_set_ready": False},
-        started_at=swe_bench_pro_scaffold_parity.dt.datetime.now(swe_bench_pro_scaffold_parity.dt.UTC),
-        completed_at=swe_bench_pro_scaffold_parity.dt.datetime.now(swe_bench_pro_scaffold_parity.dt.UTC),
+        started_at=swe_bench_pro.dt.datetime.now(swe_bench_pro.dt.UTC),
+        completed_at=swe_bench_pro.dt.datetime.now(swe_bench_pro.dt.UTC),
         status="completed",
     )
     assert payload["score"] == 1.0, json.dumps(payload, indent=2)
-    assert payload["clean_native_score"] is None, json.dumps(payload, indent=2)
-    assert payload["diagnostic_score"] == 1.0, json.dumps(payload, indent=2)
-    assert payload["native_runner"]["latest"]["returncode"] == 2, payload["native_runner"]
-    assert payload["native_runner"]["diagnostic_scored_diff"], payload["native_runner"]
+    assert payload["clean_native_score"] == 1.0, json.dumps(payload, indent=2)
+    assert payload["native_runner"]["latest"]["returncode"] == 0, payload["native_runner"]
+    assert payload["native_runner"]["clean_native_completion"], payload["native_runner"]
+    (log_dir / "eval_log.log").unlink()
+    missing_native_payload = swe_bench_pro.summarize_result(
+        args=args,
+        config=config,
+        run_result={"status": "summarized-existing-work-dir"},
+        evalscope_report_path=report_path,
+        preflight={"official_scaffold_ready": True, "official_image_set_ready": False},
+        started_at=swe_bench_pro.dt.datetime.now(swe_bench_pro.dt.UTC),
+        completed_at=swe_bench_pro.dt.datetime.now(swe_bench_pro.dt.UTC),
+        status="completed",
+    )
+    assert missing_native_payload["clean_native_score"] is None, missing_native_payload
+    assert not missing_native_payload["official_verifier_evidence"], missing_native_payload
 
 public_metadata = evalscope_multiagent_native_runner._public_solver_metadata(
     {
@@ -2329,7 +2356,7 @@ for excluded in (
     "evaluation/README.md",
     "evaluation/reports/prior-run.json",
     "evaluation/runs/prior-run/results.json",
-    "evaluation/swe_bench_pro_scaffold_parity.py",
+    "evaluation/swe_bench_pro.py",
     "README.md",
     "docs/write-policy.paths",
     "permission-investigation.md",
@@ -2364,47 +2391,27 @@ for included in (
     assert not OnDemandImageManager._skip_repo_bake_path(Path(included)), included
 
 with tempfile.TemporaryDirectory() as td:
-    standalone_context = Path(td)
-    standalone_manager = OnDemandImageManager(
-        archive_dir=standalone_context,
-        status_path=standalone_context / "status.json",
+    bake_context = Path(td)
+    production_manager = OnDemandImageManager(
+        archive_dir=bake_context,
+        status_path=bake_context / "status.json",
         platform="linux/amd64",
         image_timeout=60,
         retries=1,
         backoff_s=0,
         min_free_gb=0,
         prune_after_sample=False,
-        bake_native_solver=True,
-        native_solver_source=root / "evaluation/native_solver/solve_swe_prod.py",
+        native_solver_source=root,
     )
-    bundle_names = {
-        str(path.relative_to(root / "evaluation/native_solver"))
-        for path in standalone_manager._native_solver_file_bundle()
-    }
-    assert "swe_prod_lifecycle.py" in bundle_names, bundle_names
-    assert "swe_prod_validation.py" in bundle_names, bundle_names
-    assert "templates/swe_autonomous_appendix.md" in bundle_names, bundle_names
-    framework_bundle_names = {
-        str(path.relative_to(root))
-        for path in standalone_manager._framework_file_bundle()
-    }
-    assert "multiagent_framework/snapshot.py" in framework_bundle_names, framework_bundle_names
-    assert "multiagent_framework/coding/guardrails.py" in framework_bundle_names, framework_bundle_names
-    docker_lines, package_hint = standalone_manager._copy_native_solver_source(standalone_context)
+    docker_lines, package_hint = production_manager._copy_native_solver_source(bake_context)
     assert package_hint == "solve_swe_prod.py", package_hint
-    assert docker_lines[0] == "COPY standalone-native/ /opt/multiagent/", docker_lines
-    assert (standalone_context / "standalone-native/solve_swe.py").is_file()
-    assert (standalone_context / "standalone-native/swe_prod_lifecycle.py").is_file()
-    assert (standalone_context / "standalone-native/templates/swe_autonomous_appendix.md").is_file()
-    assert (standalone_context / "standalone-native/multiagent_framework/verification.py").is_file()
-    standalone_help = subprocess.run(
-        [sys.executable, str(standalone_context / "standalone-native/solve_swe.py"), "--help"],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    assert standalone_help.returncode == 0, standalone_help.stderr
-    assert "--multiagent-root" in standalone_help.stdout, standalone_help.stdout
+    assert docker_lines[0] == "COPY multiagent/ /opt/multiagent/", docker_lines
+    baked_root = bake_context / "multiagent"
+    assert (baked_root / "launch.sh").is_file()
+    assert (baked_root / "evaluation/native_solver/solve_swe_prod.py").is_file()
+    assert (baked_root / "multiagent_framework/verification.py").is_file()
+    assert not (baked_root / "evaluation/swe_bench_pro.py").exists()
+    assert not (baked_root / "tests").exists()
 
 with tempfile.TemporaryDirectory() as td:
     repo = Path(td)
@@ -3731,7 +3738,7 @@ with tempfile.TemporaryDirectory() as td:
         "official verifier: undefined: req.Request\nFAIL pkg [build failed]\n",
         encoding="utf-8",
     )
-    compile_postmortem = swe_bench_pro_scaffold_parity.failure_postmortem(
+    compile_postmortem = swe_bench_pro.failure_postmortem(
         work_dir=postmortem_root,
         run_result={"status": "completed"},
         evalscope_report={"score": 0.0},
@@ -3745,7 +3752,7 @@ with tempfile.TemporaryDirectory() as td:
         "final patch changes code, but submission lacks hash-bound build verification\n",
         encoding="utf-8",
     )
-    gate_postmortem = swe_bench_pro_scaffold_parity.failure_postmortem(
+    gate_postmortem = swe_bench_pro.failure_postmortem(
         work_dir=postmortem_root,
         run_result={"status": "completed"},
         evalscope_report=None,
@@ -3753,7 +3760,7 @@ with tempfile.TemporaryDirectory() as td:
         native_summary={"clean_native_completion": False},
     )
     assert gate_postmortem and gate_postmortem["category"] == "native_submission_gate_rejection", gate_postmortem
-    timeout_postmortem = swe_bench_pro_scaffold_parity.failure_postmortem(
+    timeout_postmortem = swe_bench_pro.failure_postmortem(
         work_dir=postmortem_root,
         run_result={"status": "completed"},
         evalscope_report=None,
@@ -4725,77 +4732,12 @@ with tempfile.TemporaryDirectory() as td:
         else:
             os.environ["EVAL_VALIDATION_PROBE_TIMEOUT"] = old_timeout
 
-with tempfile.TemporaryDirectory() as td:
-    aggregate_json = Path(td) / "aggregate.json"
-    aggregate_json.write_text("{}", encoding="utf-8")
-    dry_run = subprocess.check_output(
-        [
-            sys.executable,
-            "-m",
-            "evaluation.swe_bench_pro_run_next_shard",
-            "--aggregate-json",
-            str(aggregate_json),
-            "--no-refresh-before",
-            "--no-refresh-after",
-            "--skip-scaffold-audit",
-            "--sample-offset",
-            "58",
-            "--sample-count",
-            "1",
-            "--memory-limit",
-            "16g",
-            "--cpu-limit",
-            "2",
-            "--dry-run",
-        ],
-        cwd=root,
-        text=True,
-    )
-    assert "--memory-limit 16g" in dry_run, dry_run
-    assert "--cpu-limit 2" in dry_run, dry_run
-
-assert swe_bench_pro_run_next_shard.effective_proxy_timeout(
-    SimpleNamespace(
-        proxy_timeout=1800,
-        agent_timeout=3600.0,
-        agent_framework="multiagent-native",
-    )
-) == 3720
-assert swe_bench_pro_run_next_shard.effective_proxy_timeout(
-    SimpleNamespace(
-        proxy_timeout=1800,
-        agent_timeout=3600.0,
-        agent_framework="codex-devnull",
-    )
-) == 1800
-
-captured_refresh_commands = []
-old_run_next_checked = swe_bench_pro_run_next_shard.run_checked
-try:
-    swe_bench_pro_run_next_shard.run_checked = lambda cmd, *, cwd: captured_refresh_commands.append(cmd)
-    swe_bench_pro_run_next_shard.refresh_aggregate(
-        SimpleNamespace(
-            aggregate_json=Path("agg.json"),
-            aggregate_report=Path("agg.md"),
-            shard_size=10,
-            agent_framework="multiagent-native",
-            aggregate_reports=[],
-            swe_bench_pro_repo_path=Path("/tmp/public-swe-pro"),
-        ),
-        cwd=root,
-    )
-finally:
-    swe_bench_pro_run_next_shard.run_checked = old_run_next_checked
-assert captured_refresh_commands, "refresh_aggregate did not invoke run_checked"
-refresh_command = " ".join(str(part) for part in captured_refresh_commands[0])
-assert "--swe-bench-pro-repo-path /tmp/public-swe-pro" in refresh_command, refresh_command
-
 parallel_cmd = swe_bench_pro_run_parallel_shards.build_worker_command(
     SimpleNamespace(
-        proxy_port_base=9300,
         report_prefix_template="prefix-w{worker}-offset{offset}-count{count}",
+        report_dir=Path("/tmp/reports"),
+        work_root=Path("/tmp/work"),
         shard_size=1,
-        agent_framework="multiagent-native",
         agent_model_name="gpt-5.5",
         max_steps=250,
         agent_timeout=3600,
@@ -4804,21 +4746,14 @@ parallel_cmd = swe_bench_pro_run_parallel_shards.build_worker_command(
         memory_limit="16g",
         cpu_limit="2",
         evalscope_path=None,
-        native_solver_command="/tmp/evalscope-native-multiagent-solver.sh",
-        native_solver_setup_command="",
-        bake_native_solver=True,
         native_solver_source=root,
-        native_codex_auth_json="",
+        native_codex_auth_json=Path("/tmp/auth.json"),
         native_codex_auth_container_home="/root/.codex-multiagent-prod",
         persistent_cache=False,
         persistent_cache_root=Path("/tmp/cache"),
         persistent_cache_mode="rw",
         workers=1,
-        responses_keepalive=False,
-        no_start_proxy=False,
         ignore_errors=False,
-        proxy_timeout=1800,
-        proxy_ready_timeout=30,
     ),
     offset=58,
     count=1,
@@ -4841,6 +4776,8 @@ parallel_offsets_dry_run = subprocess.check_output(
         "1",
         "--sample-offsets",
         "2,8,12,14",
+        "--native-codex-auth-json",
+        "/tmp/auth.json",
         "--report-prefix-template",
         "failed-w{worker}-offset{offset}-count{count}",
     ],
@@ -4851,6 +4788,17 @@ for expected_offset in ("2", "8", "12", "14"):
     assert f"--sample-offset {expected_offset} " in parallel_offsets_dry_run, parallel_offsets_dry_run
 assert "--sample-offset 3 " not in parallel_offsets_dry_run, parallel_offsets_dry_run
 PY
+python3 -m evaluation.swe_bench_pro --help >"$TMPDIR/swe-bench-pro-help.out"
+assert_file_contains "$TMPDIR/swe-bench-pro-help.out" "Evaluate the production multiagent solver"
+assert_file_not_contains "$TMPDIR/swe-bench-pro-help.out" "--agent-framework"
+python3 -m evaluation.swe_bench_pro \
+  --no-preflight \
+  --write-config-only \
+  --native-solver-source "$ROOT" \
+  --config-json "$TMPDIR/swe-bench-pro-config.json" \
+  --config-yaml "$TMPDIR/swe-bench-pro-config.yaml" \
+  >"$TMPDIR/swe-bench-pro-config.out"
+assert_file_contains "$TMPDIR/swe-bench-pro-config.json" '"framework": "multiagent-native"'
 python3 -m evaluation.cli --list >"$TMPDIR/evaluation-list.out"
 assert_file_contains "$TMPDIR/evaluation-list.out" "ponytail"
 assert_file_contains "$TMPDIR/evaluation-list.out" "orchestration"

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Aggregate SWE Bench Pro scaffold-parity shard summaries.
+"""Aggregate production-multiagent SWE Bench Pro shard summaries.
 
 This does not run EvalScope. It validates already-written
-``swe_bench_pro_scaffold_parity`` JSON summaries against the official public
+``swe_bench_pro`` JSON summaries against the official public
 JSONL order and reports whether the shard set is complete enough to serve as an
 official comparison candidate.
 """
@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from evaluation.swe_bench_pro_scaffold_parity import DEFAULT_PRO_REPO, load_official_instances, with_dockerhub_username
+from evaluation.swe_bench_pro import DEFAULT_PRO_REPO, load_official_instances, with_dockerhub_username
 
 
 DEFAULT_JSON = Path("evaluation/reports/swe-bench-pro-official-aggregate.json")
@@ -66,7 +66,7 @@ def selected_indices(summary: dict[str, Any]) -> list[int]:
     return indices
 
 
-def report_matches(summary: dict[str, Any], *, framework: str, require_codex: bool) -> bool:
+def report_matches(summary: dict[str, Any]) -> bool:
     if summary.get("benchmark") != "swe-bench-pro":
         return False
     if summary.get("status") != "completed":
@@ -76,9 +76,7 @@ def report_matches(summary: dict[str, Any], *, framework: str, require_codex: bo
     if not selected_indices(summary):
         return False
     agent_config = str((summary.get("parity") or {}).get("agent_config") or "")
-    if framework and agent_config != f"external {framework}":
-        return False
-    if require_codex and agent_config not in {"external codex", "external codex-devnull"}:
+    if agent_config != "external multiagent-native":
         return False
     return True
 
@@ -129,7 +127,7 @@ def aggregate(args: argparse.Namespace) -> dict[str, Any]:
             excluded.append({"path": str(path), "reason": f"unreadable: {exc!r}"})
             continue
         indices = selected_indices(summary)
-        if not report_matches(summary, framework=args.framework, require_codex=args.require_codex):
+        if not report_matches(summary):
             excluded.append(
                 {
                     "path": str(path),
@@ -265,12 +263,9 @@ def main() -> int:
     parser.add_argument(
         "--reports",
         nargs="+",
-        default=["swe-bench-pro-codex-cwd*-offset*-count*.json"],
+        default=["swe-bench-pro-production*-offset*-count*.json"],
         help="report paths or glob patterns relative to --report-dir",
     )
-    parser.add_argument("--framework", default="codex-devnull")
-    parser.add_argument("--require-codex", action="store_true", default=True)
-    parser.add_argument("--allow-non-codex", action="store_false", dest="require_codex")
     parser.add_argument("--suggest-shard-size", type=int, default=10)
     parser.add_argument("--max-ranges", type=int, default=20)
     parser.add_argument("--json", type=Path, default=DEFAULT_JSON)

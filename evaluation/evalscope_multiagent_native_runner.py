@@ -61,34 +61,15 @@ if [[ -n "${EVAL_PROD_MULTIAGENT_TIMEOUT:-}" ]]; then
 fi
 cd "$workdir"
 
-if [[ -x /opt/multiagent/solve_swe.sh ]]; then
-  exec /opt/multiagent/solve_swe.sh "$prompt_file"
-fi
-
-if [[ -f /opt/multiagent/solve_swe.py ]]; then
-  exec python3 /opt/multiagent/solve_swe.py "$prompt_file" "${timeout_args[@]}"
-fi
-
-if command -v multiagent-solve-swe >/dev/null 2>&1; then
-  exec multiagent-solve-swe "$prompt_file"
-fi
-
-if command -v multiagent-swe-solver >/dev/null 2>&1; then
-  exec multiagent-swe-solver "$prompt_file"
+solver=/opt/multiagent/evaluation/native_solver/solve_swe_prod.py
+if [[ -f "$solver" && -x /opt/multiagent/launch.sh ]]; then
+  exec python3 "$solver" "$prompt_file" "${timeout_args[@]}"
 fi
 
 cat >&2 <<'EOF'
-No baked native multi-agent SWE solver was found in this task container.
-
-Expected one of:
-  /opt/multiagent/solve_swe.sh
-  /opt/multiagent/solve_swe.py
-  multiagent-solve-swe
-  multiagent-swe-solver
-
-The solver must read the issue prompt from $EVAL_TASK_PROMPT_FILE, edit the
-repository in $EVAL_TASK_WORKDIR, and leave the final patch in git diff.
-If this image uses another entrypoint, pass --native-solver-command explicitly.
+The production multiagent repository was not baked into this task image.
+Expected /opt/multiagent/launch.sh and
+/opt/multiagent/evaluation/native_solver/solve_swe_prod.py.
 EOF
 exit 127
 """
@@ -109,28 +90,20 @@ class MultiagentNativeRunner(AgentRunner):
     def __init__(
         self,
         *,
-        command: str = _DEFAULT_SOLVER_COMMAND,
-        setup_command: str = "",
         working_dir: str = "/app",
-        require_command: bool = False,
         model_name: str = "gpt-5",
         codex_auth_json: str = "",
         codex_auth_container_home: str = "/root/.codex-multiagent-prod",
-        score_failed_diff: bool = False,
-        score_timed_out_diff: bool = False,
         swe_bench_pro_repo_path: str = "",
         swe_bench_pro_sample_offset: int = 0,
         **_: Any,
     ) -> None:
-        self._command = command.strip()
-        self._setup_command = setup_command.strip()
         self._working_dir = working_dir or "/app"
-        self._require_command = require_command
         self._model_name = model_name.strip() or "gpt-5"
         self._codex_auth_json = codex_auth_json.strip()
+        if not self._codex_auth_json:
+            raise ValueError("multiagent-native requires runtime Codex auth JSON")
         self._codex_auth_container_home = codex_auth_container_home.rstrip("/") or "/root/.codex-multiagent-prod"
-        self._score_failed_diff = score_failed_diff
-        self._score_timed_out_diff = score_timed_out_diff
         self._swe_bench_pro_repo_path = swe_bench_pro_repo_path.strip()
         self._swe_bench_pro_sample_offset = swe_bench_pro_sample_offset
 
@@ -140,16 +113,7 @@ class MultiagentNativeRunner(AgentRunner):
         if chmod.returncode != 0:
             tail = ((chmod.stderr or "") + "\n" + (chmod.stdout or "")).strip()[-1000:]
             raise RuntimeError(f"multiagent-native failed to install launcher: {tail}")
-        if self._codex_auth_json:
-            await self._install_codex_auth(env)
-        if not self._setup_command:
-            return None
-        result = await env.exec(["bash", "-lc", self._setup_command], timeout=600, cwd=self._working_dir)
-        if result.timed_out:
-            raise RunnerTimeoutError("multiagent-native setup timed out")
-        if result.returncode != 0:
-            tail = ((result.stderr or "") + "\n" + (result.stdout or "")).strip()[-2000:]
-            raise RuntimeError(f"multiagent-native setup failed with code {result.returncode}: {tail}")
+        await self._install_codex_auth(env)
         return None
 
     async def run(
@@ -158,12 +122,6 @@ class MultiagentNativeRunner(AgentRunner):
         env: AgentEnvironment,
         bridge: BridgeEndpoint,
     ) -> AgentRunResult:
-        if self._require_command and not self._command:
-            raise RuntimeError(
-                "multiagent-native was configured with require_command=true but no command. "
-                "The command must edit the repository in /app; EvalScope will extract git diff afterwards."
-            )
-
         raw_metadata = dict(task.metadata or {})
         metadata = _public_solver_metadata(dict(task.metadata or {}))
         metadata.update(
@@ -177,25 +135,17 @@ class MultiagentNativeRunner(AgentRunner):
         await self._write_file(env, _METADATA_FILE, json.dumps(metadata, indent=2, sort_keys=True))
 
         env_vars: Dict[str, str] = {
-            "EVALSCOPE_BRIDGE_TOKEN": bridge.trial_token,
-            "EVALSCOPE_BRIDGE_BASE_URL": bridge.base_url,
-            "OPENAI_API_KEY": bridge.trial_token,
-            "OPENAI_BASE_URL": f"{bridge.base_url}/openai/v1",
             "EVAL_TASK_PROMPT_FILE": _PROMPT_FILE,
             "EVAL_TASK_METADATA_FILE": _METADATA_FILE,
             "EVAL_TASK_WORKDIR": self._working_dir,
             "EVAL_NATIVE_SOLVER_MODEL": self._model_name,
             "EVAL_PROD_MULTIAGENT_TIMEOUT": str(solver_internal_timeout(task.timeout)),
             "IS_SANDBOX": "1",
+            "EVAL_CODEX_AUTH_MODE": "chatgpt",
+            "CODEX_HOME": self._codex_auth_container_home,
         }
-        if self._codex_auth_json:
-            env_vars.update(
-                {
-                    "EVAL_CODEX_AUTH_MODE": "chatgpt",
-                    "CODEX_HOME": self._codex_auth_container_home,
-                }
-            )
-        command = self._command or _DEFAULT_SOLVER_COMMAND
+        _ = bridge
+        command = _DEFAULT_SOLVER_COMMAND
         shell_command = (
             f"{command} > {shlex.quote(_STDOUT_FILE)} 2> {shlex.quote(_STDERR_FILE)}"
         )
@@ -207,8 +157,7 @@ class MultiagentNativeRunner(AgentRunner):
         try:
             result = await env.exec(["bash", "-lc", shell_command], timeout=task.timeout, env=env_vars, cwd=self._working_dir)
         finally:
-            if self._codex_auth_json:
-                await self._scrub_codex_auth(env)
+            await self._scrub_codex_auth(env)
         logger.info(
             f"multiagent-native exited: sample={sample_id} rc={result.returncode} "
             f"wall={result.duration:.1f}s timed_out={result.timed_out}"
@@ -221,22 +170,16 @@ class MultiagentNativeRunner(AgentRunner):
         if result.timed_out:
             diagnostics = await self._collect_rejection_diagnostics(env)
             logger.error("multiagent-native rejection diagnostics:\n%s", diagnostics[-60000:])
-            if not self._score_timed_out_diff:
-                raise RunnerTimeoutError(
-                    "multiagent-native timed out after "
-                    f"{task.timeout}s; refusing to score an unfinished git diff\n{diagnostics[-8000:]}"
-                )
-            logger.warning(f"multiagent-native timed out after {task.timeout}s; scoring current git diff by explicit config")
+            raise RunnerTimeoutError(
+                "multiagent-native timed out after "
+                f"{task.timeout}s; refusing to score an unfinished git diff\n{diagnostics[-8000:]}"
+            )
         elif result.returncode != 0:
             diagnostics = await self._collect_rejection_diagnostics(env)
             logger.error("multiagent-native rejection diagnostics:\n%s", diagnostics[-60000:])
             tail = (stderr_tail + "\n" + stdout_tail + "\n" + diagnostics).strip()[-12000:]
-            if not self._score_failed_diff:
-                raise RuntimeError(
-                    f"multiagent-native exited with code {result.returncode}; refusing to score rejected git diff: {tail}"
-                )
-            logger.warning(
-                f"multiagent-native exited with code {result.returncode}; scoring current git diff by explicit config: {tail}"
+            raise RuntimeError(
+                f"multiagent-native exited with code {result.returncode}; refusing to score rejected git diff: {tail}"
             )
         return AgentRunResult(
             output=stdout_tail,

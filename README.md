@@ -88,7 +88,7 @@ implementation.
 ```mermaid
 flowchart TD
     User["Normal use: user runs ./launch.sh"] --> Launch
-    Eval["Optional SWE evaluation runner"] --> Adapter["SWE adapter: prepare /app, prompt, auth, and timeout"]
+    Eval["Optional production SWE evaluation"] --> Adapter["Bake production repo into task image; install temporary auth and prompt"]
     Adapter --> Launch
 
     subgraph Framework["General multiagent framework"]
@@ -144,6 +144,11 @@ The invocation sequence is:
 6. `gate-check` accepts only when blocking findings/todos are closed, required
    command evidence passes, and verifier evidence matches the current diff.
    Rejection routes another bounded repair cycle through the orchestrator.
+
+The only supported SWE Bench Pro entrypoint is
+`python3 -m evaluation.swe_bench_pro`. It bakes this production repository into
+the task image; there is no scaffold, single-agent, proxy, or custom solver
+fallback.
 
 `multiagent_framework` is not a daemon. It is shared in-process Python code and
 a short-lived CLI used by the shell control plane and adapters. It requires

@@ -101,79 +101,62 @@ baseline and orchestrator prompts are intentionally omitted. The remaining
 orchestration task exercises broad first-wave fan-out, validation layering, and
 consolidation at a size where sequential planning is visible.
 
-## SWE Bench Pro Native Solver Tuning
+## SWE Bench Pro Production Evaluation
 
-`evaluation/native_solver/solve_swe_prod.py` is the production container
-entrypoint and compatibility facade. The implementation is split by ownership:
+There is one supported SWE Bench Pro implementation:
 
-- `swe_prod_contracts.py` sanitizes public task inputs and derives contracts.
-- `swe_prod_bootstrap.py` installs container-local Codex, patch, search, and Go helpers.
-- `swe_prod_repository.py` owns source discovery, cleanup, and final-diff handling.
-- `swe_prod_evidence.py` adapts framework evidence/state primitives to SWE runtime artifacts.
-- `swe_prod_validation.py` evaluates gates and runs adapter-selected public probes.
-- `swe_prod_orchestration.py` formats repair, convergence, and resume handoffs.
-- `swe_prod_checkpoints.py` implements ordered active-run recovery checkpoints.
-- `swe_prod_transitions.py` handles completed, blocked, and final-cleanup transitions.
-- `swe_prod_lifecycle.py` launches production multiagent and coordinates those transitions.
-- `swe_prod_types.py` defines explicit lifecycle state and bounded retry policy.
-- `swe_prod_guardrails.py` is a compatibility facade over
-  `multiagent_framework/coding/guardrails.py`.
+```text
+evaluation.swe_bench_pro
+-> EvalScope multiagent-native runner
+-> production repository baked into each task image
+-> evaluation/native_solver/solve_swe_prod.py
+-> launch.sh and the production orchestrator/worker/verifier workflow
+-> official run_script.sh and parser.py scoring
+```
 
-Exact Git snapshots, final-diff hash verification, atomic terminal status, and
-generic coding guardrails are framework responsibilities under
-`multiagent_framework/`. The SWE adapter retains only task metadata
-sanitization, container bootstrap, issue-contract derivation, public probe
-selection, and EvalScope lifecycle policy.
+Run one official-order row:
 
-The entrypoint, lifecycle coordinator, and every transition handler have size
-regression checks in `tests/run.sh`. Adapter-selected probes catch weak
-completion markers, but they are not a replacement for official scoring and can
-be expensive under amd64 emulation.
+```bash
+NATIVE_CODEX_AUTH_JSON="$HOME/.codex/auth.json" \
+python3 -m evaluation.swe_bench_pro \
+  --sample-offset 0 \
+  --sample-count 1 \
+  --persistent-cache
+```
 
-Benchmark bootstrap instructions live under `evaluation/native_solver/templates/`.
-Those guardrails are intentionally no-leak: they may use visible source, issue
-text, local tests, docs, public APIs, and runtime evidence, but they must not
-encode benchmark-row-specific hidden tests, prior official failures, or exact
-fixture answers as implementation guidance.
+Run four independent rows concurrently:
 
-No-leak review should scan both prompt templates and baked native solver source
-for project-specific repair recipes before scaling an eval. A result is not a
-clean production-capability measurement if the baked solver contains row names,
-prior hidden-test failures, exact fixture answers, or task-specific API recipes
-that were learned from earlier benchmark attempts rather than derived from the
-current issue and repository.
+```bash
+python3 -m evaluation.swe_bench_pro_run_parallel_shards \
+  --workers 4 \
+  --sample-offsets 0,1,2,3 \
+  --native-codex-auth-json "$HOME/.codex/auth.json" \
+  --persistent-cache
+```
 
-A one-row production-native smoke on 2026-07-06 verified this path with the
-full SWE-bench Pro OS scaffold, the local EvalScope package path, baked PR
-source, persistent caches, and official verifier evidence. The first attempts
-surfaced infrastructure issues that should be fixed before larger shards:
-wrong EvalScope import path, stale/incomplete OS scaffold path, too-high local
-free-disk floor, symlink-sensitive native template lookup, and false-positive
-no-leak guardrails. After those fixes, the same smoke reached the official
-verifier and scored `1/1`. Use `--score-failed-native-diff` only for diagnostic
-smokes where a rejected native diff should still be sent to the official
-verifier; production score runs should leave it off unless explicitly studying
-gate behavior.
+The evaluator accepts only the production repository root as bake input. It
+does not support noop, devnull, proxy, single-agent, standalone-file, or custom
+solver-command modes. The Codex auth file is copied into a live task container
+at runtime, scrubbed when the solver exits, and never included in the baked
+image.
 
-Set `EVAL_VALIDATION_PROBE_TIMEOUT` to cap each adapter-selected probe command.
-The default is `300` seconds. Lower it for high-parallelism or Rosetta runs when
-the official verifier remains the authoritative scorer.
+`evaluation/native_solver/solve_swe_prod.py` is the container entrypoint. Its
+modules own SWE-specific metadata sanitization, bootstrap, lifecycle, and
+public-probe policy. Exact Git snapshots, final-diff hash verification, atomic
+status, and generic coding guardrails live under `multiagent_framework/` and are
+shared by normal production launches.
 
-The adapter helper defaults to advisory mode. It may run read-only public probes
-and send follow-up messages to the orchestrator, but it will not spawn
-`worker-adapter-helper-*` source editors that mutate `/app` outside the
-production orchestrator loop. Set `EVAL_ADAPTER_HELPER_MODE=repair` only for
-explicit adapter-repair experiments, not production-capability score
-comparisons.
+Solver prompts and baked source must remain no-leak: they may use issue text,
+visible source, local tests, docs, public APIs, and runtime evidence, but not
+benchmark row identity, hidden tests, prior official failures, or learned
+fixture answers. Adapter probes are additional pre-submission evidence; the
+official verifier remains authoritative.
 
-One exception is the production-native progress watchdog. It is enabled by
-default with `EVAL_PROGRESS_REPAIR_ENABLED=1` and fires only after a non-empty
-source diff has stayed stale past `EVAL_PROGRESS_REPAIR_AFTER` and
-`EVAL_PROGRESS_REPAIR_MIN_STALL`. That path runs only repository-visible
-validation and can launch at most one bounded repair worker by default, using
-source-derived ownership paths and generic blockers. It is intended to measure
-the same multi-agent capability under a hard convergence intervention, not to
-inject hidden benchmark feedback.
+`EVAL_VALIDATION_PROBE_TIMEOUT` caps each adapter-selected public probe at 300
+seconds by default. The adapter helper defaults to advisory mode and does not
+edit source. The production-native progress watchdog can launch one bounded
+repair worker after a non-empty diff remains stale; it uses only
+repository-visible evidence and is part of the production convergence loop.
 
 ## Security Model
 

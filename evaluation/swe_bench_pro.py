@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Run SWE Bench Pro through EvalScope's scaffold-parity path.
+"""Evaluate the production multiagent solver on SWE Bench Pro.
 
-This runner is for official-comparison work, not the older direct
-``solve_patch`` pilot. It drives EvalScope's ``swe_bench_pro`` adapter with an
-external Codex agent running inside the per-instance Docker image. EvalScope
-then extracts ``git diff`` from ``/app`` and scores it with the benchmark's
-Docker-side ``run_script.sh`` / ``parser.py`` verifier.
+The production framework is baked into each per-instance task image and runs
+inside that container. EvalScope extracts the resulting ``git diff`` from
+``/app`` and scores it with the benchmark's official ``run_script.sh`` and
+``parser.py`` verifier.
 """
 
 from __future__ import annotations
@@ -26,15 +25,14 @@ from typing import Any
 DEFAULT_REPORT_DIR = Path("evaluation/reports")
 DEFAULT_EVALSCOPE_PATH = Path("/private/tmp/evalscope_tmp")
 DEFAULT_PRO_REPO = Path("/private/tmp/SWE-bench_Pro-os-complete")
-DEFAULT_WORK_DIR = Path("/private/tmp/evalscope-swe-bench-pro-scaffold-parity-public-nodebb")
-DEFAULT_OUTPUT = DEFAULT_REPORT_DIR / "swe-bench-pro-scaffold-parity-public-nodebb.json"
-DEFAULT_CONFIG_JSON = DEFAULT_REPORT_DIR / "swe-bench-pro-scaffold-parity-public-nodebb-config.json"
-DEFAULT_CONFIG_YAML = DEFAULT_REPORT_DIR / "swe-bench-pro-scaffold-parity-public-nodebb-task-config.yaml"
+DEFAULT_WORK_DIR = Path("/private/tmp/evalscope-swe-bench-pro-production")
+DEFAULT_OUTPUT = DEFAULT_REPORT_DIR / "swe-bench-pro-production.json"
+DEFAULT_CONFIG_JSON = DEFAULT_REPORT_DIR / "swe-bench-pro-production-config.json"
+DEFAULT_CONFIG_YAML = DEFAULT_REPORT_DIR / "swe-bench-pro-production-task-config.yaml"
 DEFAULT_PREFLIGHT_OUTPUT = DEFAULT_REPORT_DIR / "swe-bench-pro-official-preflight.json"
 DEFAULT_ON_DEMAND_IMAGE_STATUS = DEFAULT_REPORT_DIR / "swe-bench-pro-on-demand-image-status.json"
 DEFAULT_IMAGE_ARCHIVE_DIR = Path("/private/tmp/swe-bench-pro-image-preload")
 DEFAULT_PERSISTENT_CACHE_ROOT = Path("/private/tmp/swe-bench-pro-persistent-cache")
-DEFAULT_NATIVE_SOLVER_COMMAND = "/tmp/evalscope-native-multiagent-solver.sh"
 DEFAULT_NATIVE_SOLVER_SOURCE = Path(__file__).resolve().parents[1]
 DEFAULT_FULL_SPLIT_SIZE = 731
 
@@ -113,7 +111,7 @@ def to_yaml(value: Any, indent: int = 0) -> str:
     return f"{prefix}{yaml_scalar(value)}"
 
 
-def scaffold_config(args: argparse.Namespace) -> dict[str, Any]:
+def evaluation_config(args: argparse.Namespace) -> dict[str, Any]:
     sandbox_default: dict[str, Any] = {
         "platform": args.platform,
     }
@@ -158,13 +156,13 @@ def scaffold_config(args: argparse.Namespace) -> dict[str, Any]:
         },
         "agent_config": {
             "mode": "external",
-            "framework": args.agent_framework,
+            "framework": "multiagent-native",
             "timeout": args.agent_timeout,
             "kwargs": {
-                "auto_install": not args.no_auto_install,
-                "install_timeout_s": args.install_timeout,
                 "model_name": args.agent_model_name,
                 "working_dir": args.agent_working_dir,
+                "swe_bench_pro_repo_path": str(args.swe_bench_pro_repo_path),
+                "swe_bench_pro_sample_offset": args.sample_offset,
             },
         },
         "work_dir": str(args.work_dir),
@@ -178,25 +176,9 @@ def scaffold_config(args: argparse.Namespace) -> dict[str, Any]:
         config["api_url"] = args.api_url
     if args.api_key is not None:
         config["api_key"] = args.api_key
-    if args.codex_home:
-        config["agent_config"]["kwargs"]["home_override"] = args.codex_home
-    if args.codex_npm_package:
-        config["agent_config"]["kwargs"]["npm_package"] = args.codex_npm_package
-    if args.agent_wire_api != "responses":
-        config["agent_config"]["kwargs"].setdefault("extra_config", {})[
-            "model_providers.evalscope.wire_api"
-        ] = json.dumps(args.agent_wire_api)
-    if args.agent_framework == "multiagent-native":
-        config["agent_config"]["kwargs"]["command"] = args.native_solver_command
-        config["agent_config"]["kwargs"]["setup_command"] = args.native_solver_setup_command
-        config["agent_config"]["kwargs"]["working_dir"] = args.agent_working_dir
-        config["agent_config"]["kwargs"]["swe_bench_pro_repo_path"] = str(args.swe_bench_pro_repo_path)
-        config["agent_config"]["kwargs"]["swe_bench_pro_sample_offset"] = args.sample_offset
-        config["agent_config"]["kwargs"]["score_failed_diff"] = args.score_failed_native_diff
-        config["agent_config"]["kwargs"]["score_timed_out_diff"] = args.score_timed_out_native_diff
-        if args.native_codex_auth_json:
-            config["agent_config"]["kwargs"]["codex_auth_json"] = str(args.native_codex_auth_json)
-            config["agent_config"]["kwargs"]["codex_auth_container_home"] = args.native_codex_auth_container_home
+    if args.native_codex_auth_json:
+        config["agent_config"]["kwargs"]["codex_auth_json"] = str(args.native_codex_auth_json)
+        config["agent_config"]["kwargs"]["codex_auth_container_home"] = args.native_codex_auth_container_home
     if args.persistent_cache:
         config["sandbox"]["default_config"].setdefault("env_vars", {})["SWE_BENCH_PRO_PERSISTENT_CACHE"] = "1"
     return config
@@ -394,8 +376,6 @@ def native_runner_summary(work_dir: Path) -> dict[str, Any] | None:
         return None
 
     exit_events: list[dict[str, Any]] = []
-    scored_failed_diff = False
-    scored_timed_out_diff = False
     for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
         match = re.search(
             r"multiagent-native exited: sample=(?P<sample>\S+) rc=(?P<rc>-?\d+) "
@@ -411,12 +391,7 @@ def native_runner_summary(work_dir: Path) -> dict[str, Any] | None:
                     "timed_out": match.group("timed_out") == "True",
                 }
             )
-        if "multiagent-native exited with code" in line and "scoring current git diff by explicit config" in line:
-            scored_failed_diff = True
-        if "multiagent-native timed out" in line and "scoring current git diff by explicit config" in line:
-            scored_timed_out_diff = True
-
-    if not exit_events and not scored_failed_diff and not scored_timed_out_diff:
+    if not exit_events:
         return None
 
     latest = exit_events[-1] if exit_events else None
@@ -425,9 +400,6 @@ def native_runner_summary(work_dir: Path) -> dict[str, Any] | None:
         "latest": latest,
         "all_exit_events": exit_events,
         "clean_native_completion": clean,
-        "scored_failed_native_diff": scored_failed_diff,
-        "scored_timed_out_native_diff": scored_timed_out_diff,
-        "diagnostic_scored_diff": scored_failed_diff or scored_timed_out_diff,
     }
 
 
@@ -533,18 +505,9 @@ def summarize_result(
     if evalscope_report is not None:
         score = evalscope_report.get("score")
         sample_size = evalscope_report.get("num")
-    native_summary = (
-        native_runner_summary(args.work_dir)
-        if config.get("agent_config", {}).get("framework") == "multiagent-native"
-        else None
-    )
-    clean_native_score = score
-    diagnostic_score = None
-    if native_summary and native_summary.get("diagnostic_scored_diff"):
-        diagnostic_score = score
-        clean_native_score = None
-    elif native_summary and not native_summary.get("clean_native_completion"):
-        clean_native_score = None
+    native_summary = native_runner_summary(args.work_dir)
+    native_clean = bool(native_summary and native_summary.get("clean_native_completion"))
+    clean_native_score = score if native_clean else None
 
     postmortem = failure_postmortem(
         work_dir=args.work_dir,
@@ -554,10 +517,10 @@ def summarize_result(
         native_summary=native_summary,
     )
 
-    scaffold_parity = (
+    production_native = (
         status == "completed"
         and config["agent_config"]["mode"] == "external"
-        and config["agent_config"]["framework"] in {"codex", "codex-devnull", "multiagent-native"}
+        and config["agent_config"]["framework"] == "multiagent-native"
         and config["dataset_args"]["swe_bench_pro"]["extra_params"]["command_timeout"] >= 60
         and config["dataset_args"]["swe_bench_pro"]["extra_params"]["eval_timeout"] >= 3600
     )
@@ -575,6 +538,7 @@ def summarize_result(
         )
     official_ready = (
         status == "completed"
+        and native_clean
         and sample_size is not None
         and sample_size > 0
         and (sample_shard_enabled(args) or (args.limit is not None and args.limit >= 1))
@@ -582,7 +546,8 @@ def summarize_result(
         and image_provider_ready
     )
     full_official = (
-        scaffold_parity
+        production_native
+        and native_clean
         and args.limit is None
         and not sample_shard_enabled(args)
         and official_scaffold_ready
@@ -590,8 +555,8 @@ def summarize_result(
     )
 
     notes = (
-        "SWE Bench Pro scaffold-parity run using EvalScope external Codex runner "
-        "inside the per-instance Docker image, with official run_script/parser scoring. "
+        "SWE Bench Pro production multiagent run inside each per-instance Docker image, "
+        "with official run_script/parser scoring. "
         "A limited run is official-verifier evidence but not a full benchmark score."
     )
 
@@ -602,7 +567,6 @@ def summarize_result(
         "status": status,
         "score": score,
         "clean_native_score": clean_native_score,
-        "diagnostic_score": diagnostic_score,
         "sample_size": sample_size,
         "official": full_official,
         "official_verifier_evidence": official_ready,
@@ -630,7 +594,6 @@ def summarize_result(
             "command_timeout": args.command_timeout,
             "agent_timeout": args.agent_timeout,
             "eval_timeout": args.eval_timeout,
-            "auto_install_codex_in_container": not args.no_auto_install,
             "agent_model_name": args.agent_model_name,
             "agent_working_dir": args.agent_working_dir,
             "official_scaffold_ready": official_scaffold_ready,
@@ -642,16 +605,10 @@ def summarize_result(
             "persistent_cache": args.persistent_cache,
             "persistent_cache_root": str(args.persistent_cache_root) if args.persistent_cache else None,
             "persistent_cache_mode": args.persistent_cache_mode if args.persistent_cache else None,
-            "bake_native_solver": getattr(args, "bake_native_solver", False),
-            "native_solver_source": (
-                str(args.native_solver_source) if getattr(args, "bake_native_solver", False) else None
-            ),
-            "native_codex_auth_mode": "chatgpt-auth-json" if args.native_codex_auth_json else "bridge",
-            "native_codex_auth_container_home": (
-                args.native_codex_auth_container_home if args.native_codex_auth_json else None
-            ),
-            "score_failed_native_diff": getattr(args, "score_failed_native_diff", False),
-            "score_timed_out_native_diff": getattr(args, "score_timed_out_native_diff", False),
+            "bake_native_solver": True,
+            "native_solver_source": str(args.native_solver_source),
+            "native_codex_auth_mode": "chatgpt-auth-json",
+            "native_codex_auth_container_home": args.native_codex_auth_container_home,
         },
         "on_demand_image_status": (
             {
@@ -664,11 +621,7 @@ def summarize_result(
         "sample_shard": preflight.get("sample_shard") if preflight else None,
         "preflight": json_safe(preflight),
         "system_results": {
-            "system": (
-                "ours-multiagent-swe-bench-pro-scaffold-parity"
-                if config["agent_config"]["framework"] == "multiagent-native"
-                else "ours-codex-swe-bench-pro-scaffold-parity"
-            ),
+            "system": "ours-production-multiagent-swe-bench-pro",
             "source": str(args.output),
             "results": [
                 {
@@ -705,20 +658,7 @@ def copy_evalscope_artifacts(work_dir: Path, report_dir: Path, prefix: str, mode
 
 def run_evalscope(config: dict[str, Any], evalscope_path: Path, args: argparse.Namespace) -> dict[str, Any]:
     ensure_evalscope_path(evalscope_path)
-    if config.get("agent_config", {}).get("framework") == "codex-devnull":
-        import evaluation.evalscope_codex_devnull_runner  # noqa: F401
-    if config.get("agent_config", {}).get("framework") == "multiagent-native":
-        import evaluation.evalscope_multiagent_native_runner  # noqa: F401
-    if config.get("agent_config", {}).get("framework") == "noop":
-        import evaluation.evalscope_noop_runner  # noqa: F401
-    if (
-        config.get("agent_config", {}).get("framework") in {"codex", "codex-devnull"}
-        and args.agent_wire_api == "responses"
-        and args.responses_keepalive
-    ):
-        from evaluation.evalscope_responses_keepalive import install_responses_keepalive_patch
-
-        install_responses_keepalive_patch(ping_interval_s=args.responses_keepalive_interval)
+    import evaluation.evalscope_multiagent_native_runner  # noqa: F401
     if sample_shard_enabled(args):
         from evaluation.swe_bench_pro_shard import build_sample_shard, install_sample_shard_hooks
 
@@ -748,7 +688,6 @@ def run_evalscope(config: dict[str, Any], evalscope_path: Path, args: argparse.N
             backoff_s=args.on_demand_retry_backoff,
             min_free_gb=args.on_demand_min_free_gb,
             prune_after_sample=args.on_demand_prune_after_sample,
-            bake_native_solver=args.bake_native_solver,
             native_solver_source=args.native_solver_source,
         )
         install_on_demand_image_hooks(image_manager)
@@ -769,6 +708,7 @@ def run_evalscope(config: dict[str, Any], evalscope_path: Path, args: argparse.N
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    auth_from_env = os.environ.get("NATIVE_CODEX_AUTH_JSON", "").strip()
     parser.add_argument("--evalscope-path", type=Path, default=DEFAULT_EVALSCOPE_PATH)
     parser.add_argument("--swe-bench-pro-repo-path", type=Path, default=DEFAULT_PRO_REPO)
     parser.add_argument("--work-dir", type=Path, default=DEFAULT_WORK_DIR)
@@ -777,46 +717,19 @@ def main() -> int:
     parser.add_argument("--config-yaml", type=Path, default=DEFAULT_CONFIG_YAML)
     parser.add_argument("--preflight-output", type=Path, default=DEFAULT_PREFLIGHT_OUTPUT)
     parser.add_argument("--on-demand-image-status", type=Path, default=DEFAULT_ON_DEMAND_IMAGE_STATUS)
-    parser.add_argument("--report-prefix", default="swe-bench-pro-scaffold-parity-public-nodebb")
+    parser.add_argument("--report-prefix", default="swe-bench-pro-production")
     parser.add_argument("--model", default="codex-local")
-    parser.add_argument("--model-id", default="codex-scaffold-parity")
+    parser.add_argument("--model-id", default="production-multiagent")
     parser.add_argument("--eval-type", default="openai_api")
-    parser.add_argument("--agent-framework", default="codex-devnull", choices=["codex-devnull", "codex", "noop", "multiagent-native"])
     parser.add_argument("--agent-model-name", default="gpt-5")
-    parser.add_argument("--agent-working-dir", default="/app")
-    parser.add_argument("--native-solver-command", default=DEFAULT_NATIVE_SOLVER_COMMAND)
-    parser.add_argument("--native-solver-setup-command", default="")
-    parser.add_argument("--bake-native-solver", action="store_true")
     parser.add_argument("--native-solver-source", type=Path, default=DEFAULT_NATIVE_SOLVER_SOURCE)
     parser.add_argument(
         "--native-codex-auth-json",
-        default=os.environ.get("NATIVE_CODEX_AUTH_JSON", ""),
+        type=Path,
+        default=Path(auth_from_env).expanduser() if auth_from_env else None,
         help="host path to Codex auth.json copied into each live task container at runtime; never baked into images",
     )
     parser.add_argument("--native-codex-auth-container-home", default="/root/.codex-multiagent-prod")
-    parser.add_argument(
-        "--score-failed-native-diff",
-        action="store_true",
-        help="opt in to official scoring of git diff after a nonzero native solver exit",
-    )
-    parser.add_argument(
-        "--score-timed-out-native-diff",
-        action="store_true",
-        help="opt in to official scoring of git diff after the native solver times out",
-    )
-    parser.add_argument("--agent-wire-api", default="responses", choices=["responses", "chat"])
-    parser.add_argument("--responses-keepalive-interval", type=float, default=10.0)
-    parser.add_argument(
-        "--responses-keepalive",
-        action="store_true",
-        help="enable the experimental Responses SSE keepalive monkeypatch",
-    )
-    parser.add_argument(
-        "--no-responses-keepalive",
-        action="store_false",
-        dest="responses_keepalive",
-        help="use EvalScope's native Responses stream path (default)",
-    )
     parser.add_argument("--api-url", default=os.environ.get("EVALSCOPE_MODEL_API_URL", "http://127.0.0.1:8765/v1"))
     parser.add_argument("--api-key", default=os.environ.get("EVALSCOPE_MODEL_API_KEY", "EMPTY"))
     parser.add_argument("--limit", type=parse_limit, default=1)
@@ -831,22 +744,16 @@ def main() -> int:
     parser.add_argument("--command-timeout", type=float, default=60.0)
     parser.add_argument("--agent-timeout", type=float, default=3600.0)
     parser.add_argument("--eval-timeout", type=int, default=3600)
-    parser.add_argument("--install-timeout", type=float, default=600.0)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--max-tokens", type=int)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--expected-full-split-size", type=int, default=DEFAULT_FULL_SPLIT_SIZE)
-    parser.add_argument("--codex-home", default="")
-    parser.add_argument("--codex-npm-package", default="")
-    parser.add_argument("--no-auto-install", action="store_true")
     parser.add_argument("--ignore-errors", action="store_true")
-    parser.add_argument("--on-demand-image-preload", action="store_true")
     parser.add_argument("--on-demand-archive-dir", type=Path, default=DEFAULT_IMAGE_ARCHIVE_DIR)
     parser.add_argument("--on-demand-image-timeout", type=int, default=600)
     parser.add_argument("--on-demand-retry-rate-limit", type=int, default=3)
     parser.add_argument("--on-demand-retry-backoff", type=int, default=180)
     parser.add_argument("--on-demand-min-free-gb", type=float, default=50.0)
-    parser.add_argument("--on-demand-prune-after-sample", action="store_true")
     parser.add_argument("--persistent-cache", action="store_true")
     parser.add_argument("--persistent-cache-root", type=Path, default=DEFAULT_PERSISTENT_CACHE_ROOT)
     parser.add_argument("--persistent-cache-mode", default="rw", choices=["rw", "ro"])
@@ -855,18 +762,30 @@ def main() -> int:
     parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument("--write-config-only", action="store_true")
     parser.add_argument("--summarize-only", action="store_true", help="write summary JSON from an existing work_dir")
+    parser.set_defaults(
+        agent_working_dir="/app",
+        on_demand_image_preload=True,
+        on_demand_prune_after_sample=True,
+    )
     args = parser.parse_args()
     if args.sample_offset < 0:
         parser.error("--sample-offset must be >= 0")
     if args.sample_count is not None and args.sample_count < 1:
         parser.error("--sample-count must be >= 1")
-    if args.agent_framework == "multiagent-native" and args.bake_native_solver and args.native_solver_source.is_file():
+    if args.native_solver_source.is_file():
         parser.error(
             "--bake-native-solver for multiagent-native must use the multiagent repo root, not a single solver file. "
-            "A file source bakes the eval scaffold only and does not evaluate the production orchestrator/worker/verifier workflow."
+            "A file source does not include the production orchestrator/worker/verifier workflow."
         )
+    if not (args.native_solver_source / "launch.sh").is_file():
+        parser.error("--native-solver-source must be the production multiagent repository root")
+    will_run_solver = not (args.preflight_only or args.write_config_only or args.summarize_only)
+    if will_run_solver and not args.native_codex_auth_json:
+        parser.error("--native-codex-auth-json or NATIVE_CODEX_AUTH_JSON is required for a production evaluation")
+    if args.native_codex_auth_json and not args.native_codex_auth_json.is_file():
+        parser.error(f"Codex auth file does not exist: {args.native_codex_auth_json}")
 
-    config = scaffold_config(args)
+    config = evaluation_config(args)
     write_config(config, args.config_json, args.config_yaml)
     preflight: dict[str, Any] | None = None
     should_preflight = not args.no_preflight and (args.preflight_only or not args.write_config_only)
