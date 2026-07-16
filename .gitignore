@@ -3,3 +3,6 @@
 __pycache__/
 *.pyc
 evaluation/runs/
+evaluation/reports/*
+!evaluation/reports/.gitkeep
+!evaluation/reports/swe-bench-pro-prod-multiagent-first50-summary.md

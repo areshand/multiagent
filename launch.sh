@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_ROOT="$SCRIPT_DIR"
 ROOT="${MULTIAGENT_ROOT:-$DEFAULT_ROOT}"
 PROMPT_FILE="${MULTIAGENT_PROMPT:-$SCRIPT_DIR/orchestrator_prompt.md}"
+PROMPT_MODULE_ROOT="${MULTIAGENT_PROMPT_MODULE_ROOT:-$SCRIPT_DIR}"
 CODEX_BIN="${CODEX_BIN:-codex}"
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 ORCHESTRATOR_CLI="${ORCHESTRATOR_CLI:-codex}"
@@ -23,6 +24,11 @@ Usage: ./launch.sh [--session NAME] [--root DIR] [--resume] [--attach|--no-attac
 Starts a tmux multi-agent session with one window:
   - orchestrator: Codex commander that spawns and manages workers
 
+Requirements:
+  - tmux
+  - Python 3.8 or newer (standard library only)
+  - the selected orchestrator CLI (Codex or Claude)
+
 By default the orchestrator starts clean and does not inspect recovery state.
 Pass --resume to allow the orchestrator to inspect recovery state and consider
 restoring/resuming persisted subagents.
@@ -35,6 +41,8 @@ Environment:
   MULTIAGENT_WRITE_POLICY Repo write policy, default: $MULTIAGENT_ROOT/docs/write-policy.paths
   MULTIAGENT_VERIFIER_MAX_ITERATIONS Verifier follow-up loop cap, default: 3
   MULTIAGENT_PROMPT   Orchestrator prompt, default: <launcher directory>/orchestrator_prompt.md
+  MULTIAGENT_PROMPT_MODULE_ROOT Directory containing prompts/, default: launcher directory
+  MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER Require accepted verifier evidence for the exact source diff, default: 1
   ORCHESTRATOR_CLI  Orchestrator CLI, default: codex
   WORKER_CLI        Worker CLI, default: claude
   SUBAGENT_CLI      Named subagent CLI, default: $WORKER_CLI
@@ -88,6 +96,14 @@ require_cmd() {
   fi
 }
 
+require_python_runtime() {
+  require_cmd python3
+  if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 8) else 1)'; then
+    echo "Python 3.8 or newer is required (found: $(python3 --version 2>&1))" >&2
+    exit 1
+  fi
+}
+
 normalize_cli() {
   case "$1" in
     codex|claude)
@@ -115,6 +131,14 @@ build_cli_command() {
   bin="$(cli_bin "$cli")"
   case "$cli" in
     codex)
+      if [[ "${MULTIAGENT_CODEX_EXEC:-0}" == "1" ]]; then
+        if [[ -n "$prompt_file" ]]; then
+          printf "%q exec --cd %q --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox --output-last-message %q - < %q; rc=\$?; printf '\\n[multiagent codex exec exited rc=%%s]\\n' \$rc; sleep infinity" "$bin" "$cwd" "$STATE_DIR/orchestrator-last-message.txt" "$prompt_file"
+        else
+          printf "%q exec --cd %q --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox; rc=\$?; printf '\\n[multiagent codex exec exited rc=%%s]\\n' \$rc; sleep infinity" "$bin" "$cwd"
+        fi
+        return
+      fi
       if [[ -n "$prompt_file" ]]; then
         printf "%q --cd %q --dangerously-bypass-approvals-and-sandbox --no-alt-screen \"\$(cat %q)\"" "$bin" "$cwd" "$prompt_file"
       else
@@ -139,6 +163,7 @@ if ! [[ "$VERIFIER_MAX_ITERATIONS" =~ ^[1-9][0-9]*$ ]]; then
   echo "MULTIAGENT_VERIFIER_MAX_ITERATIONS must be a positive integer" >&2
   exit 2
 fi
+require_python_runtime
 require_cmd tmux
 require_cmd "$(cli_bin "$ORCHESTRATOR_CLI")"
 
@@ -162,6 +187,8 @@ export MULTIAGENT_SESSION="$SESSION"
 export MULTIAGENT_ROOT="$ROOT"
 export MULTIAGENT_RESUME="$RESUME"
 export MULTIAGENT_PROMPT="$PROMPT_FILE"
+export MULTIAGENT_PROMPT_MODULE_ROOT="$PROMPT_MODULE_ROOT"
+export MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER="${MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER:-1}"
 export MULTIAGENT_STATE_DIR="$STATE_DIR"
 export MULTIAGENT_WRITE_POLICY="$POLICY_FILE"
 export MULTIAGENT_VERIFIER_MAX_ITERATIONS="$VERIFIER_MAX_ITERATIONS"
@@ -169,6 +196,11 @@ export ORCHESTRATOR_CLI
 export WORKER_CLI
 export SUBAGENT_CLI
 export VERIFIER_CLI
+export CODEX_BIN
+export CLAUDE_BIN
+export MULTIAGENT_CODEX_EXEC="${MULTIAGENT_CODEX_EXEC:-0}"
+export MULTIAGENT_EXTRA_PATH="${MULTIAGENT_EXTRA_PATH:-}"
+export PATH
 
 mkdir -p "$STATE_DIR/subagents" "$STATE_DIR/assignments" "$STATE_DIR/worktrees"
 "$SCRIPT_DIR/bin/write-policy.sh" init
@@ -178,26 +210,35 @@ else
   RESUME_LABEL="clean"
 fi
 
-ORCHESTRATOR_BOOTSTRAP="$(
-  cat <<EOF
-cd '$ROOT'
-export MULTIAGENT_SESSION='$SESSION'
-export MULTIAGENT_ROOT='$ROOT'
-export MULTIAGENT_RESUME='$RESUME'
-export MULTIAGENT_PROMPT='$PROMPT_FILE'
-export MULTIAGENT_STATE_DIR='$STATE_DIR'
-export MULTIAGENT_WRITE_POLICY='$POLICY_FILE'
-export MULTIAGENT_VERIFIER_MAX_ITERATIONS='$VERIFIER_MAX_ITERATIONS'
-export ORCHESTRATOR_CLI='$ORCHESTRATOR_CLI'
-export WORKER_CLI='$WORKER_CLI'
-export SUBAGENT_CLI='$SUBAGENT_CLI'
-export VERIFIER_CLI='$VERIFIER_CLI'
-printf 'Multiagent launch mode: MULTIAGENT_RESUME=%s (%s)\n' '$RESUME' '$RESUME_LABEL'
-$(build_cli_command "$ORCHESTRATOR_CLI" "$ROOT" "$PROMPT_FILE")
-EOF
-)"
+ORCHESTRATOR_BOOTSTRAP_SCRIPT="$STATE_DIR/orchestrator-bootstrap.sh"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'cd %q\n' "$ROOT"
+  printf 'export MULTIAGENT_SESSION=%q\n' "$SESSION"
+  printf 'export MULTIAGENT_ROOT=%q\n' "$ROOT"
+  printf 'export MULTIAGENT_RESUME=%q\n' "$RESUME"
+  printf 'export MULTIAGENT_PROMPT=%q\n' "$PROMPT_FILE"
+  printf 'export MULTIAGENT_PROMPT_MODULE_ROOT=%q\n' "$PROMPT_MODULE_ROOT"
+  printf 'export MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=%q\n' "${MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER:-1}"
+  printf 'export MULTIAGENT_STATE_DIR=%q\n' "$STATE_DIR"
+  printf 'export MULTIAGENT_WRITE_POLICY=%q\n' "$POLICY_FILE"
+  printf 'export MULTIAGENT_VERIFIER_MAX_ITERATIONS=%q\n' "$VERIFIER_MAX_ITERATIONS"
+  printf 'export ORCHESTRATOR_CLI=%q\n' "$ORCHESTRATOR_CLI"
+  printf 'export WORKER_CLI=%q\n' "$WORKER_CLI"
+  printf 'export SUBAGENT_CLI=%q\n' "$SUBAGENT_CLI"
+  printf 'export VERIFIER_CLI=%q\n' "$VERIFIER_CLI"
+  printf 'export CODEX_BIN=%q\n' "$CODEX_BIN"
+  printf 'export CLAUDE_BIN=%q\n' "$CLAUDE_BIN"
+  printf 'export MULTIAGENT_CODEX_EXEC=%q\n' "$MULTIAGENT_CODEX_EXEC"
+  printf 'export MULTIAGENT_EXTRA_PATH=%q\n' "$MULTIAGENT_EXTRA_PATH"
+  printf 'export PATH=%q\n' "$PATH"
+  printf 'printf %q %q %q\n' 'Multiagent launch mode: MULTIAGENT_RESUME=%s (%s)\n' "$RESUME" "$RESUME_LABEL"
+  build_cli_command "$ORCHESTRATOR_CLI" "$ROOT" "$PROMPT_FILE"
+  printf '\n'
+} > "$ORCHESTRATOR_BOOTSTRAP_SCRIPT"
+chmod 700 "$ORCHESTRATOR_BOOTSTRAP_SCRIPT"
 
-tmux new-session -d -s "$SESSION" -n orchestrator "$ORCHESTRATOR_BOOTSTRAP"
+tmux new-session -d -s "$SESSION" -n orchestrator "bash $(printf '%q' "$ORCHESTRATOR_BOOTSTRAP_SCRIPT")"
 tmux select-window -t "$SESSION:orchestrator"
 
 echo "Started tmux session: $SESSION"

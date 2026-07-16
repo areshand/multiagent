@@ -113,6 +113,11 @@ def die(message: str) -> None:
     raise SystemExit(2)
 
 
+def require_path(path: Path, description: str) -> None:
+    if not path.exists():
+        raise FileNotFoundError(f"{description} not found: {path}")
+
+
 def parse_csv(value: str, choices: dict[str, Any] | set[str] | list[str] | tuple[str, ...]) -> list[str]:
     allowed = set(choices)
     items = [item.strip() for item in value.split(",") if item.strip()]
@@ -206,24 +211,32 @@ def git_diff_stats(workdir: Path) -> dict[str, int]:
 
 
 def current_worker_system() -> str:
-    prompt_path = ROOT / "orchestrator_prompt.md"
+    spawn_playbook_path = ROOT / "prompts" / "playbooks" / "agent-spawning.md"
+    worker_prompt_path = ROOT / "prompts" / "worker.md"
     try:
-        text = prompt_path.read_text(encoding="utf-8")
-        start = text.index("## Required Worker First Instruction")
-        end = text.index("## Worker Spawn Skill", start)
-        section = text[start:end].strip()
+        require_path(spawn_playbook_path, "agent spawning playbook")
+        require_path(worker_prompt_path, "worker role prompt")
+        section = (
+            "## Evaluation Worker Launch Context\n\n"
+            "The production orchestrator builds worker first instructions by combining "
+            "`prompts/playbooks/agent-spawning.md` with `prompts/worker.md`. "
+            "This evaluator uses the same modules directly so prompt refactors do not "
+            "depend on core orchestrator section headers.\n\n"
+            + spawn_playbook_path.read_text(encoding="utf-8").strip()
+            + "\n\n"
+            + worker_prompt_path.read_text(encoding="utf-8").strip()
+        )
         return (
             "You are a worker agent launched by the multiagent orchestrator.\n\n"
             "Use the current repository worker rules below. They are extracted from "
-            "`orchestrator_prompt.md`, so evaluation tracks changes to the multiagent system.\n\n"
+            "`prompts/playbooks/agent-spawning.md` and `prompts/worker.md`, "
+            "so evaluation tracks changes to the multiagent system.\n\n"
             f"{section}"
         )
     except Exception as exc:
         print(
-            f"WARNING: current_worker_system() failed to extract section from "
-            f"{prompt_path} ({exc}). Falling back to BASELINE_FALLBACK. "
-            "Check that '## Required Worker First Instruction' and "
-            "'## Worker Spawn Skill' headers exist in orchestrator_prompt.md.",
+            f"WARNING: current_worker_system() failed to load worker prompt modules ({exc}). "
+            "Falling back to BASELINE_FALLBACK.",
             file=sys.stderr,
         )
         return BASELINE_FALLBACK

@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://areshand.github.io/multiagent/internal-pilot-evidence.schema.json",
+  "title": "Multiagent internal pilot cell evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "pilot_id", "task_id", "team", "issue_url", "arm",
+    "harness_commit", "target_base_commit", "observed_base_commit",
+    "observed_final_commit", "started_at", "finished_at", "duration_seconds",
+    "preflight", "driver", "validation", "git_status", "diff_sha256",
+    "changed_lines", "mechanical_status", "human_status", "verdict"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "pilot_id": {"type": "string"},
+    "task_id": {"type": "string"},
+    "team": {"type": "string"},
+    "issue_url": {"type": "string"},
+    "arm": {"enum": ["baseline", "orchestrated"]},
+    "harness_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "target_base_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "observed_base_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "observed_final_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "started_at": {"type": "string"},
+    "finished_at": {"type": "string"},
+    "duration_seconds": {"type": "number", "minimum": 0},
+    "preflight": {"type": "array", "items": {"$ref": "#/$defs/commandResult"}},
+    "driver": {"$ref": "#/$defs/processResult"},
+    "validation": {"type": "array", "items": {"$ref": "#/$defs/commandResult"}},
+    "git_status": {"type": "string"},
+    "diff_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "changed_lines": {"type": "integer", "minimum": 0},
+    "mechanical_status": {"enum": ["invalid", "failed", "passed"]},
+    "human_status": {"enum": ["pending", "accepted", "rejected"]},
+    "verdict": {"enum": ["invalid", "failed", "pending-review", "success", "rejected"]}
+  },
+  "$defs": {
+    "processResult": {
+      "type": "object",
+      "required": ["argv", "exit_code", "timed_out", "duration_seconds", "stdout_log", "stderr_log"],
+      "properties": {
+        "argv": {"type": "array", "items": {"type": "string"}},
+        "exit_code": {"type": ["integer", "null"]},
+        "timed_out": {"type": "boolean"},
+        "duration_seconds": {"type": "number", "minimum": 0},
+        "stdout_log": {"type": "string"},
+        "stderr_log": {"type": "string"}
+      }
+    },
+    "commandResult": {
+      "allOf": [
+        {"$ref": "#/$defs/processResult"},
+        {
+          "type": "object",
+          "required": ["name", "command", "expected_exit", "passed"],
+          "properties": {
+            "name": {"type": "string"},
+            "command": {"type": "string"},
+            "expected_exit": {"type": "integer"},
+            "passed": {"type": "boolean"}
+          }
+        }
+      ]
+    }
+  }
+}
