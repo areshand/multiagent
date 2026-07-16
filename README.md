@@ -125,6 +125,7 @@ an advanced path.
 - [Three-minute local demo](docs/demo.md)
 - [Getting started and operations](docs/getting-started.md)
 - [Benchmark results and reproducibility](docs/benchmark.md)
+- [Internal pilot request one-pager](docs/internal-pilot-request.md)
 - [Evaluation framework](evaluation/README.md)
 
 ## Test

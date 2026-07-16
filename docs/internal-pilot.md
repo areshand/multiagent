@@ -1,5 +1,8 @@
 # Internal Pilot
 
+To ask a team to run this pilot, send
+[the one-page internal pilot request](internal-pilot-request.md).
+
 ## Three-Minute Pitch
 
 This is a benchmark harness and orchestration experiment, not a request to

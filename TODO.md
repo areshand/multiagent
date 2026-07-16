@@ -113,6 +113,19 @@ Suggested issue framing:
 - [ ] Use those results to validate reliability and workflow fit before broader
   promotion.
 
+Evidence rules for checking these boxes (see
+[the pilot request one-pager](docs/internal-pilot-request.md)):
+
+- The presentation item requires a record that the pitch was actually delivered
+  internally, with date and audience. Having presentation material in the repo
+  is not enough.
+- The willing-team item requires a named sponsor and team, the agreed 5-10 task
+  list, and named independent reviewers. A prepared ask is not a commitment.
+- The results item requires a completed pilot run directory: validated
+  manifest, per-cell `evidence.json`, filled `review.json` files from
+  independent reviewers, the generated summary, and checksums. Fixture tests
+  and mocked drivers do not count as pilot results.
+
 ### OSS Readiness
 
 - [x] Add an explicit open-source license.
