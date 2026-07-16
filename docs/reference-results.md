@@ -23,7 +23,7 @@ automated provenance boundary requires:
 | Task images | Base and baked image IDs and manifest digests for every selected row |
 | Agent CLI | Actual in-container `codex-cli` version captured from every baked task image before pruning |
 | Configuration | Exact redacted command plus JSON/YAML config, row offset/count, platform, limits, and output paths |
-| Result artifacts | Summary, preflight, image status, stdout, and stderr files bound by SHA-256 |
+| Result artifacts | Summary, effective config, preflight, image status, authoritative EvalScope report, and native event log bound by SHA-256 |
 | Completion | Evaluation `rc=0`, completed summary, matching sample size, completed image status, and no missing image captures |
 
 The validator rejects dirty checkouts, diagnostic error swallowing, duplicate
