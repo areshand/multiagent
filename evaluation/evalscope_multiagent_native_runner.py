@@ -54,22 +54,20 @@ _SOLVER_LAUNCHER = """#!/usr/bin/env bash
 set -euo pipefail
 
 prompt_file="${EVAL_TASK_PROMPT_FILE:-/tmp/evalscope-native-multiagent-prompt.txt}"
-workdir="${EVAL_TASK_WORKDIR:-/app}"
 timeout_args=()
 if [[ -n "${EVAL_PROD_MULTIAGENT_TIMEOUT:-}" ]]; then
   timeout_args=(--timeout "$EVAL_PROD_MULTIAGENT_TIMEOUT")
 fi
-cd "$workdir"
-
-solver=/opt/multiagent/evaluation/native_solver/solve_swe_prod.py
-if [[ -f "$solver" && -x /opt/multiagent/launch.sh ]]; then
-  exec python3 "$solver" "$prompt_file" "${timeout_args[@]}"
+package=/opt/multiagent/evaluation/native_solver/__init__.py
+if [[ -f "$package" && -x /opt/multiagent/launch.sh ]]; then
+  cd /opt/multiagent
+  exec python3 -m evaluation.native_solver.solve_swe_prod "$prompt_file" "${timeout_args[@]}"
 fi
 
 cat >&2 <<'EOF'
 The production multiagent repository was not baked into this task image.
 Expected /opt/multiagent/launch.sh and
-/opt/multiagent/evaluation/native_solver/solve_swe_prod.py.
+/opt/multiagent/evaluation/native_solver/__init__.py.
 EOF
 exit 127
 """

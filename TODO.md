@@ -1,0 +1,112 @@
+# Project TODO
+
+## OSS Positioning And Adoption
+
+Do not try to contribute the whole framework to another OSS project first. A
+large orchestration and evaluation change is too expensive for most maintainers
+to review as one contribution.
+
+Position the project as:
+
+> This is not another coding agent. It is an orchestration layer that composes
+> existing coding agents, runs them in parallel roles, verifies their work, and
+> improves SWE-style task reliability.
+
+### Reference Implementation
+
+- [x] Keep `areshand/multiagent` as the reference implementation.
+- [ ] Document an exact benchmark command and commit.
+- [ ] Publish a concise result table, relevant logs, and failure analysis.
+- [x] Add an architecture diagram and a three-minute demonstration.
+- [x] Prioritize orchestration, evaluation, and runtime rigor over UI work.
+
+### Framework Contract Boundary
+
+- [x] Move generic contract reasoning from
+  `evaluation/native_solver/swe_prod_contracts.py` into
+  `multiagent_framework/coding/contracts.py`.
+- [x] Promote public issue requirement extraction, issue-coverage gating,
+  data-provenance contracts, migration/history contracts, and generic contract
+  ledger rules into reusable framework APIs.
+- [x] Keep only SWE-specific metadata sanitization, benchmark prompt-envelope
+  handling, runtime file paths, and adapter rendering under `evaluation/`.
+- [x] Remove dead compatibility paths where sanitized metadata makes official
+  test fields, `requirements`, or `interface` unreachable.
+- [x] Add framework-level tests proving the contract APIs have no SWE Bench,
+  EvalScope, benchmark-row, hidden-test, or `EVAL_*` dependencies.
+- [x] Make the SWE contracts module a thin adapter over the framework contract
+  model instead of an independent contract engine.
+
+### Native Solver Import Model
+
+- [x] Add `evaluation/native_solver/__init__.py` and treat the native solver as
+  one package in local tests and baked task containers.
+- [x] Launch the production solver with
+  `python3 -m evaluation.native_solver.solve_swe_prod` from
+  `/opt/multiagent` instead of executing `solve_swe_prod.py` by file path.
+- [x] Remove the repeated relative-import/top-level-import fallbacks
+  (`try/except ImportError`) from all native solver modules.
+- [x] Replace `from ... import *` with explicit symbol imports or module-qualified
+  references so dependencies and cycles are visible.
+- [x] Do not catch broad `ImportError` around module loading; internal dependency
+  failures must preserve their original traceback instead of triggering an
+  alternate import path.
+- [x] Refactor `evaluation/native_solver/swe_prod_lifecycle.py` to use one
+  explicit package import path: remove its repeated `try/except ImportError`
+  blocks and wildcard imports, keep dependencies named or module-qualified,
+  and add a regression test proving an import-time dependency failure surfaces
+  the original exception instead of silently selecting a fallback path.
+- [x] Add tests for package import, module entrypoint execution, and the exact
+  baked-container command.
+
+### Small Upstream Contributions
+
+- [ ] Propose a benchmark runner, trace/evidence format, verifier gate, or
+  regression harness to SWE-agent or OpenHands.
+- [ ] Propose a minimal external coding-agent worker adapter to opencode or the
+  Claude/Codex CLI ecosystem.
+- [ ] Extract diff-hash binding, tool-execution audit, or permission/evidence
+  gates for relevant security and runtime projects.
+- [ ] Keep each upstream contribution independently reviewable and mergeable.
+
+### Technical Note
+
+- [x] Write a short technical note titled approximately *Composing Codex CLI
+  and Claude CLI as verifier/worker agents for SWE-bench-style tasks*.
+- [x] Include the benchmark setup, improvements, failures, and evidence for why
+  orchestration helped.
+
+### Getting Started
+
+- [x] Provide one command that runs a small local demonstration in about five
+  minutes.
+- [x] Keep the full benchmark and 20 GB container workflow as an advanced path,
+  not the first proof a new user must run.
+
+### Upstream Discovery
+
+- [ ] Open design or feedback issues before sending upstream code.
+- [ ] Ask maintainers whether a minimal external-agent adapter or evidence-gate
+  contribution fits their project.
+- [ ] Avoid leading with the complete multiagent framework implementation.
+
+Suggested issue framing:
+
+> I built an external-agent orchestration layer that runs existing CLIs as
+> workers and verifiers. Would a minimal adapter or evidence-gate contribution
+> be useful here?
+
+### Internal Validation
+
+- [ ] Present the system internally as a benchmark harness and orchestration
+  experiment, not as a tool that every team should immediately adopt.
+- [ ] Find one team willing to run it on 5-10 real bugs or internal tasks.
+- [ ] Use those results to validate reliability and workflow fit before broader
+  promotion.
+
+### OSS Readiness
+
+- [x] Add an explicit open-source license.
+- [x] Make the README concise and clearly state the project positioning.
+- [ ] Add a reproducible benchmark section with exact commands and provenance.
+- [ ] Complete these credibility basics before significant external promotion.

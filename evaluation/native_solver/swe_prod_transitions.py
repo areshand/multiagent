@@ -1,34 +1,67 @@
 from __future__ import annotations
 
-try:
-    from .swe_prod_types import *  # noqa: F403
-except ImportError:  # pragma: no cover - direct execution in task containers
-    from swe_prod_types import *  # type: ignore  # noqa: F403
+import json
+import time
+from pathlib import Path
 
-try:
-    from .swe_prod_contracts import *  # noqa: F403
-except ImportError:  # pragma: no cover - direct execution in task containers
-    from swe_prod_contracts import *  # type: ignore  # noqa: F403
-
-try:
-    from .swe_prod_bootstrap import *  # noqa: F403
-except ImportError:  # pragma: no cover - direct execution in task containers
-    from swe_prod_bootstrap import *  # type: ignore  # noqa: F403
-
-try:
-    from .swe_prod_repository import *  # noqa: F403
-except ImportError:  # pragma: no cover - direct execution in task containers
-    from swe_prod_repository import *  # type: ignore  # noqa: F403
-
-try:
-    from .swe_prod_state import *  # noqa: F403
-except ImportError:  # pragma: no cover - direct execution in task containers
-    from swe_prod_state import *  # type: ignore  # noqa: F403
-
-try:
-    from .swe_prod_orchestration import *  # noqa: F403
-except ImportError:  # pragma: no cover - direct execution in task containers
-    from swe_prod_orchestration import *  # type: ignore  # noqa: F403
+from .swe_prod_contracts import (
+    HELPER_PROBE_PATH,
+    RUNTIME_ROOT,
+    STATUS_PATH,
+    log,
+)
+from .swe_prod_evidence import (
+    active_verifier_subagent_summaries,
+    append_adapter_probe_evidence,
+    assignment_owned_paths,
+    blocked_status_has_no_source_diff,
+    blocked_status_waits_for_verifier,
+    build_verification_has_evidence,
+    capture_session,
+    captured_text,
+    completed_status_covers_adapter_validation,
+    create_no_diff_stall_repair_state,
+    emit_failure_diagnostics,
+    final_diff_sha256,
+    has_live_agent_process,
+    inferred_required_paths_from_worker_text,
+    orchestrator_exited_without_status,
+    persisted_stale_visible_reconciliation_evidence,
+    persisted_subagent_final_acceptance_evidence,
+    persisted_subagent_visible_validation_evidence,
+    publish_status,
+    recover_verifier_accepted_todo_closures,
+    required_path_outside_owned_reports,
+    status,
+    status_covers_validation_commands,
+    status_with_recovered_public_evidence,
+    structured_repair_gate_blockers,
+    tmux_has_session,
+    visible_validation_passed_in_text,
+)
+from .swe_prod_guardrails import (
+    coverage_probe_commands,
+    helper_scope_hints,
+    implementation_scope_blockers,
+)
+from .swe_prod_orchestration import (
+    persisted_verifier_blocking_evidence,
+    send_orchestrator_followup,
+    spawn_adapter_helper_worker,
+    verifier_blocking_handoff_key,
+)
+from .swe_prod_repository import cleanup_patch, clear_blocked_changes, git_diff
+from .swe_prod_types import LifecyclePolicy, LifecycleProgress
+from .swe_prod_validation import (
+    blocked_status_needs_diff_reconciliation,
+    blocked_status_recoverable_by_public_probe,
+    blockers_after_passing_public_probe,
+    completed_status_snapshot_blockers,
+    has_hard_scope_blocker,
+    non_recoverable_final_validation_blockers,
+    run_validation_coverage_probe,
+    validation_coverage_blockers,
+)
 
 def handle_completed_status(
     *,

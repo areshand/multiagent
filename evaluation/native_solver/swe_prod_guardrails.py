@@ -1,18 +1,27 @@
-"""Compatibility facade for framework-owned coding guardrails."""
+"""Compatibility facade with explicit framework-owned coding guardrails."""
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
+from multiagent_framework.coding.guardrails import (
+    changed_go_package_args,
+    coverage_probe_commands,
+    dependency_contract_changed,
+    failed_validation_return_code,
+    helper_preservation_evidence,
+    helper_scope_hints,
+    implementation_scope_blockers,
+    required_public_symbols,
+    source_symbol_changes,
+)
 
-
-def _ensure_framework_import_path() -> None:
-    candidates = (Path(__file__).resolve().parent, Path(__file__).resolve().parents[2])
-    for candidate in candidates:
-        if (candidate / "multiagent_framework").is_dir() and str(candidate) not in sys.path:
-            sys.path.insert(0, str(candidate))
-
-
-_ensure_framework_import_path()
-
-from multiagent_framework.coding.guardrails import *  # noqa: E402,F403
+__all__ = [
+    "changed_go_package_args",
+    "coverage_probe_commands",
+    "dependency_contract_changed",
+    "failed_validation_return_code",
+    "helper_preservation_evidence",
+    "helper_scope_hints",
+    "implementation_scope_blockers",
+    "required_public_symbols",
+    "source_symbol_changes",
+]

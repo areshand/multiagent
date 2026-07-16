@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 
-CommandRunner = Callable[..., subprocess.CompletedProcess[str]]
+CommandRunner = Callable[..., subprocess.CompletedProcess]
 
 
 def structured_repair_gate_blockers(

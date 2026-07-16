@@ -1,24 +1,60 @@
 from __future__ import annotations
 
-try:
-    from .swe_prod_contracts import *  # noqa: F403
-except ImportError:  # pragma: no cover - direct execution in task containers
-    from swe_prod_contracts import *  # type: ignore  # noqa: F403
+import json
+import re
+import shlex
+import subprocess
+import time
+from pathlib import Path
 
-try:
-    from .swe_prod_bootstrap import *  # noqa: F403
-except ImportError:  # pragma: no cover - direct execution in task containers
-    from swe_prod_bootstrap import *  # type: ignore  # noqa: F403
-
-try:
-    from .swe_prod_repository import *  # noqa: F403
-except ImportError:  # pragma: no cover - direct execution in task containers
-    from swe_prod_repository import *  # type: ignore  # noqa: F403
-
-try:
-    from .swe_prod_evidence import *  # noqa: F403
-except ImportError:  # pragma: no cover - direct execution in task containers
-    from swe_prod_evidence import *  # type: ignore  # noqa: F403
+from .swe_prod_contracts import (
+    HELPER_PROBE_PATH,
+    MULTI_VALUE_PROBE_PATH,
+    RUNTIME_ROOT,
+    SOURCE_OWNER_CANDIDATES_PATH,
+    data_provenance_blockers,
+    env_positive_int,
+    historical_contract_blockers,
+    issue_coverage_blockers,
+    issue_with_public_problem_text,
+    log,
+    official_expected_test_blockers,
+    official_expected_tests_satisfied_by_text,
+    run,
+)
+from .swe_prod_evidence import (
+    accepted_systemic_runtime_probe_fallback,
+    build_verification_has_evidence,
+    changed_code_paths_from_diff,
+    changed_paths_from_diff,
+    claimed_changed_path_blockers,
+    completed_status_covers_adapter_validation,
+    final_diff_sha256,
+    go_compile_failure_present,
+    go_failure_is_unaffected_unbuildable_root_target,
+    go_package_validation_has_evidence,
+    go_package_validation_has_explicit_marker,
+    multi_value_probe_has_final_output_counts,
+    persisted_exact_hash_behavior_acceptance_texts,
+    policy_collection_partition_risk,
+    pytest_teardown_after_success,
+    remove_truncated_go_package_prefixes,
+    run_final_changed_go_compile_probe,
+    source_required_go_validation_packages,
+    stale_patch_application_blockers,
+    state_space_partition_audit_has_evidence,
+    status,
+    validation_probe_env,
+    validation_probe_has_no_test_evidence,
+    validation_text_has_no_test_evidence,
+    verifier_runtime_failure_is_classified_compile_clean,
+)
+from .swe_prod_guardrails import (
+    changed_go_package_args,
+    coverage_probe_commands,
+    implementation_scope_blockers,
+)
+from .swe_prod_repository import git_diff
 
 def validation_coverage_blockers(
     issue: str,

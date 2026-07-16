@@ -1,0 +1,26 @@
+name: Framework contract tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.8", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Run framework and native-solver boundary tests
+        run: |
+          python -m unittest discover -s tests -p 'test_contracts.py' -v
+          python -m unittest discover -s tests -p 'test_native_solver_import_model.py' -v

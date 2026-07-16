@@ -936,7 +936,9 @@ assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "f
 assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "production multiagent solver crashed before reaching a terminal state"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "solver_internal_timeout"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "EVAL_NATIVE_SOLVER_TIMEOUT_RESERVE"
-assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "/opt/multiagent/evaluation/native_solver/solve_swe_prod.py"
+assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "python3 -m evaluation.native_solver.solve_swe_prod"
+PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 "$ROOT/tests/test_contracts.py"
+PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 "$ROOT/tests/test_native_solver_import_model.py"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "multiagent-native requires runtime Codex auth JSON"
 assert_file_not_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" '"OPENAI_API_KEY": bridge.trial_token'
 assert_file_not_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" '"OPENAI_BASE_URL": f"{bridge.base_url}'
@@ -2404,11 +2406,13 @@ with tempfile.TemporaryDirectory() as td:
         native_solver_source=root,
     )
     docker_lines, package_hint = production_manager._copy_native_solver_source(bake_context)
-    assert package_hint == "solve_swe_prod.py", package_hint
+    assert package_hint == "python3 -m evaluation.native_solver.solve_swe_prod", package_hint
     assert docker_lines[0] == "COPY multiagent/ /opt/multiagent/", docker_lines
     baked_root = bake_context / "multiagent"
     assert (baked_root / "launch.sh").is_file()
     assert (baked_root / "evaluation/native_solver/solve_swe_prod.py").is_file()
+    assert (baked_root / "evaluation/native_solver/__init__.py").is_file()
+    assert (baked_root / "evaluation/__init__.py").is_file()
     assert (baked_root / "multiagent_framework/verification.py").is_file()
     assert not (baked_root / "evaluation/swe_bench_pro.py").exists()
     assert not (baked_root / "tests").exists()
@@ -5620,14 +5624,16 @@ printf 'Subagent without org metadata progress\n' >"$MOCK_TMUX_CAPTURES/subagent
 status_no_meta_output="$("$ROOT/bin/status.sh")"
 [[ "$status_no_meta_output" == *$'subagent\tsubagent-no-meta\trunning\topen\tSubagent without org metadata progress\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-no-meta"$'\t-\t-\t-'* ]]
 # Test documentation consistency - no unsupported plan.sh or decision.sh resolve commands
-if grep -Fq "bin/plan.sh" "$ROOT/README.md"; then
-  echo "README.md should not reference unsupported bin/plan.sh" >&2
-  exit 1
-fi
-if grep -Fq "decision.sh resolve" "$ROOT/README.md"; then
-  echo "README.md should not reference unsupported decision.sh resolve command" >&2
-  exit 1
-fi
+for documentation_file in "$ROOT/README.md" "$ROOT/docs/getting-started.md"; do
+  if grep -Fq "bin/plan.sh" "$documentation_file"; then
+    echo "$documentation_file should not reference unsupported bin/plan.sh" >&2
+    exit 1
+  fi
+  if grep -Fq "decision.sh resolve" "$documentation_file"; then
+    echo "$documentation_file should not reference unsupported decision.sh resolve command" >&2
+    exit 1
+  fi
+done
 if grep -Fq "bin/plan.sh" "$ROOT/orchestrator_prompt.md"; then
   echo "orchestrator_prompt.md should not reference unsupported bin/plan.sh" >&2
   exit 1
@@ -5637,13 +5643,13 @@ if grep -Fq "decision.sh resolve" "$ROOT/orchestrator_prompt.md"; then
   exit 1
 fi
 
-# Verify that decision command examples in README.md use only supported commands
-decision_commands_readme="$(grep "bin/decision.sh" "$ROOT/README.md" || true)"
-[[ "$decision_commands_readme" == *"bin/decision.sh init"* ]]
-[[ "$decision_commands_readme" == *"bin/decision.sh add-alternative"* ]]
-[[ "$decision_commands_readme" == *"bin/decision.sh commit"* ]]
-[[ "$decision_commands_readme" == *"bin/decision.sh list"* ]]
-[[ "$decision_commands_readme" == *"bin/decision.sh show"* ]]
+# Verify that decision command examples in the operations guide use only supported commands
+decision_commands_guide="$(grep "bin/decision.sh" "$ROOT/docs/getting-started.md" || true)"
+[[ "$decision_commands_guide" == *"bin/decision.sh init"* ]]
+[[ "$decision_commands_guide" == *"bin/decision.sh add-alternative"* ]]
+[[ "$decision_commands_guide" == *"bin/decision.sh commit"* ]]
+[[ "$decision_commands_guide" == *"bin/decision.sh list"* ]]
+[[ "$decision_commands_guide" == *"bin/decision.sh show"* ]]
 
 # Verify that decision command examples in the organizational-learning module use only supported commands
 decision_commands_prompt="$(grep "bin/decision.sh" "$ROOT/prompts/roles/organizational-learning.md" || true)"

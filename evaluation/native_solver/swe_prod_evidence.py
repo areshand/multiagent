@@ -1,19 +1,13 @@
 from __future__ import annotations
 
-try:
-    from .swe_prod_contracts import *  # noqa: F403
-except ImportError:  # pragma: no cover - direct execution in task containers
-    from swe_prod_contracts import *  # type: ignore  # noqa: F403
-
-try:
-    from .swe_prod_bootstrap import *  # noqa: F403
-except ImportError:  # pragma: no cover - direct execution in task containers
-    from swe_prod_bootstrap import *  # type: ignore  # noqa: F403
-
-try:
-    from .swe_prod_repository import *  # noqa: F403
-except ImportError:  # pragma: no cover - direct execution in task containers
-    from swe_prod_repository import *  # type: ignore  # noqa: F403
+import json
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import time
+from pathlib import Path
 
 from multiagent_framework import (
     AtomicStatusStore,
@@ -28,6 +22,31 @@ from multiagent_framework import (
     verifier_rechecked_todo as _framework_verifier_rechecked_todo,
     verifier_text_covers_resolution_commands as _framework_verifier_text_covers_resolution_commands,
 )
+
+from .swe_prod_contracts import (
+    CONTRACT_LEDGER_PATH,
+    DEFAULT_MULTIAGENT_ROOT,
+    DEFAULT_WORKDIR,
+    FAILURE_DIAGNOSTICS_PATH,
+    MULTI_VALUE_PROBE_PATH,
+    RUNTIME_ROOT,
+    SOURCE_OWNER_CANDIDATES_PATH,
+    STALE_VISIBLE_RECONCILIATION_PATH,
+    STATUS_PATH,
+    env_positive_int,
+    log,
+    remove_prefix,
+    run,
+)
+from .swe_prod_guardrails import (
+    changed_go_package_args,
+    coverage_probe_commands,
+    dependency_contract_changed,
+    failed_validation_return_code,
+    helper_preservation_evidence,
+    source_symbol_changes,
+)
+from .swe_prod_repository import git_diff
 
 def structured_repair_gate_blockers() -> list[str]:
     return _framework_structured_repair_gate_blockers(

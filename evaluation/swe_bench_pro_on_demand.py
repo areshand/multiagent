@@ -163,6 +163,8 @@ class OnDemandImageManager:
         if path.parts and path.parts[0] == "evaluation":
             if path == Path("evaluation"):
                 return False
+            if path == Path("evaluation/__init__.py"):
+                return False
             if len(path.parts) < 2 or path.parts[1] != "native_solver":
                 return True
             native_solver_root = Path("evaluation/native_solver")
@@ -199,16 +201,21 @@ class OnDemandImageManager:
                 if self._skip_repo_bake_path((Path(directory).relative_to(source_root) / name) if Path(directory) != source_root else Path(name))
             ],
         )
-        prod_solver = dest / "evaluation" / "native_solver" / "solve_swe_prod.py"
-        if not prod_solver.exists():
-            raise RuntimeError(f"production native solver missing from repo source: {prod_solver}")
+        entrypoint = dest / "evaluation" / "native_solver" / "solve_swe_prod.py"
+        package_init = dest / "evaluation" / "native_solver" / "__init__.py"
+        evaluation_init = dest / "evaluation" / "__init__.py"
+        missing = [path for path in (entrypoint, package_init, evaluation_init) if not path.exists()]
+        if missing:
+            raise RuntimeError(
+                "production native solver package is incomplete: "
+                + ", ".join(str(path) for path in missing)
+            )
         return (
             [
                 "COPY multiagent/ /opt/multiagent/",
-                "RUN chmod +x /opt/multiagent/launch.sh /opt/multiagent/bin/*.sh "
-                "/opt/multiagent/evaluation/native_solver/solve_swe_prod.py",
+                "RUN chmod +x /opt/multiagent/launch.sh /opt/multiagent/bin/*.sh",
             ],
-            "solve_swe_prod.py",
+            "python3 -m evaluation.native_solver.solve_swe_prod",
         )
 
     def _ensure_baked_image(self, image: str, instance_id: str) -> str:

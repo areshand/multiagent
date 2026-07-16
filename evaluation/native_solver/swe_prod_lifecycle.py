@@ -1,47 +1,63 @@
 from __future__ import annotations
 
-try:
-    from .swe_prod_types import *  # noqa: F403
-except ImportError:  # pragma: no cover - direct execution in task containers
-    from swe_prod_types import *  # type: ignore  # noqa: F403
+import hashlib
+import json
+import os
+import shutil
+import time
+from pathlib import Path
 
-try:
-    from .swe_prod_contracts import *  # noqa: F403
-except ImportError:  # pragma: no cover - direct execution in task containers
-    from swe_prod_contracts import *  # type: ignore  # noqa: F403
-
-try:
-    from .swe_prod_bootstrap import *  # noqa: F403
-except ImportError:  # pragma: no cover - direct execution in task containers
-    from swe_prod_bootstrap import *  # type: ignore  # noqa: F403
-
-try:
-    from . import swe_prod_repository as _repository
-    from .swe_prod_repository import *  # noqa: F403
-except ImportError:  # pragma: no cover - direct execution in task containers
-    import swe_prod_repository as _repository  # type: ignore
-    from swe_prod_repository import *  # type: ignore  # noqa: F403
-
-try:
-    from .swe_prod_state import *  # noqa: F403
-except ImportError:  # pragma: no cover - direct execution in task containers
-    from swe_prod_state import *  # type: ignore  # noqa: F403
-
-try:
-    from .swe_prod_orchestration import *  # noqa: F403
-except ImportError:  # pragma: no cover - direct execution in task containers
-    from swe_prod_orchestration import *  # type: ignore  # noqa: F403
-
-try:
-    from .swe_prod_checkpoints import *  # noqa: F403
-except ImportError:  # pragma: no cover - direct execution in task containers
-    from swe_prod_checkpoints import *  # type: ignore  # noqa: F403
-
-try:
-    from .swe_prod_transitions import *  # noqa: F403
-except ImportError:  # pragma: no cover - direct execution in task containers
-    from swe_prod_transitions import *  # type: ignore  # noqa: F403
-
+from . import swe_prod_repository as _repository
+from .swe_prod_bootstrap import (
+    require_path,
+    write_apply_patch_helper,
+    write_codex_bridge,
+    write_go_singleflight_wrapper,
+    write_rg_fallback,
+)
+from .swe_prod_checkpoints import handle_progress_checkpoint
+from .swe_prod_contracts import (
+    CODEX_HOME,
+    CODEX_WRAPPER,
+    RUNTIME_ROOT,
+    STATUS_PATH,
+    env_truthy,
+    log,
+    read_prompt,
+    read_task_metadata,
+    run,
+)
+from .swe_prod_evidence import (
+    assignment_owned_paths,
+    capture_session,
+    ensure_cache_dir,
+    find_codex_cli,
+    has_live_agent_process,
+    inferred_required_paths_from_worker_text,
+    status,
+    tmux_has_session,
+    toolchain_path_prefixes,
+)
+from .swe_prod_guardrails import helper_scope_hints
+from .swe_prod_orchestration import write_orchestrator_resume_prompt
+from .swe_prod_repository import (
+    cleanup_initial_environment_diff,
+    git_head,
+    make_prompt,
+    mark_untracked_source_intent_to_add,
+    materialize_committed_changes,
+)
+from .swe_prod_transitions import (
+    finalize_solver_run,
+    handle_blocked_status,
+    handle_completed_status,
+)
+from .swe_prod_types import LifecyclePolicy, LifecycleProgress
+from .swe_prod_validation import (
+    source_symbol_map_blocker_present,
+    status_records_selected_validation,
+    structured_repair_todo_blocker_present,
+)
 
 def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, timeout: int) -> int:
     global ACTIVE_START_HEAD

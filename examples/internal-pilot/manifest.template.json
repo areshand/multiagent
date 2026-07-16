@@ -1,0 +1,75 @@
+{
+  "template_only": true,
+  "pilot_id": "replace-with-pilot-id",
+  "harness_commit": "REPLACE_WITH_40_CHARACTER_MULTIAGENT_COMMIT",
+  "arms": {
+    "baseline": {
+      "driver": ["examples/internal-pilot/drivers/codex-baseline.sh"]
+    },
+    "orchestrated": {
+      "driver": ["examples/internal-pilot/drivers/multiagent-codex.sh"]
+    }
+  },
+  "tasks": [
+    {
+      "id": "REPLACE_REAL_TASK_01",
+      "team": "REPLACE_OWNER_TEAM",
+      "issue_url": "REPLACE_INTERNAL_ISSUE_URL",
+      "issue_file": "issues/REPLACE_REAL_TASK_01.md",
+      "repository": "REPLACE_AUTHORIZED_REPOSITORY_PATH_OR_URL",
+      "base_commit": "REPLACE_WITH_40_CHARACTER_TARGET_COMMIT",
+      "solver_timeout_seconds": 1800,
+      "preflight": [{"name": "reproduce", "command": "REPLACE_COMMAND", "expect_exit": 1, "timeout_seconds": 300}],
+      "validation": [{"name": "targeted-tests", "command": "REPLACE_COMMAND", "expect_exit": 0, "timeout_seconds": 900}],
+      "acceptance_criteria": ["REPLACE_WITH_OBJECTIVE_CRITERION"]
+    },
+    {
+      "id": "REPLACE_REAL_TASK_02",
+      "team": "REPLACE_OWNER_TEAM",
+      "issue_url": "REPLACE_INTERNAL_ISSUE_URL",
+      "issue_file": "issues/REPLACE_REAL_TASK_02.md",
+      "repository": "REPLACE_AUTHORIZED_REPOSITORY_PATH_OR_URL",
+      "base_commit": "REPLACE_WITH_40_CHARACTER_TARGET_COMMIT",
+      "solver_timeout_seconds": 1800,
+      "preflight": [{"name": "reproduce", "command": "REPLACE_COMMAND", "expect_exit": 1, "timeout_seconds": 300}],
+      "validation": [{"name": "targeted-tests", "command": "REPLACE_COMMAND", "expect_exit": 0, "timeout_seconds": 900}],
+      "acceptance_criteria": ["REPLACE_WITH_OBJECTIVE_CRITERION"]
+    },
+    {
+      "id": "REPLACE_REAL_TASK_03",
+      "team": "REPLACE_OWNER_TEAM",
+      "issue_url": "REPLACE_INTERNAL_ISSUE_URL",
+      "issue_file": "issues/REPLACE_REAL_TASK_03.md",
+      "repository": "REPLACE_AUTHORIZED_REPOSITORY_PATH_OR_URL",
+      "base_commit": "REPLACE_WITH_40_CHARACTER_TARGET_COMMIT",
+      "solver_timeout_seconds": 1800,
+      "preflight": [{"name": "reproduce", "command": "REPLACE_COMMAND", "expect_exit": 1, "timeout_seconds": 300}],
+      "validation": [{"name": "targeted-tests", "command": "REPLACE_COMMAND", "expect_exit": 0, "timeout_seconds": 900}],
+      "acceptance_criteria": ["REPLACE_WITH_OBJECTIVE_CRITERION"]
+    },
+    {
+      "id": "REPLACE_REAL_TASK_04",
+      "team": "REPLACE_OWNER_TEAM",
+      "issue_url": "REPLACE_INTERNAL_ISSUE_URL",
+      "issue_file": "issues/REPLACE_REAL_TASK_04.md",
+      "repository": "REPLACE_AUTHORIZED_REPOSITORY_PATH_OR_URL",
+      "base_commit": "REPLACE_WITH_40_CHARACTER_TARGET_COMMIT",
+      "solver_timeout_seconds": 1800,
+      "preflight": [{"name": "reproduce", "command": "REPLACE_COMMAND", "expect_exit": 1, "timeout_seconds": 300}],
+      "validation": [{"name": "targeted-tests", "command": "REPLACE_COMMAND", "expect_exit": 0, "timeout_seconds": 900}],
+      "acceptance_criteria": ["REPLACE_WITH_OBJECTIVE_CRITERION"]
+    },
+    {
+      "id": "REPLACE_REAL_TASK_05",
+      "team": "REPLACE_OWNER_TEAM",
+      "issue_url": "REPLACE_INTERNAL_ISSUE_URL",
+      "issue_file": "issues/REPLACE_REAL_TASK_05.md",
+      "repository": "REPLACE_AUTHORIZED_REPOSITORY_PATH_OR_URL",
+      "base_commit": "REPLACE_WITH_40_CHARACTER_TARGET_COMMIT",
+      "solver_timeout_seconds": 1800,
+      "preflight": [{"name": "reproduce", "command": "REPLACE_COMMAND", "expect_exit": 1, "timeout_seconds": 300}],
+      "validation": [{"name": "targeted-tests", "command": "REPLACE_COMMAND", "expect_exit": 0, "timeout_seconds": 900}],
+      "acceptance_criteria": ["REPLACE_WITH_OBJECTIVE_CRITERION"]
+    }
+  ]
+}

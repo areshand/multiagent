@@ -1,9 +1,17 @@
 from __future__ import annotations
 
-try:
-    from .swe_prod_contracts import *  # noqa: F403
-except ImportError:  # pragma: no cover - direct execution in task containers
-    from swe_prod_contracts import *  # type: ignore  # noqa: F403
+import os
+import shutil
+from pathlib import Path
+
+from .swe_prod_contracts import (
+    APPLY_PATCH_WRAPPER,
+    CODEX_HOME,
+    CODEX_WRAPPER,
+    RUNTIME_ROOT,
+    STABLE_APPLY_PATCH,
+    log,
+)
 
 def require_path(path: Path, description: str) -> None:
     if not path.exists():

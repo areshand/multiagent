@@ -1,14 +1,25 @@
 from __future__ import annotations
 
-try:
-    from .swe_prod_contracts import *  # noqa: F403
-except ImportError:  # pragma: no cover - direct execution in task containers
-    from swe_prod_contracts import *  # type: ignore  # noqa: F403
+import os
+import re
+import shutil
+from pathlib import Path
 
-try:
-    from .swe_prod_bootstrap import *  # noqa: F403
-except ImportError:  # pragma: no cover - direct execution in task containers
-    from swe_prod_bootstrap import *  # type: ignore  # noqa: F403
+from .swe_prod_bootstrap import require_path
+from .swe_prod_contracts import (
+    ACTIVE_START_HEAD,
+    AUTONOMOUS_APPENDIX,
+    AUTONOMOUS_FINAL_OVERRIDE,
+    RUNTIME_ROOT,
+    SOURCE_OWNER_CANDIDATES_PATH,
+    issue_with_public_problem_text,
+    log,
+    public_issue_text_for_coverage,
+    public_solver_metadata,
+    remove_prefix,
+    run,
+    write_contract_ledger,
+)
 
 def _walk_source_dirs(workdir: Path, *, max_dirs: int = 500) -> list[str]:
     ignored = {".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "coverage", "__pycache__"}

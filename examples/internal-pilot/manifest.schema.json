@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://areshand.github.io/multiagent/internal-pilot-manifest.schema.json",
+  "title": "Multiagent internal pilot manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["pilot_id", "harness_commit", "arms", "tasks"],
+  "properties": {
+    "pilot_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,63}$"},
+    "harness_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "template_only": {"const": false},
+    "arms": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baseline", "orchestrated"],
+      "properties": {
+        "baseline": {"$ref": "#/$defs/arm"},
+        "orchestrated": {"$ref": "#/$defs/arm"}
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 10,
+      "items": {"$ref": "#/$defs/task"}
+    }
+  },
+  "$defs": {
+    "arm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["driver"],
+      "properties": {
+        "driver": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "command", "expect_exit"],
+      "properties": {
+        "name": {"type": "string", "pattern": "^[a-zA-Z0-9._-]+$"},
+        "command": {"type": "string", "minLength": 1},
+        "expect_exit": {"type": "integer", "minimum": 0, "maximum": 255},
+        "timeout_seconds": {"type": "integer", "minimum": 1}
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "team", "issue_url", "issue_file", "repository",
+        "base_commit", "solver_timeout_seconds", "preflight", "validation",
+        "acceptance_criteria"
+      ],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-zA-Z0-9._-]+$"},
+        "team": {"type": "string", "minLength": 1},
+        "issue_url": {"type": "string", "minLength": 1},
+        "issue_file": {"type": "string", "minLength": 1},
+        "repository": {"type": "string", "minLength": 1},
+        "base_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "solver_timeout_seconds": {"type": "integer", "minimum": 60},
+        "preflight": {
+          "type": "array", "minItems": 1, "items": {"$ref": "#/$defs/command"}
+        },
+        "validation": {
+          "type": "array", "minItems": 1, "items": {"$ref": "#/$defs/command"}
+        },
+        "acceptance_criteria": {
+          "type": "array", "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

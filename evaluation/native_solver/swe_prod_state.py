@@ -1,11 +1,7 @@
 from __future__ import annotations
 
-try:
-    from .swe_prod_evidence import *  # noqa: F403
-except ImportError:  # pragma: no cover - direct execution in task containers
-    from swe_prod_evidence import *  # type: ignore  # noqa: F403
+"""Compatibility namespace for the evidence and validation modules."""
 
-try:
-    from .swe_prod_validation import *  # noqa: F403
-except ImportError:  # pragma: no cover - direct execution in task containers
-    from swe_prod_validation import *  # type: ignore  # noqa: F403
+from . import swe_prod_evidence, swe_prod_validation
+
+__all__ = ["swe_prod_evidence", "swe_prod_validation"]
