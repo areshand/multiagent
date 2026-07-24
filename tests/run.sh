@@ -99,6 +99,26 @@ case "$cmd" in
   select-window)
     printf 'select-window %s\n' "${1:-}" >>"$log_file"
     ;;
+  pipe-pane)
+    target=""
+    pipe_command=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -o)
+          shift
+          ;;
+        -t)
+          target="$2"
+          shift 2
+          ;;
+        *)
+          pipe_command="$1"
+          shift
+          ;;
+      esac
+    done
+    printf 'pipe-pane %s %s\n' "$target" "$pipe_command" >>"$log_file"
+    ;;
   capture-pane)
     target=""
     while [[ $# -gt 0 ]]; do
@@ -227,10 +247,14 @@ assert_file_contains "$TMPDIR/launch.out" "Worker CLI: claude"
 assert_file_contains "$TMPDIR/launch.out" "Subagent CLI: claude"
 assert_file_contains "$TMPDIR/launch.out" "Verifier CLI: codex"
 assert_file_contains "$TMPDIR/launch.out" "Default write root: $LAUNCH_TARGET"
+assert_file_contains "$TMPDIR/launch.out" "Logs: $LAUNCH_STATE/logs"
+assert_file_contains "$TMPDIR/launch.out" "Dashboard: MULTIAGENT_SESSION=launch-cross-repo MULTIAGENT_ROOT=$LAUNCH_TARGET $ROOT/bin/watch.sh"
 LAUNCH_BOOTSTRAP="$LAUNCH_STATE/orchestrator-bootstrap.sh"
 assert_file_contains "$MOCK_TMUX_LOG" "$(printf '%q' "$LAUNCH_BOOTSTRAP")"
+assert_file_contains "$MOCK_TMUX_LOG" "pipe-pane launch-cross-repo:orchestrator cat >> $LAUNCH_STATE/logs/orchestrator.log"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "--cd $LAUNCH_TARGET"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "export MULTIAGENT_RESUME=0"
+assert_file_contains "$LAUNCH_BOOTSTRAP" "export MULTIAGENT_LOG_DIR=$LAUNCH_STATE/logs"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "export MULTIAGENT_VERIFIER_MAX_ITERATIONS=3"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "export WORKER_CLI=claude"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "export SUBAGENT_CLI=claude"
@@ -5169,8 +5193,10 @@ assert_file_contains "$MOCK_TMUX_WINDOWS" "subagent-watch"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/status" "running"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/current.txt" "Claude prompt ready"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/meta.env" "write_policy=$MULTIAGENT_WRITE_POLICY"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/meta.env" "log_file=$MULTIAGENT_STATE_DIR/logs/subagent-watch.log"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/meta.env" "cli=claude"
 assert_file_contains "$MOCK_TMUX_LOG" "new-window -d test-session subagent-watch"
+assert_file_contains "$MOCK_TMUX_LOG" "pipe-pane test-session:subagent-watch cat >> $MULTIAGENT_STATE_DIR/logs/subagent-watch.log"
 watch_spawn_line="$(grep -F "new-window -d test-session subagent-watch " "$MOCK_TMUX_LOG")"
 [[ "$watch_spawn_line" == *"--dangerously-skip-permissions"* ]]
 if [[ "$watch_spawn_line" == *"--cd"* || "$watch_spawn_line" == *"--no-alt-screen"* ]]; then
@@ -5403,6 +5429,23 @@ mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-blocked"
 printf 'running\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-blocked/status"
 printf 'Blocked: need input from orchestrator\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-blocked/current.txt"
 
+mkdir -p "$MULTIAGENT_STATE_DIR/logs" "$MULTIAGENT_STATE_DIR/workflows/dashboard-flow"
+printf 'orchestrator event: routed worker-01-docs\n' >"$MULTIAGENT_STATE_DIR/logs/orchestrator.log"
+cat >"$MULTIAGENT_STATE_DIR/workflows/dashboard-flow/nodes.tsv" <<'EOF'
+node_id	agent	assignment_id	role	branch	owned_paths	status	decision_id	plan_id	added_at
+impl	worker-impl	A-impl	exploitation	feature/docs	README.md	blocked	DEC-1	PLAN-1	2026-01-01T00:00:00Z
+docs	worker-docs	A-docs	exploitation	feature/docs	docs/	running	DEC-1	PLAN-1	2026-01-01T00:00:01Z
+EOF
+watch_output="$("$ROOT/bin/watch.sh" --once --log-lines 5)"
+[[ "$watch_output" == *"Multiagent Dashboard"* ]]
+[[ "$watch_output" == *"Agent Status Summary"* ]]
+[[ "$watch_output" == *"Blocked Agents"* ]]
+[[ "$watch_output" == *"subagent-blocked"* ]]
+[[ "$watch_output" == *"DAG Summary"* ]]
+[[ "$watch_output" == *"dashboard-flow"* ]]
+[[ "$watch_output" == *$'dashboard-flow\timpl\tblocked\tworker-impl'* ]]
+[[ "$watch_output" == *"orchestrator event: routed worker-01-docs"* ]]
+
 mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-prompt-only"
 printf 'missing\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-prompt-only/status"
 printf 'If blocked, stop and state what you need. Do not finish with only a plan while /app has no materialized source diff.\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-prompt-only/current.txt"
@@ -5454,6 +5497,7 @@ assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-restore/transcrip
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-restore/transcript.log" "Previous progress: halfway through recovery work"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-restore/instruction.txt" "You are a restored long-running subagent."
 assert_file_contains "$MOCK_TMUX_LOG" "send-key test-session:subagent-restore Read and follow the assignment in $MULTIAGENT_STATE_DIR/subagents/subagent-restore/instruction.txt"
+assert_file_contains "$MOCK_TMUX_LOG" "pipe-pane test-session:subagent-restore cat >> $MULTIAGENT_STATE_DIR/logs/subagent-restore.log"
 claude_restore_line="$(grep -F "new-window -d test-session subagent-restore " "$MOCK_TMUX_LOG")"
 [[ "$claude_restore_line" == *"--dangerously-skip-permissions"* ]]
 if [[ "$claude_restore_line" == *"--cd"* || "$claude_restore_line" == *"--no-alt-screen"* ]]; then

@@ -96,6 +96,8 @@ contracts and workflows:
   `validation-run`, and `validation-lease-acquire`;
 - **Verifier Workflow**, its compact contract ledger, and
   `MULTIAGENT_VERIFIER_MAX_ITERATIONS=3`;
+- Codex UI dashboard watching through `bin/watch.sh`, backed by tmux pane logs
+  under `.multiagent/logs`, blocked-agent state, and workflow DAG nodes;
 - preflight checks that prevent a scaffold, shim, or proxy behavior from being
   mistaken for the target production system.
 

@@ -606,6 +606,28 @@ worker windows, polls open named subagents, refreshes subagent state, and prints
 a table with agent type, name, status, window state, latest progress line, and
 state directory.
 
+For a live Codex desktop view, use the dashboard watcher:
+
+```bash
+bin/watch.sh
+```
+
+`launch.sh` pipes the orchestrator tmux pane into
+`$MULTIAGENT_STATE_DIR/logs/orchestrator.log`. Named subagents spawned or
+restored through `bin/subagent.sh` are piped into
+`$MULTIAGENT_STATE_DIR/logs/NAME.log`. The watcher renders a compact dashboard
+from those logs, `bin/status.sh`, assignment metadata, and workflow DAG state so
+the Codex UI can continuously show the orchestrator tail, status counts, blocked
+agents, DAG summaries, and blocked DAG nodes.
+
+Useful watcher options:
+
+```bash
+bin/watch.sh --once
+bin/watch.sh --interval 2 --log-lines 80
+MULTIAGENT_LOG_DIR=/tmp/swarm-logs bin/watch.sh
+```
+
 ## Organizational Learning Workflow
 
 The orchestrator supports exploration/exploitation/reflection cycles for complex decisions requiring multiple approaches.

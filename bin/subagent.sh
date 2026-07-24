@@ -4,6 +4,7 @@ set -euo pipefail
 SESSION="${MULTIAGENT_SESSION:-multiagent}"
 ROOT="${MULTIAGENT_ROOT:-$(pwd)}"
 STATE_DIR="${MULTIAGENT_STATE_DIR:-$ROOT/.multiagent}"
+LOG_DIR="${MULTIAGENT_LOG_DIR:-$STATE_DIR/logs}"
 POLICY_FILE="${MULTIAGENT_WRITE_POLICY:-$ROOT/docs/write-policy.paths}"
 CODEX_BIN="${CODEX_BIN:-codex}"
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
@@ -88,6 +89,14 @@ die() {
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
+}
+
+pipe_log() {
+  local window="$1"
+  local log_file="$LOG_DIR/$window.log"
+  mkdir -p "$LOG_DIR"
+  touch "$log_file"
+  tmux pipe-pane -o -t "$SESSION:$window" "cat >> $(printf '%q' "$log_file")"
 }
 
 normalize_cli() {
@@ -1296,12 +1305,13 @@ spawn_subagent() {
 
   local dir
   dir="$(subagent_dir "$name")"
-  mkdir -p "$dir"
+  mkdir -p "$dir" "$LOG_DIR"
   cat >"$dir/meta.env" <<EOF
 name=$name
 session=$SESSION
 root=$ROOT
 write_policy=$POLICY_FILE
+log_file=$LOG_DIR/$name.log
 cli=$cli
 cli_bin=$bin
 helper=$MULTIAGENT_HELPER
@@ -1323,9 +1333,10 @@ EOF
       cat "$prompt_file"
     } >>"$dir/transcript.log"
   fi
-  printf -v command "cd %q && export MULTIAGENT_SESSION=%q MULTIAGENT_ROOT=%q MULTIAGENT_STATE_DIR=%q MULTIAGENT_WRITE_POLICY=%q MULTIAGENT_SUBAGENT_NAME=%q MULTIAGENT_HELPER=%q WORKER_CLI=%q SUBAGENT_CLI=%q VERIFIER_CLI=%q CODEX_BIN=%q CLAUDE_BIN=%q MULTIAGENT_CODEX_EXEC=%q PATH=%q && %s; rc=\$?; printf '\\nfinal status: codex exec exited rc=%%s\\n' \$rc; sleep infinity" \
-    "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$POLICY_FILE" "$name" "$MULTIAGENT_HELPER" "$WORKER_CLI" "$cli" "$VERIFIER_CLI" "$CODEX_BIN" "$CLAUDE_BIN" "${MULTIAGENT_CODEX_EXEC:-0}" "$PATH" "$(build_cli_command "$cli" "$ROOT" "$prompt_file" "$output_file")"
+  printf -v command "cd %q && export MULTIAGENT_SESSION=%q MULTIAGENT_ROOT=%q MULTIAGENT_STATE_DIR=%q MULTIAGENT_LOG_DIR=%q MULTIAGENT_WRITE_POLICY=%q MULTIAGENT_SUBAGENT_NAME=%q MULTIAGENT_HELPER=%q WORKER_CLI=%q SUBAGENT_CLI=%q VERIFIER_CLI=%q CODEX_BIN=%q CLAUDE_BIN=%q MULTIAGENT_CODEX_EXEC=%q PATH=%q && %s; rc=\$?; printf '\\nfinal status: codex exec exited rc=%%s\\n' \$rc; sleep infinity" \
+    "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$LOG_DIR" "$POLICY_FILE" "$name" "$MULTIAGENT_HELPER" "$WORKER_CLI" "$cli" "$VERIFIER_CLI" "$CODEX_BIN" "$CLAUDE_BIN" "${MULTIAGENT_CODEX_EXEC:-0}" "$PATH" "$(build_cli_command "$cli" "$ROOT" "$prompt_file" "$output_file")"
   tmux new-window -d -t "$SESSION" -n "$name" "$command"
+  pipe_log "$name"
   set_status "$name" "running"
   if [[ -f "$(assignment_meta_file "$name")" ]]; then
     set_assignment_status "$name" "running"
@@ -1580,6 +1591,7 @@ restore_subagent() {
   } >>"$dir/transcript.log"
   set_status "$name" "restoring"
 
+  mkdir -p "$LOG_DIR"
   local prompt_file output_file
   prompt_file=""
   output_file="$dir/last-message.txt"
@@ -1587,9 +1599,10 @@ restore_subagent() {
     prompt_file="$dir/restore-instruction.txt"
     printf '%s\n' "$instruction" >"$prompt_file"
   fi
-  printf -v command "cd %q && export MULTIAGENT_SESSION=%q MULTIAGENT_ROOT=%q MULTIAGENT_STATE_DIR=%q MULTIAGENT_WRITE_POLICY=%q MULTIAGENT_SUBAGENT_NAME=%q MULTIAGENT_HELPER=%q MULTIAGENT_SUBAGENT_RESTORED=1 WORKER_CLI=%q SUBAGENT_CLI=%q VERIFIER_CLI=%q CODEX_BIN=%q CLAUDE_BIN=%q MULTIAGENT_CODEX_EXEC=%q PATH=%q && %s; rc=\$?; printf '\\nfinal status: codex exec exited rc=%%s\\n' \$rc; sleep infinity" \
-    "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$POLICY_FILE" "$name" "$MULTIAGENT_HELPER" "$WORKER_CLI" "$cli" "$VERIFIER_CLI" "$CODEX_BIN" "$CLAUDE_BIN" "${MULTIAGENT_CODEX_EXEC:-0}" "$PATH" "$(build_cli_command "$cli" "$ROOT" "$prompt_file" "$output_file")"
+  printf -v command "cd %q && export MULTIAGENT_SESSION=%q MULTIAGENT_ROOT=%q MULTIAGENT_STATE_DIR=%q MULTIAGENT_LOG_DIR=%q MULTIAGENT_WRITE_POLICY=%q MULTIAGENT_SUBAGENT_NAME=%q MULTIAGENT_HELPER=%q MULTIAGENT_SUBAGENT_RESTORED=1 WORKER_CLI=%q SUBAGENT_CLI=%q VERIFIER_CLI=%q CODEX_BIN=%q CLAUDE_BIN=%q MULTIAGENT_CODEX_EXEC=%q PATH=%q && %s; rc=\$?; printf '\\nfinal status: codex exec exited rc=%%s\\n' \$rc; sleep infinity" \
+    "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$LOG_DIR" "$POLICY_FILE" "$name" "$MULTIAGENT_HELPER" "$WORKER_CLI" "$cli" "$VERIFIER_CLI" "$CODEX_BIN" "$CLAUDE_BIN" "${MULTIAGENT_CODEX_EXEC:-0}" "$PATH" "$(build_cli_command "$cli" "$ROOT" "$prompt_file" "$output_file")"
   tmux new-window -d -t "$SESSION" -n "$name" "$command"
+  pipe_log "$name"
   set_status "$name" "running"
   if ! [[ "${MULTIAGENT_CODEX_EXEC:-0}" == "1" && "$cli" == "codex" ]]; then
     deliver_instruction "$name" "$instruction"
