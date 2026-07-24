@@ -38,6 +38,7 @@ Environment:
   MULTIAGENT_ROOT     Default project root, default: launcher directory
   MULTIAGENT_RESUME   Launch mode exported by this script: 0 clean, 1 resume
   MULTIAGENT_STATE_DIR Persisted subagent state, default: $MULTIAGENT_ROOT/.multiagent
+  MULTIAGENT_LOG_DIR   tmux pane logs, default: $MULTIAGENT_STATE_DIR/logs
   MULTIAGENT_WRITE_POLICY Repo write policy, default: $MULTIAGENT_ROOT/docs/write-policy.paths
   MULTIAGENT_VERIFIER_MAX_ITERATIONS Verifier follow-up loop cap, default: 3
   MULTIAGENT_PROMPT   Orchestrator prompt, default: <launcher directory>/orchestrator_prompt.md
@@ -87,6 +88,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 STATE_DIR="${MULTIAGENT_STATE_DIR:-$ROOT/.multiagent}"
+LOG_DIR="${MULTIAGENT_LOG_DIR:-$STATE_DIR/logs}"
 POLICY_FILE="${MULTIAGENT_WRITE_POLICY:-$ROOT/docs/write-policy.paths}"
 
 require_cmd() {
@@ -102,6 +104,14 @@ require_python_runtime() {
     echo "Python 3.8 or newer is required (found: $(python3 --version 2>&1))" >&2
     exit 1
   fi
+}
+
+pipe_log() {
+  local window="$1"
+  local log_file="$LOG_DIR/$window.log"
+  mkdir -p "$LOG_DIR"
+  touch "$log_file"
+  tmux pipe-pane -o -t "$SESSION:$window" "cat >> $(printf '%q' "$log_file")"
 }
 
 normalize_cli() {
@@ -190,6 +200,7 @@ export MULTIAGENT_PROMPT="$PROMPT_FILE"
 export MULTIAGENT_PROMPT_MODULE_ROOT="$PROMPT_MODULE_ROOT"
 export MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER="${MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER:-1}"
 export MULTIAGENT_STATE_DIR="$STATE_DIR"
+export MULTIAGENT_LOG_DIR="$LOG_DIR"
 export MULTIAGENT_WRITE_POLICY="$POLICY_FILE"
 export MULTIAGENT_VERIFIER_MAX_ITERATIONS="$VERIFIER_MAX_ITERATIONS"
 export ORCHESTRATOR_CLI
@@ -202,7 +213,7 @@ export MULTIAGENT_CODEX_EXEC="${MULTIAGENT_CODEX_EXEC:-0}"
 export MULTIAGENT_EXTRA_PATH="${MULTIAGENT_EXTRA_PATH:-}"
 export PATH
 
-mkdir -p "$STATE_DIR/subagents" "$STATE_DIR/assignments" "$STATE_DIR/worktrees"
+mkdir -p "$STATE_DIR/subagents" "$STATE_DIR/assignments" "$STATE_DIR/worktrees" "$LOG_DIR"
 "$SCRIPT_DIR/bin/write-policy.sh" init
 if [[ "$RESUME" -eq 1 ]]; then
   RESUME_LABEL="resume"
@@ -221,6 +232,7 @@ ORCHESTRATOR_BOOTSTRAP_SCRIPT="$STATE_DIR/orchestrator-bootstrap.sh"
   printf 'export MULTIAGENT_PROMPT_MODULE_ROOT=%q\n' "$PROMPT_MODULE_ROOT"
   printf 'export MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=%q\n' "${MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER:-1}"
   printf 'export MULTIAGENT_STATE_DIR=%q\n' "$STATE_DIR"
+  printf 'export MULTIAGENT_LOG_DIR=%q\n' "$LOG_DIR"
   printf 'export MULTIAGENT_WRITE_POLICY=%q\n' "$POLICY_FILE"
   printf 'export MULTIAGENT_VERIFIER_MAX_ITERATIONS=%q\n' "$VERIFIER_MAX_ITERATIONS"
   printf 'export ORCHESTRATOR_CLI=%q\n' "$ORCHESTRATOR_CLI"
@@ -240,11 +252,14 @@ chmod 700 "$ORCHESTRATOR_BOOTSTRAP_SCRIPT"
 
 tmux new-session -d -s "$SESSION" -n orchestrator "bash $(printf '%q' "$ORCHESTRATOR_BOOTSTRAP_SCRIPT")"
 tmux select-window -t "$SESSION:orchestrator"
+pipe_log orchestrator
 
 echo "Started tmux session: $SESSION"
 echo "Attach with: tmux attach -t $SESSION"
 echo "Resume mode: $RESUME"
 echo "Subagent state: $STATE_DIR"
+echo "Logs: $LOG_DIR"
+echo "Dashboard: MULTIAGENT_SESSION=$(printf '%q' "$SESSION") MULTIAGENT_ROOT=$(printf '%q' "$ROOT") $SCRIPT_DIR/bin/watch.sh"
 echo "Verifier max iterations: $VERIFIER_MAX_ITERATIONS"
 echo "Worker CLI: $WORKER_CLI"
 echo "Subagent CLI: $SUBAGENT_CLI"
