@@ -40,17 +40,23 @@ the artifacts behind each transition.
 
 ```mermaid
 flowchart TD
-    User["User task"] --> Orchestrator["Orchestrator CLI"]
-    Orchestrator --> DAG["Assignments and dependency DAG"]
+    User["User task"] --> Pre["Pre-implementation"]
+    Pre --> Authority["Independent authority review"]
+    Authority --> Choice{"User-owned decision?"}
+    Choice -- "yes" --> UserDecision["Ask user and record choice"]
+    Choice -- "no" --> Capsule["Approved decision capsule"]
+    UserDecision --> Capsule
+    Capsule --> DAG["Assignments and dependency DAG"]
     DAG --> WorkerA["Worker A"]
     DAG --> WorkerB["Worker B"]
     WorkerA --> Repo["Target Git repository"]
     WorkerB --> Repo
     Repo --> Snapshot["Exact diff snapshot"]
-    Snapshot --> Verifier["Independent verifier"]
-    Verifier --> Findings["Findings, todos, and recheck evidence"]
-    Findings --> Gate{"Final gate"}
-    Gate -- "reject and repair" --> Orchestrator
+    Snapshot --> Reviews["Post-implementation reviews"]
+    Reviews --> Findings["Findings, todos, and recheck evidence"]
+    Findings --> Todo{"Active TODO?"}
+    Todo -- "yes" --> Pre
+    Todo -- "no" --> Gate{"Lifecycle and technical gates"}
     Gate -- "hash-bound evidence passes" --> Result["Accepted patch"]
 ```
 
@@ -77,6 +83,40 @@ Launches are clean by default. Explicit crash recovery is opt-in:
 ./launch.sh --resume --session multiagent --root /absolute/path/to/target-repo
 ```
 
+## Implementation Lifecycle
+
+`launch.sh` bundles the orchestrator role with the mandatory lifecycle prompt,
+records prompt hashes, and initializes durable lifecycle state under:
+
+```text
+$MULTIAGENT_STATE_DIR/workflows/$MULTIAGENT_WORKFLOW_ID/lifecycle/
+```
+
+The enforced normal path is `pre-implementation -> implementation ->
+post-implementation`. An independent authority review identifies consequential
+choices and whether the user or orchestrator owns each one. Writable workers
+receive the complete approved decision capsule, not only a partial assignment
+summary. Any accepted review finding creates a TODO and returns through
+pre-implementation before another edit iteration.
+The implementation permit also verifies that `bin/decision.sh` contains a
+committed decision whose selected plan matches the capsule and assignment.
+
+Inspect and advance the state with:
+
+```bash
+bin/workflow.sh status "$MULTIAGENT_WORKFLOW_ID"
+bin/workflow.sh prepare-implementation "$MULTIAGENT_WORKFLOW_ID" \
+  --decision-id DECISION_ID --plan-id PLAN_ID --decision-revision REVISION \
+  --decision-capsule CAPSULE_PATH --authority-review REVIEW_ID
+bin/workflow.sh transition "$MULTIAGENT_WORKFLOW_ID" implementation
+bin/workflow.sh completion-check "$MULTIAGENT_WORKFLOW_ID"
+```
+
+`MULTIAGENT_LIFECYCLE_ENFORCEMENT=1` is the default. Existing structured
+technical findings and repair TODOs remain authoritative. Running
+`bin/orchestrator.sh complete` requires both the lifecycle completion gate and
+`bin/subagent.sh gate-check`.
+
 The default roles use Codex for orchestration and verification and Claude for
 workers. `WORKER_CLI`: worker CLI for manual worker windows, default `claude`.
 `VERIFIER_CLI`: verifier CLI, default `codex`. CLI choices, recovery, ownership
@@ -94,8 +134,8 @@ contracts and workflows:
   `hidden-contract-ledger`, and hidden-contract edge cases;
 - **Scope Guard Workflow**, **Validation Coordinator Workflow**, the validation lease table,
   `validation-run`, and `validation-lease-acquire`;
-- **Verifier Workflow**, its compact contract ledger, and
-  `MULTIAGENT_VERIFIER_MAX_ITERATIONS=3`;
+- **Verifier Workflow**, its compact contract ledger, and the
+  `MULTIAGENT_VERIFIER_MAX_ITERATIONS=3` escalation threshold;
 - Codex UI dashboard watching through `bin/watch.sh`, backed by tmux pane logs
   under `.multiagent/logs`, blocked-agent state, and workflow DAG nodes;
 - preflight checks that prevent a scaffold, shim, or proxy behavior from being
@@ -135,3 +175,17 @@ an advanced path.
 ```bash
 tests/run.sh
 ```
+
+## Enforcement Caveat
+
+Decision-authority review, decision-capsule handoff, lifecycle TODO convergence,
+and completion are enforced by the orchestrator prompt plus normal-path checks
+in `bin/workflow.sh`, `bin/subagent.sh`, and `bin/orchestrator.sh`. This makes
+ordinary violations fail visibly, but it is not a security or capability
+boundary: an orchestrator with direct shell and state-file access can bypass or
+disable these checks.
+
+Revisit this limitation before treating the workflow as strict enforcement.
+The stronger design is a trusted supervisor that exclusively owns writable
+worker launch and independently validates TODO state, decision ownership, user
+approval, capsule revision, and assignment scope before starting a worker.

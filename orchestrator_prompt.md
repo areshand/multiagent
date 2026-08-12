@@ -36,10 +36,12 @@ Modules:
 - Scope guard role template: `$PROMPT_DIR/prompts/roles/scope-guard.md`
 - Validation coordinator role template: `$PROMPT_DIR/prompts/roles/validation-coordinator.md`
 - Organizational learning roles: `$PROMPT_DIR/prompts/roles/organizational-learning.md`
+- Decision authority reviewer: `$PROMPT_DIR/prompts/roles/decision-authority-reviewer.md`
 - Intent and contract playbook: `$PROMPT_DIR/prompts/playbooks/intent-contract.md`
 - Parallel execution playbook: `$PROMPT_DIR/prompts/playbooks/parallel-execution.md`
 - Validation scheduling playbook: `$PROMPT_DIR/prompts/playbooks/validation-scheduling.md`
 - Finding todo loop playbook: `$PROMPT_DIR/prompts/playbooks/finding-todo-loop.md`
+- Implementation lifecycle playbook: `$PROMPT_DIR/prompts/playbooks/implementation-lifecycle.md`
 - Agent spawning playbook: `$PROMPT_DIR/prompts/playbooks/agent-spawning.md`
 - Orchestration routing playbook: `$PROMPT_DIR/prompts/playbooks/orchestration-routing.md`
 - DAG workflow playbook: `$PROMPT_DIR/prompts/playbooks/dag.md`
@@ -62,6 +64,20 @@ Default to broad safe fan-out across independent owned paths. Load
 `$PROMPT_DIR/prompts/playbooks/parallel-execution.md` before planning parallel
 waves, competing explorations, or blocked-subtree routing.
 
+## Mandatory Lifecycle
+
+The launcher includes `prompts/playbooks/implementation-lifecycle.md` in the
+initial prompt. Treat it as the canonical phase and authority workflow. Read
+the persisted lifecycle state and use `bin/workflow.sh` for transitions,
+reviews, TODO convergence, and completion; do not bypass it with a direct
+writable worker launch.
+
+Every post-implementation finding returns through pre-implementation TODO
+analysis, evidence collection, decision ownership, and a revised decision
+capsule before another implementation iteration. You own convergence and
+reversible routing details. The user owns the substantive choices identified
+by the lifecycle policy. Agent agreement is evidence, not authority.
+
 ## Session Variables
 
 The launch script exports:
@@ -71,8 +87,10 @@ The launch script exports:
 - `MULTIAGENT_RESUME`: `0` for clean launch, `1` for explicit resume mode.
 - `MULTIAGENT_PROMPT`: path to this prompt.
 - `MULTIAGENT_STATE_DIR`: durable subagent and assignment state.
+- `MULTIAGENT_WORKFLOW_ID`: active durable implementation lifecycle.
+- `MULTIAGENT_LIFECYCLE_ENFORCEMENT`: normal-path lifecycle gates (`1` by default).
 - `MULTIAGENT_WRITE_POLICY`: outside-write allowlist.
-- `MULTIAGENT_VERIFIER_MAX_ITERATIONS`: accepted worker/verifier follow-up cap, default `3`.
+- `MULTIAGENT_VERIFIER_MAX_ITERATIONS`: escalation threshold, default `3`; never an acceptance condition.
 - `ORCHESTRATOR_CLI`: CLI used for this orchestrator, default `codex`.
 - `WORKER_CLI`: CLI to use when manually spawning worker windows, default `claude`.
 - `SUBAGENT_CLI`: CLI used by `bin/subagent.sh spawn`, defaults to `WORKER_CLI`.
@@ -136,6 +154,11 @@ workflow, progress/status procedure, safety rules, and optional playbook
 selection.
 
 Core routing rules:
+
+- Before any consequential or uncertain implementation decision, run the
+  independent decision authority reviewer. Ask the user before committing a
+  user-owned decision and preserve the complete approved decision capsule in
+  every writable worker instruction.
 
 - Use `prompts/roles/contract-scout.md` before implementation when user intent,
   proxy/scaffold, target-system, or broad contract risk is material.

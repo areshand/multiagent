@@ -260,7 +260,12 @@ assert_file_contains "$LAUNCH_BOOTSTRAP" "export WORKER_CLI=claude"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "export SUBAGENT_CLI=claude"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "export VERIFIER_CLI=codex"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "Multiagent\\ launch\\ mode:"
-assert_file_contains "$LAUNCH_BOOTSTRAP" "$(printf '%q' "$ROOT/orchestrator_prompt.md")"
+assert_file_contains "$LAUNCH_BOOTSTRAP" "$(printf '%q' "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md")"
+assert_file_contains "$LAUNCH_BOOTSTRAP" "export MULTIAGENT_LIFECYCLE_ENFORCEMENT=1"
+assert_file_contains "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "BEGIN ORCHESTRATOR ROLE"
+assert_file_contains "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "BEGIN MANDATORY IMPLEMENTATION LIFECYCLE"
+LAUNCH_WORKFLOW_ID="$(tr -d '\r\n' <"$LAUNCH_STATE/runtime_state/active-workflow-id")"
+assert_file_contains "$LAUNCH_STATE/workflows/$LAUNCH_WORKFLOW_ID/lifecycle/lifecycle.env" "phase=pre-implementation"
 if grep -Fq "$LAUNCH_TARGET/orchestrator_prompt.md" "$MOCK_TMUX_LOG" "$TMPDIR/launch.out" "$LAUNCH_BOOTSTRAP"; then
   echo "expected launch to use script-dir orchestrator prompt, not target-root prompt" >&2
   cat "$MOCK_TMUX_LOG" >&2
@@ -311,7 +316,9 @@ MOCK_TMUX_HAS_SESSION=0 \
   MULTIAGENT_STATE_DIR="$TMPDIR/launch-explicit-state" \
   MULTIAGENT_WRITE_POLICY="$TMPDIR/launch-explicit-policy/write-policy.paths" \
   "$ROOT/launch.sh" --session launch-explicit-prompt --root "$LAUNCH_TARGET" --no-attach >"$TMPDIR/launch-explicit.out"
-assert_file_contains "$TMPDIR/launch-explicit-state/orchestrator-bootstrap.sh" "$(printf '%q' "$EXPLICIT_PROMPT")"
+assert_file_contains "$TMPDIR/launch-explicit-state/orchestrator-bootstrap.sh" "$(printf '%q' "$TMPDIR/launch-explicit-state/runtime_state/orchestrator-prompt-bundle.md")"
+assert_file_contains "$TMPDIR/launch-explicit-state/runtime_state/orchestrator-prompt-bundle.md" "custom prompt"
+assert_file_contains "$TMPDIR/launch-explicit-state/runtime_state/orchestrator-prompt-bundle.md" "BEGIN MANDATORY IMPLEMENTATION LIFECYCLE"
 
 REPAIR_STATE="$TMPDIR/repair-state"
 mkdir -p "$REPAIR_STATE"
@@ -719,7 +726,11 @@ assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Agent Spawning
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Ponytail implementation discipline"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Ponytail over-engineering pass"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "hidden-contract probes"
-assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" 'verifier suggests no follow-up'
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" 'MAX_ITERATIONS` is an escalation threshold'
+if grep -Fq -- "accepted follow-up count reaches" "$ROOT/prompts/playbooks/agent-spawning.md"; then
+  echo "iteration threshold must not be an acceptance condition" >&2
+  exit 1
+fi
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "todo-create"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "todo-close"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "gate-check"
@@ -5987,3 +5998,4 @@ fi
 
 echo "DAG workflow tests passed"
 echo "organizational learning tests passed"
+"$ROOT/tests/lifecycle.sh"

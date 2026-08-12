@@ -10,6 +10,8 @@ task-specific assignment. Also pass assignment ID, branch, owned paths, task
 statement, and the relevant contract ledger. For high-risk coding tasks,
 include the contract scout's `must-preserve` list and validation plan. The
 worker module contains shared worker rules and Ponytail implementation discipline.
+For lifecycle-enforced exploitation work, also include the active workflow,
+decision, plan, decision revision, and the complete approved decision capsule.
 When the scout emits `historical-contract-ledger:`, copy that block verbatim
 into every implementation, repair, and verifier assignment. Do not replace it
 with a narrower locked hypothesis. Worker ownership and done criteria must
@@ -23,6 +25,10 @@ Before spawning a worker, create durable assignment metadata:
 ```bash
 bin/subagent.sh assignment-create worker-01-task \
   --assignment-id ASSIGNMENT_ID \
+  --role exploitation \
+  --workflow-id "$MULTIAGENT_WORKFLOW_ID" \
+  --decision-id DECISION_ID \
+  --plan-id PLAN_ID \
   --branch BRANCH \
   --owned PATH[,PATH...]
 bin/subagent.sh worktree-create worker-01-task
@@ -115,11 +121,10 @@ Use the configurable iteration cap:
 MAX_ITERATIONS="${MULTIAGENT_VERIFIER_MAX_ITERATIONS:-3}"
 ```
 
-Stop the worker/verifier loop when the verifier suggests no follow-up, the
-orchestrator accepts no follow-up, or the accepted follow-up count reaches
-`MAX_ITERATIONS`. If the final allowed verifier pass still produces findings
-you would otherwise accept, explicitly accept with residual risk, reject, or ask
-the user.
+Stop the worker/verifier loop only when no accepted follow-up remains. Reaching
+`MAX_ITERATIONS` is an escalation threshold: reconsider the route, surface a
+blocker, or ask the user. It never permits acceptance while required work or
+unanswered user-owned decisions remain.
 
 The verifier module requires a verifier contract ledger, source-derived
 hidden-contract probes, assumption challenges, and the instruction to Run a
