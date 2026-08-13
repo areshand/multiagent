@@ -763,16 +763,15 @@ def finalize_solver_run(
     if (
         progress.exit_code == 2
         and progress.outcome == "blocked"
-        and final_diff.strip()
         and not progress.terminal_outcome
     ):
-        # All patch-bearing blocked exits are production submission decisions,
-        # regardless of which legacy checkpoint first recorded the block. Keep
-        # runner failures distinct while ensuring EvalScope can score a
-        # rejected patch as an explicit no-submission instead of aborting the
-        # entire shard on an untyped exit code.
+        # Every blocked lifecycle exit is a production submission decision,
+        # regardless of which checkpoint first recorded the block or whether a
+        # scoreable diff was materialized. Timeouts and crashes use separate
+        # exit codes, so runner failures remain distinct while EvalScope can
+        # score this explicit no-submission instead of aborting the shard.
         progress.terminal_outcome = SUBMISSION_GATE_REJECTION
-        log("patch-bearing blocked outcome classified as submission_gate_rejection")
+        log("blocked outcome classified as submission_gate_rejection")
     log(f"final /app diff bytes={len(final_diff.encode('utf-8'))}")
     if progress.exit_code != 0:
         emit_failure_diagnostics(session)
