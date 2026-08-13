@@ -108,21 +108,23 @@ class NativeOutcomeTest(unittest.TestCase):
                 "mark_untracked_source_intent_to_add": mock.DEFAULT,
                 "git_diff": mock.Mock(return_value=final_diff),
             }
-            with (
-                mock.patch.multiple(swe_prod_lifecycle, **lifecycle_patches),
-                mock.patch.object(
+            with mock.patch.multiple(swe_prod_lifecycle, **lifecycle_patches):
+                with mock.patch.object(
                     swe_prod_lifecycle.shutil,
                     "which",
                     side_effect=lambda name: "/usr/bin/tmux" if name == "tmux" else None,
-                ),
-                mock.patch.object(swe_prod_lifecycle.time, "sleep"),
-                mock.patch.dict(
-                    swe_prod_lifecycle.os.environ,
-                    {"EVAL_CODEX_AUTH_MODE": "chatgpt", "CODEX_ACCESS_TOKEN": "test-token"},
-                ),
-            ):
-                result = swe_prod_lifecycle.run_prod_solver(None, root, root, 60)
-                git_diff_mock = swe_prod_lifecycle.git_diff
+                ):
+                    with mock.patch.object(swe_prod_lifecycle.time, "sleep"):
+                        with mock.patch.dict(
+                            swe_prod_lifecycle.os.environ,
+                            {
+                                "EVAL_CODEX_AUTH_MODE": "bridge",
+                                "OPENAI_BASE_URL": "http://127.0.0.1:1/v1",
+                                "OPENAI_API_KEY": "test-key",
+                            },
+                        ):
+                            result = swe_prod_lifecycle.run_prod_solver(None, root, root, 60)
+                            git_diff_mock = swe_prod_lifecycle.git_diff
 
         self.assertEqual(result, 0)
         git_diff_mock.assert_called_once_with(root)
