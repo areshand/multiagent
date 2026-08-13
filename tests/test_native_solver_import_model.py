@@ -66,6 +66,10 @@ class NativeSolverImportModelTest(unittest.TestCase):
             "  exec python3 -m evaluation.native_solver.solve_swe_prod "
             '"$prompt_file" "${timeout_args[@]}"'
         )
+        self.assertIn(
+            'export PATH="/opt/codex-node/bin:/opt/node22/bin:/usr/local/bin:${PATH:-/usr/bin:/bin}"',
+            launcher,
+        )
         self.assertIn(expected, launcher)
         self.assertNotIn('python3 "$solver"', launcher)
 

@@ -62,6 +62,12 @@ _PRIVATE_SOLVER_METADATA_KEYS = {
 _SOLVER_LAUNCHER = """#!/usr/bin/env bash
 set -euo pipefail
 
+# AgentEnvironment supplies an explicit environment to this launcher. Keep the
+# baked Codex runtime discoverable even when the base image's login PATH is not
+# inherited (some official task images otherwise find codex but not its node
+# interpreter).
+export PATH="/opt/codex-node/bin:/opt/node22/bin:/usr/local/bin:${PATH:-/usr/bin:/bin}"
+
 prompt_file="${EVAL_TASK_PROMPT_FILE:-/tmp/evalscope-native-multiagent-prompt.txt}"
 timeout_args=()
 if [[ -n "${EVAL_PROD_MULTIAGENT_TIMEOUT:-}" ]]; then
