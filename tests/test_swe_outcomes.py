@@ -73,23 +73,25 @@ class NativeOutcomeTest(unittest.TestCase):
                 no_diff_blocked_retry_limit=0,
             )
             progress = LifecycleProgress()
-            with (
-                mock.patch.object(swe_prod_transitions, "active_verifier_subagent_summaries", return_value=[]),
-                mock.patch.object(swe_prod_transitions, "create_no_diff_stall_repair_state", return_value=[]),
+            with mock.patch.object(
+                swe_prod_transitions, "active_verifier_subagent_summaries", return_value=[]
             ):
-                transition = swe_prod_transitions.handle_blocked_status(
-                    current_status={
-                        "status": "blocked",
-                        "reason": "bounded workers produced no source diff",
-                    },
-                    workdir=repo,
-                    issue="Implement the public requirement.",
-                    task_metadata={},
-                    session="test-session",
-                    policy=policy,
-                    relaunch_orchestrator_for_blockers=lambda *_args, **_kwargs: False,
-                    progress=progress,
-                )
+                with mock.patch.object(
+                    swe_prod_transitions, "create_no_diff_stall_repair_state", return_value=[]
+                ):
+                    transition = swe_prod_transitions.handle_blocked_status(
+                        current_status={
+                            "status": "blocked",
+                            "reason": "bounded workers produced no source diff",
+                        },
+                        workdir=repo,
+                        issue="Implement the public requirement.",
+                        task_metadata={},
+                        session="test-session",
+                        policy=policy,
+                        relaunch_orchestrator_for_blockers=lambda *_args, **_kwargs: False,
+                        progress=progress,
+                    )
 
             self.assertEqual(transition, "break")
             self.assertEqual(progress.exit_code, 2)
