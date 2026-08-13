@@ -69,7 +69,7 @@ class RustCliResolutionTest(unittest.TestCase):
 
 
 class MigrationCliContractTest(unittest.TestCase):
-    def test_launch_is_the_only_production_shell_compatibility_entrypoint(self):
+    def test_launch_is_the_only_production_shell_bootstrap(self):
         self.assertTrue((PROJECT_ROOT / "launch.sh").is_file())
         self.assertEqual(list((PROJECT_ROOT / "bin").glob("*.sh")), [])
         launch = (PROJECT_ROOT / "launch.sh").read_text(encoding="utf-8")
@@ -150,24 +150,6 @@ class MigrationCliContractTest(unittest.TestCase):
             )
         return result
 
-    def run_cli_with_env(self, env, relative, *args, check=True):
-        result = subprocess.run(
-            [str(MULTIAGENT), *CLI_PREFIX[relative], *args],
-            cwd=self.repo,
-            env=env,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        if check and result.returncode != 0:
-            self.fail(
-                "command failed: {}\nstdout:\n{}\nstderr:\n{}".format(
-                    " ".join(result.args), result.stdout, result.stderr
-                )
-            )
-        return result
-
     def test_decision_v1_persistence_and_output_contract(self):
         created = self.run_cli(
             "decision", "init", "DEC-RUST", "--title", "Rust migration", "--owner", "user"
@@ -212,7 +194,7 @@ class MigrationCliContractTest(unittest.TestCase):
             "--reason",
             "lowest migration risk",
             "--rollback-policy",
-            "restore shell entrypoints",
+            "revert the Rust control-plane changes",
             "--reflection-due",
             "after parity",
         )
@@ -250,92 +232,6 @@ class MigrationCliContractTest(unittest.TestCase):
             (decision_dir / "assumptions.tsv").read_text(encoding="utf-8").splitlines()[0],
             "assumption_id\tstatement\tconfidence\tvalidation_method\texpected_signal\tadded_at",
         )
-
-    def test_removed_legacy_flags_do_not_change_v1_state_contract(self):
-        legacy = self.env.copy()
-        legacy.update(
-            {
-                "MULTIAGENT_USE_LEGACY_DECISION": "1",
-                "MULTIAGENT_USE_LEGACY_DAG": "1",
-                "MULTIAGENT_USE_LEGACY_WORKFLOW": "1",
-                "MULTIAGENT_USE_LEGACY_POLICY": "1",
-            }
-        )
-
-        self.run_cli_with_env(
-            legacy,
-            "decision",
-            "init",
-            "DEC-LEGACY",
-            "--title",
-            "Legacy state",
-            "--owner",
-            "test",
-        )
-        self.assertIn(
-            "decision_id=DEC-LEGACY",
-            self.run_cli("decision", "show", "DEC-LEGACY").stdout,
-        )
-
-        self.run_cli("decision", "init", "DEC-RUST-READ", "--title", "Rust state")
-        self.assertIn(
-            "decision_id=DEC-RUST-READ",
-            self.run_cli_with_env(
-                legacy, "decision", "show", "DEC-RUST-READ"
-            ).stdout,
-        )
-
-        self.run_cli_with_env(
-            legacy, "dag", "init", "WF-LEGACY-DAG", "--title", "Legacy DAG"
-        )
-        self.run_cli_with_env(
-            legacy,
-            "dag",
-            "add-node",
-            "WF-LEGACY-DAG",
-            "NODE-A",
-            "--agent",
-            "worker-a",
-            "--assignment-id",
-            "A-1",
-            "--role",
-            "qa",
-            "--branch",
-            "worker/a",
-            "--owned",
-            "src",
-        )
-        self.assertIn(
-            "NODE-A\tworker-a",
-            self.run_cli("dag", "show", "WF-LEGACY-DAG").stdout,
-        )
-
-        self.run_cli_with_env(legacy, "workflow", "init", "WF-LEGACY-LIFECYCLE")
-        resumed = self.run_cli(
-            "workflow",
-            "init-or-resume",
-            "WF-LEGACY-LIFECYCLE",
-            "--resume",
-            "1",
-        )
-        self.assertIn("workflow resumed\tWF-LEGACY-LIFECYCLE", resumed.stdout)
-
-        outside = self.root / "legacy-approved"
-        self.run_cli_with_env(legacy, "policy", "init")
-        self.run_cli_with_env(
-            legacy,
-            "policy",
-            "approve",
-            str(outside),
-            "--actor",
-            "compatibility-test",
-            "--assignment-id",
-            "POLICY-LEGACY",
-            "--reason",
-            "verify Rust reader",
-        )
-        checked = self.run_cli("policy", "check", str(outside / "file.txt"))
-        self.assertIn("allowed\t", checked.stdout)
 
     def test_finding_and_todo_read_contracts(self):
         self.run_cli(

@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-for command in cargo git python3; do
+for command in cargo git; do
   if ! command -v "$command" >/dev/null 2>&1; then
     printf 'demo: missing required command: %s\n' "$command" >&2
     exit 1

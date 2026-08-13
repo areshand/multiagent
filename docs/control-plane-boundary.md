@@ -1,8 +1,8 @@
 # Control-Plane Boundary
 
-`multiagent` is the single command surface. The source-checkout `launch.sh` is
-the one retained compatibility bootstrap: it builds or locates the Rust binary
-and execs `multiagent launch`. Packaged releases install the binary directly.
+`multiagent` is the single command surface. The source-checkout `launch.sh`
+builds or locates the Rust binary and execs `multiagent launch`. Packaged
+releases install the binary directly.
 
 Rust owns production decisions and durable state:
 

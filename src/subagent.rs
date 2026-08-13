@@ -1497,62 +1497,32 @@ fn update_todo_state(id: &str, assigned_to: Option<&str>, status: &str) -> Resul
 }
 
 fn resolution_create(args: &[String]) -> Result<(), String> {
-    let (positional, option_start) = match args.first() {
-        Some(value) if !value.starts_with("--") => (Some(value.clone()), 1),
-        Some(_) => (None, 0),
-        None => return Err("resolution-create requires TODO_ID".into()),
-    };
-    let values = repeated_options(&args[option_start..], &[])?;
-    let legacy = values.contains_key("--todo")
-        || values.contains_key("--owner")
-        || values.contains_key("--summary")
-        || values.contains_key("--evidence");
-    let todo_id = positional
-        .as_deref()
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| option_first(&values, "--todo"));
-    if todo_id.is_empty() {
-        return Err("resolution-create requires TODO_ID".into());
-    }
+    let todo_id = args
+        .first()
+        .filter(|value| !value.is_empty() && !value.starts_with("--"))
+        .ok_or_else(|| "resolution-create requires TODO_ID".to_string())?;
     validate_name(todo_id)?;
-    let worker = {
-        let value = option_first(&values, "--worker");
-        if value.is_empty() {
-            option_first(&values, "--owner")
-        } else {
-            value
-        }
-    };
-    if worker.is_empty() {
-        return Err("resolution-create requires --worker NAME".into());
-    }
+    let values = repeated_options(&args[1..], &[])?;
+    let worker = option_required(
+        &values,
+        "--worker",
+        "resolution-create requires --worker NAME",
+    )?;
     validate_name(worker)?;
-    let mut status = option_first(&values, "--status").to_string();
-    if legacy && status.is_empty() {
-        status = "resolved".into();
-    }
-    if !matches!(status.as_str(), "resolved" | "blocked") {
+    let status = option_required(
+        &values,
+        "--status",
+        "resolution-create requires --status resolved|blocked",
+    )?;
+    if !matches!(status, "resolved" | "blocked") {
         return Err(format!("invalid resolution status: {status}"));
     }
-    let legacy_evidence = option_first(&values, "--evidence");
-    let mut validation_raw = option_first(&values, "--validation-json").to_string();
-    if legacy && validation_raw.is_empty() && !legacy_evidence.is_empty() {
-        validation_raw =
-            serde_json::to_string(&legacy_validation(legacy_evidence)).map_err(json_error)?;
-    }
-    let legacy_summary = option_first(&values, "--summary");
-    let why = {
-        let value = option_first(&values, "--why");
-        if !value.is_empty() {
-            value.to_string()
-        } else if legacy && !legacy_summary.is_empty() {
-            legacy_summary.into()
-        } else if legacy {
-            "legacy resolution evidence recorded".into()
-        } else {
-            String::new()
-        }
-    };
+    let validation_raw = option_required(
+        &values,
+        "--validation-json",
+        "resolution-create requires --validation-json JSON",
+    )?;
+    let why = option_required(&values, "--why", "resolution-create requires --why TEXT")?;
     let state = config::state_dir()?;
     let todo_dir = state.join("todos").join(todo_id);
     if !todo_dir.join("todo.env").is_file()
@@ -1565,7 +1535,7 @@ fn resolution_create(args: &[String]) -> Result<(), String> {
             .join("finding.env")
             .is_file()
         {
-            let evidence = json!({"source":"resolution-create-autocreate","evidence":if legacy_evidence.is_empty(){why.as_str()}else{legacy_evidence}});
+            let evidence = json!({"source":"resolution-create-autocreate","evidence":why});
             finding_create(&[finding_id.clone(),"--severity".into(),"blocking".into(),"--type".into(),"worker_resolution_without_registered_todo".into(),"--summary".into(),"Worker recorded a resolution for an unregistered todo.".into(),"--evidence-json".into(),serde_json::to_string(&evidence).map_err(json_error)?,"--required-resolution".into(),"Create durable todo state before assigning worker repairs; verifier must close the todo after rechecking the worker resolution.".into()])?;
         }
         todo_create(&[
@@ -1573,17 +1543,9 @@ fn resolution_create(args: &[String]) -> Result<(), String> {
             "--source-finding-id".into(),
             finding_id,
             "--task".into(),
-            if legacy_summary.is_empty() {
-                "Record and verify worker resolution evidence.".into()
-            } else {
-                legacy_summary.into()
-            },
+            "Record and verify worker resolution evidence.".into(),
             "--context".into(),
-            if legacy_evidence.is_empty() {
-                why.clone()
-            } else {
-                legacy_evidence.into()
-            },
+            why.into(),
             "--done-criteria".into(),
             "worker records structured resolution evidence".into(),
             "--done-criteria".into(),
@@ -1593,16 +1555,10 @@ fn resolution_create(args: &[String]) -> Result<(), String> {
     if !todo_dir.join("todo.env").is_file() {
         return Err(format!("no todo: {todo_id}"));
     }
-    if validation_raw.is_empty() {
-        return Err("resolution-create requires --validation-json JSON".into());
-    }
-    if why.is_empty() {
-        return Err("resolution-create requires --why TEXT".into());
-    }
-    reject_newline("--why", &why)?;
-    let validation: Value = serde_json::from_str(&validation_raw)
+    reject_newline("--why", why)?;
+    let validation: Value = serde_json::from_str(validation_raw)
         .map_err(|error| format!("invalid validation JSON: {error}"))?;
-    validate_resolution(&status, &validation)?;
+    validate_resolution(status, &validation)?;
     if status == "resolved" {
         validate_required_commands(&todo_dir, "worker resolution", &validation)?;
     }
@@ -1742,20 +1698,6 @@ fn write_resolution_json(dir: &Path) -> Result<(), String> {
         .collect::<Vec<_>>();
     let payload = json!({"todo_id":env_value(&metadata,"todo_id"),"status":env_value(&metadata,"status"),"worker":env_value(&metadata,"worker"),"changed_paths":changed,"validation":validation,"why_resolved":env_value(&metadata,"why_resolved"),"created_at":env_value(&metadata,"created_at")});
     write_json(&dir.join("resolution.json"), &payload)
-}
-fn legacy_validation(evidence: &str) -> Value {
-    if let Some((left, right)) = evidence.rsplit_once("returncode=") {
-        if let Ok(rc) = right.trim().parse::<i64>() {
-            let cmd = left
-                .trim()
-                .trim_end_matches([';', ','])
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ");
-            return json!([{"cmd":cmd,"rc":rc,"evidence":evidence}]);
-        }
-    }
-    json!([{"source_evidence":evidence}])
 }
 fn validate_resolution(status: &str, value: &Value) -> Result<(), String> {
     let items = value

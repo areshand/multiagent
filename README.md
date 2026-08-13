@@ -10,12 +10,11 @@ custom UI or model implementation.
 
 ## Requirements
 
-Building from source requires Rust 1.75 or newer, Cargo, Bash, Git, and Python 3.8 or newer.
-Rust owns the production control-plane state machine. Python is
-retained for evaluation adapters and a small number of compatibility evidence
-audits during the migration and has no third-party Python package dependency.
-Live agent sessions also require `tmux` plus the
-configured Codex or Claude CLI.
+Building from source requires Rust 1.75 or newer, Cargo, Bash, and Git. Rust owns
+the production control plane. Python 3.8 or newer is required only for evaluation
+and evidence-analysis commands; those modules have no third-party Python package
+dependency. Live agent sessions also require `tmux` plus the configured Codex or
+Claude CLI.
 
 ## Try It Locally
 
@@ -25,7 +24,7 @@ Run the deterministic local demo from the repository root:
 ./scripts/demo.sh
 ```
 
-It needs Rust/Cargo, Bash, Git, and Python 3.8+. It does not launch an agent, use an
+It needs Rust/Cargo, Bash, and Git. It does not launch an agent, use an
 API key, or spend model tokens. In under five minutes it exercises the real
 repository control plane:
 
@@ -66,7 +65,7 @@ flowchart TD
 `multiagent` is the unified CLI. Its Rust core owns exact Git snapshots,
 decisions, DAGs, lifecycle transitions, assignments, findings, repair todos,
 validation leases, validation subprocesses, tmux process orchestration, status,
-watching, and recovery. `launch.sh` is the only compatibility wrapper: it locates
+watching, and recovery. `launch.sh` is the source-checkout bootstrap: it locates
 or builds the Rust executable and immediately runs `multiagent launch`. tmux—not
 shell or Rust—continues to own the PTY. `multiagent_framework/` remains the Python
 evaluation client and reusable analysis library. SWE Bench Pro is an adapter over
@@ -91,15 +90,15 @@ Launches are clean by default. Explicit crash recovery is opt-in:
 
 ## Implementation Lifecycle
 
-`launch.sh` bundles the orchestrator role with the mandatory lifecycle prompt,
-records prompt hashes, and initializes durable lifecycle state under:
+`multiagent launch` bundles the orchestrator role with the mandatory lifecycle
+prompt, records prompt hashes, and initializes durable lifecycle state under:
 
 ```text
 $MULTIAGENT_STATE_DIR/workflows/$MULTIAGENT_WORKFLOW_ID/lifecycle/
 ```
 
 `multiagent workflow` is the Rust lifecycle state machine in `src/workflow.rs`.
-Existing v1 state files remain readable without a legacy implementation.
+Existing v1 state files remain readable.
 
 The enforced normal path is `pre-implementation -> implementation ->
 post-implementation`. An independent authority review identifies consequential

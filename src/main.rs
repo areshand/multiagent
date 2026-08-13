@@ -22,7 +22,7 @@ const USAGE: &str = r#"Usage:
   multiagent snapshot --root DIR [--base REV] [--format json|shell]
 
 The Rust binary owns both durable control-plane state and tmux subprocess
-orchestration. launch.sh is the only compatibility bootstrap."#;
+orchestration. launch.sh is the source-checkout bootstrap."#;
 
 fn main() -> ExitCode {
     let mut args: Vec<String> = env::args().skip(1).collect();

@@ -292,9 +292,8 @@ commands with return codes, and why the original finding is resolved, preferably
 with `"${MULTIAGENT_BIN:-/opt/multiagent/bin/multiagent}" subagent resolution-create
 TODO_ID --worker "$MULTIAGENT_SUBAGENT_NAME" --status resolved --changed
 PATH[,PATH...] --validation-json '[{"cmd":"...","rc":0}]' --why "..."`.
-Do not use `resolution-create --todo ...`, `--owner`, `--summary`, or
-free-form `--evidence`; those are legacy recovery inputs, not the framework
-contract. If your workdir is the task repo, do not use a relative
+Use the positional TODO ID and the documented `--worker`, `--status`,
+`--validation-json`, and `--why` fields. If your workdir is the task repo, do not use a relative
 `multiagent subagent`; the helper may live outside the repo. A plain "fixed" summary
 does not close the todo; it only tells the orchestrator/verifier there is
 evidence to recheck.

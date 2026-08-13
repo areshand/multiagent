@@ -641,7 +641,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ids_match_the_legacy_contract() {
+    fn ids_match_the_v1_contract() {
         assert!(validate_id("decision ID", "DEC_1.alpha-beta").is_ok());
         assert!(validate_id("decision ID", "bad/id").is_err());
         assert!(validate_id("decision ID", "").is_err());

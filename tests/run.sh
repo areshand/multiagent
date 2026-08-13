@@ -537,22 +537,22 @@ if MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MUL
 fi
 assert_file_contains "$TMPDIR/gate-verifier-rejected-variant.out" $'reject\tlatest-verifier-blocking\tverifier=verifier-01-hash'
 
-LEGACY_RESOLUTION_STATE="$TMPDIR/legacy-resolution-state"
-mkdir -p "$LEGACY_RESOLUTION_STATE"
-if MULTIAGENT_STATE_DIR="$LEGACY_RESOLUTION_STATE" "$MULTIAGENT" subagent resolution-create --todo TODO-legacy --owner worker-legacy --summary "Legacy summary" --evidence "go test ./pkg returncode=0" >"$TMPDIR/legacy-resolution-no-autocreate.out" 2>&1; then
-  echo "expected legacy resolution-create without auto-create to fail for a missing todo" >&2
+AUTOCREATE_RESOLUTION_STATE="$TMPDIR/autocreate-resolution-state"
+mkdir -p "$AUTOCREATE_RESOLUTION_STATE"
+if MULTIAGENT_STATE_DIR="$AUTOCREATE_RESOLUTION_STATE" "$MULTIAGENT" subagent resolution-create TODO-autocreate --worker worker-autocreate --status resolved --validation-json '[{"cmd":"go test ./pkg","rc":0}]' --why "Structured resolution" >"$TMPDIR/resolution-no-autocreate.out" 2>&1; then
+  echo "expected structured resolution-create without auto-create to fail for a missing todo" >&2
   exit 1
 fi
-assert_file_contains "$TMPDIR/legacy-resolution-no-autocreate.out" "no todo: TODO-legacy"
-MULTIAGENT_STATE_DIR="$LEGACY_RESOLUTION_STATE" MULTIAGENT_RESOLUTION_AUTOCREATE_TODO=1 "$MULTIAGENT" subagent resolution-create --todo TODO-legacy --owner worker-legacy --summary "Legacy summary" --evidence "go test ./pkg returncode=0" >"$TMPDIR/legacy-resolution-autocreate.out"
-assert_file_contains "$TMPDIR/legacy-resolution-autocreate.out" $'resolution recorded\tTODO-legacy\tworker-legacy\tresolved'
-assert_file_contains "$LEGACY_RESOLUTION_STATE/todos/TODO-legacy/resolution.json" '"cmd": "go test ./pkg"'
-assert_file_contains "$LEGACY_RESOLUTION_STATE/todos/TODO-legacy/resolution.json" '"rc": 0'
-if MULTIAGENT_STATE_DIR="$LEGACY_RESOLUTION_STATE" "$MULTIAGENT" subagent gate-check >"$TMPDIR/legacy-resolution-gate.out" 2>&1; then
-  echo "expected auto-created legacy resolution to remain blocked until verifier closure" >&2
+assert_file_contains "$TMPDIR/resolution-no-autocreate.out" "no todo: TODO-autocreate"
+MULTIAGENT_STATE_DIR="$AUTOCREATE_RESOLUTION_STATE" MULTIAGENT_RESOLUTION_AUTOCREATE_TODO=1 "$MULTIAGENT" subagent resolution-create TODO-autocreate --worker worker-autocreate --status resolved --validation-json '[{"cmd":"go test ./pkg","rc":0}]' --why "Structured resolution" >"$TMPDIR/resolution-autocreate.out"
+assert_file_contains "$TMPDIR/resolution-autocreate.out" $'resolution recorded\tTODO-autocreate\tworker-autocreate\tresolved'
+assert_file_contains "$AUTOCREATE_RESOLUTION_STATE/todos/TODO-autocreate/resolution.json" '"cmd": "go test ./pkg"'
+assert_file_contains "$AUTOCREATE_RESOLUTION_STATE/todos/TODO-autocreate/resolution.json" '"rc": 0'
+if MULTIAGENT_STATE_DIR="$AUTOCREATE_RESOLUTION_STATE" "$MULTIAGENT" subagent gate-check >"$TMPDIR/resolution-autocreate-gate.out" 2>&1; then
+  echo "expected auto-created structured resolution to remain blocked until verifier closure" >&2
   exit 1
 fi
-assert_file_contains "$TMPDIR/legacy-resolution-gate.out" $'reject\topen-blocking-todo\tfinding=auto-TODO-legacy\ttodo=TODO-legacy\tstatus=resolved'
+assert_file_contains "$TMPDIR/resolution-autocreate-gate.out" $'reject\topen-blocking-todo\tfinding=auto-TODO-autocreate\ttodo=TODO-autocreate\tstatus=resolved'
 
 MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent validation-lease-acquire go-ofrep \
   --owner worker-02-ofrep-build \
@@ -759,8 +759,8 @@ assert_file_contains "$ROOT/prompts/playbooks/recovery.md" "Recovery Playbook"
 assert_file_contains "$ROOT/prompts/playbooks/write-policy.md" "Write Policy Playbook"
 assert_file_contains "$ROOT/README.md" "Launches are clean by default"
 assert_file_contains "$ROOT/README.md" "## Requirements"
-assert_file_contains "$ROOT/README.md" "Python 3.8 or newer"
-assert_file_contains "$ROOT/README.md" "no third-party Python package dependency"
+assert_file_contains "$ROOT/README.md" "Python 3.8 or newer is required only for evaluation"
+assert_file_contains "$ROOT/README.md" "no third-party Python package"
 assert_file_contains "$ROOT/README.md" "./launch.sh --resume"
 assert_file_contains "$ROOT/README.md" "Prompt Modules"
 assert_file_contains "$ROOT/README.md" "validation lease table"

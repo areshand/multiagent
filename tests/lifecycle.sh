@@ -6,9 +6,6 @@ MULTIAGENT="$FRAMEWORK_ROOT/target/debug/multiagent"
 TEST_TMP="$(mktemp -d)"
 trap 'rm -rf "$TEST_TMP"' EXIT
 
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$FRAMEWORK_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
-  python3 -c 'from multiagent_framework.workflow import main; assert callable(main)'
-
 assert_contains() {
   local file="$1"
   local expected="$2"

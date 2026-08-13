@@ -21,13 +21,12 @@ This project launches a tmux session with one `orchestrator` window. The orchest
 
 - `tmux`
 - Rust 1.75 or newer and Cargo when running from a source checkout
-- Python 3.8 or newer for evaluation adapters and remaining compatibility evidence audits; no `pip install` or virtual environment is required
+- Python 3.8 or newer only for evaluation and evidence-analysis commands; no `pip install` or virtual environment is required
 - Codex CLI or Claude CLI, according to the configured orchestrator and agent roles
 
-`launch.sh` checks these executable prerequisites before creating the tmux
-session. Durable production state and exact Git snapshot binding run in the
-Rust `multiagent` CLI. Python remains required while compatibility gate audits
-and evaluation clients are still present.
+`launch.sh` locates or builds the Rust binary and execs `multiagent launch`,
+which checks runtime prerequisites before creating the tmux session. Durable
+production state and exact Git snapshot binding run entirely in Rust.
 
 ## Launch
 
@@ -53,7 +52,7 @@ Environment:
 
 - `MULTIAGENT_SESSION`: tmux session name, default `multiagent`
 - `MULTIAGENT_ROOT`: project root, default launcher directory
-- `MULTIAGENT_RESUME`: launch mode exported by `launch.sh`; `0` clean launch, `1` explicit `--resume`
+- `MULTIAGENT_RESUME`: launch mode exported by `multiagent launch`; `0` clean launch, `1` explicit `--resume`
 - `MULTIAGENT_STATE_DIR`: durable subagent state, default `$MULTIAGENT_ROOT/.multiagent`
 - `MULTIAGENT_WRITE_POLICY`: repo write policy, default `$MULTIAGENT_ROOT/docs/write-policy.paths`
 - `MULTIAGENT_VERIFIER_MAX_ITERATIONS`: worker/verifier follow-up loop cap, default `3`
@@ -98,7 +97,8 @@ flowchart TD
     Adapter --> Launch
 
     subgraph Framework["General multiagent framework"]
-        Launch["launch.sh: export config and initialize state"] --> Tmux["tmux session with orchestrator window"]
+        Launch["launch.sh: locate or build Rust binary"] --> RustLaunch["multiagent launch: validate config and initialize state"]
+        RustLaunch --> Tmux["tmux session with orchestrator window"]
         Prompts["orchestrator_prompt.md plus role/playbook modules"] --> Orchestrator["Orchestrator CLI process"]
         Tmux --> Orchestrator
         Orchestrator --> Helper["multiagent Rust control plane"]
@@ -110,7 +110,7 @@ flowchart TD
         Runtime --> Evidence["Build and behavior evidence checks"]
         Runtime --> Guardrails["Generic coding and hidden-contract guardrails"]
         Runtime --> Status["Atomic status and structured gate integration"]
-        Adapter --> Python["Python evaluation compatibility client"]
+        Adapter --> Python["Python evaluation and evidence analysis"]
 
         Worker --> Durable[("assignments, checkpoints, resolutions")]
         Verifier --> Durable
@@ -137,15 +137,16 @@ flowchart TD
 
 The invocation sequence is:
 
-1. `launch.sh` exports the session, target root, prompt, CLI choices, state
-   directory, and write policy, then starts the orchestrator in tmux.
+1. `launch.sh` execs `multiagent launch`; Rust exports the session, target root,
+   prompt, CLI choices, state directory, and write policy, then starts the
+   orchestrator in tmux.
 2. The orchestrator reads the dispatcher prompt and loads role/playbook modules
    only when needed.
 3. The orchestrator calls `multiagent subagent` to create assignments, spawn tmux
    workers/scouts/verifiers, monitor them, and persist structured artifacts.
 4. `multiagent subagent` invokes `multiagent snapshot` when binding a verifier to
-   the exact staged and unstaged diff. Evaluation adapters consume the same v1
-   state and evidence contracts through the Python compatibility client.
+   the exact staged and unstaged diff. Evaluation code reads the same v1 state
+   and evidence artifacts without writing production control-plane state.
 5. Workers edit the target repository. Verifiers independently inspect the
    live diff and write findings or hash-bound acceptance evidence.
 6. `gate-check` accepts only when blocking findings/todos are closed, required
@@ -157,10 +158,9 @@ The only supported SWE Bench Pro entrypoint is
 the task image; there is no scaffold, single-agent, proxy, or custom solver
 fallback.
 
-`multiagent_framework` is not a daemon. It is the Python evaluation and
-compatibility client for the Rust-owned v1 contracts. The long-lived execution
-units remain the orchestrator, worker, scout, and verifier CLI processes inside
-tmux.
+`multiagent_framework` is not a daemon. It contains Python readers and evidence
+analysis used by evaluation. The long-lived execution units remain the
+orchestrator, worker, scout, and verifier CLI processes inside tmux.
 
 ## Prompt Modules
 
@@ -218,12 +218,11 @@ exact current `final-diff-sha256`; closed todo rechecks are audited against that
 same hash. This is enabled by default through
 `MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1`.
 
-The Rust runtime under `src/` is the shared production implementation behind
-these invariants. The Python modules under `multiagent_framework/` remain
-evaluation-facing readers, evidence helpers, and compatibility APIs. Evaluation
-adapters may add benchmark-specific task discovery or probes, but they must
-consume the same durable contracts instead of implementing a second acceptance
-protocol.
+The Rust runtime under `src/` is the production implementation behind these
+invariants. Python modules under `multiagent_framework/` are evaluation-facing
+readers and evidence helpers. Evaluation adapters may add benchmark-specific
+task discovery or probes, but they must consume the same durable contracts
+instead of implementing a second acceptance protocol.
 
 `prompts/playbooks/orchestration-routing.md` contains the detailed role-routing
 workflow for contract scouts, scope guards, validation coordinators, worker
@@ -352,7 +351,7 @@ If the final allowed verifier pass still finds accepted follow-up, the
 orchestrator stops the loop at the cap and explicitly accepts with residual
 risk, rejects the work, or asks the user.
 
-The loop cap is exported by `launch.sh`:
+The loop cap is exported by `multiagent launch`:
 
 ```bash
 MULTIAGENT_VERIFIER_MAX_ITERATIONS=3
@@ -609,7 +608,7 @@ For a live Codex desktop view, use the dashboard watcher:
 multiagent watch
 ```
 
-`launch.sh` pipes the orchestrator tmux pane into
+`multiagent launch` pipes the orchestrator tmux pane into
 `$MULTIAGENT_STATE_DIR/logs/orchestrator.log`. Named subagents spawned or
 restored through `multiagent subagent` are piped into
 `$MULTIAGENT_STATE_DIR/logs/NAME.log`. The watcher renders a compact dashboard
