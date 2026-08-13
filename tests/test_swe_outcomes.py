@@ -407,6 +407,21 @@ class NativeOutcomeTest(unittest.TestCase):
 
 
 class AggregateOutcomeTest(unittest.TestCase):
+    def test_default_discovery_accepts_custom_parallel_report_prefix(self):
+        with tempfile.TemporaryDirectory() as directory:
+            reports = Path(directory)
+            shard = reports / "swe-bench-pro-7971da1-w0-offset0-count5.json"
+            sidecar = reports / "swe-bench-pro-7971da1-w0-offset0-count5-config.json"
+            shard.write_text("{}", encoding="utf-8")
+            sidecar.write_text("{}", encoding="utf-8")
+
+            discovered = swe_bench_pro_official_aggregate.discover_reports(
+                reports,
+                swe_bench_pro_official_aggregate.DEFAULT_REPORT_PATTERNS,
+            )
+
+            self.assertEqual(discovered, [shard])
+
     def test_verified_patch_and_no_submission_weight_to_half(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

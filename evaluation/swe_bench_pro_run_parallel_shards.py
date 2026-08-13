@@ -11,6 +11,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from evaluation.swe_bench_pro_official_aggregate import DEFAULT_REPORT_PATTERNS
+
 
 DEFAULT_REPORT_DIR = Path("evaluation/reports")
 DEFAULT_AGGREGATE_JSON = DEFAULT_REPORT_DIR / "swe-bench-pro-official-aggregate.json"
@@ -49,6 +51,11 @@ def refresh_aggregate(args: argparse.Namespace) -> None:
     if args.aggregate_reports:
         reports = [part for raw in args.aggregate_reports for part in raw.split(",") if part]
         cmd.extend(["--reports", *reports])
+    else:
+        # Custom report-prefix templates are common for named or commit-specific
+        # runs. Keep aggregation independent of the prefix while sidecar JSON is
+        # filtered by the aggregate command.
+        cmd.extend(["--reports", *DEFAULT_REPORT_PATTERNS])
     run_checked(cmd)
 
 
