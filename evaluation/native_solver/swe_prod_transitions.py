@@ -760,6 +760,19 @@ def finalize_solver_run(
         final_diff = git_diff(workdir)
     elif progress.outcome == "blocked":
         log("blocked run produced a scoreable source diff; preserving it for the official verifier")
+    if (
+        progress.exit_code == 2
+        and progress.outcome == "blocked"
+        and final_diff.strip()
+        and not progress.terminal_outcome
+    ):
+        # All patch-bearing blocked exits are production submission decisions,
+        # regardless of which legacy checkpoint first recorded the block. Keep
+        # runner failures distinct while ensuring EvalScope can score a
+        # rejected patch as an explicit no-submission instead of aborting the
+        # entire shard on an untyped exit code.
+        progress.terminal_outcome = SUBMISSION_GATE_REJECTION
+        log("patch-bearing blocked outcome classified as submission_gate_rejection")
     log(f"final /app diff bytes={len(final_diff.encode('utf-8'))}")
     if progress.exit_code != 0:
         emit_failure_diagnostics(session)

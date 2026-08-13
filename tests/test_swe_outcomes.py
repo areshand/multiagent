@@ -189,6 +189,68 @@ class NativeOutcomeTest(unittest.TestCase):
                 solve_swe_prod.STATUS_PATH = original_status
                 solve_swe_prod.TERMINAL_OUTCOME_PATH = original_terminal
 
+    @unittest.skipUnless(shutil.which("git"), "git is required for lifecycle finalization")
+    def test_patch_bearing_blocked_exit_is_typed_at_finalization(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo = root / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+            readme = repo / "README.md"
+            readme.write_text("base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+            subprocess.run(
+                ["git", "-c", "commit.gpgsign=false", "commit", "-qm", "base"], cwd=repo, check=True
+            )
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=repo, check=True, text=True, capture_output=True
+            ).stdout.strip()
+            readme.write_text("base\nrejected patch\n", encoding="utf-8")
+            original_status = solve_swe_prod.STATUS_PATH
+            original_terminal = solve_swe_prod.TERMINAL_OUTCOME_PATH
+            original_emit = swe_prod_transitions.emit_failure_diagnostics
+            try:
+                solve_swe_prod.STATUS_PATH = root / "status.json"
+                solve_swe_prod.TERMINAL_OUTCOME_PATH = root / "terminal-outcome.json"
+                solve_swe_prod.STATUS_PATH.write_text(
+                    json.dumps(
+                        {
+                            "status": "blocked",
+                            "reason": "final validation remained unresolved",
+                            "blockers": ["missing durable completion marker"],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                swe_prod_transitions.emit_failure_diagnostics = lambda _session: None
+                progress = LifecycleProgress(exit_code=2, outcome="blocked")
+
+                with mock.patch.object(
+                    swe_prod_transitions,
+                    "coverage_probe_commands",
+                    return_value=[],
+                ):
+                    returncode = swe_prod_transitions.finalize_solver_run(
+                        workdir=repo,
+                        start_head=head,
+                        issue="Fix the public issue.",
+                        task_metadata={},
+                        session="test-session",
+                        progress=progress,
+                    )
+
+                self.assertEqual(returncode, 3)
+                self.assertEqual(progress.terminal_outcome, SUBMISSION_GATE_REJECTION)
+                published = load_terminal_outcome(solve_swe_prod.TERMINAL_OUTCOME_PATH)
+                self.assertEqual(published["outcome"], SUBMISSION_GATE_REJECTION)
+                self.assertEqual(published["reason"], "final validation remained unresolved")
+            finally:
+                swe_prod_transitions.emit_failure_diagnostics = original_emit
+                solve_swe_prod.STATUS_PATH = original_status
+                solve_swe_prod.TERMINAL_OUTCOME_PATH = original_terminal
+
     def test_summary_keeps_no_submission_in_denominator(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
