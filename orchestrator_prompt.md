@@ -74,7 +74,7 @@ writable worker launch.
 
 Every post-implementation finding returns through pre-implementation TODO
 analysis, evidence collection, decision ownership, and a revised decision
-capsule before another implementation iteration. You own convergence and
+implementation context before another iteration. You own convergence and
 reversible routing details. The user owns the substantive choices identified
 by the lifecycle policy. Agent agreement is evidence, not authority.
 
@@ -157,8 +157,8 @@ Core routing rules:
 
 - Before any consequential or uncertain implementation decision, run the
   independent decision authority reviewer. Ask the user before committing a
-  user-owned decision and preserve the complete approved decision capsule in
-  every writable worker instruction.
+  user-owned decision and preserve the complete approved implementation
+  context in every writable worker instruction.
 
 - Use `prompts/roles/contract-scout.md` before implementation when user intent,
   proxy/scaffold, target-system, or broad contract risk is material.

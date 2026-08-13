@@ -26,13 +26,13 @@ git -C "$TEST_REPO" add README.md
 git -C "$TEST_REPO" commit -q -m initial
 TEST_BRANCH="$(git -C "$TEST_REPO" branch --show-current)"
 
-CAPSULE="$TEST_TMP/decision-capsule.md"
+IMPLEMENTATION_CONTEXT="$TEST_TMP/approved-implementation-context.md"
 printf '%s\n' \
-  '# Decision capsule' \
+  '# Approved implementation context' \
   'decision: DEC-1' \
   'plan: PLAN-1' \
   'authority: orchestrator' \
-  'must-not-do: change public behavior' >"$CAPSULE"
+  'must-not-do: change public behavior' >"$IMPLEMENTATION_CONTEXT"
 
 PROMPT_BUNDLE="$TEST_TMP/orchestrator-bundle.md"
 "$FRAMEWORK_ROOT/bin/prompt-bundle.sh" \
@@ -67,7 +67,7 @@ wf add-todo WF-LIFECYCLE TODO-EVIDENCE \
   --kind evidence --summary "inspect persisted state" >/dev/null
 if wf prepare-implementation WF-LIFECYCLE \
   --decision-id DEC-1 --plan-id PLAN-1 --decision-revision 1 \
-  --decision-capsule "$CAPSULE" --authority-review AUTH-1 \
+  --implementation-context "$IMPLEMENTATION_CONTEXT" --authority-review AUTH-1 \
   >"$TEST_TMP/evidence-open.out" 2>&1; then
   echo "expected active evidence TODO to block implementation" >&2
   exit 1
@@ -77,7 +77,7 @@ wf resolve-todo WF-LIFECYCLE TODO-EVIDENCE \
   --resolution completed --evidence "state inspected" >/dev/null
 wf prepare-implementation WF-LIFECYCLE \
   --decision-id DEC-1 --plan-id PLAN-1 --decision-revision 1 \
-  --decision-capsule "$CAPSULE" --authority-review AUTH-1 >/dev/null
+  --implementation-context "$IMPLEMENTATION_CONTEXT" --authority-review AUTH-1 >/dev/null
 wf transition WF-LIFECYCLE implementation >/dev/null
 
 MULTIAGENT_ROOT="$TEST_REPO" MULTIAGENT_STATE_DIR="$TEST_STATE" \
@@ -87,15 +87,15 @@ MULTIAGENT_ROOT="$TEST_REPO" MULTIAGENT_STATE_DIR="$TEST_STATE" \
     --workflow-id WF-LIFECYCLE --decision-id DEC-1 --plan-id PLAN-1 \
     --branch "$TEST_BRANCH" --owned README.md >/dev/null
 assert_contains "$TEST_STATE/assignments/worker-lifecycle/assignment.env" "decision_revision=1"
-assert_contains "$TEST_STATE/assignments/worker-lifecycle/assignment.env" "decision_capsule_sha256="
+assert_contains "$TEST_STATE/assignments/worker-lifecycle/assignment.env" "implementation_context_sha256="
 
-printf '\ncapsule drift\n' >>"$CAPSULE"
+printf '\ncontext drift\n' >>"$IMPLEMENTATION_CONTEXT"
 if wf gate WF-LIFECYCLE implementation --decision-id DEC-1 --plan-id PLAN-1 \
-  >"$TEST_TMP/capsule-drift.out" 2>&1; then
-  echo "expected changed capsule to invalidate the implementation gate" >&2
+  >"$TEST_TMP/context-drift.out" 2>&1; then
+  echo "expected changed implementation context to invalidate the implementation gate" >&2
   exit 1
 fi
-assert_contains "$TEST_TMP/capsule-drift.out" "decision capsule changed"
+assert_contains "$TEST_TMP/context-drift.out" "approved implementation context changed"
 
 SKIP_STATE="$TEST_TMP/skip-state"
 MULTIAGENT_STATE_DIR="$SKIP_STATE" "$FRAMEWORK_ROOT/bin/workflow.sh" init WF-SKIP >/dev/null
@@ -110,8 +110,8 @@ fi
 assert_contains "$TEST_TMP/invalid-skip.out" "requires --destination or --resume-condition"
 
 LOOP_STATE="$TEST_TMP/loop-state"
-LOOP_CAPSULE="$TEST_TMP/loop-capsule.md"
-printf 'revision 1\n' >"$LOOP_CAPSULE"
+LOOP_CONTEXT="$TEST_TMP/loop-implementation-context.md"
+printf 'revision 1\n' >"$LOOP_CONTEXT"
 loop() {
   MULTIAGENT_STATE_DIR="$LOOP_STATE" "$FRAMEWORK_ROOT/bin/workflow.sh" "$@"
 }
@@ -127,7 +127,7 @@ loop record-review WF-LOOP AUTH-LOOP \
   --type decision-authority --verdict pass --evidence "authority passed" >/dev/null
 loop prepare-implementation WF-LOOP \
   --decision-id DEC-LOOP --plan-id PLAN-LOOP --decision-revision 1 \
-  --decision-capsule "$LOOP_CAPSULE" --authority-review AUTH-LOOP >/dev/null
+  --implementation-context "$LOOP_CONTEXT" --authority-review AUTH-LOOP >/dev/null
 loop transition WF-LOOP implementation >/dev/null
 loop transition WF-LOOP post-implementation --diff-hash DIFF-LOOP >/dev/null
 loop record-review WF-LOOP TECH-FINDING \
@@ -140,10 +140,10 @@ assert_contains "$LOOP_STATE/workflows/WF-LOOP/lifecycle/lifecycle.env" "iterati
 
 loop record-review WF-LOOP AUTH-LOOP-2 \
   --type decision-authority --verdict pass --evidence "revised authority passed" >/dev/null
-printf 'revision 2\n' >"$LOOP_CAPSULE"
+printf 'revision 2\n' >"$LOOP_CONTEXT"
 loop prepare-implementation WF-LOOP \
   --decision-id DEC-LOOP --plan-id PLAN-LOOP --decision-revision 2 \
-  --decision-capsule "$LOOP_CAPSULE" --authority-review AUTH-LOOP-2 >/dev/null
+  --implementation-context "$LOOP_CONTEXT" --authority-review AUTH-LOOP-2 >/dev/null
 loop transition WF-LOOP implementation >/dev/null
 loop transition WF-LOOP post-implementation --diff-hash DIFF-FINAL >/dev/null
 loop resolve-todo WF-LOOP TODO-FOLLOWUP \

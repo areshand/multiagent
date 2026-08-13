@@ -44,9 +44,9 @@ flowchart TD
     Pre --> Authority["Independent authority review"]
     Authority --> Choice{"User-owned decision?"}
     Choice -- "yes" --> UserDecision["Ask user and record choice"]
-    Choice -- "no" --> Capsule["Approved decision capsule"]
-    UserDecision --> Capsule
-    Capsule --> DAG["Assignments and dependency DAG"]
+    Choice -- "no" --> Context["Approved implementation context"]
+    UserDecision --> Context
+    Context --> DAG["Assignments and dependency DAG"]
     DAG --> WorkerA["Worker A"]
     DAG --> WorkerB["Worker B"]
     WorkerA --> Repo["Target Git repository"]
@@ -95,11 +95,11 @@ $MULTIAGENT_STATE_DIR/workflows/$MULTIAGENT_WORKFLOW_ID/lifecycle/
 The enforced normal path is `pre-implementation -> implementation ->
 post-implementation`. An independent authority review identifies consequential
 choices and whether the user or orchestrator owns each one. Writable workers
-receive the complete approved decision capsule, not only a partial assignment
-summary. Any accepted review finding creates a TODO and returns through
+receive the complete approved implementation context, not only a partial
+assignment summary. Any accepted review finding creates a TODO and returns through
 pre-implementation before another edit iteration.
 The implementation permit also verifies that `bin/decision.sh` contains a
-committed decision whose selected plan matches the capsule and assignment.
+committed decision whose selected plan matches the context and assignment.
 
 Inspect and advance the state with:
 
@@ -107,7 +107,7 @@ Inspect and advance the state with:
 bin/workflow.sh status "$MULTIAGENT_WORKFLOW_ID"
 bin/workflow.sh prepare-implementation "$MULTIAGENT_WORKFLOW_ID" \
   --decision-id DECISION_ID --plan-id PLAN_ID --decision-revision REVISION \
-  --decision-capsule CAPSULE_PATH --authority-review REVIEW_ID
+  --implementation-context CONTEXT_PATH --authority-review REVIEW_ID
 bin/workflow.sh transition "$MULTIAGENT_WORKFLOW_ID" implementation
 bin/workflow.sh completion-check "$MULTIAGENT_WORKFLOW_ID"
 ```
@@ -178,7 +178,7 @@ tests/run.sh
 
 ## Enforcement Caveat
 
-Decision-authority review, decision-capsule handoff, lifecycle TODO convergence,
+Decision-authority review, approved-context handoff, lifecycle TODO convergence,
 and completion are enforced by the orchestrator prompt plus normal-path checks
 in `bin/workflow.sh`, `bin/subagent.sh`, and `bin/orchestrator.sh`. This makes
 ordinary violations fail visibly, but it is not a security or capability
@@ -188,4 +188,4 @@ disable these checks.
 Revisit this limitation before treating the workflow as strict enforcement.
 The stronger design is a trusted supervisor that exclusively owns writable
 worker launch and independently validates TODO state, decision ownership, user
-approval, capsule revision, and assignment scope before starting a worker.
+approval, context revision, and assignment scope before starting a worker.

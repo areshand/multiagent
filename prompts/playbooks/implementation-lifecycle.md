@@ -28,7 +28,7 @@ post-implementation -> complete            when terminal gates pass
 
 Never route a post-implementation finding directly to implementation. Add it to
 the TODO queue, return to pre-implementation, and reconsider evidence,
-decisions, authority, and the decision capsule first.
+decisions, authority, and the approved implementation context first.
 
 ## Pre-Implementation
 
@@ -64,19 +64,19 @@ SUBAGENT_CLI="$VERIFIER_CLI" bin/subagent.sh spawn decision-authority-reviewer \
   --role reviewer --instruction-file AUTHORITY_REVIEW_INPUT
 ```
 
-Build a complete decision capsule containing the selected plan, decision and
-plan IDs, authority and approval basis, intended outcome, rejected alternatives
-and reasons, must-do and must-not-do constraints, migration choice,
+Create an approved implementation context document containing the selected
+plan, decision and plan IDs, authority and approval basis, intended outcome,
+rejected alternatives and reasons, must-do and must-not-do constraints, migration choice,
 responsibility boundary, affected paths, unresolved questions, and revision.
 Commit the selected alternative with `bin/decision.sh commit`, then record the
-passed authority review and capsule with:
+passed authority review and approved context with:
 
 ```bash
 bin/workflow.sh prepare-implementation "$MULTIAGENT_WORKFLOW_ID" \
   --decision-id DECISION_ID \
   --plan-id PLAN_ID \
   --decision-revision REVISION \
-  --decision-capsule CAPSULE_PATH \
+  --implementation-context CONTEXT_PATH \
   --authority-review REVIEW_ID
 bin/workflow.sh transition "$MULTIAGENT_WORKFLOW_ID" implementation
 ```
@@ -89,8 +89,8 @@ workers.
 
 Spawn bounded exploitation workers only after the implementation gate passes.
 Every assignment must reference the active workflow, decision, and plan. The
-worker's first instruction must contain the complete current decision capsule;
-a decision ID alone is insufficient.
+worker's first instruction must contain the complete current approved
+implementation context; a decision ID alone is insufficient.
 
 Do not silently change the approved plan. A newly discovered choice or factual
 uncertainty becomes a TODO and returns through pre-implementation.
@@ -107,7 +107,7 @@ bin/workflow.sh transition "$MULTIAGENT_WORKFLOW_ID" post-implementation \
 
 Run independent reviews against the frozen candidate diff:
 
-- `decision-drift`: compare the diff to the authorized decision capsule;
+- `decision-drift`: compare the diff to the authorized implementation context;
 - `scope`: check scope, simplicity, ownership, and unnecessary complexity;
 - `technical`: verify behavior and the accepted contract;
 - `reflection`: compare expected and actual results and identify improvements.

@@ -563,12 +563,12 @@ gate_implementation_assignment() {
     die "workflow implementation gate rejected assignment for workflow $workflow_id"
 }
 
-lifecycle_assignment_capsule() {
+validated_assignment_context_path() {
   local name="$1"
   lifecycle_enforced || return 1
   [[ -f "$(assignment_meta_file "$name")" ]] || return 1
 
-  local role workflow_id decision_id plan_id assignment_revision current_revision capsule
+  local role workflow_id decision_id plan_id assignment_revision current_revision context_path
   role="$(read_assignment_value "$name" role || true)"
   [[ "$role" == "exploitation" ]] || return 1
   workflow_id="$(read_assignment_value "$name" workflow_id || true)"
@@ -579,9 +579,9 @@ lifecycle_assignment_capsule() {
   current_revision="$(workflow_value "$workflow_id" decision_revision)"
   [[ -n "$assignment_revision" && "$assignment_revision" == "$current_revision" ]] || \
     die "assignment decision revision is stale: assignment=${assignment_revision:-missing} workflow=$current_revision"
-  capsule="$(read_assignment_value "$name" decision_capsule || true)"
-  [[ -f "$capsule" ]] || die "assignment decision capsule is missing: $capsule"
-  printf '%s\n' "$capsule"
+  context_path="$(read_assignment_value "$name" implementation_context || true)"
+  [[ -f "$context_path" ]] || die "assignment approved implementation context is missing: $context_path"
+  printf '%s\n' "$context_path"
 }
 
 status_is_active_worker() {
@@ -806,11 +806,11 @@ assignment_create() {
     start_commit="$(git -C "$ROOT" rev-parse "$start_commit^{commit}")"
   fi
 
-  local dir owned_file item normalized decision_revision="" decision_capsule="" decision_capsule_sha256=""
+  local dir owned_file item normalized decision_revision="" implementation_context="" implementation_context_sha256=""
   if [[ "$role" == "exploitation" ]] && lifecycle_enforced; then
     decision_revision="$(workflow_value "$workflow_id" decision_revision)"
-    decision_capsule="$(workflow_value "$workflow_id" decision_capsule)"
-    decision_capsule_sha256="$(workflow_value "$workflow_id" decision_capsule_sha256)"
+    implementation_context="$(workflow_value "$workflow_id" implementation_context)"
+    implementation_context_sha256="$(workflow_value "$workflow_id" implementation_context_sha256)"
   fi
   dir="$(assignment_dir "$name")"
   mkdir -p "$dir"
@@ -841,8 +841,8 @@ role=$role
 decision_id=$decision_id
 plan_id=$plan_id
 decision_revision=$decision_revision
-decision_capsule=$decision_capsule
-decision_capsule_sha256=$decision_capsule_sha256
+implementation_context=$implementation_context
+implementation_context_sha256=$implementation_context_sha256
 workflow_id=$workflow_id
 node_id=$node_id
 depends_on=$depends_on
@@ -1362,14 +1362,14 @@ spawn_subagent() {
     fi
   fi
 
-  local lifecycle_capsule=""
-  if lifecycle_capsule="$(lifecycle_assignment_capsule "$name")"; then
+  local implementation_context_path=""
+  if implementation_context_path="$(validated_assignment_context_path "$name")"; then
     [[ -n "$instruction_file" ]] || \
-      die "lifecycle-enforced exploitation spawn requires --instruction-file with the complete decision capsule"
-    local required_capsule
-    required_capsule="$(cat "$lifecycle_capsule")"
-    [[ -n "$required_capsule" && "$instruction" == *"$required_capsule"* ]] || \
-      die "exploitation instruction does not contain the complete approved decision capsule"
+      die "lifecycle-enforced exploitation spawn requires --instruction-file with the complete approved implementation context"
+    local required_context
+    required_context="$(cat "$implementation_context_path")"
+    [[ -n "$required_context" && "$instruction" == *"$required_context"* ]] || \
+      die "exploitation instruction does not contain the complete approved implementation context"
   fi
 
   local dir
@@ -1653,10 +1653,10 @@ restore_subagent() {
 
   local instruction command
   instruction="$(restore_instruction "$name" "$prior_status" "$dir")"
-  local lifecycle_capsule=""
-  if lifecycle_capsule="$(lifecycle_assignment_capsule "$name")"; then
-    instruction+=$'\n\n## Approved Decision Capsule\n\n'
-    instruction+="$(cat "$lifecycle_capsule")"
+  local implementation_context_path=""
+  if implementation_context_path="$(validated_assignment_context_path "$name")"; then
+    instruction+=$'\n\n## Approved Implementation Context\n\n'
+    instruction+="$(cat "$implementation_context_path")"
   fi
   printf '%s\n' "$(timestamp) prior_status=$prior_status action=$action reason=$reason force=$force cli=$cli" >>"$dir/restore_events.log"
   {

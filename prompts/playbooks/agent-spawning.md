@@ -11,7 +11,7 @@ statement, and the relevant contract ledger. For high-risk coding tasks,
 include the contract scout's `must-preserve` list and validation plan. The
 worker module contains shared worker rules and Ponytail implementation discipline.
 For lifecycle-enforced exploitation work, also include the active workflow,
-decision, plan, decision revision, and the complete approved decision capsule.
+decision, plan, decision revision, and the complete approved implementation context.
 When the scout emits `historical-contract-ledger:`, copy that block verbatim
 into every implementation, repair, and verifier assignment. Do not replace it
 with a narrower locked hypothesis. Worker ownership and done criteria must

@@ -110,8 +110,8 @@ def read_env(path):
 def write_env(path, data):
     order = [
         "workflow_id", "phase", "iteration", "preimplementation_gate",
-        "decision_id", "plan_id", "decision_revision", "decision_capsule",
-        "decision_capsule_sha256", "authority_review_id", "candidate_diff_hash",
+        "decision_id", "plan_id", "decision_revision", "implementation_context",
+        "implementation_context_sha256", "authority_review_id", "candidate_diff_hash",
         "reviewed_diff_hash", "resume_count", "created_at", "updated_at",
     ]
     text = "".join(f"{key}={data.get(key, '')}\n" for key in order)
@@ -167,8 +167,8 @@ def initial_state(workflow_id):
         "decision_id": "",
         "plan_id": "",
         "decision_revision": "",
-        "decision_capsule": "",
-        "decision_capsule_sha256": "",
+        "implementation_context": "",
+        "implementation_context_sha256": "",
         "authority_review_id": "",
         "candidate_diff_hash": "",
         "reviewed_diff_hash": "",
@@ -220,16 +220,16 @@ def review_by_id(rows, review_id):
     return next((row for row in rows if row.get("review_id") == review_id), None)
 
 
-def validate_capsule(state):
-    capsule_text = state.get("decision_capsule", "")
-    if not capsule_text:
-        die("implementation gate requires a decision capsule")
-    capsule = Path(capsule_text)
-    if not capsule.is_file():
-        die(f"decision capsule is missing: {capsule}")
-    actual = sha256(capsule)
-    if actual != state.get("decision_capsule_sha256"):
-        die("decision capsule changed after pre-implementation approval")
+def validate_implementation_context(state):
+    context_text = state.get("implementation_context", "")
+    if not context_text:
+        die("implementation gate requires approved implementation context")
+    context = Path(context_text)
+    if not context.is_file():
+        die(f"approved implementation context is missing: {context}")
+    actual = sha256(context)
+    if actual != state.get("implementation_context_sha256"):
+        die("approved implementation context changed after pre-implementation approval")
 
 
 def read_simple_env(path):
@@ -264,7 +264,7 @@ def implementation_gate(workflow_id, expected_decision="", expected_plan="", all
         die(f"implementation gate requires phase=implementation, got {state.get('phase')}")
     if state.get("preimplementation_gate") != "passed":
         die("implementation gate has not passed")
-    validate_capsule(state)
+    validate_implementation_context(state)
     todos = active_todos(read_table(p["todos"], TODO_FIELDS))
     blockers = [row["todo_id"] for row in todos if row.get("kind") in {"evidence", "decision"}]
     if blockers:
@@ -303,7 +303,7 @@ def completion_check(workflow_id):
     missing = required_post_reviews(p, state)
     if missing:
         die("completion requires passing current-diff reviews: " + ",".join(missing))
-    validate_capsule(state)
+    validate_implementation_context(state)
     return state
 
 
@@ -337,16 +337,16 @@ def cmd_prepare(args):
         ]
         if blockers:
             die("pre-implementation blocked by active evidence/decision TODOs: " + ",".join(blockers))
-        capsule = Path(args.decision_capsule).resolve()
-        if not capsule.is_file():
-            die(f"decision capsule not found: {capsule}")
+        context = Path(args.implementation_context).resolve()
+        if not context.is_file():
+            die(f"approved implementation context not found: {context}")
         state.update({
             "preimplementation_gate": "passed",
             "decision_id": args.decision_id,
             "plan_id": args.plan_id,
             "decision_revision": args.decision_revision,
-            "decision_capsule": str(capsule),
-            "decision_capsule_sha256": sha256(capsule),
+            "implementation_context": str(context),
+            "implementation_context_sha256": sha256(context),
             "authority_review_id": args.authority_review,
             "updated_at": now(),
         })
@@ -388,8 +388,8 @@ def cmd_transition(args):
             state["iteration"] = str(int(state.get("iteration", "1")) + 1)
             state["preimplementation_gate"] = "pending"
             state["decision_revision"] = ""
-            state["decision_capsule"] = ""
-            state["decision_capsule_sha256"] = ""
+            state["implementation_context"] = ""
+            state["implementation_context_sha256"] = ""
             state["authority_review_id"] = ""
             state["candidate_diff_hash"] = ""
             state["reviewed_diff_hash"] = ""
@@ -524,7 +524,7 @@ def cmd_record_review(args):
 def cmd_gate(args):
     if args.gate == "implementation":
         state = implementation_gate(args.workflow_id, args.decision_id, args.plan_id)
-        print(f"gate passed\t{args.workflow_id}\timplementation\t{state['decision_revision']}\t{state['decision_capsule_sha256']}")
+        print(f"gate passed\t{args.workflow_id}\timplementation\t{state['decision_revision']}\t{state['implementation_context_sha256']}")
     else:
         state = completion_check(args.workflow_id)
         print(f"gate passed\t{args.workflow_id}\tcompletion\t{state['candidate_diff_hash']}")
@@ -558,7 +558,7 @@ prepare.add_argument("workflow_id")
 prepare.add_argument("--decision-id", required=True)
 prepare.add_argument("--plan-id", required=True)
 prepare.add_argument("--decision-revision", required=True)
-prepare.add_argument("--decision-capsule", required=True)
+prepare.add_argument("--implementation-context", required=True)
 prepare.add_argument("--authority-review", required=True)
 prepare.set_defaults(func=cmd_prepare)
 

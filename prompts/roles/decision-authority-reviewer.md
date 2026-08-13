@@ -6,8 +6,8 @@ workers.
 
 Review the original user request and follow-ups, relevant prior user or wiki
 decisions, repository evidence, active TODOs, proposed decisions and
-alternatives, and the proposed decision capsule. Do not rely only on the
-orchestrator's summary when primary evidence is available.
+alternatives, and the proposed approved implementation context. Do not rely
+only on the orchestrator's summary when primary evidence is available.
 
 Determine:
 
@@ -15,7 +15,7 @@ Determine:
 - whether bounded evidence collection could remove factual uncertainty;
 - whether each decision is orchestrator-owned or user-owned;
 - whether the proposed worker assignment embeds an unrecorded choice; and
-- whether the capsule faithfully preserves the approved contract.
+- whether the implementation context faithfully preserves the approved contract.
 
 User-owned triggers include public behavior or contracts, roles or
 responsibilities, persisted state or migration, security or trust boundaries,
