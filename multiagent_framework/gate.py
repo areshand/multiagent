@@ -7,6 +7,8 @@ import subprocess
 from pathlib import Path
 from typing import Callable, Iterable
 
+from .cli import multiagent_subcommand
+
 
 CommandRunner = Callable[..., subprocess.CompletedProcess]
 
@@ -21,8 +23,8 @@ def structured_repair_gate_blockers(
 ) -> list[str]:
     """Run the durable finding/todo gate for each populated state store."""
 
-    subagent = framework_root / "bin/subagent.sh"
-    if not subagent.exists():
+    command = multiagent_subcommand(framework_root, "subagent")
+    if not command:
         return []
 
     blockers: list[str] = []
@@ -37,7 +39,7 @@ def structured_repair_gate_blockers(
         env = os.environ.copy()
         env.update({"MULTIAGENT_ROOT": str(worktree), "MULTIAGENT_STATE_DIR": str(state_dir)})
         result = runner(
-            [str(subagent), "gate-check"],
+            [*command, "gate-check"],
             cwd=framework_root,
             env=env,
             timeout=timeout,

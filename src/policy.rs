@@ -11,7 +11,7 @@ const POLICY_TEMPLATE: &str = r#"# Multiagent repo write policy
 # Default allowed write root is $MULTIAGENT_ROOT for the launched session.
 # Orchestrator-owned: workers should not edit this file directly.
 # Add approvals only with:
-#   bin/write-policy.sh approve PATH --actor ACTOR --assignment-id ID --reason TEXT [--force]
+#   multiagent policy approve PATH --actor ACTOR --assignment-id ID --reason TEXT [--force]
 #
 # Records are TSV:
 #   approval<TAB>timestamp<TAB>actor<TAB>assignment_id<TAB>requested_path<TAB>canonical_path<TAB>reason<TAB>force
@@ -20,10 +20,10 @@ const POLICY_TEMPLATE: &str = r#"# Multiagent repo write policy
 "#;
 
 const USAGE: &str = r#"Usage:
-  bin/write-policy.sh init
-  bin/write-policy.sh show
-  bin/write-policy.sh check PATH [...]
-  bin/write-policy.sh approve PATH --actor ACTOR --assignment-id ID --reason TEXT [--force]"#;
+  multiagent policy init
+  multiagent policy show
+  multiagent policy check PATH [...]
+  multiagent policy approve PATH --actor ACTOR --assignment-id ID --reason TEXT [--force]"#;
 
 pub fn run(args: &[String]) -> Result<(), String> {
     if args.is_empty() || matches!(args[0].as_str(), "-h" | "--help") {
@@ -80,6 +80,7 @@ impl Policy {
         ));
         let file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(lock_path)

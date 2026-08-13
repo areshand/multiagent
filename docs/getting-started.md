@@ -46,7 +46,7 @@ To explicitly resume after a previous crashed or interrupted session:
 ```
 
 With `--resume`, the orchestrator receives `MULTIAGENT_RESUME=1` and should run
-`bin/subagent.sh recover-plan` before deciding whether to restore persisted
+`multiagent subagent recover-plan` before deciding whether to restore persisted
 subagents.
 
 Environment:
@@ -101,7 +101,7 @@ flowchart TD
         Launch["launch.sh: export config and initialize state"] --> Tmux["tmux session with orchestrator window"]
         Prompts["orchestrator_prompt.md plus role/playbook modules"] --> Orchestrator["Orchestrator CLI process"]
         Tmux --> Orchestrator
-        Orchestrator --> Helper["bin/multiagent Rust control plane"]
+        Orchestrator --> Helper["multiagent Rust control plane"]
 
         Helper --> Worker["Worker tmux windows"]
         Helper --> Verifier["Scout and verifier tmux windows"]
@@ -119,7 +119,7 @@ flowchart TD
         Helper --> Findings
         Snapshot --> Verifier
 
-        Orchestrator --> Gate["bin/subagent.sh gate-check"]
+        Orchestrator --> Gate["multiagent subagent gate-check"]
         Durable --> Gate
         Findings --> Gate
         Evidence --> Gate
@@ -141,9 +141,9 @@ The invocation sequence is:
    directory, and write policy, then starts the orchestrator in tmux.
 2. The orchestrator reads the dispatcher prompt and loads role/playbook modules
    only when needed.
-3. The orchestrator calls `bin/subagent.sh` to create assignments, spawn tmux
+3. The orchestrator calls `multiagent subagent` to create assignments, spawn tmux
    workers/scouts/verifiers, monitor them, and persist structured artifacts.
-4. `subagent.sh` invokes `bin/multiagent snapshot` when binding a verifier to
+4. `multiagent subagent` invokes `multiagent snapshot` when binding a verifier to
    the exact staged and unstaged diff. Evaluation adapters consume the same v1
    state and evidence contracts through the Python compatibility client.
 5. Workers edit the target repository. Verifiers independently inspect the
@@ -206,8 +206,8 @@ exploration/exploitation policy for running independent work in parallel.
 
 `prompts/playbooks/finding-todo-loop.md` contains the generic structured repair
 loop: verifier findings, orchestrator todos, worker resolution reports,
-verifier closure through `bin/subagent.sh todo-close`, and
-`bin/subagent.sh gate-check`. Build verification failures are one instance of
+verifier closure through `multiagent subagent todo-close`, and
+`multiagent subagent gate-check`. Build verification failures are one instance of
 this loop, not special eval-only wrapper logic. The final gate also reads the
 latest durable verifier verdict: a `BLOCKING` result cannot be bypassed by an
 empty finding store or a contradictory completion narrative. A later verifier
@@ -250,7 +250,7 @@ non-public evaluator rows, hidden row names, or benchmark-only metadata.
 Use the same subagent helper with the verifier CLI:
 
 ```bash
-SUBAGENT_CLI="${VERIFIER_CLI:-codex}" bin/subagent.sh spawn contract-scout-01-docs --instruction "Review only; extract the contract ledger."
+SUBAGENT_CLI="${VERIFIER_CLI:-codex}" multiagent subagent spawn contract-scout-01-docs --instruction "Review only; extract the contract ledger."
 ```
 
 The scout does not edit files or coordinate with workers. The orchestrator
@@ -270,7 +270,7 @@ helper-layer ownership, or past verifier misses in the same area.
 Use the verifier CLI:
 
 ```bash
-SUBAGENT_CLI="${VERIFIER_CLI:-codex}" bin/subagent.sh spawn scope-guard-01-docs --instruction "Review only; audit diff scope against the contract ledger."
+SUBAGENT_CLI="${VERIFIER_CLI:-codex}" multiagent subagent spawn scope-guard-01-docs --instruction "Review only; audit diff scope against the contract ledger."
 ```
 
 The guard reports `blocking-scope-findings`, `must-preserve`, validation gaps,
@@ -283,16 +283,16 @@ When several live agents touch the same package/path or expensive validation is
 already running, the orchestrator can spawn a read-only validation coordinator.
 This role maps active workers, verifiers, owned paths, running test commands,
 and validation leases so the orchestrator can keep one active validator per
-package/path. Prefer `bin/subagent.sh validation-run LEASE_ID --owner NAME
+package/path. Prefer `multiagent subagent validation-run LEASE_ID --owner NAME
 --target TARGET -- COMMAND...` for expensive commands; it acquires the lease,
 runs the command, records stdout/stderr tails and return code, and marks the
-lease passed or failed. Use `bin/subagent.sh validation-lease-acquire` and
-`bin/subagent.sh validation-lease-status` for externally managed commands.
+lease passed or failed. Use `multiagent subagent validation-lease-acquire` and
+`multiagent subagent validation-lease-status` for externally managed commands.
 
 Use the verifier CLI:
 
 ```bash
-SUBAGENT_CLI="${VERIFIER_CLI:-codex}" bin/subagent.sh spawn validation-coordinator-01-docs --instruction "Review only; map active validators and recommend routing."
+SUBAGENT_CLI="${VERIFIER_CLI:-codex}" multiagent subagent spawn validation-coordinator-01-docs --instruction "Review only; map active validators and recommend routing."
 ```
 
 The coordinator does not edit files or make the final correctness decision. It
@@ -369,7 +369,7 @@ dedicated verifier spawn helper; when using the generic subagent helper, pass
 the verifier CLI explicitly:
 
 ```bash
-SUBAGENT_CLI="${VERIFIER_CLI:-codex}" bin/subagent.sh spawn verifier-01-docs --instruction "Review worker-01-docs."
+SUBAGENT_CLI="${VERIFIER_CLI:-codex}" multiagent subagent spawn verifier-01-docs --instruction "Review worker-01-docs."
 ```
 
 Verifiers are reviewers, not implementers. They should not receive duplicate
@@ -425,16 +425,16 @@ docs/write-policy.paths
 Use the helper to initialize, inspect, check, and update the policy:
 
 ```bash
-bin/write-policy.sh init
-bin/write-policy.sh show
-bin/write-policy.sh check README.md /tmp/outside-file
-bin/write-policy.sh approve /tmp/approved-output --actor orchestrator --assignment-id docs-001 --reason "export report"
+multiagent policy init
+multiagent policy show
+multiagent policy check README.md /tmp/outside-file
+multiagent policy approve /tmp/approved-output --actor orchestrator --assignment-id docs-001 --reason "export report"
 ```
 
 The launch script initializes the policy file and prints the active policy at
 startup. The orchestrator must ask for explicit approval before allowing a
 worker to write outside `MULTIAGENT_ROOT`, then record the narrowest practical
-outside path with `bin/write-policy.sh approve PATH --actor ACTOR
+outside path with `multiagent policy approve PATH --actor ACTOR
 --assignment-id ID --reason TEXT`.
 
 `docs/write-policy.paths` is orchestrator-owned. Workers should not edit it
@@ -449,7 +449,7 @@ repo parent, `/tmp`, and broad shared roots such as `/Users`, `/home`, `/usr`,
 orchestrator/user decision:
 
 ```bash
-bin/write-policy.sh approve /tmp --actor orchestrator --assignment-id build-logs --reason "user approved shared temp output" --force
+multiagent policy approve /tmp --actor orchestrator --assignment-id build-logs --reason "user approved shared temp output" --force
 ```
 
 Mechanical enforcement is limited to the helper's policy checks and startup
@@ -464,14 +464,14 @@ Use repo-local assignment records for every worker or named subagent before
 work starts:
 
 ```bash
-bin/subagent.sh assignment-create worker-01-docs \
+multiagent subagent assignment-create worker-01-docs \
   --assignment-id docs-001 \
   --branch worker/docs-001 \
   --owned README.md,orchestrator_prompt.md
-bin/subagent.sh worktree-create worker-01-docs
-bin/subagent.sh assignment-show worker-01-docs
-bin/subagent.sh assignment-status worker-01-docs running
-bin/subagent.sh checkpoint-update worker-01-docs --step "started implementation" --status running
+multiagent subagent worktree-create worker-01-docs
+multiagent subagent assignment-show worker-01-docs
+multiagent subagent assignment-status worker-01-docs running
+multiagent subagent checkpoint-update worker-01-docs --step "started implementation" --status running
 ```
 
 Assignment state is stored under:
@@ -494,7 +494,7 @@ Workers default to Claude, so run the window from the worktree without
 Codex-only flags:
 
 ```bash
-WORKTREE_PATH="$(bin/subagent.sh worktree-show worker-01-docs | awk -F= '$1 == "path" {print $2}')"
+WORKTREE_PATH="$(multiagent subagent worktree-show worker-01-docs | awk -F= '$1 == "path" {print $2}')"
 tmux new-window -d -t "$MULTIAGENT_SESSION" -n "worker-01-docs" \
   "cd '$WORKTREE_PATH' && ${CLAUDE_BIN:-claude} --dangerously-skip-permissions"
 ```
@@ -502,12 +502,12 @@ tmux new-window -d -t "$MULTIAGENT_SESSION" -n "worker-01-docs" \
 Workers and orchestrators can write structured recovery checkpoints:
 
 ```bash
-bin/subagent.sh checkpoint-update worker-01-docs \
+multiagent subagent checkpoint-update worker-01-docs \
   --step "tests passing locally" \
   --idempotency "rerun tests/run.sh before acceptance" \
   --last-commit HEAD \
   --status running
-bin/subagent.sh checkpoint-show worker-01-docs
+multiagent subagent checkpoint-show worker-01-docs
 ```
 
 Checkpoints include the assignment ID, branch, owned path file, last commit,
@@ -516,7 +516,7 @@ completed step, blocker, idempotency notes, status, and update timestamp.
 After a worker reports completion, run:
 
 ```bash
-bin/subagent.sh assignment-check worker-01-docs
+multiagent subagent assignment-check worker-01-docs
 ```
 
 The check mechanically rejects a branch mismatch and rejects any file changed
@@ -527,17 +527,17 @@ prevent a worker from editing files before the check runs.
 
 ## Long-Running Subagents
 
-Use `bin/subagent.sh` for named subagents that should keep working or monitoring over time:
+Use `multiagent subagent` for named subagents that should keep working or monitoring over time:
 
 ```bash
-bin/subagent.sh spawn subagent-ci-monitor --instruction "Monitor CI and report status changes."
-SUBAGENT_CLI=claude bin/subagent.sh spawn subagent-ci-monitor --instruction "Monitor CI and report status changes."
-bin/subagent.sh poll subagent-ci-monitor
-bin/subagent.sh inspect subagent-ci-monitor --lines 160
-bin/subagent.sh recover-plan
-bin/subagent.sh restore subagent-ci-monitor
-bin/subagent.sh restore-all
-bin/subagent.sh finalize subagent-ci-monitor
+multiagent subagent spawn subagent-ci-monitor --instruction "Monitor CI and report status changes."
+SUBAGENT_CLI=claude multiagent subagent spawn subagent-ci-monitor --instruction "Monitor CI and report status changes."
+multiagent subagent poll subagent-ci-monitor
+multiagent subagent inspect subagent-ci-monitor --lines 160
+multiagent subagent recover-plan
+multiagent subagent restore subagent-ci-monitor
+multiagent subagent restore-all
+multiagent subagent finalize subagent-ci-monitor
 ```
 
 Each subagent persists state under:
@@ -558,7 +558,7 @@ If the tmux session or orchestrator crashes, start a new orchestrator with
 `--resume`. In resume mode, the orchestrator should run:
 
 ```bash
-bin/subagent.sh recover-plan
+multiagent subagent recover-plan
 ```
 
 The plan prints one row per persisted subagent with a conservative action.
@@ -575,13 +575,13 @@ state is missing.
 Restore a specific resumable subagent with:
 
 ```bash
-bin/subagent.sh restore NAME
+multiagent subagent restore NAME
 ```
 
 The restored subagent gets a fresh tmux window with an instruction containing
 its name, prior status, state directory, and a concise tail of `current.txt` and
 `transcript.log`. Existing memory files are not deleted. Use
-`bin/subagent.sh restore-all` only after reviewing the plan; it restores only
+`multiagent subagent restore-all` only after reviewing the plan; it restores only
 rows classified as `restore` and skips finalized, blocked, open, and unknown
 subagents.
 
@@ -592,10 +592,10 @@ login/setup/trust prompts, or never becomes ready.
 
 ## Agent Progress
 
-Use `bin/status.sh` when you want the orchestrator to check progress:
+Use `multiagent status` when you want the orchestrator to check progress:
 
 ```bash
-bin/status.sh
+multiagent status
 ```
 
 The status helper reports actual agents, not every local process. It captures
@@ -606,23 +606,23 @@ state directory.
 For a live Codex desktop view, use the dashboard watcher:
 
 ```bash
-bin/watch.sh
+multiagent watch
 ```
 
 `launch.sh` pipes the orchestrator tmux pane into
 `$MULTIAGENT_STATE_DIR/logs/orchestrator.log`. Named subagents spawned or
-restored through `bin/subagent.sh` are piped into
+restored through `multiagent subagent` are piped into
 `$MULTIAGENT_STATE_DIR/logs/NAME.log`. The watcher renders a compact dashboard
-from those logs, `bin/status.sh`, assignment metadata, and workflow DAG state so
+from those logs, `multiagent status`, assignment metadata, and workflow DAG state so
 the Codex UI can continuously show the orchestrator tail, status counts, blocked
 agents, DAG summaries, and blocked DAG nodes.
 
 Useful watcher options:
 
 ```bash
-bin/watch.sh --once
-bin/watch.sh --interval 2 --log-lines 80
-MULTIAGENT_LOG_DIR=/tmp/swarm-logs bin/watch.sh
+multiagent watch --once
+multiagent watch --interval 2 --log-lines 80
+MULTIAGENT_LOG_DIR=/tmp/swarm-logs multiagent watch
 ```
 
 ## Organizational Learning Workflow
@@ -635,29 +635,29 @@ Create and manage decisions with competing options:
 
 ```bash
 # Create a new decision
-bin/decision.sh init DEC-001 --title "Which API authentication approach?"
+multiagent decision init DEC-001 --title "Which API authentication approach?"
 
 # Add competing options discovered during exploration
-bin/decision.sh add-alternative DEC-001 \
+multiagent decision add-alternative DEC-001 \
   --plan-id PLN-001 \
   --summary "OAuth 2.0 with PKCE" \
   --proposed-by exploration-agent-01 \
   --expected-outcome "Secure auth with industry standard OAuth 2.0 and PKCE for mobile"
 
-bin/decision.sh add-alternative DEC-001 \
+multiagent decision add-alternative DEC-001 \
   --plan-id PLN-002 \
   --summary "Custom JWT with refresh tokens" \
   --proposed-by exploration-agent-02 \
   --expected-outcome "Fast custom JWT implementation with refresh token security"
 
 # Resolve decision and create implementation plan
-bin/decision.sh commit DEC-001 \
+multiagent decision commit DEC-001 \
   --selected-plan PLN-001 \
   --reason "Better security posture and industry standard"
 
 # View decision history
-bin/decision.sh list
-bin/decision.sh show DEC-001
+multiagent decision list
+multiagent decision show DEC-001
 ```
 
 ### Role-Tagged Agent Assignments
@@ -666,14 +666,14 @@ Assign specific roles to agents for structured workflows:
 
 ```bash
 # Create exploration assignments for different approaches
-bin/subagent.sh assignment-create worker-01-explore-oauth \
+multiagent subagent assignment-create worker-01-explore-oauth \
   --assignment-id AUTH-001 \
   --role exploration \
   --decision-id DEC-001 \
   --branch explore/oauth-approach \
   --owned exploration/oauth/
 
-bin/subagent.sh assignment-create worker-02-explore-jwt \
+multiagent subagent assignment-create worker-02-explore-jwt \
   --assignment-id AUTH-002 \
   --role exploration \
   --decision-id DEC-001 \
@@ -681,7 +681,7 @@ bin/subagent.sh assignment-create worker-02-explore-jwt \
   --owned exploration/jwt/
 
 # Create exploitation assignment after decision resolution
-bin/subagent.sh assignment-create worker-03-implement-oauth \
+multiagent subagent assignment-create worker-03-implement-oauth \
   --assignment-id AUTH-003 \
   --role exploitation \
   --decision-id DEC-001 \
@@ -690,7 +690,7 @@ bin/subagent.sh assignment-create worker-03-implement-oauth \
   --owned src/auth/,tests/auth/
 
 # Create reflection assignment after implementation
-bin/subagent.sh assignment-create reflection-01-auth \
+multiagent subagent assignment-create reflection-01-auth \
   --assignment-id REF-001 \
   --role reflection \
   --decision-id DEC-001 \
@@ -699,7 +699,7 @@ bin/subagent.sh assignment-create reflection-01-auth \
   --owned docs/reflection/auth-decision.md
 
 # Architecture review across multiple decisions
-bin/subagent.sh assignment-create arch-01-security \
+multiagent subagent assignment-create arch-01-security \
   --assignment-id ARCH-001 \
   --role architecture \
   --decision-id DEC-001,DEC-002 \
@@ -707,7 +707,7 @@ bin/subagent.sh assignment-create arch-01-security \
   --owned architecture/security/
 
 # QA verification of implementation
-bin/subagent.sh assignment-create qa-01-auth-tests \
+multiagent subagent assignment-create qa-01-auth-tests \
   --assignment-id QA-001 \
   --role qa \
   --decision-id DEC-001 \
@@ -722,57 +722,57 @@ Complete workflow for a complex architectural decision:
 
 ```bash
 # 1. Create decision context
-bin/decision.sh init DEC-003 --title "Database scaling strategy for user growth"
+multiagent decision init DEC-003 --title "Database scaling strategy for user growth"
 
 # 2. Spawn exploration agents for different approaches
-bin/subagent.sh assignment-create worker-01-explore-sharding \
+multiagent subagent assignment-create worker-01-explore-sharding \
   --assignment-id DB-001 --role exploration --decision-id DEC-003 \
   --branch explore/db-sharding --owned exploration/sharding/
 
-bin/subagent.sh assignment-create worker-02-explore-replication \
+multiagent subagent assignment-create worker-02-explore-replication \
   --assignment-id DB-002 --role exploration --decision-id DEC-003 \
   --branch explore/db-replication --owned exploration/replication/
 
-bin/subagent.sh assignment-create worker-03-explore-nosql \
+multiagent subagent assignment-create worker-03-explore-nosql \
   --assignment-id DB-003 --role exploration --decision-id DEC-003 \
   --branch explore/nosql-migration --owned exploration/nosql/
 
 # 3. Architecture agent reviews consistency across approaches
-bin/subagent.sh assignment-create arch-01-db-review \
+multiagent subagent assignment-create arch-01-db-review \
   --assignment-id ARCH-002 --role architecture --decision-id DEC-003 \
   --branch main --owned architecture/database/
 
 # 4. After exploration, record options and make decision
-bin/decision.sh add-alternative DEC-003 \
+multiagent decision add-alternative DEC-003 \
   --plan-id PLN-001 \
   --summary "Horizontal sharding" \
   --proposed-by worker-01-explore-sharding \
   --expected-outcome "Scalable database with horizontal partitioning"
 
-bin/decision.sh add-alternative DEC-003 \
+multiagent decision add-alternative DEC-003 \
   --plan-id PLN-002 \
   --summary "Read replicas with write scaling" \
   --proposed-by worker-02-explore-replication \
   --expected-outcome "Improved read performance with replica scaling"
 
-bin/decision.sh commit DEC-003 \
+multiagent decision commit DEC-003 \
   --selected-plan PLN-001 \
   --reason "Sharding provides better long-term scalability"
 
 # 5. Implementation with focused exploitation
-bin/subagent.sh assignment-create worker-04-implement-sharding \
+multiagent subagent assignment-create worker-04-implement-sharding \
   --assignment-id DB-004 --role exploitation --decision-id DEC-003 \
   --plan-id PLN-001 --branch implement/db-sharding \
   --owned src/database/,migrations/,config/sharding.yaml
 
 # 6. QA verification against exploration predictions
-bin/subagent.sh assignment-create qa-01-sharding-tests \
+multiagent subagent assignment-create qa-01-sharding-tests \
   --assignment-id QA-002 --role qa --decision-id DEC-003 \
   --plan-id PLN-001 --branch implement/db-sharding \
   --owned tests/performance/sharding/
 
 # 7. Retrospective reflection on decision quality
-bin/subagent.sh assignment-create reflection-01-db-scaling \
+multiagent subagent assignment-create reflection-01-db-scaling \
   --assignment-id REF-002 --role reflection --decision-id DEC-003 \
   --plan-id PLN-001 --branch main \
   --owned docs/reflection/db-scaling-decision.md
@@ -784,7 +784,7 @@ Track implementations and handle pivots using assignment metadata:
 
 ```bash
 # Create primary implementation assignment
-bin/subagent.sh assignment-create worker-03-oauth-impl \
+multiagent subagent assignment-create worker-03-oauth-impl \
   --assignment-id AUTH-003 \
   --role exploitation \
   --decision-id DEC-001 \
@@ -793,7 +793,7 @@ bin/subagent.sh assignment-create worker-03-oauth-impl \
   --owned src/auth/
 
 # Create contingency implementation (ready but not active)
-bin/subagent.sh assignment-create worker-04-jwt-fallback \
+multiagent subagent assignment-create worker-04-jwt-fallback \
   --assignment-id AUTH-004 \
   --role exploitation \
   --decision-id DEC-001 \
@@ -803,18 +803,18 @@ bin/subagent.sh assignment-create worker-04-jwt-fallback \
   --status contingency
 
 # Track progress via assignment status
-bin/subagent.sh assignment-status worker-03-oauth-impl running
-bin/subagent.sh checkpoint-update worker-03-oauth-impl \
+multiagent subagent assignment-status worker-03-oauth-impl running
+multiagent subagent checkpoint-update worker-03-oauth-impl \
   --step "PKCE flow implemented" --status running
 
 # Handle pivot when primary approach encounters blockers
-bin/subagent.sh checkpoint-update worker-03-oauth-impl \
+multiagent subagent checkpoint-update worker-03-oauth-impl \
   --step "blocked on PKCE library compatibility" \
   --blocker "third-party PKCE library incompatible with mobile framework" \
   --status blocked
 
 # Orchestrator activates contingency by changing assignment status
-bin/subagent.sh assignment-status worker-04-jwt-fallback running
+multiagent subagent assignment-status worker-04-jwt-fallback running
 ```
 
 ### Role-Specific Agent Instructions
@@ -839,10 +839,10 @@ Create and manage workflow DAGs:
 
 ```bash
 # Initialize a new workflow
-bin/dag.sh init auth-workflow-001 --title "Authentication system implementation"
+multiagent dag init auth-workflow-001 --title "Authentication system implementation"
 
 # Add nodes with dependencies and role assignments
-bin/dag.sh add-node auth-workflow-001 initial-architecture \
+multiagent dag add-node auth-workflow-001 initial-architecture \
   --agent worker-initial-arch \
   --role architecture \
   --depends-on "" \
@@ -850,7 +850,7 @@ bin/dag.sh add-node auth-workflow-001 initial-architecture \
   --branch main \
   --owned architecture/auth/
 
-bin/dag.sh add-node auth-workflow-001 explore-oauth \
+multiagent dag add-node auth-workflow-001 explore-oauth \
   --agent worker-explore-oauth \
   --role exploration \
   --depends-on initial-architecture \
@@ -858,7 +858,7 @@ bin/dag.sh add-node auth-workflow-001 explore-oauth \
   --branch explore/oauth \
   --owned exploration/oauth/
 
-bin/dag.sh add-node auth-workflow-001 explore-jwt \
+multiagent dag add-node auth-workflow-001 explore-jwt \
   --agent worker-explore-jwt \
   --role exploration \
   --depends-on initial-architecture \
@@ -866,9 +866,9 @@ bin/dag.sh add-node auth-workflow-001 explore-jwt \
   --branch explore/jwt \
   --owned exploration/jwt/
 
-# Note: Decision processing handled by orchestrator using bin/decision.sh commands
+# Note: Decision processing handled by orchestrator using multiagent decision commands
 # Implementation depends on exploration results and architecture
-bin/dag.sh add-node auth-workflow-001 implement-auth \
+multiagent dag add-node auth-workflow-001 implement-auth \
   --agent worker-implement-auth \
   --role exploitation \
   --depends-on explore-oauth,explore-jwt,initial-architecture \
@@ -876,7 +876,7 @@ bin/dag.sh add-node auth-workflow-001 implement-auth \
   --branch implement/auth \
   --owned src/auth/,tests/auth/
 
-bin/dag.sh add-node auth-workflow-001 verify-auth \
+multiagent dag add-node auth-workflow-001 verify-auth \
   --agent worker-verify-auth \
   --role qa \
   --depends-on implement-auth \
@@ -884,7 +884,7 @@ bin/dag.sh add-node auth-workflow-001 verify-auth \
   --branch implement/auth \
   --owned tests/integration/auth/
 
-bin/dag.sh add-node auth-workflow-001 reflect-auth \
+multiagent dag add-node auth-workflow-001 reflect-auth \
   --agent worker-reflect-auth \
   --role reflection \
   --depends-on verify-auth \
@@ -893,10 +893,10 @@ bin/dag.sh add-node auth-workflow-001 reflect-auth \
   --owned docs/reflection/auth-decision.md
 
 # Check ready nodes
-bin/dag.sh ready auth-workflow-001
+multiagent dag ready auth-workflow-001
 
 # Show workflow visualization
-bin/dag.sh show auth-workflow-001
+multiagent dag show auth-workflow-001
 ```
 
 ### DAG-Driven Agent Spawning
@@ -905,10 +905,10 @@ The orchestrator uses DAG status to determine which agents to spawn:
 
 ```bash
 # Get ready nodes (nodes with satisfied dependencies)
-bin/dag.sh ready auth-workflow-001
+multiagent dag ready auth-workflow-001
 
 # For each ready node, create assignment and spawn agent
-bin/subagent.sh assignment-create worker-initial-arch \
+multiagent subagent assignment-create worker-initial-arch \
   --assignment-id ARCH-001 \
   --role architecture \
   --branch main \
@@ -917,13 +917,13 @@ bin/subagent.sh assignment-create worker-initial-arch \
   --node-id initial-architecture
 
 # Update node status when agent starts working
-bin/dag.sh status auth-workflow-001 initial-architecture running
+multiagent dag status auth-workflow-001 initial-architecture running
 
 # Update node status when agent completes
-bin/dag.sh status auth-workflow-001 initial-architecture done
+multiagent dag status auth-workflow-001 initial-architecture done
 
 # Check for newly ready nodes after status update
-bin/dag.sh ready auth-workflow-001
+multiagent dag ready auth-workflow-001
 ```
 
 ### Node Status Management
@@ -932,23 +932,23 @@ Track and update node progress through the workflow:
 
 ```bash
 # Update node status based on agent reports
-bin/dag.sh status auth-workflow-001 explore-oauth running
-bin/dag.sh status auth-workflow-001 explore-jwt running
+multiagent dag status auth-workflow-001 explore-oauth running
+multiagent dag status auth-workflow-001 explore-jwt running
 
 # Mark nodes as completed when agents finish
-bin/dag.sh status auth-workflow-001 explore-oauth done
-bin/dag.sh status auth-workflow-001 explore-jwt done
+multiagent dag status auth-workflow-001 explore-oauth done
+multiagent dag status auth-workflow-001 explore-jwt done
 
 # Handle blocked nodes
-bin/dag.sh status auth-workflow-001 implement-auth blocked \
+multiagent dag status auth-workflow-001 implement-auth blocked \
   --reason "Waiting for external API keys"
 
 # Skip nodes when conditions change
-bin/dag.sh status auth-workflow-001 verify-auth skipped \
+multiagent dag status auth-workflow-001 verify-auth skipped \
   --reason "Implementation approach changed, verification not needed"
 
 # Mark failed nodes for retry decisions
-bin/dag.sh status auth-workflow-001 implement-auth failed \
+multiagent dag status auth-workflow-001 implement-auth failed \
   --reason "Implementation approach incompatible with requirements"
 ```
 
@@ -958,17 +958,17 @@ End-to-end example of a complex feature implementation:
 
 ```bash
 # 1. Initialize workflow for database scaling feature
-bin/dag.sh init db-scaling-workflow --title "Database scaling implementation"
+multiagent dag init db-scaling-workflow --title "Database scaling implementation"
 
 # 2. Add architecture and exploration nodes
-bin/dag.sh add-node db-scaling-workflow db-architecture \
+multiagent dag add-node db-scaling-workflow db-architecture \
   --agent worker-db-arch \
   --role architecture \
   --assignment-id ARCH-003 \
   --branch main \
   --owned architecture/database/
 
-bin/dag.sh add-node db-scaling-workflow explore-sharding \
+multiagent dag add-node db-scaling-workflow explore-sharding \
   --agent worker-explore-sharding \
   --role exploration \
   --depends-on db-architecture \
@@ -976,7 +976,7 @@ bin/dag.sh add-node db-scaling-workflow explore-sharding \
   --branch explore/sharding \
   --owned exploration/sharding/
 
-bin/dag.sh add-node db-scaling-workflow explore-replication \
+multiagent dag add-node db-scaling-workflow explore-replication \
   --agent worker-explore-replication \
   --role exploration \
   --depends-on db-architecture \
@@ -984,7 +984,7 @@ bin/dag.sh add-node db-scaling-workflow explore-replication \
   --branch explore/replication \
   --owned exploration/replication/
 
-bin/dag.sh add-node db-scaling-workflow explore-nosql \
+multiagent dag add-node db-scaling-workflow explore-nosql \
   --agent worker-explore-nosql \
   --role exploration \
   --depends-on db-architecture \
@@ -993,7 +993,7 @@ bin/dag.sh add-node db-scaling-workflow explore-nosql \
   --owned exploration/nosql/
 
 # 3. Add implementation node (decision handled by orchestrator)
-bin/dag.sh add-node db-scaling-workflow implement-scaling \
+multiagent dag add-node db-scaling-workflow implement-scaling \
   --agent worker-implement-scaling \
   --role exploitation \
   --depends-on explore-sharding,explore-replication,explore-nosql,db-architecture \
@@ -1002,7 +1002,7 @@ bin/dag.sh add-node db-scaling-workflow implement-scaling \
   --owned src/database/,migrations/,config/
 
 # 4. Add verification and metrics nodes
-bin/dag.sh add-node db-scaling-workflow performance-tests \
+multiagent dag add-node db-scaling-workflow performance-tests \
   --agent worker-performance-tests \
   --role qa \
   --depends-on implement-scaling \
@@ -1010,7 +1010,7 @@ bin/dag.sh add-node db-scaling-workflow performance-tests \
   --branch implement/db-scaling \
   --owned tests/performance/
 
-bin/dag.sh add-node db-scaling-workflow load-testing \
+multiagent dag add-node db-scaling-workflow load-testing \
   --agent worker-load-testing \
   --role qa \
   --depends-on implement-scaling \
@@ -1018,7 +1018,7 @@ bin/dag.sh add-node db-scaling-workflow load-testing \
   --branch implement/db-scaling \
   --owned tests/load/
 
-bin/dag.sh add-node db-scaling-workflow metrics-collection \
+multiagent dag add-node db-scaling-workflow metrics-collection \
   --agent worker-metrics \
   --role qa \
   --depends-on performance-tests,load-testing \
@@ -1027,7 +1027,7 @@ bin/dag.sh add-node db-scaling-workflow metrics-collection \
   --owned monitoring/scaling-metrics/
 
 # 5. Add reflection node
-bin/dag.sh add-node db-scaling-workflow scaling-reflection \
+multiagent dag add-node db-scaling-workflow scaling-reflection \
   --agent worker-reflection \
   --role reflection \
   --depends-on metrics-collection \
@@ -1037,10 +1037,10 @@ bin/dag.sh add-node db-scaling-workflow scaling-reflection \
 
 # 6. Execute workflow (orchestrator loop)
 # Check ready nodes
-bin/dag.sh ready db-scaling-workflow
+multiagent dag ready db-scaling-workflow
 
 # Spawn agent for ready architecture node
-bin/subagent.sh assignment-create worker-db-architecture \
+multiagent subagent assignment-create worker-db-architecture \
   --assignment-id ARCH-003 \
   --role architecture \
   --workflow-id db-scaling-workflow \
@@ -1049,19 +1049,19 @@ bin/subagent.sh assignment-create worker-db-architecture \
   --owned architecture/database/
 
 # Update status and check for next ready nodes
-bin/dag.sh status db-scaling-workflow db-architecture running
+multiagent dag status db-scaling-workflow db-architecture running
 # ... (agent works) ...
-bin/dag.sh status db-scaling-workflow db-architecture done
-bin/dag.sh ready db-scaling-workflow
+multiagent dag status db-scaling-workflow db-architecture done
+multiagent dag ready db-scaling-workflow
 
 # Now exploration nodes should be ready - spawn multiple parallel agents
-bin/dag.sh ready db-scaling-workflow
+multiagent dag ready db-scaling-workflow
 # Returns: explore-sharding,explore-replication,explore-nosql
 
 # Spawn all ready exploration agents (orchestrator uses workflow definition)
-bin/dag.sh ready db-scaling-workflow | while read node_id; do
+multiagent dag ready db-scaling-workflow | while read node_id; do
   # Orchestrator looks up node details from the workflow definition it created
-  # or inspects bin/dag.sh show db-scaling-workflow manually
+  # or inspects multiagent dag show db-scaling-workflow manually
   case "$node_id" in
     explore-sharding)
       ASSIGNMENT_ID="DB-001"; AGENT="worker-explore-sharding"
@@ -1076,7 +1076,7 @@ bin/dag.sh ready db-scaling-workflow | while read node_id; do
       continue ;;
   esac
 
-  bin/subagent.sh assignment-create "$AGENT" \
+  multiagent subagent assignment-create "$AGENT" \
     --assignment-id "$ASSIGNMENT_ID" \
     --role exploration \
     --branch "$BRANCH" \
@@ -1094,16 +1094,16 @@ Monitor workflow progress and agent coordination:
 
 ```bash
 # Get detailed node information
-bin/dag.sh show db-scaling-workflow
+multiagent dag show db-scaling-workflow
 
 # Check ready nodes for agent spawning
-bin/dag.sh ready db-scaling-workflow
+multiagent dag ready db-scaling-workflow
 
 # Check blocked nodes
-bin/dag.sh blocked db-scaling-workflow
+multiagent dag blocked db-scaling-workflow
 
 # List all active workflows
-bin/dag.sh list
+multiagent dag list
 ```
 
 ### Integration with Agent Management
@@ -1112,7 +1112,7 @@ DAG workflows integrate with existing agent assignment and status tracking:
 
 ```bash
 # Create agent assignments with workflow context
-bin/subagent.sh assignment-create worker-implement-scaling \
+multiagent subagent assignment-create worker-implement-scaling \
   --assignment-id IMPL-002 \
   --role exploitation \
   --workflow-id db-scaling-workflow \
@@ -1121,11 +1121,11 @@ bin/subagent.sh assignment-create worker-implement-scaling \
   --owned src/database/,migrations/
 
 # Check agent assignment against workflow node
-bin/subagent.sh assignment-check worker-implement-scaling
+multiagent subagent assignment-check worker-implement-scaling
 
 # Update workflow status based on agent progress
-bin/subagent.sh assignment-status worker-implement-scaling done
-bin/dag.sh status db-scaling-workflow implement-scaling done
+multiagent subagent assignment-status worker-implement-scaling done
+multiagent dag status db-scaling-workflow implement-scaling done
 ```
 
 Note: DAG workflows provide structure and dependency tracking, but the orchestrator remains the active workflow controller. Agent spawning and status updates are orchestrator-driven, not automatic, preserving human oversight and intervention capabilities.

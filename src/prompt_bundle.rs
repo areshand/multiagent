@@ -3,7 +3,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
 
-const USAGE:&str="Usage:\n  bin/prompt-bundle.sh --orchestrator PATH --lifecycle PATH --output PATH\n\nBuilds the canonical initial orchestrator prompt from the role prompt and the\nmandatory implementation lifecycle playbook.";
+const USAGE:&str="Usage:\n  multiagent prompt-bundle --orchestrator PATH --lifecycle PATH --output PATH\n\nBuilds the canonical initial orchestrator prompt from the role prompt and the\nmandatory implementation lifecycle playbook.";
 
 pub fn run(args: &[String]) -> Result<(), String> {
     if args

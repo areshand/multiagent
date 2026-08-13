@@ -5,6 +5,8 @@ import json
 import re
 from pathlib import Path
 
+from multiagent_framework import multiagent_subcommand
+
 from .swe_prod_contracts import (
     CONTRACT_LEDGER_PATH,
     HELPER_PROBE_PATH,
@@ -198,7 +200,7 @@ def send_orchestrator_followup(session: str, blockers: list[str], probe_report: 
         + contract_ledger_excerpt()
         + "\n"
         + " If any finding is an implementation-scope blocker, spawn a new bounded source worker with these implicated source paths in --owned; do not only rerun the original feature worker. "
-        + "Do not use tmux send-keys to send implementation instructions to a completed worker pane; create a fresh assignment and `bin/subagent.sh spawn` a new worker process. "
+        + "Do not use tmux send-keys to send implementation instructions to a completed worker pane; create a fresh assignment and `multiagent subagent spawn` a new worker process. "
         + source_symbol_map_resume_instructions(blockers)
         + " "
         + structured_repair_state_instructions(
@@ -465,6 +467,9 @@ def spawn_adapter_helper_worker(
     blockers, visible contract ledger, and source-derived ownership hints.
     """
 
+    subagent = multiagent_subcommand(repo_root, "subagent")
+    if not subagent:
+        raise RuntimeError(f"Rust multiagent executable not found under {repo_root}")
     owned = list(dict.fromkeys(source_owned or helper_scope_hints(workdir, issue, diff, blockers)))
     if not owned:
         owned = [path for path in ("src", "lib", "app", "pkg", "internal") if (workdir / path).exists()]
@@ -497,7 +502,7 @@ def spawn_adapter_helper_worker(
     )
     run(
         [
-            str(repo_root / "bin/subagent.sh"),
+            *subagent,
             "assignment-create",
             worker_name,
             "--assignment-id",
@@ -515,7 +520,7 @@ def spawn_adapter_helper_worker(
         check=True,
     )
     run(
-        [str(repo_root / "bin/subagent.sh"), "spawn", worker_name, "--instruction", instruction],
+        [*subagent, "spawn", worker_name, "--instruction", instruction],
         cwd=repo_root,
         env=env,
         timeout=120,

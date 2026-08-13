@@ -63,12 +63,13 @@ flowchart TD
     Gate -- "hash-bound evidence passes" --> Result["Accepted patch"]
 ```
 
-`bin/multiagent` is the unified CLI. Its Rust core owns exact Git snapshots,
+`multiagent` is the unified CLI. Its Rust core owns exact Git snapshots,
 decisions, DAGs, lifecycle transitions, assignments, findings, repair todos,
-validation leases, and validation subprocesses. `launch.sh`, `status.sh`, and
-the tmux portions of `subagent.sh` remain external runtime adapters; the Rust
-CLI can dispatch them without owning a PTY. `multiagent_framework/` remains the
-Python evaluation and compatibility client. SWE Bench Pro is an adapter over
+validation leases, validation subprocesses, tmux process orchestration, status,
+watching, and recovery. `launch.sh` is the only compatibility wrapper: it locates
+or builds the Rust executable and immediately runs `multiagent launch`. tmux—not
+shell or Rust—continues to own the PTY. `multiagent_framework/` remains the Python
+evaluation client and reusable analysis library. SWE Bench Pro is an adapter over
 the production path, not a second solver. `multiagent_framework` is not a daemon;
 it is imported by evaluation processes as needed. See
 [the control-plane boundary](docs/control-plane-boundary.md).
@@ -97,9 +98,8 @@ records prompt hashes, and initializes durable lifecycle state under:
 $MULTIAGENT_STATE_DIR/workflows/$MULTIAGENT_WORKFLOW_ID/lifecycle/
 ```
 
-`bin/workflow.sh` is a compatibility entry point for the Rust lifecycle state
-machine in `src/workflow.rs`. Existing v1 state files remain readable. Set
-`MULTIAGENT_USE_LEGACY_WORKFLOW=1` only for migration diagnosis.
+`multiagent workflow` is the Rust lifecycle state machine in `src/workflow.rs`.
+Existing v1 state files remain readable without a legacy implementation.
 
 The enforced normal path is `pre-implementation -> implementation ->
 post-implementation`. An independent authority review identifies consequential
@@ -107,24 +107,24 @@ choices and whether the user or orchestrator owns each one. Writable workers
 receive the complete approved implementation context, not only a partial
 assignment summary. Any accepted review finding creates a TODO and returns through
 pre-implementation before another edit iteration.
-The implementation permit also verifies that `bin/decision.sh` contains a
+The implementation permit also verifies that `multiagent decision` contains a
 committed decision whose selected plan matches the context and assignment.
 
 Inspect and advance the state with:
 
 ```bash
-bin/workflow.sh status "$MULTIAGENT_WORKFLOW_ID"
-bin/workflow.sh prepare-implementation "$MULTIAGENT_WORKFLOW_ID" \
+multiagent workflow status "$MULTIAGENT_WORKFLOW_ID"
+multiagent workflow prepare-implementation "$MULTIAGENT_WORKFLOW_ID" \
   --decision-id DECISION_ID --plan-id PLAN_ID --decision-revision REVISION \
   --implementation-context CONTEXT_PATH --authority-review REVIEW_ID
-bin/workflow.sh transition "$MULTIAGENT_WORKFLOW_ID" implementation
-bin/workflow.sh completion-check "$MULTIAGENT_WORKFLOW_ID"
+multiagent workflow transition "$MULTIAGENT_WORKFLOW_ID" implementation
+multiagent workflow completion-check "$MULTIAGENT_WORKFLOW_ID"
 ```
 
 `MULTIAGENT_LIFECYCLE_ENFORCEMENT=1` is the default. Existing structured
 technical findings and repair TODOs remain authoritative. Running
-`bin/orchestrator.sh complete` requires both the lifecycle completion gate and
-`bin/subagent.sh gate-check`.
+`multiagent orchestrator complete` requires both the lifecycle completion gate and
+`multiagent subagent gate-check`.
 
 The default roles use Codex for orchestration and verification and Claude for
 workers. `WORKER_CLI`: worker CLI for manual worker windows, default `claude`.
@@ -145,7 +145,7 @@ contracts and workflows:
   `validation-run`, and `validation-lease-acquire`;
 - **Verifier Workflow**, its compact contract ledger, and the
   `MULTIAGENT_VERIFIER_MAX_ITERATIONS=3` escalation threshold;
-- Codex UI dashboard watching through `bin/watch.sh`, backed by tmux pane logs
+- Codex UI dashboard watching through `multiagent watch`, backed by tmux pane logs
   under `.multiagent/logs`, blocked-agent state, and workflow DAG nodes;
 - preflight checks that prevent a scaffold, shim, or proxy behavior from being
   mistaken for the target production system.
@@ -189,7 +189,7 @@ tests/run.sh
 
 Decision-authority review, approved-context handoff, lifecycle TODO convergence,
 and completion are enforced by the orchestrator prompt plus normal-path checks
-in `bin/workflow.sh`, `bin/subagent.sh`, and `bin/orchestrator.sh`. This makes
+in `multiagent workflow`, `multiagent subagent`, and `multiagent orchestrator`. This makes
 ordinary violations fail visibly, but it is not a security or capability
 boundary: an orchestrator with direct shell and state-file access can bypass or
 disable these checks.

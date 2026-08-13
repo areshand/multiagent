@@ -26,7 +26,7 @@ relevant files or benchmark metadata, known constraints, and any proxy/scaffold
 risk.
 
 ```bash
-SUBAGENT_CLI="$VERIFIER_CLI" bin/subagent.sh spawn contract-scout-01-task --instruction "FIRST_INSTRUCTION_TEXT"
+SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn contract-scout-01-task --instruction "FIRST_INSTRUCTION_TEXT"
 ```
 
 Paste the scout's compact contract ledger, must-preserve list, validation plan,
@@ -74,7 +74,7 @@ owned paths, process list, recent pane output, current validation leases, and
 intended validation commands.
 
 ```bash
-SUBAGENT_CLI="$VERIFIER_CLI" bin/subagent.sh spawn validation-coordinator-01-task --instruction "FIRST_INSTRUCTION_TEXT"
+SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn validation-coordinator-01-task --instruction "FIRST_INSTRUCTION_TEXT"
 ```
 
 Use the coordinator's lease report to decide whether to wait, poll,
@@ -119,7 +119,7 @@ verifier that may duplicate the command.
 The orchestrator decides which findings become accepted follow-up; never pass
 raw verifier findings directly to the worker as orders. Accepted blocking
 findings become todo queue items with done criteria, and a todo is retired only
-through `bin/subagent.sh todo-close ...` after a verifier accepts the worker's
+through `multiagent subagent todo-close ...` after a verifier accepts the worker's
 resolution evidence.
 
 Mirror every accepted follow-up into the lifecycle TODO queue. If any active
@@ -175,7 +175,7 @@ and use its progress/status procedure.
 - Always inspect captured output before sending input.
 - Never send input to a busy worker.
 - Never ask a worker to edit outside its assigned files.
-- Never ask a worker to write outside `$MULTIAGENT_ROOT` unless approved and recorded with `bin/write-policy.sh approve`.
+- Never ask a worker to write outside `$MULTIAGENT_ROOT` unless approved and recorded with `multiagent policy approve`.
 - Use `prompts/playbooks/write-policy.md` for outside-write decisions.
 - Never let two workers own the same files unless you explicitly coordinate the overlap.
 - If a worker over an owned path set produces no `/app` source diff, allow at
@@ -189,11 +189,11 @@ and use its progress/status procedure.
   `required-path-outside-owned: RELATIVE_PATH`, `validation-repair-needed:`, or
   blocked status with a source-visible reason.
 - After killing or finalizing a worker, release its assignment ownership before
-  reusing paths: `bin/subagent.sh assignment-status NAME failed` for killed
-  workers or `bin/subagent.sh assignment-status NAME done` for finalized
+  reusing paths: `multiagent subagent assignment-status NAME failed` for killed
+  workers or `multiagent subagent assignment-status NAME done` for finalized
   workers, then create the replacement assignment.
 - Never let a verifier receive writable ownership for a worker's owned paths.
-- Before accepting completed worker or subagent work, run `bin/subagent.sh assignment-check NAME`.
+- Before accepting completed worker or subagent work, run `multiagent subagent assignment-check NAME`.
 - Always capture final output before killing a worker.
 - Always poll or inspect a long-running subagent before finalizing it.
 - Do not delete `$MULTIAGENT_STATE_DIR`; it is durable context.
@@ -204,9 +204,9 @@ and use its progress/status procedure.
 
 1. Plan: understand intent, run a contract scout when risk justifies it, update the contract ledger, split work, assign owner/branch/scope.
 2. Spawn: create assignment metadata, load the right prompt module, start the agent, send the assignment.
-3. Monitor: use `bin/status.sh`, inspect busy/blocked/done states, update checkpoints.
+3. Monitor: use `multiagent status`, inspect busy/blocked/done states, update checkpoints.
 4. Coordinate: resolve blockers, prevent ownership conflicts, maintain validation leases, run scope guard when diff shape is risky, route verification, spawn independent follow-ups.
-5. Accept: run `assignment-check`, review verifier findings, close accepted todo resolutions with `bin/subagent.sh todo-close ...` after reverification or reopen them, run `bin/subagent.sh gate-check`, finalize agents.
+5. Accept: run `assignment-check`, review verifier findings, close accepted todo resolutions with `multiagent subagent todo-close ...` after reverification or reopen them, run `multiagent subagent gate-check`, finalize agents.
 6. Report: summarize status, branches, commits, blockers, state paths, validation, and residual risk.
 
 ## Optional Playbooks

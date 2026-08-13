@@ -90,7 +90,19 @@ class NativeSolverImportModelTest(unittest.TestCase):
             self.assertTrue((baked_root / "evaluation" / "__init__.py").is_file())
             self.assertTrue((baked_root / "evaluation" / "native_solver" / "__init__.py").is_file())
             self.assertEqual(package_hint, f"python3 -m {MODULE_ENTRYPOINT}")
-            self.assertEqual(copy_lines[-1], "RUN chmod +x /opt/multiagent/launch.sh /opt/multiagent/bin/*.sh")
+            self.assertEqual(
+                copy_lines[-1],
+                "RUN chmod +x /opt/multiagent/launch.sh /opt/multiagent/bin/multiagent",
+            )
+            self.assertIn(
+                "COPY --from=multiagent-builder /build/target/release/multiagent /opt/multiagent/bin/multiagent",
+                copy_lines,
+            )
+            self.assertEqual(
+                manager._rust_builder_lines()[0],
+                "FROM rust:1.85-alpine AS multiagent-builder",
+            )
+            self.assertIn("RUN cargo build --release --locked", manager._rust_builder_lines())
 
     def test_native_modules_have_strict_relative_imports(self) -> None:
         failures = []

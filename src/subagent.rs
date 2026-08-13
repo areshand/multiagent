@@ -1,7 +1,8 @@
-use crate::{adapter, config, workflow};
+use crate::{config, runtime, workflow};
 use chrono::{SecondsFormat, Utc};
 use fs2::FileExt;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs::{self, File, OpenOptions};
@@ -61,13 +62,8 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
         "validation-lease-show" => validation_lease_show(&args[1..]),
         "validation-lease-list" => validation_lease_list(&args[1..]),
         "validation-run" => return validation_run(&args[1..]),
-        _ => {
-            return adapter::run(
-                "bin/subagent.sh",
-                args,
-                &[("MULTIAGENT_USE_LEGACY_SUBAGENT_STATE", "1")],
-            )
-        }
+        "gate-check" => gate_check(&args[1..]),
+        _ => return runtime::subagent(args),
     };
     result.map(|_| ExitCode::SUCCESS)
 }
@@ -449,6 +445,7 @@ fn assignment_create(args: &[String]) -> Result<(), String> {
     fs::create_dir_all(&assignments).map_err(io_error("create assignments directory"))?;
     let lock = OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(assignments.join(".lock"))
@@ -861,6 +858,435 @@ fn current_final_diff_sha256() -> Result<String, String> {
     let mut digest = Sha256::new();
     digest.update(&output.stdout);
     Ok(format!("{:x}", digest.finalize()))
+}
+
+fn gate_check(args: &[String]) -> Result<(), String> {
+    if !args.is_empty() {
+        return Err("gate-check takes no arguments".into());
+    }
+    let state = config::state_dir()?;
+    reconcile_terminal_verifiers(&state)?;
+    let final_hash = current_final_diff_sha256()?;
+    let mut failed = false;
+
+    for (name, status) in active_verifiers(&state)? {
+        println!("reject\tactive-verifier\t{name}\t{status}");
+        failed = true;
+    }
+    if let Some((verdict, name, evidence_path)) = latest_verifier_verdict(&state)? {
+        match verdict.as_str() {
+            "BLOCKING" => {
+                println!(
+                    "reject\tlatest-verifier-blocking\tverifier={name}\tevidence={}",
+                    evidence_path.display()
+                );
+                failed = true;
+            }
+            "MISSING" => {
+                println!(
+                    "reject\tlatest-verifier-missing-verdict\tverifier={name}\tevidence={}",
+                    evidence_path.display()
+                );
+                failed = true;
+            }
+            "ACCEPTED" if !final_hash.is_empty() => {
+                let evidence = fs::read_to_string(&evidence_path).unwrap_or_default();
+                if !evidence_matches_hash(&evidence, &final_hash) {
+                    println!("reject\tlatest-verifier-final-diff-hash-mismatch\tverifier={name}\texpected={final_hash}\tevidence={}", evidence_path.display());
+                    failed = true;
+                }
+            }
+            _ => {}
+        }
+    } else if !final_hash.is_empty() {
+        println!("reject\tmissing-verifier-acceptance\texpected={final_hash}");
+        failed = true;
+    }
+
+    let findings = state.join("findings");
+    let todos = state.join("todos");
+    for finding_dir in sorted_directories(&findings)? {
+        let finding_id = finding_dir
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
+        let metadata = read_env(&finding_dir.join("finding.env")).unwrap_or_default();
+        if env_value(&metadata, "severity") != "blocking" {
+            continue;
+        }
+        if finding_dir.join("dismissal.json").is_file() {
+            if !audit_dismissed_finding(&finding_dir, finding_id, &final_hash) {
+                failed = true;
+            }
+            continue;
+        }
+        let mut found_todo = false;
+        for todo_dir in sorted_directories(&todos)? {
+            let todo_id = todo_dir
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("");
+            let metadata = read_env(&todo_dir.join("todo.env")).unwrap_or_default();
+            if env_value(&metadata, "source_finding_id") != finding_id {
+                continue;
+            }
+            found_todo = true;
+            let status = fs::read_to_string(todo_dir.join("status")).unwrap_or_default();
+            if status.trim() != "closed" {
+                println!(
+                    "reject\topen-blocking-todo\tfinding={finding_id}\ttodo={todo_id}\tstatus={}",
+                    status.trim()
+                );
+                failed = true;
+            }
+        }
+        if !found_todo {
+            println!("reject\tunqueued-blocking-finding\tfinding={finding_id}");
+            failed = true;
+        }
+    }
+    for todo_dir in sorted_directories(&todos)? {
+        let todo_id = todo_dir
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
+        let status = fs::read_to_string(todo_dir.join("status")).unwrap_or_default();
+        if status.trim() != "closed" {
+            println!(
+                "reject\topen-todo\ttodo={todo_id}\tstatus={}",
+                status.trim()
+            );
+            failed = true;
+        } else if !audit_closed_todo(&state, &todo_dir, todo_id, &final_hash) {
+            failed = true;
+        }
+    }
+    if failed {
+        Err(String::new())
+    } else {
+        println!("accepted\tfinal-gate");
+        Ok(())
+    }
+}
+
+fn verifier_dirs(state: &Path) -> Result<Vec<PathBuf>, String> {
+    Ok(sorted_directories(&state.join("subagents"))?
+        .into_iter()
+        .filter(|path| {
+            let name = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            name.contains("verifier") || name.contains("review")
+        })
+        .collect())
+}
+
+fn report_verdict(text: &str) -> String {
+    let first = text
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("")
+        .trim();
+    let lower = first.to_ascii_lowercase();
+    let normalized = lower
+        .strip_prefix("verdict:")
+        .or_else(|| lower.strip_prefix("verdict="))
+        .unwrap_or(&lower)
+        .trim();
+    if normalized == "accepted"
+        || normalized
+            .strip_prefix("accepted ")
+            .is_some_and(verifier_hash_suffix)
+    {
+        return "ACCEPTED".into();
+    }
+    if normalized == "blocking"
+        || normalized == "rejected"
+        || normalized
+            .strip_prefix("blocking ")
+            .is_some_and(verifier_hash_suffix)
+    {
+        return "BLOCKING".into();
+    }
+    for line in text.lines() {
+        let lower = line.trim().to_ascii_lowercase();
+        let Some(value) = lower
+            .strip_prefix("final recommendation:")
+            .or_else(|| lower.strip_prefix("final-recommendation:"))
+            .or_else(|| lower.strip_prefix("recommendation:"))
+            .or_else(|| lower.strip_prefix("recommendation="))
+        else {
+            continue;
+        };
+        let value = value.trim();
+        let recommendation = value
+            .split(|character: char| {
+                character.is_whitespace() || matches!(character, ';' | ',' | '.' | ':')
+            })
+            .next()
+            .unwrap_or("");
+        if matches!(recommendation, "accept" | "accepted") {
+            return "ACCEPTED".into();
+        }
+        if matches!(recommendation, "block" | "blocking" | "reject" | "rejected") {
+            return "BLOCKING".into();
+        }
+    }
+    "MISSING".into()
+}
+
+fn verifier_hash_suffix(value: &str) -> bool {
+    let mut parts = value.split_whitespace();
+    parts.all(|part| {
+        let Some((key, hash)) = part.split_once('=') else {
+            return false;
+        };
+        matches!(
+            key,
+            "final_diff_sha256" | "final-diff-sha256" | "final_diff_hash" | "final-diff-hash"
+        ) && hash.len() == 64
+            && hash.chars().all(|value| value.is_ascii_hexdigit())
+    })
+}
+
+fn reconcile_terminal_verifiers(state: &Path) -> Result<(), String> {
+    for dir in verifier_dirs(state)? {
+        let status_path = dir.join("status");
+        let status = fs::read_to_string(&status_path).unwrap_or_default();
+        if !matches!(status.trim(), "running" | "starting" | "pending") {
+            continue;
+        }
+        let report = fs::read_to_string(dir.join("last-message.txt")).unwrap_or_default();
+        match report_verdict(&report).as_str() {
+            "ACCEPTED" => atomic_write(&status_path, "done\n")?,
+            "BLOCKING" => atomic_write(&status_path, "blocked\n")?,
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn active_verifiers(state: &Path) -> Result<Vec<(String, String)>, String> {
+    let mut values = Vec::new();
+    for dir in verifier_dirs(state)? {
+        let status = fs::read_to_string(dir.join("status")).unwrap_or_default();
+        if matches!(status.trim(), "running" | "starting" | "pending") {
+            values.push((
+                dir.file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("")
+                    .into(),
+                status.trim().into(),
+            ));
+        }
+    }
+    Ok(values)
+}
+
+fn latest_verifier_verdict(state: &Path) -> Result<Option<(String, String, PathBuf)>, String> {
+    let mut candidates = Vec::new();
+    for dir in verifier_dirs(state)? {
+        let path = dir.join("last-message.txt");
+        let Ok(metadata) = path.metadata() else {
+            continue;
+        };
+        let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+        let text = fs::read_to_string(&path).unwrap_or_default();
+        candidates.push((
+            modified,
+            path.clone(),
+            report_verdict(&text),
+            dir.file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("")
+                .to_string(),
+        ));
+    }
+    candidates.sort_by(|left, right| (left.0, &left.1).cmp(&(right.0, &right.1)));
+    Ok(candidates
+        .pop()
+        .map(|(_, path, verdict, name)| (verdict, name, path)))
+}
+
+fn evidence_matches_hash(text: &str, expected: &str) -> bool {
+    let compact = text
+        .chars()
+        .filter(|value| !value.is_whitespace())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    let expected = expected.to_ascii_lowercase();
+    [
+        format!("final-diff-sha256={expected}"),
+        format!("\"final_diff_hash\":\"{expected}\""),
+        format!("\"final_diff_sha256\":\"{expected}\""),
+    ]
+    .iter()
+    .any(|marker| compact.contains(marker))
+}
+
+fn audit_dismissed_finding(dir: &Path, id: &str, final_hash: &str) -> bool {
+    let result = (|| -> Result<(), String> {
+        let finding_bytes = fs::read(dir.join("finding.json")).map_err(io_error("read finding"))?;
+        let dismissal: Value = serde_json::from_str(
+            &fs::read_to_string(dir.join("dismissal.json")).map_err(io_error("read dismissal"))?,
+        )
+        .map_err(|error| format!("invalid dismissal JSON: {error}"))?;
+        let recheck = dismissal
+            .get("recheck")
+            .and_then(Value::as_object)
+            .ok_or_else(|| "missing recheck".to_string())?;
+        if dismissal.get("finding_id").and_then(Value::as_str) != Some(id) {
+            return Err("id-mismatch".into());
+        }
+        if dismissal.get("finding_hash").and_then(Value::as_str)
+            != Some(&format!("{:x}", Sha256::digest(finding_bytes)))
+        {
+            return Err("hash-mismatch".into());
+        }
+        let named = ["finding_rechecked", "source_finding_id"]
+            .iter()
+            .filter_map(|key| recheck.get(*key).and_then(Value::as_str))
+            .any(|value| value.trim() == id);
+        if recheck.get("accepted") != Some(&Value::Bool(true))
+            || !named
+            || !matches!(
+                recheck.get("disposition").and_then(Value::as_str),
+                Some("invalid" | "superseded" | "not_reproducible")
+            )
+            || !recheck.get("evidence").is_some_and(nonempty_json)
+        {
+            return Err("invalid-recheck".into());
+        }
+        let evidence_path = dismissal
+            .get("verifier_evidence")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "missing verifier evidence".to_string())?;
+        let evidence =
+            fs::read_to_string(evidence_path).map_err(io_error("read verifier evidence"))?;
+        if report_verdict(&evidence) != "ACCEPTED" {
+            return Err("verifier-not-accepted".into());
+        }
+        if !final_hash.is_empty() {
+            let reported = recheck
+                .get("final_diff_sha256")
+                .or_else(|| recheck.get("final_diff_hash"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if !reported.eq_ignore_ascii_case(final_hash)
+                || !evidence_matches_hash(&evidence, final_hash)
+            {
+                return Err("final-diff-mismatch".into());
+            }
+        }
+        Ok(())
+    })();
+    if let Err(reason) = result {
+        println!("reject\tinvalid-finding-dismissal-evidence\tfinding={id}\treason={reason}");
+        false
+    } else {
+        true
+    }
+}
+
+fn audit_closed_todo(state: &Path, dir: &Path, id: &str, final_hash: &str) -> bool {
+    let result = (|| -> Result<(), String> {
+        let metadata = read_env(&dir.join("todo.env"))?;
+        let source = env_value(&metadata, "source_finding_id");
+        let expected_hash = env_value(&metadata, "source_finding_hash");
+        let finding_path = state.join("findings").join(source).join("finding.json");
+        if source.is_empty() || !finding_path.is_file() {
+            return Err(format!(
+                "closed-todo-missing-source-finding\ttodo={id}\tfinding={source}"
+            ));
+        }
+        if expected_hash.is_empty() {
+            return Err(format!(
+                "closed-todo-missing-source-finding-hash\ttodo={id}"
+            ));
+        }
+        if file_sha256(&finding_path)? != expected_hash {
+            return Err(format!(
+                "closed-todo-source-finding-hash-changed\ttodo={id}\tfinding={source}"
+            ));
+        }
+        if !dir.join("resolution.json").is_file() {
+            return Err(format!("closed-todo-missing-resolution\ttodo={id}"));
+        }
+        if !dir.join("closure.json").is_file() {
+            return Err(format!("closed-todo-missing-verifier-closure\ttodo={id}"));
+        }
+        let resolution: Value = serde_json::from_str(
+            &fs::read_to_string(dir.join("resolution.json"))
+                .map_err(io_error("read resolution"))?,
+        )
+        .map_err(|error| format!("closed-todo-invalid-evidence\ttodo={id}\treason={error}"))?;
+        let closure: Value = serde_json::from_str(
+            &fs::read_to_string(dir.join("closure.json")).map_err(io_error("read closure"))?,
+        )
+        .map_err(|error| format!("closed-todo-invalid-evidence\ttodo={id}\treason={error}"))?;
+        if resolution.get("todo_id").and_then(Value::as_str) != Some(id)
+            || resolution.get("status").and_then(Value::as_str) != Some("resolved")
+        {
+            return Err(format!("closed-todo-invalid-resolution\ttodo={id}"));
+        }
+        let recheck = closure
+            .get("recheck")
+            .and_then(Value::as_object)
+            .ok_or_else(|| format!("closed-todo-invalid-closure\ttodo={id}"))?;
+        if closure.get("todo_id").and_then(Value::as_str) != Some(id)
+            || recheck.get("accepted") != Some(&Value::Bool(true))
+        {
+            return Err(format!("closed-todo-invalid-closure\ttodo={id}"));
+        }
+        if closure.get("source_finding_hash").and_then(Value::as_str) != Some(expected_hash) {
+            return Err(format!(
+                "closed-todo-closure-finding-hash-mismatch\ttodo={id}"
+            ));
+        }
+        if !final_hash.is_empty() {
+            let reported = recheck
+                .get("final_diff_sha256")
+                .or_else(|| recheck.get("final_diff_hash"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if !reported.eq_ignore_ascii_case(final_hash) {
+                return Err(format!("closed-todo-final-diff-hash-mismatch\ttodo={id}"));
+            }
+        }
+        let named = ["finding_rechecked", "source_finding_id"]
+            .iter()
+            .filter_map(|key| recheck.get(*key).and_then(Value::as_str))
+            .any(|value| value.trim() == source);
+        if !named {
+            return Err(format!(
+                "closed-todo-recheck-mismatch\ttodo={id}\tfinding={source}"
+            ));
+        }
+        let resolution_commands = successful_commands(&resolution);
+        let recheck_commands = successful_commands(closure.get("recheck").unwrap_or(&Value::Null));
+        if let Some(command) = resolution_commands.difference(&recheck_commands).next() {
+            return Err(format!(
+                "closed-todo-recheck-missing-worker-command\ttodo={id}\tcmd={command}"
+            ));
+        }
+        validate_required_commands(dir, "closed todo resolution", &resolution)
+            .map_err(|error| format!("closed-todo-invalid-evidence\ttodo={id}\treason={error}"))?;
+        validate_required_commands(
+            dir,
+            "closed todo verifier recheck",
+            closure.get("recheck").unwrap_or(&Value::Null),
+        )
+        .map_err(|error| format!("closed-todo-invalid-evidence\ttodo={id}\treason={error}"))?;
+        Ok(())
+    })();
+    if let Err(reason) = result {
+        println!("reject\t{reason}");
+        false
+    } else {
+        true
+    }
 }
 
 fn todo_create(args: &[String]) -> Result<(), String> {
@@ -1322,7 +1748,7 @@ fn legacy_validation(evidence: &str) -> Value {
         if let Ok(rc) = right.trim().parse::<i64>() {
             let cmd = left
                 .trim()
-                .trim_end_matches(|character: char| character == ';' || character == ',')
+                .trim_end_matches([';', ','])
                 .split_whitespace()
                 .collect::<Vec<_>>()
                 .join(" ");
@@ -2295,6 +2721,7 @@ fn push_unique(output: &mut Vec<String>, value: &str) {
 fn lock_file(path: &Path, label: &str) -> Result<File, String> {
     let file = OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(path)

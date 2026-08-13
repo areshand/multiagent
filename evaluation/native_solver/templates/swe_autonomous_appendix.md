@@ -18,7 +18,7 @@ diff in `/app`.
 - Run helper commands from `/opt/multiagent` with `MULTIAGENT_ROOT=/app` and
   `MULTIAGENT_STATE_DIR=/tmp/multiagent-prod-swe/state`. Keep terminal
   `/tmp/multiagent-prod-swe/status.json` separate from helper state.
-- Spawn workers and verifiers with `bin/subagent.sh`; this preserves the Codex
+- Spawn workers and verifiers with `multiagent subagent`; this preserves the Codex
   bridge. Assign narrow repository-relative source paths. Never own `.` or the
   whole `/app` tree.
 - The orchestrator does not edit source. It may inspect source and git state,
@@ -87,7 +87,7 @@ metadata, mappings, config, or emitted identity/session state.
    tests in each changed/affected package.
 6. Convert every accepted blocking verifier finding into structured state:
    `finding-create` -> `todo-create` -> bounded worker -> `resolution-create`
-   -> verifier recheck -> `todo-close`. Run `bin/subagent.sh gate-check` before
+   -> verifier recheck -> `todo-close`. Run `multiagent subagent gate-check` before
    completion. Do not close a todo from worker narrative alone. The gate also
    rejects a latest durable `BLOCKING` verifier verdict even if the verifier
    failed to persist its finding; route repair and a later accepted recheck
@@ -133,7 +133,7 @@ Before completion:
   evidence proves the expectation changed and a rerunnable exact replacement
   probe passes.
 - Require read-only verifier acceptance, all blocking todos closed with
-  accepted evidence, and `bin/subagent.sh gate-check` success.
+  accepted evidence, and `multiagent subagent gate-check` success.
 
 Write exactly one terminal file:
 

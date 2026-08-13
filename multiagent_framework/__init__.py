@@ -8,6 +8,7 @@ from .snapshot import (
     is_test_path,
 )
 from .gate import structured_repair_gate_blockers
+from .cli import multiagent_command, multiagent_subcommand
 from .provenance import (
     capture_git_identity,
     copy_artifact_bundle,
@@ -34,6 +35,8 @@ __all__ = [
     "copy_artifact_bundle",
     "final_diff_sha256",
     "is_test_path",
+    "multiagent_command",
+    "multiagent_subcommand",
     "sha256_file",
     "structured_repair_gate_blockers",
     "validate_artifact_bundle",

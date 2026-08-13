@@ -17,6 +17,7 @@ from multiagent_framework import (
     changed_paths_from_diff as _framework_changed_paths_from_diff,
     final_diff_sha256 as _framework_final_diff_sha256,
     is_test_path as _framework_is_test_path,
+    multiagent_subcommand,
     structured_repair_gate_blockers as _framework_structured_repair_gate_blockers,
     verifier_passing_commands as _framework_verifier_passing_commands,
     verifier_rechecked_todo as _framework_verifier_rechecked_todo,
@@ -67,8 +68,8 @@ def create_no_diff_stall_repair_state(
 
     if runtime_root is None:
         runtime_root = RUNTIME_ROOT
-    subagent = DEFAULT_MULTIAGENT_ROOT / "bin/subagent.sh"
-    if not subagent.exists():
+    subagent = multiagent_subcommand(DEFAULT_MULTIAGENT_ROOT, "subagent")
+    if not subagent:
         return []
 
     worker_summaries = blocked_no_diff_subagent_summaries(runtime_root)
@@ -105,7 +106,7 @@ def create_no_diff_stall_repair_state(
     finding_json = runtime_root / "findings" / finding_id / "finding.json"
     if not finding_json.exists():
         args = [
-            str(subagent),
+            *subagent,
             "finding-create",
             finding_id,
             "--severity",
@@ -139,7 +140,7 @@ def create_no_diff_stall_repair_state(
         context = "; ".join([*blockers, *worker_summaries])[:1200]
         result = run(
             [
-                str(subagent),
+                *subagent,
                 "todo-create",
                 todo_id,
                 "--source-finding-id",
@@ -190,7 +191,7 @@ def migrate_runtime_fallback_todo_resolution(
     resolution: dict[str, object],
     evidence_texts: list[str],
     diff: str,
-    subagent: Path,
+    subagent: list[str],
     state_dir: Path,
 ) -> list[dict[str, object]]:
     """Repair a contradictory runtime-test todo after exact verifier recheck.
@@ -256,7 +257,7 @@ def migrate_runtime_fallback_todo_resolution(
     )
     changed_paths = [str(path).strip() for path in resolution.get("changed_paths", []) if str(path).strip()]
     args = [
-        str(subagent),
+        *subagent,
         "resolution-create",
         todo_id,
         "--worker",
@@ -292,8 +293,8 @@ def recover_verifier_accepted_todo_closures(text: str, diff: str) -> list[str]:
     still decides whether the run can be accepted.
     """
 
-    subagent = DEFAULT_MULTIAGENT_ROOT / "bin/subagent.sh"
-    if not subagent.exists():
+    subagent = multiagent_subcommand(DEFAULT_MULTIAGENT_ROOT, "subagent")
+    if not subagent:
         return []
     evidence_texts = [text, *persisted_subagent_final_acceptance_texts(diff, RUNTIME_ROOT)]
     combined_text = "\n".join(evidence_texts)
@@ -392,7 +393,7 @@ def recover_verifier_accepted_todo_closures(text: str, diff: str) -> list[str]:
             )
             result = run(
                 [
-                    str(subagent),
+                    *subagent,
                     "todo-close",
                     todo_id,
                     "--verified-by",
@@ -860,7 +861,7 @@ def valid_required_path_outside_owned_report(report: str) -> bool:
 def structured_repair_diagnostic_sections(runtime_root: Path = RUNTIME_ROOT) -> list[str]:
     """Return high-signal structured repair state for failure report tails."""
 
-    subagent = DEFAULT_MULTIAGENT_ROOT / "bin/subagent.sh"
+    subagent = multiagent_subcommand(DEFAULT_MULTIAGENT_ROOT, "subagent")
     sections: list[str] = []
     seen_state_dirs: set[Path] = set()
     for state_dir in (runtime_root, runtime_root / "state"):
@@ -870,7 +871,7 @@ def structured_repair_diagnostic_sections(runtime_root: Path = RUNTIME_ROOT) -> 
         if not any((state_dir / name).exists() for name in ("findings", "todos")):
             continue
         sections.append(f"structured repair state: {state_dir}")
-        if subagent.exists():
+        if subagent:
             env = os.environ.copy()
             env.update(
                 {
@@ -879,7 +880,7 @@ def structured_repair_diagnostic_sections(runtime_root: Path = RUNTIME_ROOT) -> 
                 }
             )
             result = run(
-                [str(subagent), "gate-check"],
+                [*subagent, "gate-check"],
                 cwd=DEFAULT_MULTIAGENT_ROOT,
                 env=env,
                 timeout=30,

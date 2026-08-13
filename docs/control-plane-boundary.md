@@ -1,8 +1,8 @@
 # Control-Plane Boundary
 
-`bin/multiagent` is the single user-facing command surface. The source-checkout
-launcher builds and executes the Rust binary; packaged releases can set
-`MULTIAGENT_BIN` to a prebuilt binary.
+`multiagent` is the single command surface. The source-checkout `launch.sh` is
+the one retained compatibility bootstrap: it builds or locates the Rust binary
+and execs `multiagent launch`. Packaged releases install the binary directly.
 
 Rust owns production decisions and durable state:
 
@@ -11,20 +11,20 @@ Rust owns production decisions and durable state:
 - write-policy checks and approvals;
 - assignments, checkpoints, and Git worktree metadata;
 - findings, repair TODOs, resolution and closure evidence;
-- validation leases and bounded validation subprocesses.
+- validation leases and bounded validation subprocesses;
+- launch configuration, tmux subprocess orchestration, status, watch, and
+  recovery behavior.
 
-Shell is an external runtime adapter for tmux session/window operations,
-terminal capture, and recovery interaction. The Rust CLI dispatches these
-adapters for `launch`, `status`, `watch`, and tmux-oriented `subagent` commands.
-Rust does not allocate or emulate a PTY; tmux continues to own terminal
-lifecycle and interactive process semantics.
+There is no production shell control plane. Rust invokes tmux as a normal child
+process for session/window operations and terminal capture. Rust does not
+allocate or emulate a PTY; tmux continues to own terminal lifecycle and
+interactive process semantics. This keeps PTY behavior without preserving shell
+implementations.
 
-Python is the evaluation and compatibility client. SWE Bench adapters can read
-the version-1 state and evidence formats, derive benchmark-specific evidence,
-and publish evaluator results. Python must not become a second writer for
-production control-plane state. Temporary legacy entry points are guarded by
-`MULTIAGENT_USE_LEGACY_*` environment variables and exist for parity diagnosis,
-not as the normal execution path.
+Python is the evaluation client and reusable evidence-analysis layer. SWE Bench
+adapters read version-1 state and evidence, derive benchmark-specific evidence,
+and publish evaluator results. Whenever evaluation needs a production state
+transition, it invokes the Rust binary instead of implementing a second writer.
 
 The important benefit is not command rendering or startup speed. A single
 locked writer makes overlap checks, duplicate detection, lifecycle gates,

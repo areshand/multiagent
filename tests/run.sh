@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MULTIAGENT="$ROOT/target/debug/multiagent"
+cargo build --offline --locked --manifest-path "$ROOT/Cargo.toml" >/dev/null
 TMPDIR="$(mktemp -d)"
 TMPDIR="$(cd "$TMPDIR" && pwd -P)"
 trap 'rm -rf "$TMPDIR"' EXIT
@@ -220,10 +222,10 @@ assert_file_not_contains() {
   fi
 }
 
-"$ROOT/bin/write-policy.sh" init
+"$MULTIAGENT" policy init
 assert_file_contains "$MULTIAGENT_WRITE_POLICY" "Default allowed write root"
 
-policy_show="$("$ROOT/bin/write-policy.sh" show)"
+policy_show="$("$MULTIAGENT" policy show)"
 [[ "$policy_show" == *"Default write root: $ROOT"* ]]
 [[ "$policy_show" == *"Approved outside write roots:"* ]]
 
@@ -248,7 +250,7 @@ assert_file_contains "$TMPDIR/launch.out" "Subagent CLI: claude"
 assert_file_contains "$TMPDIR/launch.out" "Verifier CLI: codex"
 assert_file_contains "$TMPDIR/launch.out" "Default write root: $LAUNCH_TARGET"
 assert_file_contains "$TMPDIR/launch.out" "Logs: $LAUNCH_STATE/logs"
-assert_file_contains "$TMPDIR/launch.out" "Dashboard: MULTIAGENT_SESSION=launch-cross-repo MULTIAGENT_ROOT=$LAUNCH_TARGET $ROOT/bin/watch.sh"
+assert_file_contains "$TMPDIR/launch.out" "Dashboard: MULTIAGENT_SESSION=launch-cross-repo MULTIAGENT_ROOT=$LAUNCH_TARGET $MULTIAGENT watch"
 LAUNCH_BOOTSTRAP="$LAUNCH_STATE/orchestrator-bootstrap.sh"
 assert_file_contains "$MOCK_TMUX_LOG" "$(printf '%q' "$LAUNCH_BOOTSTRAP")"
 assert_file_contains "$MOCK_TMUX_LOG" "pipe-pane launch-cross-repo:orchestrator cat >> $LAUNCH_STATE/logs/orchestrator.log"
@@ -259,7 +261,7 @@ assert_file_contains "$LAUNCH_BOOTSTRAP" "export MULTIAGENT_VERIFIER_MAX_ITERATI
 assert_file_contains "$LAUNCH_BOOTSTRAP" "export WORKER_CLI=claude"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "export SUBAGENT_CLI=claude"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "export VERIFIER_CLI=codex"
-assert_file_contains "$LAUNCH_BOOTSTRAP" "Multiagent\\ launch\\ mode:"
+assert_file_contains "$LAUNCH_BOOTSTRAP" "Multiagent launch mode:"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "$(printf '%q' "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md")"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "export MULTIAGENT_LIFECYCLE_ENFORCEMENT=1"
 assert_file_contains "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "BEGIN ORCHESTRATOR ROLE"
@@ -322,7 +324,7 @@ assert_file_contains "$TMPDIR/launch-explicit-state/runtime_state/orchestrator-p
 
 REPAIR_STATE="$TMPDIR/repair-state"
 mkdir -p "$REPAIR_STATE"
-if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" finding-create invalid-prose-finding \
+if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent finding-create invalid-prose-finding \
   --severity blocking \
   --type compile_failure \
   --summary "Prose-only compile finding" \
@@ -333,7 +335,7 @@ if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" finding-create i
   exit 1
 fi
 assert_file_contains "$TMPDIR/finding-prose-invalid.out" "evidence JSON must be an object"
-if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" finding-create invalid-command-finding \
+if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent finding-create invalid-command-finding \
   --severity blocking \
   --type compile_failure \
   --summary "Missing command evidence" \
@@ -344,14 +346,14 @@ if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" finding-create i
   exit 1
 fi
 assert_file_contains "$TMPDIR/finding-command-invalid.out" "compile_failure finding evidence requires command and returncode"
-MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" finding-create build-go-ofrep \
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent finding-create build-go-ofrep \
   --severity blocking \
   --type compile_failure \
   --summary "Changed Go packages do not compile" \
   --affected internal/server/ofrep/evaluation.go,internal/server/evaluation/ofrep_bridge.go \
   --evidence-json '{"command":"go test ./internal/server/ofrep ./internal/server/evaluation","returncode":1,"stderr_excerpt":"undefined: req.Request"}' \
   --required-resolution "Final diff must compile with rc=0 for both changed Go packages." >"$TMPDIR/finding-create.out"
-MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" todo-create todo-017 \
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent todo-create todo-017 \
   --source-finding-id build-go-ofrep \
   --task "Fix Go compile failure in changed packages." \
   --context "Exact verifier evidence." \
@@ -359,7 +361,7 @@ MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" todo-create todo-01
   --done-criteria "record returncode=0 after final diff" >"$TMPDIR/todo-create.out"
 assert_file_contains "$REPAIR_STATE/todos/todo-017/todo.json" '"required_commands":'
 assert_file_contains "$REPAIR_STATE/todos/todo-017/todo.json" '"go test ./internal/server/ofrep"'
-if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" resolution-create todo-017 \
+if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent resolution-create todo-017 \
   --worker worker-02-ofrep-build \
   --status resolved \
   --changed internal/server/ofrep/evaluation.go \
@@ -370,7 +372,7 @@ if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" resolution-creat
   exit 1
 fi
 assert_file_contains "$TMPDIR/resolution-bad.out" "nonzero rc=1"
-if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" resolution-create todo-017 \
+if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent resolution-create todo-017 \
   --worker worker-02-ofrep-build \
   --status resolved \
   --changed internal/server/ofrep/evaluation.go \
@@ -381,21 +383,21 @@ if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" resolution-creat
   exit 1
 fi
 assert_file_contains "$TMPDIR/resolution-missing-required.out" "missing required command"
-MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" resolution-create todo-017 \
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent resolution-create todo-017 \
   --worker worker-02-ofrep-build \
   --status resolved \
   --changed internal/server/ofrep/evaluation.go \
   --validation-json '[{"cmd":"go test ./internal/server/ofrep","rc":0}]' \
   --why "Changed package compiles after the final diff." >"$TMPDIR/resolution-create.out"
-MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" todo-status todo-017 closed >"$TMPDIR/direct-close.out"
-if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-missing-closure.out" 2>&1; then
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent todo-status todo-017 closed >"$TMPDIR/direct-close.out"
+if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-missing-closure.out" 2>&1; then
   echo "expected direct closed todo without verifier closure to fail gate-check" >&2
   cat "$TMPDIR/gate-missing-closure.out" >&2
   exit 1
 fi
 assert_file_contains "$TMPDIR/gate-missing-closure.out" "closed-todo-missing-verifier-closure"
-MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" todo-status todo-017 resolved >"$TMPDIR/reopen-resolved.out"
-if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" todo-close todo-017 \
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent todo-status todo-017 resolved >"$TMPDIR/reopen-resolved.out"
+if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent todo-close todo-017 \
   --verified-by verifier-01-ofrep-build \
   --recheck-json '{"accepted":false,"finding_rechecked":"build-go-ofrep"}' >"$TMPDIR/close-rejected.out" 2>&1; then
   echo "expected verifier closure with accepted=false to fail" >&2
@@ -403,30 +405,30 @@ if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" todo-close todo-
   exit 1
 fi
 assert_file_contains "$TMPDIR/close-rejected.out" "accepted=true"
-MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" todo-close todo-017 \
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent todo-close todo-017 \
   --verified-by verifier-01-ofrep-build \
   --recheck-json '{"accepted":true,"finding_rechecked":"build-go-ofrep","commands":[{"cmd":"go test ./internal/server/ofrep","rc":0}],"final_diff_hash":"abc123"}' \
   --notes "Verifier rechecked original finding after worker resolution." >"$TMPDIR/todo-close.out"
-MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-closed.out"
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-closed.out"
 assert_file_contains "$TMPDIR/gate-closed.out" "accepted"
 assert_file_contains "$REPAIR_STATE/todos/todo-017/closure.json" '"verified_by": "verifier-01-ofrep-build"'
 cp "$REPAIR_STATE/findings/build-go-ofrep/finding.json" "$TMPDIR/build-go-ofrep.finding.json"
 printf '{"id":"build-go-ofrep","severity":"blocking","type":"compile_failure","summary":"mutated after closure","affected_paths":[],"evidence":{"command":"go test ./internal/server/ofrep","returncode":1},"required_resolution":"mutated","created_at":"mutated"}\n' >"$REPAIR_STATE/findings/build-go-ofrep/finding.json"
-if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-mutated-finding.out" 2>&1; then
+if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-mutated-finding.out" 2>&1; then
   echo "expected gate-check to reject a closed todo after source finding mutation" >&2
   cat "$TMPDIR/gate-mutated-finding.out" >&2
   exit 1
 fi
 assert_file_contains "$TMPDIR/gate-mutated-finding.out" "closed-todo-source-finding-hash-changed"
 cp "$TMPDIR/build-go-ofrep.finding.json" "$REPAIR_STATE/findings/build-go-ofrep/finding.json"
-MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-restored-finding.out"
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-restored-finding.out"
 assert_file_contains "$TMPDIR/gate-restored-finding.out" "accepted"
 
 VERIFIER_VERDICT_STATE="$TMPDIR/verifier-verdict-state"
 mkdir -p "$VERIFIER_VERDICT_STATE/subagents/worker-01-fix" "$VERIFIER_VERDICT_STATE/subagents/verifier-01-fix"
 printf 'BLOCKING\nworker text must not control the final gate\n' >"$VERIFIER_VERDICT_STATE/subagents/worker-01-fix/last-message.txt"
 printf 'BLOCKING\nsource contract remains unsatisfied\n' >"$VERIFIER_VERDICT_STATE/subagents/verifier-01-fix/last-message.txt"
-if MULTIAGENT_STATE_DIR="$VERIFIER_VERDICT_STATE" "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-verifier-blocking.out" 2>&1; then
+if MULTIAGENT_STATE_DIR="$VERIFIER_VERDICT_STATE" "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-verifier-blocking.out" 2>&1; then
   echo "expected latest blocking verifier verdict to fail gate-check" >&2
   cat "$TMPDIR/gate-verifier-blocking.out" >&2
   exit 1
@@ -441,7 +443,7 @@ import sys
 os.utime(sys.argv[1], ns=(1_000_000_000, 1_000_000_000))
 os.utime(sys.argv[2], ns=(2_000_000_000, 2_000_000_000))
 PY
-MULTIAGENT_STATE_DIR="$VERIFIER_VERDICT_STATE" "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-verifier-accepted.out"
+MULTIAGENT_STATE_DIR="$VERIFIER_VERDICT_STATE" "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-verifier-accepted.out"
 assert_file_contains "$TMPDIR/gate-verifier-accepted.out" "accepted"
 mkdir -p "$VERIFIER_VERDICT_STATE/subagents/verifier-03-fix"
 printf 'Verifier process exited before a final recommendation.\n' >"$VERIFIER_VERDICT_STATE/subagents/verifier-03-fix/last-message.txt"
@@ -451,7 +453,7 @@ import sys
 
 os.utime(sys.argv[1], ns=(3_000_000_000, 3_000_000_000))
 PY
-if MULTIAGENT_STATE_DIR="$VERIFIER_VERDICT_STATE" "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-verifier-missing.out" 2>&1; then
+if MULTIAGENT_STATE_DIR="$VERIFIER_VERDICT_STATE" "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-verifier-missing.out" 2>&1; then
   echo "expected newest verifier artifact without a verdict to fail gate-check" >&2
   cat "$TMPDIR/gate-verifier-missing.out" >&2
   exit 1
@@ -464,13 +466,14 @@ mkdir -p "$HASH_GATE_ROOT" "$HASH_GATE_STATE/subagents/verifier-01-hash"
 git -C "$HASH_GATE_ROOT" init -q
 git -C "$HASH_GATE_ROOT" config user.email test@example.com
 git -C "$HASH_GATE_ROOT" config user.name Test
+git -C "$HASH_GATE_ROOT" config commit.gpgsign false
 printf 'before\n' >"$HASH_GATE_ROOT/source.txt"
 git -C "$HASH_GATE_ROOT" add source.txt
 git -C "$HASH_GATE_ROOT" commit -qm initial
 printf 'after\n' >"$HASH_GATE_ROOT/source.txt"
 printf 'ACCEPTED\nsource reviewed without hash binding\n' >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
 if MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
-  "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-verifier-unbound-hash.out" 2>&1; then
+  "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-verifier-unbound-hash.out" 2>&1; then
   echo "expected verifier acceptance without the current final diff hash to fail gate-check" >&2
   cat "$TMPDIR/gate-verifier-unbound-hash.out" >&2
   exit 1
@@ -479,19 +482,19 @@ assert_file_contains "$TMPDIR/gate-verifier-unbound-hash.out" $'reject\tlatest-v
 HASH_GATE_DIFF_SHA="$(git -C "$HASH_GATE_ROOT" diff --binary --ignore-submodules=all | shasum -a 256 | awk '{print $1}')"
 printf 'ACCEPTED\nbuild-verification-passed: final-diff-sha256=%s compile_clean=true returncode=0\n' "$HASH_GATE_DIFF_SHA" >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
 MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
-  "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-verifier-bound-hash.out"
+  "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-verifier-bound-hash.out"
 assert_file_contains "$TMPDIR/gate-verifier-bound-hash.out" "accepted"
 printf 'ACCEPTED\n{"verdict":"ACCEPTED","final_diff_sha256":"%s","build_verification_passed":{"final_diff_sha256":"%s","compile_clean":true,"commands":[{"cmd":"test -f source.txt","rc":0}]}}\n' \
   "$HASH_GATE_DIFF_SHA" "$HASH_GATE_DIFF_SHA" >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
 printf 'running\n' >"$HASH_GATE_STATE/subagents/verifier-01-hash/status"
 MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
-  "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-verifier-terminal-reconciled.out"
+  "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-verifier-terminal-reconciled.out"
 assert_file_contains "$HASH_GATE_STATE/subagents/verifier-01-hash/status" "done"
 assert_file_contains "$TMPDIR/gate-verifier-terminal-reconciled.out" "accepted"
 rm "$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
 printf 'running\n' >"$HASH_GATE_STATE/subagents/verifier-01-hash/status"
 if MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
-  "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-verifier-active.out" 2>&1; then
+  "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-verifier-active.out" 2>&1; then
   echo "expected an active verifier without a terminal report to block the final gate" >&2
   cat "$TMPDIR/gate-verifier-active.out" >&2
   exit 1
@@ -501,26 +504,26 @@ printf 'done\n' >"$HASH_GATE_STATE/subagents/verifier-01-hash/status"
 printf 'ACCEPTED\n{"verdict":"ACCEPTED","final_diff_sha256":"%s","build_verification_passed":{"final_diff_sha256":"%s","compile_clean":true,"commands":[{"cmd":"test -f source.txt","rc":0}]}}\n' \
   "$HASH_GATE_DIFF_SHA" "$HASH_GATE_DIFF_SHA" >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
 MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
-  "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-verifier-structured-hash.out"
+  "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-verifier-structured-hash.out"
 assert_file_contains "$TMPDIR/gate-verifier-structured-hash.out" "accepted"
 printf 'policy-gate: source owner checked\nbuild-verification-passed: final-diff-sha256=%s compile_clean=true returncode=0\nfinal-recommendation: accept; source contract satisfied\n' \
   "$HASH_GATE_DIFF_SHA" >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
 printf 'running\n' >"$HASH_GATE_STATE/subagents/verifier-01-hash/status"
 MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
-  "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-verifier-final-recommendation.out"
+  "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-verifier-final-recommendation.out"
 assert_file_contains "$HASH_GATE_STATE/subagents/verifier-01-hash/status" "done"
 assert_file_contains "$TMPDIR/gate-verifier-final-recommendation.out" "accepted"
 printf 'ACCEPTED final_diff_sha256=%s\nbuild-verification-passed: final-diff-sha256=%s compile_clean=true returncode=0\n' \
   "$HASH_GATE_DIFF_SHA" "$HASH_GATE_DIFF_SHA" >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
 printf 'running\n' >"$HASH_GATE_STATE/subagents/verifier-01-hash/status"
 MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
-  "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-verifier-inline-hash.out"
+  "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-verifier-inline-hash.out"
 assert_file_contains "$HASH_GATE_STATE/subagents/verifier-01-hash/status" "done"
 assert_file_contains "$TMPDIR/gate-verifier-inline-hash.out" "accepted"
 printf 'policy-gate: source owner checked\nfinal-recommendation: block; source contract missing\n' >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
 printf 'running\n' >"$HASH_GATE_STATE/subagents/verifier-01-hash/status"
 if MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
-  "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-verifier-block-recommendation.out" 2>&1; then
+  "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-verifier-block-recommendation.out" 2>&1; then
   echo "expected normalized final block recommendation to block the gate" >&2
   exit 1
 fi
@@ -528,7 +531,7 @@ assert_file_contains "$HASH_GATE_STATE/subagents/verifier-01-hash/status" "block
 assert_file_contains "$TMPDIR/gate-verifier-block-recommendation.out" $'reject\tlatest-verifier-blocking\tverifier=verifier-01-hash'
 printf 'verdict=REJECTED\nrequired_resolution=repair semantic contract\n' >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
 if MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
-  "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-verifier-rejected-variant.out" 2>&1; then
+  "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-verifier-rejected-variant.out" 2>&1; then
   echo "expected normalized REJECTED verifier verdict to block the gate" >&2
   exit 1
 fi
@@ -536,28 +539,28 @@ assert_file_contains "$TMPDIR/gate-verifier-rejected-variant.out" $'reject\tlate
 
 LEGACY_RESOLUTION_STATE="$TMPDIR/legacy-resolution-state"
 mkdir -p "$LEGACY_RESOLUTION_STATE"
-if MULTIAGENT_STATE_DIR="$LEGACY_RESOLUTION_STATE" "$ROOT/bin/subagent.sh" resolution-create --todo TODO-legacy --owner worker-legacy --summary "Legacy summary" --evidence "go test ./pkg returncode=0" >"$TMPDIR/legacy-resolution-no-autocreate.out" 2>&1; then
+if MULTIAGENT_STATE_DIR="$LEGACY_RESOLUTION_STATE" "$MULTIAGENT" subagent resolution-create --todo TODO-legacy --owner worker-legacy --summary "Legacy summary" --evidence "go test ./pkg returncode=0" >"$TMPDIR/legacy-resolution-no-autocreate.out" 2>&1; then
   echo "expected legacy resolution-create without auto-create to fail for a missing todo" >&2
   exit 1
 fi
 assert_file_contains "$TMPDIR/legacy-resolution-no-autocreate.out" "no todo: TODO-legacy"
-MULTIAGENT_STATE_DIR="$LEGACY_RESOLUTION_STATE" MULTIAGENT_RESOLUTION_AUTOCREATE_TODO=1 "$ROOT/bin/subagent.sh" resolution-create --todo TODO-legacy --owner worker-legacy --summary "Legacy summary" --evidence "go test ./pkg returncode=0" >"$TMPDIR/legacy-resolution-autocreate.out"
+MULTIAGENT_STATE_DIR="$LEGACY_RESOLUTION_STATE" MULTIAGENT_RESOLUTION_AUTOCREATE_TODO=1 "$MULTIAGENT" subagent resolution-create --todo TODO-legacy --owner worker-legacy --summary "Legacy summary" --evidence "go test ./pkg returncode=0" >"$TMPDIR/legacy-resolution-autocreate.out"
 assert_file_contains "$TMPDIR/legacy-resolution-autocreate.out" $'resolution recorded\tTODO-legacy\tworker-legacy\tresolved'
 assert_file_contains "$LEGACY_RESOLUTION_STATE/todos/TODO-legacy/resolution.json" '"cmd": "go test ./pkg"'
 assert_file_contains "$LEGACY_RESOLUTION_STATE/todos/TODO-legacy/resolution.json" '"rc": 0'
-if MULTIAGENT_STATE_DIR="$LEGACY_RESOLUTION_STATE" "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/legacy-resolution-gate.out" 2>&1; then
+if MULTIAGENT_STATE_DIR="$LEGACY_RESOLUTION_STATE" "$MULTIAGENT" subagent gate-check >"$TMPDIR/legacy-resolution-gate.out" 2>&1; then
   echo "expected auto-created legacy resolution to remain blocked until verifier closure" >&2
   exit 1
 fi
 assert_file_contains "$TMPDIR/legacy-resolution-gate.out" $'reject\topen-blocking-todo\tfinding=auto-TODO-legacy\ttodo=TODO-legacy\tstatus=resolved'
 
-MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease-acquire go-ofrep \
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent validation-lease-acquire go-ofrep \
   --owner worker-02-ofrep-build \
   --target "./internal/server/ofrep ./internal/server/evaluation" \
   --command "go test ./internal/server/ofrep ./internal/server/evaluation" \
   --resource-risk "go test under Docker/Rosetta" >"$TMPDIR/lease-acquire.out"
 assert_file_contains "$TMPDIR/lease-acquire.out" $'validation lease acquired\tgo-ofrep\tworker-02-ofrep-build\trunning'
-if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease-acquire go-ofrep-dup \
+if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent validation-lease-acquire go-ofrep-dup \
   --owner verifier-01-ofrep-build \
   --target "./internal/server/ofrep ./internal/server/evaluation" \
   --command "go test ./internal/server/ofrep ./internal/server/evaluation" >"$TMPDIR/lease-conflict.out" 2>&1; then
@@ -566,37 +569,37 @@ if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease
   exit 1
 fi
 assert_file_contains "$TMPDIR/lease-conflict.out" "validation lease conflict"
-MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease-status go-ofrep passed \
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent validation-lease-status go-ofrep passed \
   --result-json '{"command":"go test ./internal/server/ofrep ./internal/server/evaluation","returncode":0}' >"$TMPDIR/lease-passed.out"
-MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease-acquire go-ofrep-followup \
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent validation-lease-acquire go-ofrep-followup \
   --owner verifier-01-ofrep-build \
   --target "./internal/server/ofrep ./internal/server/evaluation" \
   --command "go test ./internal/server/ofrep ./internal/server/evaluation" >"$TMPDIR/lease-followup.out"
-MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease-list --state running >"$TMPDIR/lease-list.out"
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent validation-lease-list --state running >"$TMPDIR/lease-list.out"
 assert_file_contains "$TMPDIR/lease-list.out" $'go-ofrep-followup\trunning\tverifier-01-ofrep-build'
-MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease-show go-ofrep >"$TMPDIR/lease-show.out"
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent validation-lease-show go-ofrep >"$TMPDIR/lease-show.out"
 assert_file_contains "$TMPDIR/lease-show.out" '"returncode": 0'
-MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-run validation-run-ok \
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent validation-run validation-run-ok \
   --owner worker-02-ofrep-build \
   --target "unit-target" \
   --resource-risk "cheap test command" \
   -- bash -lc 'printf validation-ok' >"$TMPDIR/validation-run-ok.out"
 assert_file_contains "$TMPDIR/validation-run-ok.out" "validation-ok"
-MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease-show validation-run-ok >"$TMPDIR/validation-run-ok-lease.out"
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent validation-lease-show validation-run-ok >"$TMPDIR/validation-run-ok-lease.out"
 assert_file_contains "$TMPDIR/validation-run-ok-lease.out" '"state": "passed"'
 assert_file_contains "$TMPDIR/validation-run-ok-lease.out" '"returncode": 0'
 mkdir -p "$TMPDIR/not-root"
 (
   cd "$TMPDIR/not-root"
-  MULTIAGENT_ROOT="$ROOT" MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-run validation-run-cwd \
+  MULTIAGENT_ROOT="$ROOT" MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent validation-run validation-run-cwd \
     --owner worker-02-ofrep-build \
     --target "unit-target-cwd" \
     -- bash -lc 'pwd' >"$TMPDIR/validation-run-cwd.out"
 )
 assert_file_contains "$TMPDIR/validation-run-cwd.out" "$ROOT"
-MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease-show validation-run-cwd >"$TMPDIR/validation-run-cwd-lease.out"
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent validation-lease-show validation-run-cwd >"$TMPDIR/validation-run-cwd-lease.out"
 assert_file_contains "$TMPDIR/validation-run-cwd-lease.out" "\"cwd\": \"$ROOT\""
-if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-run validation-run-fail \
+if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent validation-run validation-run-fail \
   --owner worker-02-ofrep-build \
   --target "unit-target-fail" \
   -- bash -lc 'printf validation-fail >&2; exit 7' >"$TMPDIR/validation-run-fail.out" 2>"$TMPDIR/validation-run-fail.err"; then
@@ -604,11 +607,11 @@ if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-run v
   exit 1
 fi
 assert_file_contains "$TMPDIR/validation-run-fail.err" "validation-fail"
-MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease-show validation-run-fail >"$TMPDIR/validation-run-fail-lease.out"
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent validation-lease-show validation-run-fail >"$TMPDIR/validation-run-fail-lease.out"
 assert_file_contains "$TMPDIR/validation-run-fail-lease.out" '"state": "failed"'
 assert_file_contains "$TMPDIR/validation-run-fail-lease.out" '"returncode": 7'
 set +e
-MULTIAGENT_VALIDATION_TIMEOUT_SECONDS=1 MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-run validation-run-timeout \
+MULTIAGENT_VALIDATION_TIMEOUT_SECONDS=1 MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent validation-run validation-run-timeout \
   --owner worker-02-ofrep-build \
   --target "unit-target-timeout" \
   -- bash -lc 'sleep 2' >"$TMPDIR/validation-run-timeout.out" 2>"$TMPDIR/validation-run-timeout.err"
@@ -619,11 +622,11 @@ if [[ "$timeout_rc" -ne 124 ]]; then
   exit 1
 fi
 assert_file_contains "$TMPDIR/validation-run-timeout.err" "validation-run timed out after 1 seconds"
-MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-lease-show validation-run-timeout >"$TMPDIR/validation-run-timeout-lease.out"
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent validation-lease-show validation-run-timeout >"$TMPDIR/validation-run-timeout-lease.out"
 assert_file_contains "$TMPDIR/validation-run-timeout-lease.out" '"state": "timed-out"'
 assert_file_contains "$TMPDIR/validation-run-timeout-lease.out" '"returncode": 124'
 assert_file_contains "$TMPDIR/validation-run-timeout-lease.out" '"timed_out": true'
-if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$ROOT/bin/subagent.sh" validation-run validation-run-conflict \
+if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent validation-run validation-run-conflict \
   --owner verifier-01-ofrep-build \
   --target "./internal/server/ofrep ./internal/server/evaluation" \
   -- bash -lc 'true' >"$TMPDIR/validation-run-conflict.out" 2>&1; then
@@ -637,7 +640,7 @@ assert_file_contains "$ROOT/orchestrator_prompt.md" "Do not inspect recovery sta
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'When `MULTIAGENT_RESUME=1`'
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'Only in that mode'
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'MULTIAGENT_VERIFIER_MAX_ITERATIONS'
-assert_file_contains "$ROOT/orchestrator_prompt.md" 'SUBAGENT_CLI="$VERIFIER_CLI" bin/subagent.sh spawn'
+assert_file_contains "$ROOT/orchestrator_prompt.md" 'SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn'
 assert_file_contains "$ROOT/orchestrator_prompt.md" "Core Disciplines"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "intent-contract.md"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "parallel-execution.md"
@@ -676,7 +679,7 @@ assert_file_contains "$ROOT/prompts/verifier.md" "verify parity for each named p
 assert_file_contains "$ROOT/prompts/verifier.md" "reject first-match-only fixes"
 assert_file_contains "$ROOT/prompts/verifier.md" "machine-readable verifier finding"
 assert_file_contains "$ROOT/prompts/verifier.md" "finding-create"
-assert_file_contains "$ROOT/prompts/verifier.md" 'MULTIAGENT_HELPER:-/opt/multiagent/bin/subagent.sh'
+assert_file_contains "$ROOT/prompts/verifier.md" 'MULTIAGENT_BIN:-/opt/multiagent/bin/multiagent'
 assert_file_contains "$ROOT/prompts/verifier.md" "finding-create FINDING_ID"
 assert_file_contains "$ROOT/prompts/verifier.md" "--severity blocking"
 assert_file_contains "$ROOT/prompts/verifier.md" "--affected PATH[,PATH...]"
@@ -794,9 +797,8 @@ assert_file_contains "$ROOT/multiagent_framework/coding/guardrails.py" "Return s
 assert_file_contains "$ROOT/multiagent_framework/coding/guardrails.py" "hidden-test-shaped commands"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "Compatibility facade"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "MULTIAGENT_PROMPT_MODULE_ROOT"
-assert_file_contains "$ROOT/launch.sh" "MULTIAGENT_PROMPT_MODULE_ROOT"
-assert_file_contains "$ROOT/launch.sh" "require_python_runtime"
-assert_file_contains "$ROOT/launch.sh" "sys.version_info >= (3, 8)"
+assert_file_contains "$ROOT/src/runtime.rs" "MULTIAGENT_PROMPT_MODULE_ROOT"
+assert_file_not_contains "$ROOT/launch.sh" "python"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_lifecycle.py" '"MULTIAGENT_PROMPT_MODULE_ROOT": str(repo_root)'
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "production prompt modules"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Do not rely on leaked evaluator tests"
@@ -933,9 +935,9 @@ assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "prompts
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "build-verification-passed:"
 assert_file_contains "$ROOT/prompts/playbooks/finding-todo-loop.md" "Do not create or reopen a todo from command evidence bound"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Process evidence by final"
-assert_file_contains "$ROOT/bin/subagent.sh" '--own|--owned-path)'
-assert_file_contains "$ROOT/bin/subagent.sh" '--source-finding-id|--finding)'
-assert_file_contains "$ROOT/bin/subagent.sh" '--role)'
+assert_file_contains "$MULTIAGENT" subagent '--own|--owned-path)'
+assert_file_contains "$MULTIAGENT" subagent '--source-finding-id|--finding)'
+assert_file_contains "$MULTIAGENT" subagent '--role)'
 assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "declared-type ownership risk"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_contracts.py" "declared type at that call site"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "visible tests"
@@ -1463,6 +1465,7 @@ with tempfile.TemporaryDirectory() as td:
     subprocess.run(["git", "init"], cwd=workdir, check=True, stdout=subprocess.DEVNULL)
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=workdir, check=True)
     subprocess.run(["git", "config", "user.name", "Test"], cwd=workdir, check=True)
+    subprocess.run(["git", "config", "commit.gpgsign", "false"], cwd=workdir, check=True)
     (workdir / "tracked.go").write_text("package main\n", encoding="utf-8")
     subprocess.run(["git", "add", "tracked.go"], cwd=workdir, check=True)
     subprocess.run(["git", "commit", "-m", "initial"], cwd=workdir, check=True, stdout=subprocess.DEVNULL)
@@ -2412,7 +2415,8 @@ for excluded in (
 for included in (
     "launch.sh",
     "orchestrator_prompt.md",
-    "bin/subagent.sh",
+    "Cargo.toml",
+    "src/subagent.rs",
     "prompts/verifier.md",
     "evaluation",
     "evaluation/native_solver",
@@ -2553,7 +2557,8 @@ with tempfile.TemporaryDirectory() as td:
     try:
         subprocess.run(
             [
-                str(root / "bin/subagent.sh"),
+                str(root / "target/debug/multiagent"),
+                "subagent",
                 "finding-create",
                 "F-OPEN",
                 "--severity",
@@ -2576,7 +2581,8 @@ with tempfile.TemporaryDirectory() as td:
         )
         subprocess.run(
             [
-                str(root / "bin/subagent.sh"),
+                str(root / "target/debug/multiagent"),
+                "subagent",
                 "todo-create",
                 "T-OPEN",
                 "--source-finding-id",
@@ -2595,7 +2601,8 @@ with tempfile.TemporaryDirectory() as td:
         )
         subprocess.run(
             [
-                str(root / "bin/subagent.sh"),
+                str(root / "target/debug/multiagent"),
+                "subagent",
                 "resolution-create",
                 "T-OPEN",
                 "--worker",
@@ -2622,7 +2629,8 @@ with tempfile.TemporaryDirectory() as td:
         assert solve_swe_prod.structured_repair_gate_blockers() == [], solve_swe_prod.structured_repair_gate_blockers()
         subprocess.run(
             [
-                str(root / "bin/subagent.sh"),
+                str(root / "target/debug/multiagent"),
+                "subagent",
                 "resolution-create",
                 "TODO-compile-service",
                 "--worker",
@@ -2662,7 +2670,8 @@ with tempfile.TemporaryDirectory() as td:
         assert solve_swe_prod.structured_repair_gate_blockers() == [], solve_swe_prod.structured_repair_gate_blockers()
         subprocess.run(
             [
-                str(root / "bin/subagent.sh"),
+                str(root / "target/debug/multiagent"),
+                "subagent",
                 "resolution-create",
                 "issue-forwarder-exec-portforward",
                 "--worker",
@@ -2712,7 +2721,8 @@ with tempfile.TemporaryDirectory() as td:
         assert solve_swe_prod.structured_repair_gate_blockers() == [], solve_swe_prod.structured_repair_gate_blockers()
         subprocess.run(
             [
-                str(root / "bin/subagent.sh"),
+                str(root / "target/debug/multiagent"),
+                "subagent",
                 "finding-create",
                 "finding-runtime-build",
                 "--severity",
@@ -2735,7 +2745,8 @@ with tempfile.TemporaryDirectory() as td:
         )
         subprocess.run(
             [
-                str(root / "bin/subagent.sh"),
+                str(root / "target/debug/multiagent"),
+                "subagent",
                 "todo-create",
                 "todo-runtime-build",
                 "--source-finding-id",
@@ -2754,7 +2765,8 @@ with tempfile.TemporaryDirectory() as td:
         )
         subprocess.run(
             [
-                str(root / "bin/subagent.sh"),
+                str(root / "target/debug/multiagent"),
+                "subagent",
                 "resolution-create",
                 "todo-runtime-build",
                 "--worker",
@@ -3507,6 +3519,7 @@ with tempfile.TemporaryDirectory() as td:
     subprocess.run(["git", "init", "-q"], cwd=compile_repo, check=True)
     subprocess.run(["git", "config", "user.email", "eval@example.invalid"], cwd=compile_repo, check=True)
     subprocess.run(["git", "config", "user.name", "Eval Test"], cwd=compile_repo, check=True)
+    subprocess.run(["git", "config", "commit.gpgsign", "false"], cwd=compile_repo, check=True)
     (compile_repo / "go.mod").write_text("module example.invalid/probe\n\ngo 1.22\n", encoding="utf-8")
     package_dir = compile_repo / "pkg" / "foo"
     package_dir.mkdir(parents=True)
@@ -4896,6 +4909,7 @@ from evaluation.core import git_snapshot, git_diff_stats
 workdir = Path(sys.argv[1])
 (workdir / "demo.py").write_text("def demo():\n    raise NotImplementedError\n", encoding="utf-8")
 git_snapshot(workdir)
+subprocess.run(["git", "config", "commit.gpgsign", "false"], cwd=workdir, check=True)
 (workdir / "demo.py").write_text("def demo():\n    return 1\n", encoding="utf-8")
 subprocess.run(["git", "add", "demo.py"], cwd=workdir, check=True)
 subprocess.run(["git", "commit", "-q", "-m", "implement demo"], cwd=workdir, check=True)
@@ -4921,41 +4935,41 @@ assert_file_contains "$orchestration_results" '"repo_spawn_commands": 1'
 assert_file_contains "$orchestration_report" "Evaluation Report: orchestration"
 assert_file_contains "$orchestration_report" "Max Agents"
 
-policy_check_inside="$("$ROOT/bin/write-policy.sh" check "$ROOT/README.md")"
+policy_check_inside="$("$MULTIAGENT" policy check "$ROOT/README.md")"
 [[ "$policy_check_inside" == $'allowed\t'"$ROOT/README.md" ]]
 
 outside_path="$TMPDIR/outside/result.txt"
 policy_check_file="$TMPDIR/policy-check.out"
-if "$ROOT/bin/write-policy.sh" check "$outside_path" >"$policy_check_file" 2>&1; then
+if "$MULTIAGENT" policy check "$outside_path" >"$policy_check_file" 2>&1; then
   echo "expected outside path to be denied before approval" >&2
   cat "$policy_check_file" >&2
   exit 1
 fi
 assert_file_contains "$policy_check_file" $'denied\t'"$outside_path"
 
-if "$ROOT/bin/write-policy.sh" approve "$TMPDIR/outside" >"$TMPDIR/old-approve.out" 2>&1; then
+if "$MULTIAGENT" policy approve "$TMPDIR/outside" >"$TMPDIR/old-approve.out" 2>&1; then
   echo "expected approve without metadata to fail" >&2
   cat "$TMPDIR/old-approve.out" >&2
   exit 1
 fi
 assert_file_contains "$TMPDIR/old-approve.out" "approve requires --actor ACTOR"
 
-approve_output="$("$ROOT/bin/write-policy.sh" approve "$TMPDIR/outside" --actor orchestrator --assignment-id test-policy --reason "test outside output")"
+approve_output="$("$MULTIAGENT" policy approve "$TMPDIR/outside" --actor orchestrator --assignment-id test-policy --reason "test outside output")"
 [[ "$approve_output" == $'approved outside write root: '"$TMPDIR/outside" ]]
 assert_file_contains "$MULTIAGENT_WRITE_POLICY" $'approval\t'
 assert_file_contains "$MULTIAGENT_WRITE_POLICY" $'\torchestrator\ttest-policy\t'
 assert_file_contains "$MULTIAGENT_WRITE_POLICY" $'\ttest outside output\t0'
-policy_check_outside="$("$ROOT/bin/write-policy.sh" check "$outside_path")"
+policy_check_outside="$("$MULTIAGENT" policy check "$outside_path")"
 [[ "$policy_check_outside" == $'allowed\t'"$outside_path" ]]
 
-if "$ROOT/bin/write-policy.sh" approve /tmp --actor orchestrator --assignment-id broad-reject --reason "too broad" >"$TMPDIR/broad-approve.out" 2>&1; then
+if "$MULTIAGENT" policy approve /tmp --actor orchestrator --assignment-id broad-reject --reason "too broad" >"$TMPDIR/broad-approve.out" 2>&1; then
   echo "expected broad approval to require force" >&2
   cat "$TMPDIR/broad-approve.out" >&2
   exit 1
 fi
 assert_file_contains "$TMPDIR/broad-approve.out" "refusing broad outside approval without --force"
 
-forced_broad_output="$("$ROOT/bin/write-policy.sh" approve /tmp --actor orchestrator --assignment-id broad-force --reason "explicit user decision" --force)"
+forced_broad_output="$("$MULTIAGENT" policy approve /tmp --actor orchestrator --assignment-id broad-force --reason "explicit user decision" --force)"
 [[ "$forced_broad_output" == *"(forced)" ]]
 assert_file_contains "$MULTIAGENT_WRITE_POLICY" $'\tbroad-force\t'
 assert_file_contains "$MULTIAGENT_WRITE_POLICY" $'\texplicit user decision\t1'
@@ -4976,7 +4990,7 @@ mkdir -p "$ASSIGN_REPO/src" "$ASSIGN_REPO/docs" "$ASSIGN_STATE"
   git switch -q -c worker/docs
 )
 
-assignment_create_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create worker-docs --assignment-id docs-001 --branch worker/docs --owned README.md,src)"
+assignment_create_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$MULTIAGENT" subagent assignment-create worker-docs --assignment-id docs-001 --branch worker/docs --owned README.md,src)"
 [[ "$assignment_create_output" == $'assignment created\tworker-docs\tdocs-001\tworker/docs' ]]
 assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/assignment.env" "assignment_id=docs-001"
 assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/assignment.env" "branch=worker/docs"
@@ -4987,151 +5001,151 @@ assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/status" "assigned"
 assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/owned-paths" "README.md"
 assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/owned-paths" "src"
 
-if MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create worker-overlap --assignment-id docs-overlap --branch worker/docs --owned README.md >"$TMPDIR/assignment-overlap.out" 2>&1; then
+if MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$MULTIAGENT" subagent assignment-create worker-overlap --assignment-id docs-overlap --branch worker/docs --owned README.md >"$TMPDIR/assignment-overlap.out" 2>&1; then
   echo "expected assignment-create to reject overlapping active writable ownership" >&2
   cat "$TMPDIR/assignment-overlap.out" >&2
   exit 1
 fi
 assert_file_contains "$TMPDIR/assignment-overlap.out" "active assignment owned-path overlap"
 
-assignment_verifier_overlap_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create verifier-overlap --assignment-id docs-verifier --branch worker/docs --owned README.md --role verifier)"
+assignment_verifier_overlap_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$MULTIAGENT" subagent assignment-create verifier-overlap --assignment-id docs-verifier --branch worker/docs --owned README.md --role verifier)"
 [[ "$assignment_verifier_overlap_output" == $'assignment created\tverifier-overlap\tdocs-verifier\tworker/docs' ]]
-MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-status verifier-overlap done >/dev/null
+MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$MULTIAGENT" subagent assignment-status verifier-overlap done >/dev/null
 
-assignment_scout_overlap_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create scout-overlap --assignment-id docs-scout --branch worker/docs --owned README.md --role scout)"
+assignment_scout_overlap_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$MULTIAGENT" subagent assignment-create scout-overlap --assignment-id docs-scout --branch worker/docs --owned README.md --role scout)"
 [[ "$assignment_scout_overlap_output" == $'assignment created\tscout-overlap\tdocs-scout\tworker/docs' ]]
-assignment_after_scout_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create worker-after-scout --assignment-id docs-after-scout --branch worker/docs --owned docs)"
+assignment_after_scout_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$MULTIAGENT" subagent assignment-create worker-after-scout --assignment-id docs-after-scout --branch worker/docs --owned docs)"
 [[ "$assignment_after_scout_output" == $'assignment created\tworker-after-scout\tdocs-after-scout\tworker/docs' ]]
 assert_file_contains "$ASSIGN_STATE/assignments/scout-overlap/assignment.env" "role=scout"
-MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-status worker-after-scout done >/dev/null
+MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$MULTIAGENT" subagent assignment-status worker-after-scout done >/dev/null
 
-assignment_kill_owner_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create worker-kill-owner --assignment-id docs-kill-owner --branch worker/docs --owned docs)"
+assignment_kill_owner_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$MULTIAGENT" subagent assignment-create worker-kill-owner --assignment-id docs-kill-owner --branch worker/docs --owned docs)"
 [[ "$assignment_kill_owner_output" == $'assignment created\tworker-kill-owner\tdocs-kill-owner\tworker/docs' ]]
-MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" MULTIAGENT_SESSION="missing-test-session" "$ROOT/bin/subagent.sh" kill worker-kill-owner >/dev/null
+MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" MULTIAGENT_SESSION="missing-test-session" "$MULTIAGENT" subagent kill worker-kill-owner >/dev/null
 assert_file_contains "$ASSIGN_STATE/assignments/worker-kill-owner/status" "failed"
-assignment_after_kill_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create worker-after-kill --assignment-id docs-after-kill --branch worker/docs --owned docs)"
+assignment_after_kill_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$MULTIAGENT" subagent assignment-create worker-after-kill --assignment-id docs-after-kill --branch worker/docs --owned docs)"
 [[ "$assignment_after_kill_output" == $'assignment created\tworker-after-kill\tdocs-after-kill\tworker/docs' ]]
-MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-status worker-after-kill done >/dev/null
+MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$MULTIAGENT" subagent assignment-status worker-after-kill done >/dev/null
 
-assignment_show_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-show worker-docs)"
+assignment_show_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$MULTIAGENT" subagent assignment-show worker-docs)"
 [[ "$assignment_show_output" == *"agent_name=worker-docs"* ]]
 [[ "$assignment_show_output" == *"status=assigned"* ]]
 
-assignment_status_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-status worker-docs running)"
+assignment_status_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$MULTIAGENT" subagent assignment-status worker-docs running)"
 [[ "$assignment_status_output" == $'assignment status\tworker-docs\trunning' ]]
 assert_file_contains "$ASSIGN_STATE/assignments/worker-docs/status" "running"
 
 printf 'change\n' >>"$ASSIGN_REPO/README.md"
-assignment_check_ok="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-check worker-docs)"
+assignment_check_ok="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$MULTIAGENT" subagent assignment-check worker-docs)"
 [[ "$assignment_check_ok" == *$'branch\tworker/docs\tworker/docs'* ]]
 [[ "$assignment_check_ok" == *$'ok\tREADME.md'* ]]
 [[ "$assignment_check_ok" == *$'accepted\tworker-docs'* ]]
 
 printf 'outside\n' >"$ASSIGN_REPO/docs/notes.txt"
-if MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-check worker-docs >"$TMPDIR/assignment-outside.out" 2>&1; then
+if MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$MULTIAGENT" subagent assignment-check worker-docs >"$TMPDIR/assignment-outside.out" 2>&1; then
   echo "expected assignment check to reject outside owned paths" >&2
   cat "$TMPDIR/assignment-outside.out" >&2
   exit 1
 fi
 assert_file_contains "$TMPDIR/assignment-outside.out" $'reject\toutside-owned-path\tdocs/notes.txt'
 
-MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-status worker-docs done >/dev/null
-assignment_repeated_owned_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create worker-repeated-owned --assignment-id docs-002 --branch worker/docs --owned README.md --owned src)"
+MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$MULTIAGENT" subagent assignment-status worker-docs done >/dev/null
+assignment_repeated_owned_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$MULTIAGENT" subagent assignment-create worker-repeated-owned --assignment-id docs-002 --branch worker/docs --owned README.md --owned src)"
 [[ "$assignment_repeated_owned_output" == $'assignment created\tworker-repeated-owned\tdocs-002\tworker/docs' ]]
 assert_file_contains "$ASSIGN_STATE/assignments/worker-repeated-owned/owned-paths" "README.md"
 assert_file_contains "$ASSIGN_STATE/assignments/worker-repeated-owned/owned-paths" "src"
-MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-status worker-repeated-owned done >/dev/null
+MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$MULTIAGENT" subagent assignment-status worker-repeated-owned done >/dev/null
 
-assignment_create_branch_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create worker-branch --assignment-id branch-001 --branch expected/branch --owned README.md,docs)"
+assignment_create_branch_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$MULTIAGENT" subagent assignment-create worker-branch --assignment-id branch-001 --branch expected/branch --owned README.md,docs)"
 [[ "$assignment_create_branch_output" == $'assignment created\tworker-branch\tbranch-001\texpected/branch' ]]
-if MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-check worker-branch >"$TMPDIR/assignment-branch.out" 2>&1; then
+if MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$MULTIAGENT" subagent assignment-check worker-branch >"$TMPDIR/assignment-branch.out" 2>&1; then
   echo "expected assignment check to reject branch mismatch" >&2
   cat "$TMPDIR/assignment-branch.out" >&2
   exit 1
 fi
 assert_file_contains "$TMPDIR/assignment-branch.out" $'reject\tbranch-mismatch\texpected=expected/branch\tactual=worker/docs'
-MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-status worker-branch failed >/dev/null
+MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$MULTIAGENT" subagent assignment-status worker-branch failed >/dev/null
 
-worktree_assignment_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create worker-wt --assignment-id wt-001 --branch worker/wt --owned README.md)"
+worktree_assignment_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$MULTIAGENT" subagent assignment-create worker-wt --assignment-id wt-001 --branch worker/wt --owned README.md)"
 [[ "$worktree_assignment_output" == $'assignment created\tworker-wt\twt-001\tworker/wt' ]]
-worktree_create_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" worktree-create worker-wt)"
+worktree_create_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$MULTIAGENT" subagent worktree-create worker-wt)"
 [[ "$worktree_create_output" == *$'worktree created\tworker-wt\tworker/wt\t'"$ASSIGN_STATE/worktrees/worker-wt" ]]
 assert_file_contains "$ASSIGN_STATE/worktrees/worker-wt.env" "agent_name=worker-wt"
 assert_file_contains "$ASSIGN_STATE/worktrees/worker-wt.env" "branch=worker/wt"
 assert_file_contains "$ASSIGN_STATE/worktrees/worker-wt.env" "path=$ASSIGN_STATE/worktrees/worker-wt"
 [[ -f "$ASSIGN_STATE/worktrees/worker-wt/README.md" ]]
-worktree_show_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" worktree-show worker-wt)"
+worktree_show_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$MULTIAGENT" subagent worktree-show worker-wt)"
 [[ "$worktree_show_output" == *"branch=worker/wt"* ]]
-worktree_remove_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$ROOT/bin/subagent.sh" worktree-remove worker-wt)"
+worktree_remove_output="$(MULTIAGENT_ROOT="$ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ASSIGN_STATE" "$MULTIAGENT" subagent worktree-remove worker-wt)"
 [[ "$worktree_remove_output" == *$'worktree removed\tworker-wt\t'"$ASSIGN_STATE/worktrees/worker-wt" ]]
 [[ ! -e "$ASSIGN_STATE/worktrees/worker-wt.env" ]]
 
 current_branch="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)"
-checkpoint_assignment_output="$("$ROOT/bin/subagent.sh" assignment-create subagent-structured --assignment-id structured-001 --branch "$current_branch" --owned README.md)"
+checkpoint_assignment_output="$("$MULTIAGENT" subagent assignment-create subagent-structured --assignment-id structured-001 --branch "$current_branch" --owned README.md)"
 [[ "$checkpoint_assignment_output" == $'assignment created\tsubagent-structured\tstructured-001\t'"$current_branch" ]]
-checkpoint_update_output="$("$ROOT/bin/subagent.sh" checkpoint-update subagent-structured --step "implemented checkpoint metadata" --idempotency "rerun checkpoint-update safely" --status running)"
+checkpoint_update_output="$("$MULTIAGENT" subagent checkpoint-update subagent-structured --step "implemented checkpoint metadata" --idempotency "rerun checkpoint-update safely" --status running)"
 [[ "$checkpoint_update_output" == $'checkpoint updated\tsubagent-structured\trunning' ]]
-checkpoint_show_output="$("$ROOT/bin/subagent.sh" checkpoint-show subagent-structured)"
+checkpoint_show_output="$("$MULTIAGENT" subagent checkpoint-show subagent-structured)"
 [[ "$checkpoint_show_output" == *"assignment_id=structured-001"* ]]
 [[ "$checkpoint_show_output" == *"completed_step=implemented checkpoint metadata"* ]]
 [[ "$checkpoint_show_output" == *"idempotency=rerun checkpoint-update safely"* ]]
 assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/subagent-structured/checkpoint.env" "status=running"
 
-finding_output="$("$ROOT/bin/subagent.sh" finding-create build-go-ofrep --severity blocking --type compile_failure --summary "Changed Go packages do not compile" --affected internal/server/ofrep/evaluation.go,internal/server/evaluation/ofrep_bridge.go --evidence-json '{"command":"go test ./internal/server/ofrep ./internal/server/evaluation","returncode":1,"stderr_excerpt":"undefined: req.Request"}' --required-resolution "Final diff must compile with rc=0 for both changed Go packages.")"
+finding_output="$("$MULTIAGENT" subagent finding-create build-go-ofrep --severity blocking --type compile_failure --summary "Changed Go packages do not compile" --affected internal/server/ofrep/evaluation.go,internal/server/evaluation/ofrep_bridge.go --evidence-json '{"command":"go test ./internal/server/ofrep ./internal/server/evaluation","returncode":1,"stderr_excerpt":"undefined: req.Request"}' --required-resolution "Final diff must compile with rc=0 for both changed Go packages.")"
 [[ "$finding_output" == $'finding created\tbuild-go-ofrep\tblocking\tcompile_failure' ]]
 assert_file_contains "$MULTIAGENT_STATE_DIR/findings/build-go-ofrep/finding.json" '"severity": "blocking"'
 assert_file_contains "$MULTIAGENT_STATE_DIR/findings/build-go-ofrep/finding.json" '"type": "compile_failure"'
 assert_file_contains "$MULTIAGENT_STATE_DIR/findings/build-go-ofrep/finding.json" '"internal/server/ofrep/evaluation.go"'
 
-todo_output="$("$ROOT/bin/subagent.sh" todo-create todo-017 --source-finding-id build-go-ofrep --task "Fix Go compile failure in changed packages." --context "Exact verifier evidence." --done-criteria "run go test ./internal/server/ofrep" --done-criteria "run go test ./internal/server/evaluation" --done-criteria "record returncode=0 after final diff")"
+todo_output="$("$MULTIAGENT" subagent todo-create todo-017 --source-finding-id build-go-ofrep --task "Fix Go compile failure in changed packages." --context "Exact verifier evidence." --done-criteria "run go test ./internal/server/ofrep" --done-criteria "run go test ./internal/server/evaluation" --done-criteria "record returncode=0 after final diff")"
 [[ "$todo_output" == $'todo created\ttodo-017\tbuild-go-ofrep\topen' ]]
 assert_file_contains "$MULTIAGENT_STATE_DIR/todos/todo-017/todo.json" '"source_finding_id": "build-go-ofrep"'
 assert_file_contains "$MULTIAGENT_STATE_DIR/todos/todo-017/todo.json" '"status": "open"'
 assert_file_contains "$MULTIAGENT_STATE_DIR/todos/todo-017/todo.json" '"required_commands":'
 assert_file_contains "$MULTIAGENT_STATE_DIR/todos/todo-017/todo.json" '"go test ./internal/server/evaluation"'
 
-todo_assign_output="$("$ROOT/bin/subagent.sh" todo-assign todo-017 worker-02-ofrep)"
+todo_assign_output="$("$MULTIAGENT" subagent todo-assign todo-017 worker-02-ofrep)"
 [[ "$todo_assign_output" == $'todo assigned\ttodo-017\tworker-02-ofrep' ]]
 assert_file_contains "$MULTIAGENT_STATE_DIR/todos/todo-017/todo.json" '"assigned_to": "worker-02-ofrep"'
 assert_file_contains "$MULTIAGENT_STATE_DIR/todos/todo-017/todo.json" '"status": "assigned"'
 
-if "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-assigned.out" 2>&1; then
+if "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-assigned.out" 2>&1; then
   echo "expected gate-check to reject an assigned todo" >&2
   cat "$TMPDIR/gate-assigned.out" >&2
   exit 1
 fi
 assert_file_contains "$TMPDIR/gate-assigned.out" $'reject\topen-blocking-todo\tfinding=build-go-ofrep\ttodo=todo-017\tstatus=assigned'
 
-resolution_output="$("$ROOT/bin/subagent.sh" resolution-create todo-017 --worker worker-02-ofrep --status resolved --changed internal/server/ofrep/evaluation.go,internal/server/evaluation/ofrep_bridge.go --validation-json '[{"cmd":"go test ./internal/server/ofrep","rc":0},{"cmd":"go test ./internal/server/evaluation","rc":0}]' --why "Both changed packages compile after final diff.")"
+resolution_output="$("$MULTIAGENT" subagent resolution-create todo-017 --worker worker-02-ofrep --status resolved --changed internal/server/ofrep/evaluation.go,internal/server/evaluation/ofrep_bridge.go --validation-json '[{"cmd":"go test ./internal/server/ofrep","rc":0},{"cmd":"go test ./internal/server/evaluation","rc":0}]' --why "Both changed packages compile after final diff.")"
 [[ "$resolution_output" == $'resolution recorded\ttodo-017\tworker-02-ofrep\tresolved' ]]
 assert_file_contains "$MULTIAGENT_STATE_DIR/todos/todo-017/resolution.json" '"status": "resolved"'
 assert_file_contains "$MULTIAGENT_STATE_DIR/todos/todo-017/todo.json" '"status": "resolved"'
 
-if "$ROOT/bin/subagent.sh" todo-close todo-017 --verified-by verifier-01-ofrep --recheck-json '{"accepted":true,"finding_rechecked":"unrelated-finding","commands":[{"cmd":"go test ./internal/server/ofrep","rc":0},{"cmd":"go test ./internal/server/evaluation","rc":0}],"final_diff_hash":"abc123"}' >"$TMPDIR/todo-close-wrong-finding.out" 2>&1; then
+if "$MULTIAGENT" subagent todo-close todo-017 --verified-by verifier-01-ofrep --recheck-json '{"accepted":true,"finding_rechecked":"unrelated-finding","commands":[{"cmd":"go test ./internal/server/ofrep","rc":0},{"cmd":"go test ./internal/server/evaluation","rc":0}],"final_diff_hash":"abc123"}' >"$TMPDIR/todo-close-wrong-finding.out" 2>&1; then
   echo "expected todo-close to reject verifier closure for the wrong finding" >&2
   cat "$TMPDIR/todo-close-wrong-finding.out" >&2
   exit 1
 fi
 assert_file_contains "$TMPDIR/todo-close-wrong-finding.out" "must name source finding build-go-ofrep"
 
-if "$ROOT/bin/subagent.sh" todo-close todo-017 --verified-by verifier-01-ofrep --recheck-json '{"accepted":true,"finding_rechecked":"build-go-ofrep","commands":[{"cmd":"go test ./internal/server/ofrep","rc":0}],"final_diff_hash":"abc123"}' >"$TMPDIR/todo-close-partial-recheck.out" 2>&1; then
+if "$MULTIAGENT" subagent todo-close todo-017 --verified-by verifier-01-ofrep --recheck-json '{"accepted":true,"finding_rechecked":"build-go-ofrep","commands":[{"cmd":"go test ./internal/server/ofrep","rc":0}],"final_diff_hash":"abc123"}' >"$TMPDIR/todo-close-partial-recheck.out" 2>&1; then
   echo "expected todo-close to reject verifier closure missing worker validation command evidence" >&2
   cat "$TMPDIR/todo-close-partial-recheck.out" >&2
   exit 1
 fi
 assert_file_contains "$TMPDIR/todo-close-partial-recheck.out" "missing required command"
 
-if "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-resolved.out" 2>&1; then
+if "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-resolved.out" 2>&1; then
   echo "expected gate-check to reject a resolved but unverified todo" >&2
   cat "$TMPDIR/gate-resolved.out" >&2
   exit 1
 fi
 assert_file_contains "$TMPDIR/gate-resolved.out" $'reject\topen-blocking-todo\tfinding=build-go-ofrep\ttodo=todo-017\tstatus=resolved'
 
-todo_closed_output="$("$ROOT/bin/subagent.sh" todo-close todo-017 --verified-by verifier-01-ofrep --recheck-json '{"accepted":true,"finding_rechecked":"build-go-ofrep","commands":[{"cmd":"go test ./internal/server/ofrep","rc":0},{"cmd":"go test ./internal/server/evaluation","rc":0}],"final_diff_hash":"abc123"}' --notes "Verifier accepted worker resolution.")"
+todo_closed_output="$("$MULTIAGENT" subagent todo-close todo-017 --verified-by verifier-01-ofrep --recheck-json '{"accepted":true,"finding_rechecked":"build-go-ofrep","commands":[{"cmd":"go test ./internal/server/ofrep","rc":0},{"cmd":"go test ./internal/server/evaluation","rc":0}],"final_diff_hash":"abc123"}' --notes "Verifier accepted worker resolution.")"
 [[ "$todo_closed_output" == $'todo closed\ttodo-017\tverifier-01-ofrep' ]]
 assert_file_contains "$MULTIAGENT_STATE_DIR/todos/todo-017/closure.json" '"accepted": true'
-gate_closed_output="$("$ROOT/bin/subagent.sh" gate-check)"
+gate_closed_output="$("$MULTIAGENT" subagent gate-check)"
 [[ "$gate_closed_output" == $'accepted\tfinal-gate' ]]
 
 CLOSED_HASH_ROOT="$TMPDIR/closed-hash-root"
@@ -5140,6 +5154,7 @@ mkdir -p "$CLOSED_HASH_ROOT" "$CLOSED_HASH_STATE/subagents/verifier-closed-hash"
 git -C "$CLOSED_HASH_ROOT" init -q
 git -C "$CLOSED_HASH_ROOT" config user.email test@example.com
 git -C "$CLOSED_HASH_ROOT" config user.name Test
+git -C "$CLOSED_HASH_ROOT" config commit.gpgsign false
 printf 'before\n' >"$CLOSED_HASH_ROOT/source.txt"
 git -C "$CLOSED_HASH_ROOT" add source.txt
 git -C "$CLOSED_HASH_ROOT" commit -qm initial
@@ -5149,33 +5164,33 @@ printf 'ACCEPTED\nbehavior-verification-passed: final-diff-sha256=%s behavior_cl
   "$CLOSED_HASH_DIFF_SHA" >"$CLOSED_HASH_STATE/subagents/verifier-closed-hash/last-message.txt"
 printf 'done\n' >"$CLOSED_HASH_STATE/subagents/verifier-closed-hash/status"
 CLOSED_HASH_ENV=(MULTIAGENT_ROOT="$CLOSED_HASH_ROOT" MULTIAGENT_STATE_DIR="$CLOSED_HASH_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1)
-env "${CLOSED_HASH_ENV[@]}" "$ROOT/bin/subagent.sh" finding-create closed-hash-finding \
+env "${CLOSED_HASH_ENV[@]}" "$MULTIAGENT" subagent finding-create closed-hash-finding \
   --severity blocking --type behavior --summary "Verify final diff" --affected source.txt \
   --evidence-json '{"source_evidence":"source.txt changed"}' --required-resolution "Bind closure to the final diff." >/dev/null
-env "${CLOSED_HASH_ENV[@]}" "$ROOT/bin/subagent.sh" todo-create closed-hash-todo \
+env "${CLOSED_HASH_ENV[@]}" "$MULTIAGENT" subagent todo-create closed-hash-todo \
   --source-finding-id closed-hash-finding --task "Verify final diff." \
   --done-criteria "Bind closure evidence to the final diff." >/dev/null
-env "${CLOSED_HASH_ENV[@]}" "$ROOT/bin/subagent.sh" resolution-create closed-hash-todo \
+env "${CLOSED_HASH_ENV[@]}" "$MULTIAGENT" subagent resolution-create closed-hash-todo \
   --worker worker-closed-hash --status resolved --changed source.txt \
   --validation-json "[{\"cmd\":\"test -f source.txt\",\"rc\":0,\"final_diff_sha256\":\"$CLOSED_HASH_DIFF_SHA\"}]" \
   --why "Final diff reviewed." >/dev/null
-env "${CLOSED_HASH_ENV[@]}" "$ROOT/bin/subagent.sh" todo-close closed-hash-todo \
+env "${CLOSED_HASH_ENV[@]}" "$MULTIAGENT" subagent todo-close closed-hash-todo \
   --verified-by verifier-closed-hash \
   --recheck-json "{\"accepted\":true,\"source_finding_id\":\"closed-hash-finding\",\"commands\":[{\"cmd\":\"test -f source.txt\",\"rc\":0}],\"final_diff_sha256\":\"$CLOSED_HASH_DIFF_SHA\"}" >/dev/null
-closed_hash_gate_output="$(env "${CLOSED_HASH_ENV[@]}" "$ROOT/bin/subagent.sh" gate-check)"
+closed_hash_gate_output="$(env "${CLOSED_HASH_ENV[@]}" "$MULTIAGENT" subagent gate-check)"
 [[ "$closed_hash_gate_output" == $'accepted\tfinal-gate' ]]
-env "${CLOSED_HASH_ENV[@]}" "$ROOT/bin/subagent.sh" finding-create superseded-visible-test \
+env "${CLOSED_HASH_ENV[@]}" "$MULTIAGENT" subagent finding-create superseded-visible-test \
   --severity blocking --type test-gap --summary "Old visible expectation conflicts with the public task" \
   --affected source.txt --evidence-json '{"source_evidence":"source.txt old expectation"}' \
   --required-resolution "Edit the old expectation." >/dev/null
-if env "${CLOSED_HASH_ENV[@]}" "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-undismissed-finding.out" 2>&1; then
+if env "${CLOSED_HASH_ENV[@]}" "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-undismissed-finding.out" 2>&1; then
   echo "expected gate-check to reject an undismissed blocking finding" >&2
   exit 1
 fi
-env "${CLOSED_HASH_ENV[@]}" "$ROOT/bin/subagent.sh" finding-dismiss superseded-visible-test \
+env "${CLOSED_HASH_ENV[@]}" "$MULTIAGENT" subagent finding-dismiss superseded-visible-test \
   --verified-by verifier-closed-hash \
   --recheck-json "{\"accepted\":true,\"source_finding_id\":\"superseded-visible-test\",\"disposition\":\"superseded\",\"evidence\":\"Public task and source.txt prove the old expectation changed.\",\"final_diff_sha256\":\"$CLOSED_HASH_DIFF_SHA\"}" >/dev/null
-dismissed_finding_gate_output="$(env "${CLOSED_HASH_ENV[@]}" "$ROOT/bin/subagent.sh" gate-check)"
+dismissed_finding_gate_output="$(env "${CLOSED_HASH_ENV[@]}" "$MULTIAGENT" subagent gate-check)"
 [[ "$dismissed_finding_gate_output" == $'accepted\tfinal-gate' ]]
 assert_file_contains "$CLOSED_HASH_STATE/findings/superseded-visible-test/dismissal.json" '"disposition": "superseded"'
 python3 - "$CLOSED_HASH_STATE/todos/closed-hash-todo/closure.json" <<'PY'
@@ -5188,7 +5203,7 @@ payload = json.loads(path.read_text())
 payload["recheck"]["final_diff_sha256"] = "stale"
 path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 PY
-if env "${CLOSED_HASH_ENV[@]}" "$ROOT/bin/subagent.sh" gate-check >"$TMPDIR/gate-closed-hash-stale.out" 2>&1; then
+if env "${CLOSED_HASH_ENV[@]}" "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-closed-hash-stale.out" 2>&1; then
   echo "expected gate-check to reject stale closed-todo final diff evidence" >&2
   cat "$TMPDIR/gate-closed-hash-stale.out" >&2
   exit 1
@@ -5200,7 +5215,7 @@ mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-structured"
 printf 'Final status: completed according to stale transcript text\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-structured/current.txt"
 printf 'Done and finished, but this is fallback context only\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-structured/transcript.log"
 
-"$ROOT/bin/subagent.sh" spawn subagent-watch --instruction "Watch builds"
+"$MULTIAGENT" subagent spawn subagent-watch --instruction "Watch builds"
 assert_file_contains "$MOCK_TMUX_WINDOWS" "subagent-watch"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/status" "running"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/current.txt" "Claude prompt ready"
@@ -5221,13 +5236,13 @@ assert_file_contains "$MOCK_TMUX_LOG" "send-key test-session:subagent-watch Watc
 printf 'Claude prompt ready\n' >"$MOCK_TMUX_CAPTURES/subagent-file.txt"
 INSTRUCTION_FILE="$TMPDIR/subagent-instruction.txt"
 printf 'Watch from file\nwith exact text\n' >"$INSTRUCTION_FILE"
-"$ROOT/bin/subagent.sh" spawn subagent-file --instruction-file "$INSTRUCTION_FILE"
+"$MULTIAGENT" subagent spawn subagent-file --instruction-file "$INSTRUCTION_FILE"
 assert_file_contains "$MOCK_TMUX_WINDOWS" "subagent-file"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-file/instruction.txt" "Watch from file"
 assert_file_contains "$MOCK_TMUX_LOG" "send-key test-session:subagent-file Read and follow the assignment in $MULTIAGENT_STATE_DIR/subagents/subagent-file/instruction.txt"
 
 printf 'Claude prompt ready\n' >"$MOCK_TMUX_CAPTURES/owned-inline.txt"
-owned_inline_output="$("$ROOT/bin/subagent.sh" spawn owned-inline --own prompts/verifier.md -- "Repair the bounded path")"
+owned_inline_output="$("$MULTIAGENT" subagent spawn owned-inline --own prompts/verifier.md -- "Repair the bounded path")"
 [[ "$owned_inline_output" == $'spawned owned-inline' ]]
 assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/owned-inline/assignment.env" "assignment_id=spawn-owned-inline"
 assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/owned-inline/assignment.env" "branch=$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)"
@@ -5235,9 +5250,9 @@ assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/owned-inline/owned-paths
 assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/owned-inline/status" "running"
 assert_file_contains "$MOCK_TMUX_LOG" "send-key test-session:owned-inline Repair the bounded path"
 
-"$ROOT/bin/subagent.sh" assignment-create owned-mismatch --assignment-id existing-owned --branch "$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)" --owned prompts/worker.md >/dev/null
+"$MULTIAGENT" subagent assignment-create owned-mismatch --assignment-id existing-owned --branch "$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)" --owned prompts/worker.md >/dev/null
 printf 'Claude prompt ready\n' >"$MOCK_TMUX_CAPTURES/owned-mismatch.txt"
-if "$ROOT/bin/subagent.sh" spawn owned-mismatch --own bin/subagent.sh --instruction "Do not widen ownership" >"$TMPDIR/owned-mismatch.out" 2>&1; then
+if "$MULTIAGENT" subagent spawn owned-mismatch --own src/subagent.rs --instruction "Do not widen ownership" >"$TMPDIR/owned-mismatch.out" 2>&1; then
   echo "expected spawn to reject paths outside an existing assignment" >&2
   cat "$TMPDIR/owned-mismatch.out" >&2
   exit 1
@@ -5249,10 +5264,10 @@ if grep -Fq "new-window -d test-session owned-mismatch" "$MOCK_TMUX_LOG"; then
 fi
 
 printf 'Claude prompt ready\n' >"$MOCK_TMUX_CAPTURES/worker-generic-01.txt"
-"$ROOT/bin/subagent.sh" spawn worker-generic-01 --instruction "First generic worker"
+"$MULTIAGENT" subagent spawn worker-generic-01 --instruction "First generic worker"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/worker-generic-01/status" "running"
 printf 'Claude prompt ready\n' >"$MOCK_TMUX_CAPTURES/worker-generic-02.txt"
-if "$ROOT/bin/subagent.sh" spawn worker-generic-02 --instruction "Second generic worker" >"$TMPDIR/worker-generic-conflict.out" 2>&1; then
+if "$MULTIAGENT" subagent spawn worker-generic-02 --instruction "Second generic worker" >"$TMPDIR/worker-generic-conflict.out" 2>&1; then
   echo "expected generic worker spawn to reject active generic worker" >&2
   cat "$TMPDIR/worker-generic-conflict.out" >&2
   exit 1
@@ -5260,7 +5275,7 @@ fi
 assert_file_contains "$TMPDIR/worker-generic-conflict.out" "active generic worker already running"
 
 printf 'Codex prompt ready\n' >"$MOCK_TMUX_CAPTURES/verifier-01-docs.txt"
-SUBAGENT_CLI="$VERIFIER_CLI" "$ROOT/bin/subagent.sh" spawn verifier-01-docs --instruction "Review worker-01-docs"
+SUBAGENT_CLI="$VERIFIER_CLI" "$MULTIAGENT" subagent spawn verifier-01-docs --instruction "Review worker-01-docs"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-01-docs/meta.env" "cli=codex"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-01-docs/instruction.txt" "Verifier Role Prompt"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-01-docs/instruction.txt" "Review worker-01-docs"
@@ -5271,21 +5286,21 @@ verifier_spawn_line="$(grep -F "new-window -d test-session verifier-01-docs " "$
 [[ "$verifier_spawn_line" == *"--dangerously-bypass-approvals-and-sandbox --no-alt-screen"* ]]
 
 printf 'Codex prompt ready\n' >"$MOCK_TMUX_CAPTURES/verifier-owned-01.txt"
-SUBAGENT_CLI="$VERIFIER_CLI" "$ROOT/bin/subagent.sh" spawn verifier-owned-01 \
+SUBAGENT_CLI="$VERIFIER_CLI" "$MULTIAGENT" subagent spawn verifier-owned-01 \
   --own prompts/verifier.md --instruction "Review shared source"
 printf 'Codex prompt ready\n' >"$MOCK_TMUX_CAPTURES/build-verifier-owned-02.txt"
-SUBAGENT_CLI="$VERIFIER_CLI" "$ROOT/bin/subagent.sh" spawn build-verifier-owned-02 \
+SUBAGENT_CLI="$VERIFIER_CLI" "$MULTIAGENT" subagent spawn build-verifier-owned-02 \
   --own prompts/verifier.md --instruction "Compile shared source"
 assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/verifier-owned-01/assignment.env" "role=verifier"
 assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/build-verifier-owned-02/assignment.env" "role=verifier"
 
 printf 'Codex prompt ready\n' >"$MOCK_TMUX_CAPTURES/acceptance-scout-01-contract.txt"
-SUBAGENT_CLI="$VERIFIER_CLI" "$ROOT/bin/subagent.sh" spawn acceptance-scout-01-contract --instruction "Extract acceptance risks"
+SUBAGENT_CLI="$VERIFIER_CLI" "$MULTIAGENT" subagent spawn acceptance-scout-01-contract --instruction "Extract acceptance risks"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/acceptance-scout-01-contract/instruction.txt" "Acceptance Scout Role Prompt"
 assert_file_not_contains "$MULTIAGENT_STATE_DIR/subagents/acceptance-scout-01-contract/instruction.txt" "Contract Scout Role Prompt"
 
 printf 'Codex prompt ready\n' >"$MOCK_TMUX_CAPTURES/contract-scout-01-contract.txt"
-SUBAGENT_CLI="$VERIFIER_CLI" "$ROOT/bin/subagent.sh" spawn contract-scout-01-contract --instruction "Extract source contracts"
+SUBAGENT_CLI="$VERIFIER_CLI" "$MULTIAGENT" subagent spawn contract-scout-01-contract --instruction "Extract source contracts"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/contract-scout-01-contract/instruction.txt" "Contract Scout Role Prompt"
 assert_file_not_contains "$MULTIAGENT_STATE_DIR/subagents/contract-scout-01-contract/instruction.txt" "Acceptance Scout Role Prompt"
 
@@ -5295,11 +5310,11 @@ ACCEPTED
 final-diff-sha256: abc123
 build-verification-passed: final-diff-sha256=abc123 compile_clean=true returncode=0
 EOF
-verifier_accepted_poll="$(SUBAGENT_CLI="$VERIFIER_CLI" "$ROOT/bin/subagent.sh" poll verifier-01-docs)"
+verifier_accepted_poll="$(SUBAGENT_CLI="$VERIFIER_CLI" "$MULTIAGENT" subagent poll verifier-01-docs)"
 [[ "$verifier_accepted_poll" == $'verifier-01-docs\tdone' ]]
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-01-docs/status" "done"
 
-if MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$ROOT/bin/subagent.sh" spawn codex-no-prompt >"$TMPDIR/codex-no-prompt.out" 2>&1; then
+if MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$MULTIAGENT" subagent spawn codex-no-prompt >"$TMPDIR/codex-no-prompt.out" 2>&1; then
   echo "expected codex exec subagent spawn without instruction to fail" >&2
   cat "$TMPDIR/codex-no-prompt.out" >&2
   exit 1
@@ -5307,7 +5322,7 @@ fi
 assert_file_contains "$TMPDIR/codex-no-prompt.out" "codex exec subagent spawn requires --instruction or --instruction-file"
 
 printf 'Codex exec prompt ready\n' >"$MOCK_TMUX_CAPTURES/codex-exec-protocol.txt"
-MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$ROOT/bin/subagent.sh" spawn codex-exec-protocol --instruction "Inspect /app"
+MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$MULTIAGENT" subagent spawn codex-exec-protocol --instruction "Inspect /app"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/codex-exec-protocol/instruction.txt" "Codex Exec Tool Protocol"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/codex-exec-protocol/instruction.txt" '{"cmd":"cd /app && sed -n'
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/codex-exec-protocol/instruction.txt" "Inspect /app"
@@ -5321,6 +5336,7 @@ mkdir -p "$VERIFIER_DIFF_ROOT"
 git -C "$VERIFIER_DIFF_ROOT" init -q
 git -C "$VERIFIER_DIFF_ROOT" config user.email test@example.com
 git -C "$VERIFIER_DIFF_ROOT" config user.name Test
+git -C "$VERIFIER_DIFF_ROOT" config commit.gpgsign false
 printf 'before\n' >"$VERIFIER_DIFF_ROOT/source.txt"
 git -C "$VERIFIER_DIFF_ROOT" add source.txt
 git -C "$VERIFIER_DIFF_ROOT" commit -qm initial
@@ -5329,7 +5345,7 @@ git -C "$VERIFIER_DIFF_ROOT" add source.txt
 VERIFIER_STAGED_DIFF_SHA="$(git -C "$VERIFIER_DIFF_ROOT" diff HEAD --binary --ignore-submodules=all -- | shasum -a 256 | awk '{print $1}')"
 MULTIAGENT_ROOT="$VERIFIER_DIFF_ROOT" MULTIAGENT_PROMPT_MODULE_ROOT="$ROOT" \
   MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex \
-  "$ROOT/bin/subagent.sh" spawn verifier-exec-role --instruction "Review the final diff"
+  "$MULTIAGENT" subagent spawn verifier-exec-role --instruction "Review the final diff"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-exec-role/instruction.txt" "Verifier Role Prompt"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-exec-role/instruction.txt" "state-space partition audit"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-exec-role/instruction.txt" "Review the final diff"
@@ -5338,7 +5354,7 @@ assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-exec-role/instruc
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-exec-role/instruction.txt" "behavior-verification-passed:"
 
 printf 'Login required before Claude can start\n' >"$MOCK_TMUX_CAPTURES/subagent-auth.txt"
-if "$ROOT/bin/subagent.sh" spawn subagent-auth --instruction "Should not send" >"$TMPDIR/auth-spawn.out" 2>&1; then
+if "$MULTIAGENT" subagent spawn subagent-auth --instruction "Should not send" >"$TMPDIR/auth-spawn.out" 2>&1; then
   echo "expected spawn to stop when the subagent is not ready" >&2
   cat "$TMPDIR/auth-spawn.out" >&2
   exit 1
@@ -5352,7 +5368,7 @@ if grep -Fq "Should not send" "$MOCK_TMUX_LOG"; then
 fi
 
 printf 'Claude prompt ready\n' >"$MOCK_TMUX_CAPTURES/subagent-claude.txt"
-SUBAGENT_CLI=claude "$ROOT/bin/subagent.sh" spawn subagent-claude --instruction "Use Claude"
+SUBAGENT_CLI=claude "$MULTIAGENT" subagent spawn subagent-claude --instruction "Use Claude"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-claude/meta.env" "cli=claude"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-claude/current.txt" "Claude prompt ready"
 claude_spawn_line="$(grep -F "new-window -d test-session subagent-claude " "$MOCK_TMUX_LOG")"
@@ -5363,45 +5379,45 @@ if [[ "$claude_spawn_line" == *"--cd"* || "$claude_spawn_line" == *"--no-alt-scr
   exit 1
 fi
 printf 'Final status: completed\n' >"$MOCK_TMUX_CAPTURES/subagent-claude.txt"
-"$ROOT/bin/subagent.sh" finalize subagent-claude >/dev/null
+"$MULTIAGENT" subagent finalize subagent-claude >/dev/null
 
 printf 'Progress update: still running\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"
-poll_output="$("$ROOT/bin/subagent.sh" poll subagent-watch)"
+poll_output="$("$MULTIAGENT" subagent poll subagent-watch)"
 [[ "$poll_output" == $'subagent-watch\trunning' ]]
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/transcript.log" "Progress update: still running"
 
 printf 'Read and follow the assignment. Proceed now, then report progress/final status in this window.\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"
-poll_prompt_output="$("$ROOT/bin/subagent.sh" poll subagent-watch)"
+poll_prompt_output="$("$MULTIAGENT" subagent poll subagent-watch)"
 [[ "$poll_prompt_output" == $'subagent-watch\trunning' ]]
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/current.txt" "progress/final status"
 
 printf 'final status: codex exec exited rc=0\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"
-poll_final_status_output="$("$ROOT/bin/subagent.sh" poll subagent-watch)"
+poll_final_status_output="$("$MULTIAGENT" subagent poll subagent-watch)"
 [[ "$poll_final_status_output" == $'subagent-watch\tdone' ]]
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/current.txt" "final status: codex exec exited rc=0"
 
 mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-durable-codex"
 printf 'Read-only scout completed with source owner findings.\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-durable-codex/last-message.txt"
 printf 'final status: codex exec exited rc=0\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-durable-codex/transcript.log"
-poll_durable_output="$("$ROOT/bin/subagent.sh" poll subagent-durable-codex)"
+poll_durable_output="$("$MULTIAGENT" subagent poll subagent-durable-codex)"
 [[ "$poll_durable_output" == $'subagent-durable-codex\tdone' ]]
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-durable-codex/current.txt" "recovered durable subagent output"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-durable-codex/current.txt" "Read-only scout completed with source owner findings."
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-durable-codex/current.txt" "final status: codex exec exited rc=0"
 
 printf 'Warning: no last agent message; wrote empty content to /tmp/last-message.txt\nfinal status: codex exec exited rc=0\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"
-poll_empty_final_output="$("$ROOT/bin/subagent.sh" poll subagent-watch)"
+poll_empty_final_output="$("$MULTIAGENT" subagent poll subagent-watch)"
 [[ "$poll_empty_final_output" == $'subagent-watch\tfailed' ]]
 
 printf 'final status: codex exec exited rc=1\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"
-poll_failed_status_output="$("$ROOT/bin/subagent.sh" poll subagent-watch)"
+poll_failed_status_output="$("$MULTIAGENT" subagent poll subagent-watch)"
 [[ "$poll_failed_status_output" == $'subagent-watch\tfailed' ]]
 
 printf 'Progress update: still running\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"
-"$ROOT/bin/subagent.sh" poll subagent-watch >/dev/null
+"$MULTIAGENT" subagent poll subagent-watch >/dev/null
 
 printf 'worker-01-docs\n' >>"$MOCK_TMUX_WINDOWS"
-status_output="$("$ROOT/bin/status.sh")"
+status_output="$("$MULTIAGENT" status)"
 [[ "$status_output" == *$'worker\tworker-01-docs\tbusy\topen\tWorker progress: editing README\t-'* ]]
 [[ "$status_output" == *$'subagent\tsubagent-watch\trunning\topen\tProgress update: still running\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-watch"* ]]
 if grep -Fq $'\torchestrator\t' <<<"$status_output"; then
@@ -5411,7 +5427,7 @@ if grep -Fq $'\torchestrator\t' <<<"$status_output"; then
 fi
 
 printf 'Final status: completed\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"
-finalize_output="$("$ROOT/bin/subagent.sh" finalize subagent-watch)"
+finalize_output="$("$MULTIAGENT" subagent finalize subagent-watch)"
 [[ "$finalize_output" == "finalized subagent-watch" ]]
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/status" "finalized"
 if grep -Fqx -- "subagent-watch" "$MOCK_TMUX_WINDOWS"; then
@@ -5419,7 +5435,7 @@ if grep -Fqx -- "subagent-watch" "$MOCK_TMUX_WINDOWS"; then
   exit 1
 fi
 
-inspect_output="$("$ROOT/bin/subagent.sh" inspect subagent-watch --lines 5)"
+inspect_output="$("$MULTIAGENT" subagent inspect subagent-watch --lines 5)"
 [[ "$inspect_output" == *"Final status: completed"* ]]
 
 mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-restore"
@@ -5448,7 +5464,7 @@ node_id	agent	assignment_id	role	branch	owned_paths	status	decision_id	plan_id	a
 impl	worker-impl	A-impl	exploitation	feature/docs	README.md	blocked	DEC-1	PLAN-1	2026-01-01T00:00:00Z
 docs	worker-docs	A-docs	exploitation	feature/docs	docs/	running	DEC-1	PLAN-1	2026-01-01T00:00:01Z
 EOF
-watch_output="$("$ROOT/bin/watch.sh" --once --log-lines 5)"
+watch_output="$("$MULTIAGENT" watch --once --log-lines 5)"
 [[ "$watch_output" == *"Multiagent Dashboard"* ]]
 [[ "$watch_output" == *"Agent Status Summary"* ]]
 [[ "$watch_output" == *"Blocked Agents"* ]]
@@ -5480,7 +5496,7 @@ printf 'Open subagent prompt\n' >"$MOCK_TMUX_CAPTURES/subagent-open.txt"
 
 mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-unknown"
 
-recover_plan="$("$ROOT/bin/subagent.sh" recover-plan)"
+recover_plan="$("$MULTIAGENT" subagent recover-plan)"
 [[ "$recover_plan" == *$'subagent-watch\tskip-finalized\tstatus-finalized\tfinalized\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-watch"* ]]
 [[ "$recover_plan" == *$'subagent-restore\trestore\tclosed-with-recoverable-context\trunning\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-restore"* ]]
 [[ "$recover_plan" == *$'subagent-blocked\tskip-blocked\trequires-orchestrator-decision\trunning\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-blocked"* ]]
@@ -5488,18 +5504,18 @@ recover_plan="$("$ROOT/bin/subagent.sh" recover-plan)"
 [[ "$recover_plan" == *$'subagent-open\tskip-open\ttmux-window-already-open\trunning\topen\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-open"* ]]
 [[ "$recover_plan" == *$'subagent-unknown\tskip-unknown\tno-current-or-transcript\tunknown\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-unknown"* ]]
 [[ "$recover_plan" == *$'subagent-structured\trestore\tcheckpoint-resumable\trunning\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-structured"* ]]
-structured_blocked_output="$("$ROOT/bin/subagent.sh" checkpoint-update subagent-structured --step "verified checkpoint recovery preference" --blocker "aggregate restore-all test should not restore this fixture")"
+structured_blocked_output="$("$MULTIAGENT" subagent checkpoint-update subagent-structured --step "verified checkpoint recovery preference" --blocker "aggregate restore-all test should not restore this fixture")"
 [[ "$structured_blocked_output" == $'checkpoint updated\tsubagent-structured\tblocked' ]]
 
 blocked_restore_file="$TMPDIR/blocked-restore.out"
-if "$ROOT/bin/subagent.sh" restore subagent-blocked >"$blocked_restore_file" 2>&1; then
+if "$MULTIAGENT" subagent restore subagent-blocked >"$blocked_restore_file" 2>&1; then
   echo "expected blocked subagent restore to require force" >&2
   cat "$blocked_restore_file" >&2
   exit 1
 fi
 assert_file_contains "$blocked_restore_file" "refusing to restore subagent-blocked: skip-blocked"
 
-restore_output="$("$ROOT/bin/subagent.sh" restore subagent-restore)"
+restore_output="$("$MULTIAGENT" subagent restore subagent-restore)"
 [[ "$restore_output" == "restored subagent-restore" ]]
 assert_file_contains "$MOCK_TMUX_WINDOWS" "subagent-restore"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-restore/status" "running"
@@ -5518,7 +5534,7 @@ if [[ "$claude_restore_line" == *"--cd"* || "$claude_restore_line" == *"--no-alt
   exit 1
 fi
 
-restore_all_output="$("$ROOT/bin/subagent.sh" restore-all)"
+restore_all_output="$("$MULTIAGENT" subagent restore-all)"
 [[ "$restore_all_output" == *$'skipped subagent-blocked\tskip-blocked'* ]]
 [[ "$restore_all_output" == *$'skipped subagent-open\tskip-open'* ]]
 [[ "$restore_all_output" == *$'skipped subagent-watch\tskip-finalized'* ]]
@@ -5527,16 +5543,16 @@ restore_all_output="$("$ROOT/bin/subagent.sh" restore-all)"
 
 # Test organizational learning functionality
 
-# Test decision.sh basic functionality
+# Test multiagent decision basic functionality
 DECISION_STATE_DIR="$TMPDIR/decision-state"
-MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" init DEC-001 --title "Test Decision" --owner "test-user"
+MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$MULTIAGENT" decision init DEC-001 --title "Test Decision" --owner "test-user"
 assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/decision.env" "decision_id=DEC-001"
 assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/decision.env" "title=Test Decision"
 assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/decision.env" "owner=test-user"
 assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/decision.env" "status=open"
 
-# Test decision.sh add-alternative
-MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" add-alternative DEC-001 \
+# Test multiagent decision add-alternative
+MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$MULTIAGENT" decision add-alternative DEC-001 \
   --plan-id PLAN-A --summary "First approach" --proposed-by agent-1 \
   --branch worker/plan-a --assignment-name worker-implementation \
   --expected-outcome "Fast delivery" --risk "Technical debt"
@@ -5545,8 +5561,8 @@ assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/alternatives.tsv" "P
 assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/alternatives.tsv" "First approach"
 assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/alternatives.tsv" "agent-1"
 
-# Test decision.sh add-assumption
-MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" add-assumption DEC-001 \
+# Test multiagent decision add-assumption
+MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$MULTIAGENT" decision add-assumption DEC-001 \
   --assumption-id ASSUME-1 --statement "API will be stable" \
   --confidence "high" --validation-method "integration tests" \
   --expected-signal "no breaking changes"
@@ -5554,8 +5570,8 @@ MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" add-assumptio
 assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/assumptions.tsv" "ASSUME-1"
 assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/assumptions.tsv" "API will be stable"
 
-# Test decision.sh commit
-MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" commit DEC-001 \
+# Test multiagent decision commit
+MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$MULTIAGENT" decision commit DEC-001 \
   --selected-plan PLAN-A --reason "Best balance of speed and quality" \
   --rollback-policy "Manual rollback" --reflection-due "2026-06-01"
 
@@ -5563,16 +5579,16 @@ assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/decision.env" "statu
 assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/outcome.env" "selected_plan=PLAN-A"
 assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/outcome.env" "reason=Best balance of speed and quality"
 
-# Test decision.sh record-metric
-MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" record-metric DEC-001 \
+# Test multiagent decision record-metric
+MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$MULTIAGENT" decision record-metric DEC-001 \
   --name "delivery-time" --expected "2 weeks" --actual "3 weeks"
 
 assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/metrics.tsv" "delivery-time"
 assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/metrics.tsv" "2 weeks"
 assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/metrics.tsv" "3 weeks"
 
-# Test decision.sh reflect
-MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" reflect DEC-001 \
+# Test multiagent decision reflect
+MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$MULTIAGENT" decision reflect DEC-001 \
   --recommendation "adjust" --reason "Delivery was slower than expected" \
   --follow-up-assignment "optimization-task"
 
@@ -5580,16 +5596,16 @@ assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/decision.env" "statu
 assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/outcome.env" "recommendation=adjust"
 assert_file_contains "$DECISION_STATE_DIR/decisions/DEC-001/outcome.env" "reflection_reason=Delivery was slower than expected"
 
-# Test decision.sh show and list
-show_output="$(MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" show DEC-001)"
+# Test multiagent decision show and list
+show_output="$(MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$MULTIAGENT" decision show DEC-001)"
 [[ "$show_output" == *"Decision: DEC-001"* ]]
 [[ "$show_output" == *"title=Test Decision"* ]]
 
-list_output="$(MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" list)"
+list_output="$(MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$MULTIAGENT" decision list)"
 [[ "$list_output" == *$'DEC-001\treflected\tTest Decision\ttest-user'* ]]
 
-# Test decision.sh error conditions
-if MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" init DEC-001 --title "Duplicate" >"$TMPDIR/duplicate.out" 2>&1; then
+# Test multiagent decision error conditions
+if MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$MULTIAGENT" decision init DEC-001 --title "Duplicate" >"$TMPDIR/duplicate.out" 2>&1; then
   echo "expected duplicate decision to fail" >&2
   cat "$TMPDIR/duplicate.out" >&2
   exit 1
@@ -5597,7 +5613,7 @@ fi
 assert_file_contains "$TMPDIR/duplicate.out" "decision already exists: DEC-001"
 
 # Test invalid decision ID
-if MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" init "DEC/INVALID" --title "Bad ID" >"$TMPDIR/invalid-id.out" 2>&1; then
+if MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$MULTIAGENT" decision init "DEC/INVALID" --title "Bad ID" >"$TMPDIR/invalid-id.out" 2>&1; then
   echo "expected invalid decision ID to fail" >&2
   cat "$TMPDIR/invalid-id.out" >&2
   exit 1
@@ -5605,7 +5621,7 @@ fi
 assert_file_contains "$TMPDIR/invalid-id.out" "invalid decision ID: DEC/INVALID"
 
 # Test invalid recommendation
-if MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" reflect DEC-001 --recommendation "invalid" --reason "test" >"$TMPDIR/invalid-rec.out" 2>&1; then
+if MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$MULTIAGENT" decision reflect DEC-001 --recommendation "invalid" --reason "test" >"$TMPDIR/invalid-rec.out" 2>&1; then
   echo "expected invalid recommendation to fail" >&2
   cat "$TMPDIR/invalid-rec.out" >&2
   exit 1
@@ -5613,7 +5629,7 @@ fi
 assert_file_contains "$TMPDIR/invalid-rec.out" "invalid recommendation: invalid"
 
 # Test newline rejection
-if MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" init DEC-NEWLINE --title "$(printf 'Title\nwith\nnewlines')" >"$TMPDIR/newline.out" 2>&1; then
+if MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$MULTIAGENT" decision init DEC-NEWLINE --title "$(printf 'Title\nwith\nnewlines')" >"$TMPDIR/newline.out" 2>&1; then
   echo "expected newline in title to fail" >&2
   cat "$TMPDIR/newline.out" >&2
   exit 1
@@ -5621,10 +5637,10 @@ fi
 assert_file_contains "$TMPDIR/newline.out" "--title may not contain newlines"
 
 # Test duplicate plan ID with a new decision
-MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" init DEC-002 --title "Test Duplicates"
-MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" add-alternative DEC-002 --plan-id PLAN-B --summary "First plan" --proposed-by agent-1
+MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$MULTIAGENT" decision init DEC-002 --title "Test Duplicates"
+MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$MULTIAGENT" decision add-alternative DEC-002 --plan-id PLAN-B --summary "First plan" --proposed-by agent-1
 set +e  # Temporarily disable exit on error
-MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$ROOT/bin/decision.sh" add-alternative DEC-002 --plan-id PLAN-B --summary "Duplicate" --proposed-by agent-2 >"$TMPDIR/duplicate-plan.out" 2>&1
+MULTIAGENT_STATE_DIR="$DECISION_STATE_DIR" "$MULTIAGENT" decision add-alternative DEC-002 --plan-id PLAN-B --summary "Duplicate" --proposed-by agent-2 >"$TMPDIR/duplicate-plan.out" 2>&1
 duplicate_result=$?
 set -e  # Re-enable exit on error
 if [[ "$duplicate_result" -eq 0 ]]; then
@@ -5649,7 +5665,7 @@ mkdir -p "$ORG_ASSIGN_REPO" "$ORG_ASSIGN_STATE"
   git switch -q -c worker/org-task
 )
 
-org_assignment_create_output="$(MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ORG_ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create worker-org --assignment-id org-001 --branch worker/org-task --owned README.md --role qa --decision-id DEC-001 --plan-id PLAN-A)"
+org_assignment_create_output="$(MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ORG_ASSIGN_STATE" "$MULTIAGENT" subagent assignment-create worker-org --assignment-id org-001 --branch worker/org-task --owned README.md --role qa --decision-id DEC-001 --plan-id PLAN-A)"
 [[ "$org_assignment_create_output" == $'assignment created\tworker-org\torg-001\tworker/org-task' ]]
 assert_file_contains "$ORG_ASSIGN_STATE/assignments/worker-org/assignment.env" "assignment_id=org-001"
 assert_file_contains "$ORG_ASSIGN_STATE/assignments/worker-org/assignment.env" "role=qa"
@@ -5657,7 +5673,7 @@ assert_file_contains "$ORG_ASSIGN_STATE/assignments/worker-org/assignment.env" "
 assert_file_contains "$ORG_ASSIGN_STATE/assignments/worker-org/assignment.env" "plan_id=PLAN-A"
 # Test invalid role rejection
 set +e
-MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ORG_ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create worker-bad --assignment-id bad-001 --branch worker/org-task --owned README.md --role invalid-role >"$TMPDIR/invalid-role.out" 2>&1
+MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ORG_ASSIGN_STATE" "$MULTIAGENT" subagent assignment-create worker-bad --assignment-id bad-001 --branch worker/org-task --owned README.md --role invalid-role >"$TMPDIR/invalid-role.out" 2>&1
 invalid_role_result=$?
 set -e
 if [[ "$invalid_role_result" -eq 0 ]]; then
@@ -5667,22 +5683,22 @@ if [[ "$invalid_role_result" -eq 0 ]]; then
 fi
 assert_file_contains "$TMPDIR/invalid-role.out" "invalid role 'invalid-role'"
 # Test checkpoint-update includes organizational metadata
-checkpoint_org_output="$(MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ORG_ASSIGN_STATE" "$ROOT/bin/subagent.sh" checkpoint-update worker-org --step "implemented org metadata" --status running)"
+checkpoint_org_output="$(MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ORG_ASSIGN_STATE" "$MULTIAGENT" subagent checkpoint-update worker-org --step "implemented org metadata" --status running)"
 [[ "$checkpoint_org_output" == $'checkpoint updated\tworker-org\trunning' ]]
-checkpoint_show_org_output="$(MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ORG_ASSIGN_STATE" "$ROOT/bin/subagent.sh" checkpoint-show worker-org)"
+checkpoint_show_org_output="$(MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ORG_ASSIGN_STATE" "$MULTIAGENT" subagent checkpoint-show worker-org)"
 [[ "$checkpoint_show_org_output" == *"role=qa"* ]]
 [[ "$checkpoint_show_org_output" == *"decision_id=DEC-001"* ]]
 [[ "$checkpoint_show_org_output" == *"plan_id=PLAN-A"* ]]
-# Test status.sh includes organizational metadata columns
+# Test multiagent status includes organizational metadata columns
 # Create a persisted subagent with organizational metadata that won't trigger polling
 mkdir -p "$ORG_ASSIGN_STATE/subagents/subagent-org-test"
 printf 'running\n' >"$ORG_ASSIGN_STATE/subagents/subagent-org-test/status"
 printf 'Testing organizational metadata in subagents\n' >"$ORG_ASSIGN_STATE/subagents/subagent-org-test/current.txt"
 
 # Create assignment metadata for the subagent
-ORG_SUBAGENT_ASSIGN_OUTPUT="$(MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ORG_ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create subagent-org-test --assignment-id org-sub-001 --branch worker/org-task --owned README.md --role verifier --decision-id DEC-002 --plan-id PLAN-B)"
+ORG_SUBAGENT_ASSIGN_OUTPUT="$(MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ORG_ASSIGN_STATE" "$MULTIAGENT" subagent assignment-create subagent-org-test --assignment-id org-sub-001 --branch worker/org-task --owned README.md --role verifier --decision-id DEC-002 --plan-id PLAN-B)"
 
-status_org_output="$(cd "$ROOT" && MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ORG_ASSIGN_STATE" bin/status.sh)"
+status_org_output="$(cd "$ROOT" && MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ORG_ASSIGN_STATE" "$MULTIAGENT" status)"
 [[ "$status_org_output" == *$'TYPE\tNAME\tSTATUS\tWINDOW\tLAST_PROGRESS\tSTATE_DIR\tROLE\tDECISION_ID\tPLAN_ID'* ]]
 [[ "$status_org_output" == *$'subagent\tsubagent-org-test\trunning\tclosed\tTesting organizational metadata in subagents\t'"$ORG_ASSIGN_STATE/subagents/subagent-org-test"$'\tverifier\tDEC-002\tPLAN-B'* ]]
 # Test that subagents without metadata show "-" for organizational fields
@@ -5691,41 +5707,41 @@ printf 'running\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-no-meta/status"
 printf 'Subagent without org metadata\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-no-meta/current.txt"
 printf 'subagent-no-meta\n' >>"$MOCK_TMUX_WINDOWS"
 printf 'Subagent without org metadata progress\n' >"$MOCK_TMUX_CAPTURES/subagent-no-meta.txt"
-status_no_meta_output="$("$ROOT/bin/status.sh")"
+status_no_meta_output="$("$MULTIAGENT" status)"
 [[ "$status_no_meta_output" == *$'subagent\tsubagent-no-meta\trunning\topen\tSubagent without org metadata progress\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-no-meta"$'\t-\t-\t-'* ]]
-# Test documentation consistency - no unsupported plan.sh or decision.sh resolve commands
+# Test documentation consistency - no unsupported multiagent plan or multiagent decision resolve commands
 for documentation_file in "$ROOT/README.md" "$ROOT/docs/getting-started.md"; do
-  if grep -Fq "bin/plan.sh" "$documentation_file"; then
-    echo "$documentation_file should not reference unsupported bin/plan.sh" >&2
+  if grep -Fq "bin/multiagent plan" "$documentation_file"; then
+    echo "$documentation_file should not reference unsupported bin/multiagent plan" >&2
     exit 1
   fi
-  if grep -Fq "decision.sh resolve" "$documentation_file"; then
-    echo "$documentation_file should not reference unsupported decision.sh resolve command" >&2
+  if grep -Fq "multiagent decision resolve" "$documentation_file"; then
+    echo "$documentation_file should not reference unsupported multiagent decision resolve command" >&2
     exit 1
   fi
 done
-if grep -Fq "bin/plan.sh" "$ROOT/orchestrator_prompt.md"; then
-  echo "orchestrator_prompt.md should not reference unsupported bin/plan.sh" >&2
+if grep -Fq "bin/multiagent plan" "$ROOT/orchestrator_prompt.md"; then
+  echo "orchestrator_prompt.md should not reference unsupported bin/multiagent plan" >&2
   exit 1
 fi
-if grep -Fq "decision.sh resolve" "$ROOT/orchestrator_prompt.md"; then
-  echo "orchestrator_prompt.md should not reference unsupported decision.sh resolve command" >&2
+if grep -Fq "multiagent decision resolve" "$ROOT/orchestrator_prompt.md"; then
+  echo "orchestrator_prompt.md should not reference unsupported multiagent decision resolve command" >&2
   exit 1
 fi
 
 # Verify that decision command examples in the operations guide use only supported commands
-decision_commands_guide="$(grep "bin/decision.sh" "$ROOT/docs/getting-started.md" || true)"
-[[ "$decision_commands_guide" == *"bin/decision.sh init"* ]]
-[[ "$decision_commands_guide" == *"bin/decision.sh add-alternative"* ]]
-[[ "$decision_commands_guide" == *"bin/decision.sh commit"* ]]
-[[ "$decision_commands_guide" == *"bin/decision.sh list"* ]]
-[[ "$decision_commands_guide" == *"bin/decision.sh show"* ]]
+decision_commands_guide="$(grep "multiagent decision" "$ROOT/docs/getting-started.md" || true)"
+[[ "$decision_commands_guide" == *"multiagent decision init"* ]]
+[[ "$decision_commands_guide" == *"multiagent decision add-alternative"* ]]
+[[ "$decision_commands_guide" == *"multiagent decision commit"* ]]
+[[ "$decision_commands_guide" == *"multiagent decision list"* ]]
+[[ "$decision_commands_guide" == *"multiagent decision show"* ]]
 
 # Verify that decision command examples in the organizational-learning module use only supported commands
-decision_commands_prompt="$(grep "bin/decision.sh" "$ROOT/prompts/roles/organizational-learning.md" || true)"
-[[ "$decision_commands_prompt" == *"bin/decision.sh init"* ]]
-[[ "$decision_commands_prompt" == *"bin/decision.sh add-alternative"* ]]
-[[ "$decision_commands_prompt" == *"bin/decision.sh commit"* ]]
+decision_commands_prompt="$(grep "multiagent decision" "$ROOT/prompts/roles/organizational-learning.md" || true)"
+[[ "$decision_commands_prompt" == *"multiagent decision init"* ]]
+[[ "$decision_commands_prompt" == *"multiagent decision add-alternative"* ]]
+[[ "$decision_commands_prompt" == *"multiagent decision commit"* ]]
 
 # Test DAG workflow control functionality
 
@@ -5733,38 +5749,38 @@ decision_commands_prompt="$(grep "bin/decision.sh" "$ROOT/prompts/roles/organiza
 DAG_STATE_DIR="$TMPDIR/dag-state"
 mkdir -p "$DAG_STATE_DIR"
 
-# Test bin/dag.sh init
-init_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" init WF-001 --title "Test Workflow" --owner "test-user")"
+# Test multiagent dag init
+init_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag init WF-001 --title "Test Workflow" --owner "test-user")"
 [[ "$init_output" == $'workflow created\tWF-001\tTest Workflow' ]]
 assert_file_contains "$DAG_STATE_DIR/workflows/WF-001/workflow.env" "workflow_id=WF-001"
 assert_file_contains "$DAG_STATE_DIR/workflows/WF-001/workflow.env" "title=Test Workflow"
 assert_file_contains "$DAG_STATE_DIR/workflows/WF-001/workflow.env" "owner=test-user"
 assert_file_contains "$DAG_STATE_DIR/workflows/WF-001/workflow.env" "status=active"
 
-# Test bin/dag.sh add-node
-node_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-001 NODE-A --agent worker-a --assignment-id assign-a --role qa --branch worker/a --owned file-a.txt)"
+# Test multiagent dag add-node
+node_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag add-node WF-001 NODE-A --agent worker-a --assignment-id assign-a --role qa --branch worker/a --owned file-a.txt)"
 [[ "$node_output" == $'node added\tWF-001\tNODE-A\tworker-a' ]]
 assert_file_contains "$DAG_STATE_DIR/workflows/WF-001/nodes.tsv" "NODE-A"
 assert_file_contains "$DAG_STATE_DIR/workflows/WF-001/nodes.tsv" "worker-a"
 assert_file_contains "$DAG_STATE_DIR/workflows/WF-001/nodes.tsv" "pending"
 
-# Test bin/dag.sh list
-list_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" list)"
+# Test multiagent dag list
+list_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag list)"
 [[ "$list_output" == *$'WF-001\tactive\tTest Workflow\ttest-user'* ]]
 
-# Test bin/dag.sh show
-show_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" show WF-001)"
+# Test multiagent dag show
+show_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag show WF-001)"
 [[ "$show_output" == *"Workflow: WF-001"* ]]
 [[ "$show_output" == *"workflow_id=WF-001"* ]]
 [[ "$show_output" == *"NODE-A"* ]]
 
 # Test DAG sequencing: node A ready first, node B ready only after A is done
-node_b_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-001 NODE-B --agent worker-b --assignment-id assign-b --role qa --branch worker/b --owned file-b.txt --depends-on NODE-A)"
+node_b_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag add-node WF-001 NODE-B --agent worker-b --assignment-id assign-b --role qa --branch worker/b --owned file-b.txt --depends-on NODE-A)"
 [[ "$node_b_output" == $'node added\tWF-001\tNODE-B\tworker-b' ]]
 
-# Test bin/dag.sh ready - node A should be ready, node B should not
+# Test multiagent dag ready - node A should be ready, node B should not
 # Also test that ready emits only node IDs, one per line, with no READY_NODES header
-ready_initial_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" ready WF-001)"
+ready_initial_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag ready WF-001)"
 [[ "$ready_initial_output" == *"NODE-A"* ]]
 if [[ "$ready_initial_output" == *"NODE-B"* ]]; then
   echo "expected NODE-B to not be ready before NODE-A is done" >&2
@@ -5785,47 +5801,47 @@ if [[ "$ready_initial_output" != "NODE-A" ]]; then
 fi
 
 # Mark NODE-A as done
-MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" status WF-001 NODE-A done --reason "completed task A"
+MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag status WF-001 NODE-A done --reason "completed task A"
 
 # Now NODE-B should be ready
-ready_after_a_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" ready WF-001)"
+ready_after_a_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag ready WF-001)"
 [[ "$ready_after_a_output" == *"NODE-B"* ]]
 
 # Test failed upstream node causes downstream node to appear in blocked output
-MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-001 NODE-C --agent worker-c --assignment-id assign-c --role qa --branch worker/c --owned file-c.txt --depends-on NODE-B
+MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag add-node WF-001 NODE-C --agent worker-c --assignment-id assign-c --role qa --branch worker/c --owned file-c.txt --depends-on NODE-B
 
 # Mark NODE-B as failed
-MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" status WF-001 NODE-B failed --reason "task failed"
+MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag status WF-001 NODE-B failed --reason "task failed"
 
-# Test bin/dag.sh blocked - NODE-C should be blocked
-blocked_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" blocked WF-001)"
+# Test multiagent dag blocked - NODE-C should be blocked
+blocked_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag blocked WF-001)"
 [[ "$blocked_output" == *"NODE-C"* ]]
 [[ "$blocked_output" == *"dependency NODE-B failed"* ]]
 
 # Test skipped upstream node satisfies dependencies
-MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-001 NODE-D --agent worker-d --assignment-id assign-d --role qa --branch worker/d --owned file-d.txt
-MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-001 NODE-E --agent worker-e --assignment-id assign-e --role qa --branch worker/e --owned file-e.txt --depends-on NODE-D
+MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag add-node WF-001 NODE-D --agent worker-d --assignment-id assign-d --role qa --branch worker/d --owned file-d.txt
+MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag add-node WF-001 NODE-E --agent worker-e --assignment-id assign-e --role qa --branch worker/e --owned file-e.txt --depends-on NODE-D
 
 # Mark NODE-D as skipped
-MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" status WF-001 NODE-D skipped --reason "conditions not met"
+MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag status WF-001 NODE-D skipped --reason "conditions not met"
 
 # NODE-E should now be ready (skipped dependencies satisfy constraints)
-ready_after_skip_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" ready WF-001)"
+ready_after_skip_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag ready WF-001)"
 [[ "$ready_after_skip_output" == *"NODE-E"* ]]
 
 # Test explicitly marked ready nodes
-MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-001 NODE-F --agent worker-f --assignment-id assign-f --role qa --branch worker/f --owned file-f.txt
+MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag add-node WF-001 NODE-F --agent worker-f --assignment-id assign-f --role qa --branch worker/f --owned file-f.txt
 
 # Mark NODE-F as explicitly ready
-MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" status WF-001 NODE-F ready --reason "manually marked ready"
+MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag status WF-001 NODE-F ready --reason "manually marked ready"
 
 # NODE-F should appear in ready output even though it was explicitly marked ready
-ready_explicit_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" ready WF-001)"
+ready_explicit_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag ready WF-001)"
 [[ "$ready_explicit_output" == *"NODE-F"* ]]
 
 # Mark NODE-F as running and verify it no longer appears in ready output
-MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" status WF-001 NODE-F running --reason "started execution"
-ready_after_running_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" ready WF-001)"
+MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag status WF-001 NODE-F running --reason "started execution"
+ready_after_running_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag ready WF-001)"
 if [[ "$ready_after_running_output" == *"NODE-F"* ]]; then
   echo "expected NODE-F to not appear in ready output when marked running" >&2
   echo "$ready_after_running_output" >&2
@@ -5833,7 +5849,7 @@ if [[ "$ready_after_running_output" == *"NODE-F"* ]]; then
 fi
 
 # Test duplicate workflow rejection
-if MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" init WF-001 --title "Duplicate" >"$TMPDIR/duplicate-workflow.out" 2>&1; then
+if MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag init WF-001 --title "Duplicate" >"$TMPDIR/duplicate-workflow.out" 2>&1; then
   echo "expected duplicate workflow to fail" >&2
   cat "$TMPDIR/duplicate-workflow.out" >&2
   exit 1
@@ -5841,7 +5857,7 @@ fi
 assert_file_contains "$TMPDIR/duplicate-workflow.out" "workflow already exists: WF-001"
 
 # Test duplicate node rejection
-if MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-001 NODE-A --agent worker-dup --assignment-id assign-dup --role qa --branch worker/dup --owned file-dup.txt >"$TMPDIR/duplicate-node.out" 2>&1; then
+if MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag add-node WF-001 NODE-A --agent worker-dup --assignment-id assign-dup --role qa --branch worker/dup --owned file-dup.txt >"$TMPDIR/duplicate-node.out" 2>&1; then
   echo "expected duplicate node to fail" >&2
   cat "$TMPDIR/duplicate-node.out" >&2
   exit 1
@@ -5849,7 +5865,7 @@ fi
 assert_file_contains "$TMPDIR/duplicate-node.out" "node ID already exists: NODE-A"
 
 # Test missing dependency rejection
-if MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-001 NODE-MISSING --agent worker-missing --assignment-id assign-missing --role qa --branch worker/missing --owned file-missing.txt --depends-on NONEXISTENT >"$TMPDIR/missing-dep.out" 2>&1; then
+if MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag add-node WF-001 NODE-MISSING --agent worker-missing --assignment-id assign-missing --role qa --branch worker/missing --owned file-missing.txt --depends-on NONEXISTENT >"$TMPDIR/missing-dep.out" 2>&1; then
   echo "expected missing dependency to fail" >&2
   cat "$TMPDIR/missing-dep.out" >&2
   exit 1
@@ -5857,7 +5873,7 @@ fi
 assert_file_contains "$TMPDIR/missing-dep.out" "dependency does not exist: NONEXISTENT"
 
 # Test invalid status rejection
-if MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" status WF-001 NODE-A invalid-status >"$TMPDIR/invalid-status.out" 2>&1; then
+if MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag status WF-001 NODE-A invalid-status >"$TMPDIR/invalid-status.out" 2>&1; then
   echo "expected invalid status to fail" >&2
   cat "$TMPDIR/invalid-status.out" >&2
   exit 1
@@ -5865,7 +5881,7 @@ fi
 assert_file_contains "$TMPDIR/invalid-status.out" "invalid status: invalid-status"
 
 # Test role validation - invalid roles should be rejected
-if MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-001 NODE-INVALID-ROLE --agent worker-invalid --assignment-id assign-invalid --role decision --branch worker/invalid --owned file-invalid.txt >"$TMPDIR/invalid-role.out" 2>&1; then
+if MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag add-node WF-001 NODE-INVALID-ROLE --agent worker-invalid --assignment-id assign-invalid --role decision --branch worker/invalid --owned file-invalid.txt >"$TMPDIR/invalid-role.out" 2>&1; then
   echo "expected invalid role 'decision' to fail" >&2
   cat "$TMPDIR/invalid-role.out" >&2
   exit 1
@@ -5877,13 +5893,13 @@ valid_roles=("exploitation" "exploration" "reflection" "architecture" "qa" "veri
 for i in "${!valid_roles[@]}"; do
   role="${valid_roles[$i]}"
   node_id="NODE-ROLE-$i"
-  role_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-001 "$node_id" --agent "worker-$role" --assignment-id "assign-$role" --role "$role" --branch "worker/$role" --owned "file-$role.txt")"
+  role_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag add-node WF-001 "$node_id" --agent "worker-$role" --assignment-id "assign-$role" --role "$role" --branch "worker/$role" --owned "file-$role.txt")"
   [[ "$role_output" == *"node added"* ]]
   [[ "$role_output" == *"$node_id"* ]]
 done
 
 # Test invalid workflow ID rejection
-if MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" init "WF/INVALID" --title "Bad ID" >"$TMPDIR/invalid-workflow-id.out" 2>&1; then
+if MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag init "WF/INVALID" --title "Bad ID" >"$TMPDIR/invalid-workflow-id.out" 2>&1; then
   echo "expected invalid workflow ID to fail" >&2
   cat "$TMPDIR/invalid-workflow-id.out" >&2
   exit 1
@@ -5891,17 +5907,17 @@ fi
 assert_file_contains "$TMPDIR/invalid-workflow-id.out" "invalid workflow ID: WF/INVALID"
 
 # Test cycle detection
-MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" init WF-CYCLE --title "Cycle Test"
-MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-CYCLE CYCLE-A --agent worker-cycle-a --assignment-id assign-cycle-a --role qa --branch worker/cycle-a --owned file-cycle-a.txt
-MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-CYCLE CYCLE-B --agent worker-cycle-b --assignment-id assign-cycle-b --role qa --branch worker/cycle-b --owned file-cycle-b.txt --depends-on CYCLE-A
+MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag init WF-CYCLE --title "Cycle Test"
+MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag add-node WF-CYCLE CYCLE-A --agent worker-cycle-a --assignment-id assign-cycle-a --role qa --branch worker/cycle-a --owned file-cycle-a.txt
+MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag add-node WF-CYCLE CYCLE-B --agent worker-cycle-b --assignment-id assign-cycle-b --role qa --branch worker/cycle-b --owned file-cycle-b.txt --depends-on CYCLE-A
 
 # This should create a cycle: CYCLE-A -> CYCLE-B -> CYCLE-A
-if MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-CYCLE CYCLE-C --agent worker-cycle-c --assignment-id assign-cycle-c --role qa --branch worker/cycle-c --owned file-cycle-c.txt --depends-on CYCLE-B && \
-   MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-CYCLE CYCLE-D --agent worker-cycle-d --assignment-id assign-cycle-d --role qa --branch worker/cycle-d --owned file-cycle-d.txt --depends-on CYCLE-A; then
+if MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag add-node WF-CYCLE CYCLE-C --agent worker-cycle-c --assignment-id assign-cycle-c --role qa --branch worker/cycle-c --owned file-cycle-c.txt --depends-on CYCLE-B && \
+   MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag add-node WF-CYCLE CYCLE-D --agent worker-cycle-d --assignment-id assign-cycle-d --role qa --branch worker/cycle-d --owned file-cycle-d.txt --depends-on CYCLE-A; then
   # Now try to create a cycle by making CYCLE-A depend on CYCLE-C
   temp_edges="$DAG_STATE_DIR/workflows/WF-CYCLE/edges.tsv"
   printf 'CYCLE-C\tCYCLE-A\t%s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >>"$temp_edges"
-  if ! MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$ROOT/bin/dag.sh" add-node WF-CYCLE CYCLE-TEST --agent worker-test --assignment-id assign-test --role qa --branch worker/test --owned file-test.txt --depends-on CYCLE-A >"$TMPDIR/cycle-test.out" 2>&1; then
+  if ! MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag add-node WF-CYCLE CYCLE-TEST --agent worker-test --assignment-id assign-test --role qa --branch worker/test --owned file-test.txt --depends-on CYCLE-A >"$TMPDIR/cycle-test.out" 2>&1; then
     assert_file_contains "$TMPDIR/cycle-test.out" "dependency cycle detected"
   fi
 fi
@@ -5922,60 +5938,60 @@ mkdir -p "$DAG_ASSIGN_REPO" "$DAG_ASSIGN_STATE"
   git switch -q -c worker/dag-task
 )
 
-dag_assignment_create_output="$(MULTIAGENT_ROOT="$DAG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$DAG_ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create worker-dag --assignment-id dag-001 --branch worker/dag-task --owned README.md --role qa --workflow-id WF-001 --node-id NODE-A --depends-on NODE-B,NODE-C)"
+dag_assignment_create_output="$(MULTIAGENT_ROOT="$DAG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$DAG_ASSIGN_STATE" "$MULTIAGENT" subagent assignment-create worker-dag --assignment-id dag-001 --branch worker/dag-task --owned README.md --role qa --workflow-id WF-001 --node-id NODE-A --depends-on NODE-B,NODE-C)"
 [[ "$dag_assignment_create_output" == $'assignment created\tworker-dag\tdag-001\tworker/dag-task' ]]
 assert_file_contains "$DAG_ASSIGN_STATE/assignments/worker-dag/assignment.env" "workflow_id=WF-001"
 assert_file_contains "$DAG_ASSIGN_STATE/assignments/worker-dag/assignment.env" "node_id=NODE-A"
 assert_file_contains "$DAG_ASSIGN_STATE/assignments/worker-dag/assignment.env" "depends_on=NODE-B,NODE-C"
 
 # Test checkpoint-update includes DAG metadata
-checkpoint_dag_output="$(MULTIAGENT_ROOT="$DAG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$DAG_ASSIGN_STATE" "$ROOT/bin/subagent.sh" checkpoint-update worker-dag --step "implemented dag metadata support" --status running)"
+checkpoint_dag_output="$(MULTIAGENT_ROOT="$DAG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$DAG_ASSIGN_STATE" "$MULTIAGENT" subagent checkpoint-update worker-dag --step "implemented dag metadata support" --status running)"
 [[ "$checkpoint_dag_output" == $'checkpoint updated\tworker-dag\trunning' ]]
-checkpoint_show_dag_output="$(MULTIAGENT_ROOT="$DAG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$DAG_ASSIGN_STATE" "$ROOT/bin/subagent.sh" checkpoint-show worker-dag)"
+checkpoint_show_dag_output="$(MULTIAGENT_ROOT="$DAG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$DAG_ASSIGN_STATE" "$MULTIAGENT" subagent checkpoint-show worker-dag)"
 [[ "$checkpoint_show_dag_output" == *"workflow_id=WF-001"* ]]
 [[ "$checkpoint_show_dag_output" == *"node_id=NODE-A"* ]]
 [[ "$checkpoint_show_dag_output" == *"depends_on=NODE-B,NODE-C"* ]]
 
-# Test status.sh emits WORKFLOW_ID and NODE_ID columns with metadata
+# Test multiagent status emits WORKFLOW_ID and NODE_ID columns with metadata
 # Create a persisted subagent with DAG metadata
 mkdir -p "$DAG_ASSIGN_STATE/subagents/subagent-dag-test"
 printf 'running\n' >"$DAG_ASSIGN_STATE/subagents/subagent-dag-test/status"
 printf 'Testing DAG metadata in subagents\n' >"$DAG_ASSIGN_STATE/subagents/subagent-dag-test/current.txt"
 
 # Create assignment metadata for the subagent with DAG metadata
-DAG_SUBAGENT_ASSIGN_OUTPUT="$(MULTIAGENT_ROOT="$DAG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$DAG_ASSIGN_STATE" "$ROOT/bin/subagent.sh" assignment-create subagent-dag-test --assignment-id dag-sub-001 --branch worker/dag-task --owned README.md --role verifier --workflow-id WF-002 --node-id NODE-X)"
+DAG_SUBAGENT_ASSIGN_OUTPUT="$(MULTIAGENT_ROOT="$DAG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$DAG_ASSIGN_STATE" "$MULTIAGENT" subagent assignment-create subagent-dag-test --assignment-id dag-sub-001 --branch worker/dag-task --owned README.md --role verifier --workflow-id WF-002 --node-id NODE-X)"
 
-status_dag_output="$(cd "$ROOT" && MULTIAGENT_ROOT="$DAG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$DAG_ASSIGN_STATE" bin/status.sh)"
+status_dag_output="$(cd "$ROOT" && MULTIAGENT_ROOT="$DAG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$DAG_ASSIGN_STATE" "$MULTIAGENT" status)"
 [[ "$status_dag_output" == *$'TYPE\tNAME\tSTATUS\tWINDOW\tLAST_PROGRESS\tSTATE_DIR\tROLE\tDECISION_ID\tPLAN_ID\tWORKFLOW_ID\tNODE_ID'* ]]
 [[ "$status_dag_output" == *$'subagent\tsubagent-dag-test\trunning\tclosed\tTesting DAG metadata in subagents\t'"$DAG_ASSIGN_STATE/subagents/subagent-dag-test"$'\tverifier\t-\t-\tWF-002\tNODE-X'* ]]
 
 # Test documentation consistency - ensure docs do not reference unsupported DAG commands
-if grep -Fq "dag.sh update-status" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
-  echo "docs should not reference unsupported dag.sh update-status command" >&2
+if grep -Fq "multiagent dag update-status" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+  echo "docs should not reference unsupported multiagent dag update-status command" >&2
   exit 1
 fi
-if grep -Fq "dag.sh.*--description" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
-  echo "docs should not reference unsupported dag.sh --description flag" >&2
+if grep -Fq "multiagent dag.*--description" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+  echo "docs should not reference unsupported multiagent dag --description flag" >&2
   exit 1
 fi
-if grep -Fq "dag.sh show --node" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
-  echo "docs should not reference unsupported dag.sh show --node flag" >&2
+if grep -Fq "multiagent dag show --node" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+  echo "docs should not reference unsupported multiagent dag show --node flag" >&2
   exit 1
 fi
-if grep -Fq "dag.sh show --verbose" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
-  echo "docs should not reference unsupported dag.sh show --verbose flag" >&2
+if grep -Fq "multiagent dag show --verbose" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+  echo "docs should not reference unsupported multiagent dag show --verbose flag" >&2
   exit 1
 fi
-if grep -Fq "dag.sh ready --watch" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
-  echo "docs should not reference unsupported dag.sh ready --watch flag" >&2
+if grep -Fq "multiagent dag ready --watch" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+  echo "docs should not reference unsupported multiagent dag ready --watch flag" >&2
   exit 1
 fi
-if grep -Fq "dag.sh export" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
-  echo "docs should not reference unsupported dag.sh export command" >&2
+if grep -Fq "multiagent dag export" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+  echo "docs should not reference unsupported multiagent dag export command" >&2
   exit 1
 fi
-if grep -Fq "dag.sh status --workflow" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
-  echo "docs should not reference unsupported dag.sh status --workflow flag" >&2
+if grep -Fq "multiagent dag status --workflow" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+  echo "docs should not reference unsupported multiagent dag status --workflow flag" >&2
   exit 1
 fi
 if grep -Fq "role decision" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then

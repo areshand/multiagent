@@ -31,9 +31,9 @@ cat >> "$full_prompt" <<EOF
 
 This is a bounded benchmark cell. Complete the task below in
 \`$PILOT_WORKTREE\`, run appropriate validation, close the structured gate, give
-a concise final report, and then exit. Use the framework helper at the absolute
-path \`$PILOT_HARNESS_ROOT/bin/subagent.sh\` whenever the core prompt shows
-\`bin/subagent.sh\`; do not expect framework files in the target repository.
+a concise final report, and then exit. Use \`\$MULTIAGENT_BIN subagent\` whenever
+the core prompt shows \`multiagent subagent\`; do not expect framework files in
+the target repository. The launcher supplies the absolute Rust executable path.
 Do not read sibling pilot cells or future commits.
 
 EOF

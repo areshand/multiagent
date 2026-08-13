@@ -6,16 +6,16 @@ Outside-root writes require explicit user/orchestrator approval.
 ## Commands
 
 ```bash
-bin/write-policy.sh show
-bin/write-policy.sh check PATH
-bin/write-policy.sh approve PATH --actor orchestrator --assignment-id ID --reason "why this outside path is needed"
+multiagent policy show
+multiagent policy check PATH
+multiagent policy approve PATH --actor orchestrator --assignment-id ID --reason "why this outside path is needed"
 ```
 
 ## Rules
 
 - The policy file is orchestrator-owned.
 - Do not ask workers to edit `docs/write-policy.paths` directly.
-- Workers must check uncertain paths with `bin/write-policy.sh check PATH`.
+- Workers must check uncertain paths with `multiagent policy check PATH`.
 - If a worker needs an outside-root write, ask the user for approval before continuing.
 - If approved, record the narrowest practical outside path and tell the worker to retry.
 

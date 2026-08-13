@@ -39,7 +39,7 @@ The verifier is a read-only reviewer, not an implementer.
   `required_resolution`. Record it with this exact CLI schema; do not invent
   `--worker`, `--assignment`, `--affected-paths`, or non-enum severity flags:
   ```bash
-  "${MULTIAGENT_HELPER:-/opt/multiagent/bin/subagent.sh}" finding-create FINDING_ID \
+  "${MULTIAGENT_BIN:-/opt/multiagent/bin/multiagent}" subagent finding-create FINDING_ID \
     --severity blocking \
     --type TYPE \
     --summary "SHORT SUMMARY" \
@@ -47,9 +47,9 @@ The verifier is a read-only reviewer, not an implementer.
     --evidence-json '{"source_evidence":"PATH:LINE CONCRETE DEFECT"}' \
     --required-resolution "OBJECTIVE DONE CONDITION"
   ```
-  Prose alone is not a blocking repair contract. Use `MULTIAGENT_HELPER` because
+  Prose alone is not a blocking repair contract. Use `MULTIAGENT_BIN` because
   the task checkout may not contain this framework. If the helper rejects the
-  command, run `${MULTIAGENT_HELPER:-/opt/multiagent/bin/subagent.sh}
+  command, run `"${MULTIAGENT_BIN:-/opt/multiagent/bin/multiagent}" subagent
   finding-create` to read its usage and retry with the supported schema before
   exiting.
 - Do not create placeholder findings to discover CLI syntax. A persisted
@@ -59,7 +59,7 @@ The verifier is a read-only reviewer, not an implementer.
   proves it invalid, superseded by the public task, or not reproducible, dismiss
   it through the framework rather than merely contradicting it in prose:
   ```bash
-  "${MULTIAGENT_HELPER:-/opt/multiagent/bin/subagent.sh}" finding-dismiss FINDING_ID \
+  "${MULTIAGENT_BIN:-/opt/multiagent/bin/multiagent}" subagent finding-dismiss FINDING_ID \
     --verified-by "$MULTIAGENT_SUBAGENT_NAME" \
     --recheck-json '{"accepted":true,"source_finding_id":"FINDING_ID","disposition":"superseded","evidence":"EXACT SOURCE OR COMMAND EVIDENCE","final_diff_sha256":"CURRENT_HASH"}'
   ```
@@ -411,7 +411,7 @@ If compile/test validation is already running in another live worker/verifier
 for the same package, do not start a duplicate command. Inspect the running
 command, wait for its result, or reject with a clear orchestration finding that
 the package has overlapping validators. If a durable validation lease is
-available, inspect it with `bin/subagent.sh validation-lease-show LEASE_ID`
+available, inspect it with `multiagent subagent validation-lease-show LEASE_ID`
 before deciding whether to run any expensive command yourself.
 
 ## Review Scope

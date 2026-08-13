@@ -14,7 +14,7 @@ wait for user direction. Do not inspect recovery state by default.
 When `MULTIAGENT_RESUME=1`, run:
 
 ```bash
-bin/subagent.sh recover-plan
+multiagent subagent recover-plan
 ```
 
 Read the plan before spawning replacement work. This is required even if tmux
@@ -23,11 +23,11 @@ subagents persisted memory.
 
 ## Recovery Actions
 
-- `restore`: closed subagent with recoverable context. Report the restore, then run `bin/subagent.sh restore NAME` when appropriate.
+- `restore`: closed subagent with recoverable context. Report the restore, then run `multiagent subagent restore NAME` when appropriate.
 - `skip-open`: active tmux window already exists. Poll or inspect it; do not restore it.
 - `skip-finalized`: appears done, finalized, killed, or intentionally stopped. Do not restore by default.
 - `skip-blocked`: blocked or waiting for input. Report the blocker and ask the user or make an explicit orchestrator decision before `restore --force`.
 - `skip-unknown`: state is stale or unclear. Inspect the state directory before deciding.
 
-Use `bin/subagent.sh restore-all` only after reviewing the plan. It restores
+Use `multiagent subagent restore-all` only after reviewing the plan. It restores
 only conservative `restore` rows.

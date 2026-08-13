@@ -19,7 +19,7 @@ A blocking verifier issue must be machine-readable. It must identify the issue,
 severity, affected paths, evidence, and the required resolution. Use:
 
 ```bash
-bin/subagent.sh finding-create build-go-feature \
+multiagent subagent finding-create build-go-feature \
   --severity blocking \
   --type compile_failure \
   --summary "Changed Go packages do not compile" \
@@ -47,7 +47,7 @@ The orchestrator decides which findings are accepted as required follow-up and
 creates a todo for each accepted blocking finding:
 
 ```bash
-bin/subagent.sh todo-create todo-017 \
+multiagent subagent todo-create todo-017 \
   --source-finding-id build-go-feature \
   --task "Fix the compile failure in the changed Go package." \
   --context "Exact verifier evidence and relevant contract ledger." \
@@ -80,7 +80,7 @@ state; the gate rechecks the current finding artifact against that hash.
 A worker assigned a todo must record resolution evidence, not only a sentence:
 
 ```bash
-"${MULTIAGENT_HELPER:-/opt/multiagent/bin/subagent.sh}" resolution-create todo-017 \
+"${MULTIAGENT_BIN:-/opt/multiagent/bin/multiagent}" subagent resolution-create todo-017 \
   --worker worker-02-feature-build \
   --status resolved \
   --changed internal/feature/handler.go,internal/feature/bridge.go \
@@ -88,8 +88,8 @@ A worker assigned a todo must record resolution evidence, not only a sentence:
   --why "The missing interface contract is implemented and the changed package compiles."
 ```
 
-Use the helper path from `MULTIAGENT_HELPER` when present. If a worker is running
-from a task checkout such as `/app`, do not assume `bin/subagent.sh` exists in
+Use the helper path from `MULTIAGENT_BIN` when present. If a worker is running
+from a task checkout such as `/app`, do not assume `multiagent subagent` exists in
 the current repo.
 
 `resolved` means ready for verifier review. It is not final acceptance.
@@ -107,7 +107,7 @@ the todo. If the issue is fixed, the orchestrator closes the todo with verifier
 recheck evidence:
 
 ```bash
-bin/subagent.sh todo-close todo-017 \
+multiagent subagent todo-close todo-017 \
   --verified-by verifier-01-feature-build \
   --recheck-json '{"accepted":true,"finding_rechecked":"build-go-feature","commands":[{"cmd":"go test ./internal/feature","rc":0}],"final_diff_hash":"..."}' \
   --notes "Verifier rechecked the original finding after worker resolution."
@@ -117,7 +117,7 @@ If evidence is stale, partial, missing, or contradicted by source/commands,
 reopen the todo:
 
 ```bash
-bin/subagent.sh todo-status todo-017 reopened
+multiagent subagent todo-status todo-017 reopened
 ```
 
 Process verifier artifacts in final-diff order. Once a newer verifier accepts
@@ -132,7 +132,7 @@ object using the shape above, then rerun `gate-check`.
 Before final acceptance, run:
 
 ```bash
-bin/subagent.sh gate-check
+multiagent subagent gate-check
 ```
 
 Do not accept while `gate-check` reports an unqueued blocking finding or any

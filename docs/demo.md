@@ -25,7 +25,7 @@ MULTIAGENT_DEMO_KEEP=1 ./scripts/demo.sh
 
 The script creates a temporary Git repository with a public behavior check.
 The check fails until `answer.txt` contains the required value. It then drives
-the production `bin/subagent.sh` control plane through these states:
+the production `multiagent subagent` control plane through these states:
 
 | Time | Transition | Meaning |
 | ---: | --- | --- |

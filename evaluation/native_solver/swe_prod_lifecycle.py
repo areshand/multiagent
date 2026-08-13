@@ -7,6 +7,8 @@ import shutil
 import time
 from pathlib import Path
 
+from multiagent_framework import multiagent_command
+
 from . import swe_prod_repository as _repository
 from .swe_prod_bootstrap import (
     require_path,
@@ -64,7 +66,8 @@ from .swe_prod_validation import (
 def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, timeout: int) -> int:
     global ACTIVE_START_HEAD
     require_path(repo_root / "launch.sh", "production multiagent launcher")
-    require_path(repo_root / "bin" / "subagent.sh", "production subagent helper")
+    if not multiagent_command(repo_root):
+        raise RuntimeError(f"production Rust multiagent executable is missing under {repo_root}")
     require_path(workdir / ".git", "SWE task git checkout")
     if not shutil.which("tmux"):
         raise RuntimeError("tmux is required for the production multiagent solver")

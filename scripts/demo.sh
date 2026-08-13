@@ -10,6 +10,9 @@ for command in cargo git python3; do
   fi
 done
 
+cargo build --quiet --offline --locked --manifest-path "$REPO_ROOT/Cargo.toml"
+MULTIAGENT_BIN="$REPO_ROOT/target/debug/multiagent"
+
 DEMO_DIR="$(mktemp -d "${TMPDIR:-/tmp}/multiagent-demo.XXXXXX")"
 TARGET_ROOT="$DEMO_DIR/target"
 STATE_DIR="$DEMO_DIR/state"
@@ -28,7 +31,7 @@ ma() {
   MULTIAGENT_STATE_DIR="$STATE_DIR" \
   MULTIAGENT_FRAMEWORK_ROOT="$REPO_ROOT" \
   MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
-    "$REPO_ROOT/bin/multiagent" subagent "$@"
+    "$MULTIAGENT_BIN" subagent "$@"
 }
 
 expect_gate_rejection() {
@@ -92,7 +95,7 @@ printf '[3/5] Apply the worker repair and bind its evidence to the exact diff\n'
 printf 'orchestrated\n' >"$TARGET_ROOT/answer.txt"
 (cd "$TARGET_ROOT" && ./check.sh)
 SNAPSHOT="$(
-  "$REPO_ROOT/bin/multiagent" snapshot \
+  "$MULTIAGENT_BIN" snapshot \
     --root "$TARGET_ROOT" --base HEAD --format shell
 )"
 read -r FINAL_DIFF_SHA CHANGED_FILES <<<"$SNAPSHOT"

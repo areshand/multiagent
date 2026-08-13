@@ -110,8 +110,8 @@ Also include:
 - Default allowed write root is `$MULTIAGENT_ROOT`.
 - Before writing outside `$MULTIAGENT_ROOT`, stop and ask the orchestrator for explicit permission.
 - After permission is approved, the orchestrator records the approved outside path with:
-  `bin/write-policy.sh approve PATH --actor ACTOR --assignment-id ID --reason TEXT`.
-- Check uncertain paths with `bin/write-policy.sh check PATH` before writing.
+  `multiagent policy approve PATH --actor ACTOR --assignment-id ID --reason TEXT`.
+- Check uncertain paths with `multiagent policy check PATH` before writing.
 - The policy file is `$MULTIAGENT_WRITE_POLICY`, default `docs/write-policy.paths`.
 - Workers must not edit `docs/write-policy.paths` directly.
 
@@ -289,13 +289,13 @@ edit.
 When repairing an orchestrator todo, completion requires a structured worker
 resolution report bound to that todo. Record the changed paths, validation
 commands with return codes, and why the original finding is resolved, preferably
-with `${MULTIAGENT_HELPER:-/opt/multiagent/bin/subagent.sh} resolution-create
+with `"${MULTIAGENT_BIN:-/opt/multiagent/bin/multiagent}" subagent resolution-create
 TODO_ID --worker "$MULTIAGENT_SUBAGENT_NAME" --status resolved --changed
 PATH[,PATH...] --validation-json '[{"cmd":"...","rc":0}]' --why "..."`.
 Do not use `resolution-create --todo ...`, `--owner`, `--summary`, or
 free-form `--evidence`; those are legacy recovery inputs, not the framework
 contract. If your workdir is the task repo, do not use a relative
-`bin/subagent.sh`; the helper may live outside the repo. A plain "fixed" summary
+`multiagent subagent`; the helper may live outside the repo. A plain "fixed" summary
 does not close the todo; it only tells the orchestrator/verifier there is
 evidence to recheck.
 Every entry in a `resolved` report's `--validation-json` is acceptance evidence
@@ -309,10 +309,10 @@ only after independent behavior verification.
 Run only one expensive validation command per owned package at a time. Treat the
 orchestrator's validation lease as the authority for long compile/test commands.
 When given a durable lease ID, confirm it exists with
-`bin/subagent.sh validation-lease-show LEASE_ID`; when you own a new expensive
-validation, acquire it with `bin/subagent.sh validation-lease-acquire` before
-running the command and update it with `bin/subagent.sh validation-lease-status`
-after the command returns. Prefer `bin/subagent.sh validation-run LEASE_ID
+`multiagent subagent validation-lease-show LEASE_ID`; when you own a new expensive
+validation, acquire it with `multiagent subagent validation-lease-acquire` before
+running the command and update it with `multiagent subagent validation-lease-status`
+after the command returns. Prefer `multiagent subagent validation-run LEASE_ID
 --owner WORKER --target TARGET -- COMMAND...` for a new validation you own; it
 acquires the lease, runs the command, records stdout/stderr tails and return
 code, marks the lease passed or failed, and returns the command exit code.

@@ -1,8 +1,7 @@
 """Black-box contracts that a replacement control-plane implementation must preserve.
 
-These tests intentionally exercise the public CLI and durable files instead of
-importing shell implementation details.  A Rust implementation can therefore
-run the same suite during a side-by-side migration.
+These tests intentionally exercise the Rust public CLI and durable files rather
+than importing implementation details.
 """
 
 from __future__ import annotations
@@ -16,10 +15,20 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from multiagent_framework.cli import multiagent_command, multiagent_subcommand
 from multiagent_framework.state import AtomicStatusStore
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+MULTIAGENT = PROJECT_ROOT / "target" / "debug" / "multiagent"
+CLI_PREFIX = {
+    "decision": ["decision"],
+    "dag": ["dag"],
+    "workflow": ["workflow"],
+    "policy": ["policy"],
+    "subagent": ["subagent"],
+    "multiagent": [],
+}
 
 
 def read_env_file(path):
@@ -31,7 +40,66 @@ def read_env_file(path):
     return values
 
 
+class RustCliResolutionTest(unittest.TestCase):
+    def test_packaged_binary_and_environment_override_resolution(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            packaged = root / "bin" / "multiagent"
+            packaged.parent.mkdir()
+            packaged.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            packaged.chmod(0o755)
+            override = root / "custom-multiagent"
+            override.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            override.chmod(0o755)
+
+            with mock.patch.dict(os.environ, {}, clear=True):
+                self.assertEqual(multiagent_command(root), [str(packaged)])
+                self.assertEqual(
+                    multiagent_subcommand(root, "subagent", "gate-check"),
+                    [str(packaged), "subagent", "gate-check"],
+                )
+            with mock.patch.dict(os.environ, {"MULTIAGENT_BIN": str(override)}, clear=True):
+                self.assertEqual(multiagent_command(root), [str(override)])
+
+    def test_missing_rust_binary_does_not_fall_back_to_a_shell_or_python_writer(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with mock.patch.dict(os.environ, {"PATH": ""}, clear=True):
+                self.assertEqual(multiagent_command(Path(temporary)), [])
+                self.assertEqual(multiagent_subcommand(Path(temporary), "subagent"), [])
+
+
 class MigrationCliContractTest(unittest.TestCase):
+    def test_launch_is_the_only_production_shell_compatibility_entrypoint(self):
+        self.assertTrue((PROJECT_ROOT / "launch.sh").is_file())
+        self.assertEqual(list((PROJECT_ROOT / "bin").glob("*.sh")), [])
+        launch = (PROJECT_ROOT / "launch.sh").read_text(encoding="utf-8")
+        self.assertIn('exec "$MULTIAGENT_BIN" launch "$@"', launch)
+        self.assertIn('"$SCRIPT_DIR/bin/multiagent"', launch)
+        self.assertNotIn("python", launch.lower())
+
+    def test_launch_executes_packaged_binary_without_cargo(self):
+        packaged_root = self.root / "packaged"
+        packaged_bin = packaged_root / "bin"
+        packaged_bin.mkdir(parents=True)
+        launch = packaged_root / "launch.sh"
+        launch.write_bytes((PROJECT_ROOT / "launch.sh").read_bytes())
+        launch.chmod(0o755)
+        executable = packaged_bin / "multiagent"
+        executable.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n", encoding="utf-8")
+        executable.chmod(0o755)
+
+        env = {"PATH": "/usr/bin:/bin"}
+        result = subprocess.run(
+            [str(launch), "--session", "packaged-test"],
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ["launch", "--session", "packaged-test"])
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
@@ -66,7 +134,7 @@ class MigrationCliContractTest(unittest.TestCase):
 
     def run_cli(self, relative, *args, check=True):
         result = subprocess.run(
-            [str(PROJECT_ROOT / relative), *args],
+            [str(MULTIAGENT), *CLI_PREFIX[relative], *args],
             cwd=self.repo,
             env=self.env,
             text=True,
@@ -84,7 +152,7 @@ class MigrationCliContractTest(unittest.TestCase):
 
     def run_cli_with_env(self, env, relative, *args, check=True):
         result = subprocess.run(
-            [str(PROJECT_ROOT / relative), *args],
+            [str(MULTIAGENT), *CLI_PREFIX[relative], *args],
             cwd=self.repo,
             env=env,
             text=True,
@@ -102,11 +170,11 @@ class MigrationCliContractTest(unittest.TestCase):
 
     def test_decision_v1_persistence_and_output_contract(self):
         created = self.run_cli(
-            "bin/decision.sh", "init", "DEC-RUST", "--title", "Rust migration", "--owner", "user"
+            "decision", "init", "DEC-RUST", "--title", "Rust migration", "--owner", "user"
         )
         self.assertEqual(created.stdout, "decision created\tDEC-RUST\tRust migration\n")
         self.run_cli(
-            "bin/decision.sh",
+            "decision",
             "add-alternative",
             "DEC-RUST",
             "--plan-id",
@@ -121,7 +189,7 @@ class MigrationCliContractTest(unittest.TestCase):
             "behavior drift",
         )
         self.run_cli(
-            "bin/decision.sh",
+            "decision",
             "add-assumption",
             "DEC-RUST",
             "--assumption-id",
@@ -136,7 +204,7 @@ class MigrationCliContractTest(unittest.TestCase):
             "identical state",
         )
         committed = self.run_cli(
-            "bin/decision.sh",
+            "decision",
             "commit",
             "DEC-RUST",
             "--selected-plan",
@@ -183,7 +251,7 @@ class MigrationCliContractTest(unittest.TestCase):
             "assumption_id\tstatement\tconfidence\tvalidation_method\texpected_signal\tadded_at",
         )
 
-    def test_rust_and_legacy_modes_read_each_others_v1_state(self):
+    def test_removed_legacy_flags_do_not_change_v1_state_contract(self):
         legacy = self.env.copy()
         legacy.update(
             {
@@ -196,7 +264,7 @@ class MigrationCliContractTest(unittest.TestCase):
 
         self.run_cli_with_env(
             legacy,
-            "bin/decision.sh",
+            "decision",
             "init",
             "DEC-LEGACY",
             "--title",
@@ -206,23 +274,23 @@ class MigrationCliContractTest(unittest.TestCase):
         )
         self.assertIn(
             "decision_id=DEC-LEGACY",
-            self.run_cli("bin/decision.sh", "show", "DEC-LEGACY").stdout,
+            self.run_cli("decision", "show", "DEC-LEGACY").stdout,
         )
 
-        self.run_cli("bin/decision.sh", "init", "DEC-RUST-READ", "--title", "Rust state")
+        self.run_cli("decision", "init", "DEC-RUST-READ", "--title", "Rust state")
         self.assertIn(
             "decision_id=DEC-RUST-READ",
             self.run_cli_with_env(
-                legacy, "bin/decision.sh", "show", "DEC-RUST-READ"
+                legacy, "decision", "show", "DEC-RUST-READ"
             ).stdout,
         )
 
         self.run_cli_with_env(
-            legacy, "bin/dag.sh", "init", "WF-LEGACY-DAG", "--title", "Legacy DAG"
+            legacy, "dag", "init", "WF-LEGACY-DAG", "--title", "Legacy DAG"
         )
         self.run_cli_with_env(
             legacy,
-            "bin/dag.sh",
+            "dag",
             "add-node",
             "WF-LEGACY-DAG",
             "NODE-A",
@@ -239,12 +307,12 @@ class MigrationCliContractTest(unittest.TestCase):
         )
         self.assertIn(
             "NODE-A\tworker-a",
-            self.run_cli("bin/dag.sh", "show", "WF-LEGACY-DAG").stdout,
+            self.run_cli("dag", "show", "WF-LEGACY-DAG").stdout,
         )
 
-        self.run_cli_with_env(legacy, "bin/workflow.sh", "init", "WF-LEGACY-LIFECYCLE")
+        self.run_cli_with_env(legacy, "workflow", "init", "WF-LEGACY-LIFECYCLE")
         resumed = self.run_cli(
-            "bin/workflow.sh",
+            "workflow",
             "init-or-resume",
             "WF-LEGACY-LIFECYCLE",
             "--resume",
@@ -253,10 +321,10 @@ class MigrationCliContractTest(unittest.TestCase):
         self.assertIn("workflow resumed\tWF-LEGACY-LIFECYCLE", resumed.stdout)
 
         outside = self.root / "legacy-approved"
-        self.run_cli_with_env(legacy, "bin/write-policy.sh", "init")
+        self.run_cli_with_env(legacy, "policy", "init")
         self.run_cli_with_env(
             legacy,
-            "bin/write-policy.sh",
+            "policy",
             "approve",
             str(outside),
             "--actor",
@@ -266,12 +334,12 @@ class MigrationCliContractTest(unittest.TestCase):
             "--reason",
             "verify Rust reader",
         )
-        checked = self.run_cli("bin/write-policy.sh", "check", str(outside / "file.txt"))
+        checked = self.run_cli("policy", "check", str(outside / "file.txt"))
         self.assertIn("allowed\t", checked.stdout)
 
     def test_finding_and_todo_read_contracts(self):
         self.run_cli(
-            "bin/subagent.sh",
+            "subagent",
             "finding-create",
             "F-RUST",
             "--severity",
@@ -288,7 +356,7 @@ class MigrationCliContractTest(unittest.TestCase):
             "src,state",
         )
         shown_finding = json.loads(
-            self.run_cli("bin/subagent.sh", "finding-show", "F-RUST").stdout
+            self.run_cli("subagent", "finding-show", "F-RUST").stdout
         )
         self.assertEqual(
             set(shown_finding),
@@ -308,18 +376,18 @@ class MigrationCliContractTest(unittest.TestCase):
         self.assertIn(
             "F-RUST\tblocking\tvalidation_failure\tRust parity failed",
             self.run_cli(
-                "bin/subagent.sh", "finding-list", "--severity", "blocking"
+                "subagent", "finding-list", "--severity", "blocking"
             ).stdout,
         )
         self.assertEqual(
             self.run_cli(
-                "bin/subagent.sh", "finding-list", "--severity", "warning"
+                "subagent", "finding-list", "--severity", "warning"
             ).stdout,
             "",
         )
 
         self.run_cli(
-            "bin/subagent.sh",
+            "subagent",
             "todo-create",
             "T-RUST",
             "--source-finding-id",
@@ -331,7 +399,7 @@ class MigrationCliContractTest(unittest.TestCase):
             "--context",
             "preserve v1 behavior",
         )
-        shown_todo = json.loads(self.run_cli("bin/subagent.sh", "todo-show", "T-RUST").stdout)
+        shown_todo = json.loads(self.run_cli("subagent", "todo-show", "T-RUST").stdout)
         self.assertEqual(
             set(shown_todo),
             {
@@ -353,15 +421,15 @@ class MigrationCliContractTest(unittest.TestCase):
         self.assertEqual(shown_todo["required_commands"], ["cargo test"])
         self.assertIn(
             "T-RUST\topen\tF-RUST\t-\trepair parity",
-            self.run_cli("bin/subagent.sh", "todo-list", "--status", "open").stdout,
+            self.run_cli("subagent", "todo-list", "--status", "open").stdout,
         )
         self.assertEqual(
-            self.run_cli("bin/subagent.sh", "todo-list", "--status", "closed").stdout,
+            self.run_cli("subagent", "todo-list", "--status", "closed").stdout,
             "",
         )
 
     def test_unknown_command_exit_codes_are_stable(self):
-        for script in ("bin/decision.sh", "bin/dag.sh", "bin/subagent.sh", "bin/write-policy.sh"):
+        for script in ("decision", "dag", "subagent", "policy"):
             with self.subTest(script=script):
                 result = self.run_cli(script, "not-a-command", check=False)
                 self.assertEqual(result.returncode, 1)
@@ -369,7 +437,7 @@ class MigrationCliContractTest(unittest.TestCase):
 
     def test_assignment_rejects_path_outside_repository(self):
         result = self.run_cli(
-            "bin/subagent.sh",
+            "subagent",
             "assignment-create",
             "escape",
             "--assignment-id",
@@ -389,7 +457,8 @@ class MigrationCliContractTest(unittest.TestCase):
             processes.append(
                 subprocess.Popen(
                     [
-                        str(PROJECT_ROOT / "bin/subagent.sh"),
+                        str(MULTIAGENT),
+                        "subagent",
                         "assignment-create",
                         "worker-overlap-{}".format(index),
                         "--assignment-id",
@@ -430,7 +499,7 @@ class MigrationCliContractTest(unittest.TestCase):
         (self.repo / "src" / "lib.rs").write_text("pub fn value() -> u8 { 2 }\n", encoding="utf-8")
         result = subprocess.run(
             [
-                str(PROJECT_ROOT / "bin/multiagent"),
+                str(MULTIAGENT),
                 "snapshot",
                 "--root",
                 str(self.repo),
@@ -456,13 +525,14 @@ class MigrationCliContractTest(unittest.TestCase):
         self.assertRegex(payload["final_diff_sha256"], r"^[0-9a-f]{64}$")
 
     def test_dag_concurrent_node_updates_do_not_lose_rows(self):
-        self.run_cli("bin/dag.sh", "init", "WF-DAG-CONCURRENT", "--title", "Concurrent DAG")
+        self.run_cli("dag", "init", "WF-DAG-CONCURRENT", "--title", "Concurrent DAG")
         processes = []
         for index in range(12):
             processes.append(
                 subprocess.Popen(
                     [
-                        str(PROJECT_ROOT / "bin/dag.sh"),
+                        str(MULTIAGENT),
+                        "dag",
                         "add-node",
                         "WF-DAG-CONCURRENT",
                         "NODE-{:02d}".format(index),
@@ -502,14 +572,15 @@ class MigrationCliContractTest(unittest.TestCase):
         self.assertTrue((dag_dir / ".dag.lock").is_file())
 
     def test_policy_concurrent_approvals_do_not_lose_records(self):
-        self.run_cli("bin/write-policy.sh", "init")
+        self.run_cli("policy", "init")
         processes = []
         approved_paths = [self.root / "outside" / "path-{:02d}".format(index) for index in range(12)]
         for index, path in enumerate(approved_paths):
             processes.append(
                 subprocess.Popen(
                     [
-                        str(PROJECT_ROOT / "bin/write-policy.sh"),
+                        str(MULTIAGENT),
+                        "policy",
                         "approve",
                         str(path),
                         "--actor",
@@ -552,7 +623,8 @@ class MigrationCliContractTest(unittest.TestCase):
             processes.append(
                 subprocess.Popen(
                     [
-                        str(PROJECT_ROOT / "bin/subagent.sh"),
+                        str(MULTIAGENT),
+                        "subagent",
                         "validation-lease-acquire",
                         "LEASE-{:02d}".format(index),
                         "--owner",
@@ -589,13 +661,14 @@ class MigrationCliContractTest(unittest.TestCase):
         self.assertTrue((self.state / "validation-leases" / ".lock").is_file())
 
     def test_workflow_concurrent_updates_do_not_lose_rows(self):
-        self.run_cli("bin/workflow.sh", "init", "WF-CONCURRENT")
+        self.run_cli("workflow", "init", "WF-CONCURRENT")
         processes = []
         for index in range(12):
             processes.append(
                 subprocess.Popen(
                     [
-                        str(PROJECT_ROOT / "bin/workflow.sh"),
+                        str(MULTIAGENT),
+                        "workflow",
                         "add-todo",
                         "WF-CONCURRENT",
                         "T-{:02d}".format(index),
@@ -626,11 +699,12 @@ class MigrationCliContractTest(unittest.TestCase):
         self.assertTrue(all(row["status"] == "open" for row in rows))
 
     def test_workflow_concurrent_duplicate_creates_exactly_one_row(self):
-        self.run_cli("bin/workflow.sh", "init", "WF-DUPLICATE")
+        self.run_cli("workflow", "init", "WF-DUPLICATE")
         processes = [
             subprocess.Popen(
                 [
-                    str(PROJECT_ROOT / "bin/workflow.sh"),
+                    str(MULTIAGENT),
+                    "workflow",
                     "add-todo",
                     "WF-DUPLICATE",
                     "T-SAME",
@@ -665,7 +739,7 @@ class MigrationCliContractTest(unittest.TestCase):
         self.assertEqual([row["todo_id"] for row in rows], ["T-SAME"])
 
     def test_workflow_v1_state_resumes_and_rejects_invalid_phase(self):
-        self.run_cli("bin/workflow.sh", "init", "WF-RESUME")
+        self.run_cli("workflow", "init", "WF-RESUME")
         lifecycle = self.state / "workflows" / "WF-RESUME" / "lifecycle" / "lifecycle.env"
         initial = read_env_file(lifecycle)
         self.assertEqual(
@@ -688,7 +762,7 @@ class MigrationCliContractTest(unittest.TestCase):
                 "updated_at",
             ],
         )
-        resumed = self.run_cli("bin/workflow.sh", "init-or-resume", "WF-RESUME", "--resume", "1")
+        resumed = self.run_cli("workflow", "init-or-resume", "WF-RESUME", "--resume", "1")
         self.assertIn("workflow resumed\tWF-RESUME\tpre-implementation", resumed.stdout)
         self.assertEqual(read_env_file(lifecycle)["resume_count"], "1")
 
@@ -696,7 +770,7 @@ class MigrationCliContractTest(unittest.TestCase):
             "phase=pre-implementation", "phase=corrupt"
         ), encoding="utf-8")
         rejected = self.run_cli(
-            "bin/workflow.sh", "init-or-resume", "WF-RESUME", "--resume", "1", check=False
+            "workflow", "init-or-resume", "WF-RESUME", "--resume", "1", check=False
         )
         self.assertEqual(rejected.returncode, 1)
         self.assertIn("persisted workflow has invalid phase: corrupt", rejected.stderr)

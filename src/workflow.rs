@@ -44,18 +44,18 @@ const TODO_HEADER: &str = "todo_id\tkind\tsummary\torigin\tstatus\tassignment_id
 const REVIEW_HEADER: &str = "review_id\ttype\tverdict\tdiff_hash\tevidence\titeration\trecorded_at";
 
 const USAGE: &str = r#"Usage:
-  bin/workflow.sh init WORKFLOW_ID
-  bin/workflow.sh init-or-resume WORKFLOW_ID --resume 0|1
-  bin/workflow.sh status WORKFLOW_ID
-  bin/workflow.sh prepare-implementation WORKFLOW_ID --decision-id ID --plan-id ID --decision-revision REV --implementation-context PATH --authority-review ID
-  bin/workflow.sh transition WORKFLOW_ID PHASE [--diff-hash HASH]
-  bin/workflow.sh add-todo WORKFLOW_ID TODO_ID --kind KIND --summary TEXT [--origin TEXT]
-  bin/workflow.sh todo-status WORKFLOW_ID TODO_ID STATUS [--assignment-id ID]
-  bin/workflow.sh resolve-todo WORKFLOW_ID TODO_ID --resolution STATUS --evidence TEXT [OPTIONS]
-  bin/workflow.sh record-review WORKFLOW_ID REVIEW_ID --type TYPE --verdict VERDICT [--diff-hash HASH] --evidence TEXT
-  bin/workflow.sh gate WORKFLOW_ID implementation|completion [--decision-id ID] [--plan-id ID]
-  bin/workflow.sh completion-check WORKFLOW_ID
-  bin/workflow.sh value WORKFLOW_ID KEY"#;
+  multiagent workflow init WORKFLOW_ID
+  multiagent workflow init-or-resume WORKFLOW_ID --resume 0|1
+  multiagent workflow status WORKFLOW_ID
+  multiagent workflow prepare-implementation WORKFLOW_ID --decision-id ID --plan-id ID --decision-revision REV --implementation-context PATH --authority-review ID
+  multiagent workflow transition WORKFLOW_ID PHASE [--diff-hash HASH]
+  multiagent workflow add-todo WORKFLOW_ID TODO_ID --kind KIND --summary TEXT [--origin TEXT]
+  multiagent workflow todo-status WORKFLOW_ID TODO_ID STATUS [--assignment-id ID]
+  multiagent workflow resolve-todo WORKFLOW_ID TODO_ID --resolution STATUS --evidence TEXT [OPTIONS]
+  multiagent workflow record-review WORKFLOW_ID REVIEW_ID --type TYPE --verdict VERDICT [--diff-hash HASH] --evidence TEXT
+  multiagent workflow gate WORKFLOW_ID implementation|completion [--decision-id ID] [--plan-id ID]
+  multiagent workflow completion-check WORKFLOW_ID
+  multiagent workflow value WORKFLOW_ID KEY"#;
 
 pub fn run(args: &[String]) -> Result<(), String> {
     if args.is_empty() {
@@ -138,6 +138,7 @@ impl Store {
         fs::create_dir_all(&paths.base).map_err(io_error("create lifecycle directory"))?;
         let file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&paths.lock)

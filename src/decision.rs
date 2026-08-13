@@ -7,14 +7,14 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 const USAGE: &str = r#"Usage:
-  bin/decision.sh init DECISION_ID --title TEXT [--owner NAME]
-  bin/decision.sh add-alternative DECISION_ID --plan-id PLAN_ID --summary TEXT --proposed-by AGENT [--branch BRANCH] [--assignment-name NAME] [--expected-outcome TEXT] [--risk TEXT]
-  bin/decision.sh add-assumption DECISION_ID --assumption-id ID --statement TEXT [--confidence VALUE] [--validation-method TEXT] [--expected-signal TEXT]
-  bin/decision.sh commit DECISION_ID --selected-plan PLAN_ID --reason TEXT [--rollback-policy TEXT] [--reflection-due TEXT]
-  bin/decision.sh record-metric DECISION_ID --name NAME [--expected VALUE] [--actual VALUE]
-  bin/decision.sh reflect DECISION_ID --recommendation continue|adjust|rollback|pivot --reason TEXT [--follow-up-assignment NAME]
-  bin/decision.sh show DECISION_ID
-  bin/decision.sh list"#;
+  multiagent decision init DECISION_ID --title TEXT [--owner NAME]
+  multiagent decision add-alternative DECISION_ID --plan-id PLAN_ID --summary TEXT --proposed-by AGENT [--branch BRANCH] [--assignment-name NAME] [--expected-outcome TEXT] [--risk TEXT]
+  multiagent decision add-assumption DECISION_ID --assumption-id ID --statement TEXT [--confidence VALUE] [--validation-method TEXT] [--expected-signal TEXT]
+  multiagent decision commit DECISION_ID --selected-plan PLAN_ID --reason TEXT [--rollback-policy TEXT] [--reflection-due TEXT]
+  multiagent decision record-metric DECISION_ID --name NAME [--expected VALUE] [--actual VALUE]
+  multiagent decision reflect DECISION_ID --recommendation continue|adjust|rollback|pivot --reason TEXT [--follow-up-assignment NAME]
+  multiagent decision show DECISION_ID
+  multiagent decision list"#;
 
 pub fn run(args: &[String]) -> Result<(), String> {
     if args.is_empty() {
@@ -58,6 +58,7 @@ impl Store {
         fs::create_dir_all(&self.base).map_err(io_error("create decision state directory"))?;
         let file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(self.base.join(".lock"))

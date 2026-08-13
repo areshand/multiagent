@@ -1,9 +1,9 @@
-mod adapter;
 mod config;
 mod dag;
 mod decision;
 mod policy;
 mod prompt_bundle;
+mod runtime;
 mod snapshot;
 mod subagent;
 mod workflow;
@@ -21,8 +21,8 @@ const USAGE: &str = r#"Usage:
   multiagent launch|orchestrator|status|watch [ARGS...]
   multiagent snapshot --root DIR [--base REV] [--format json|shell]
 
-The Rust core owns production control-plane state. Existing bin/*.sh entrypoints
-are compatibility wrappers; tmux-oriented commands remain external adapters."#;
+The Rust binary owns both durable control-plane state and tmux subprocess
+orchestration. launch.sh is the only compatibility bootstrap."#;
 
 fn main() -> ExitCode {
     let mut args: Vec<String> = env::args().skip(1).collect();
@@ -33,13 +33,10 @@ fn main() -> ExitCode {
 
     let command = args.remove(0);
     let result: Result<ExitCode, (&str, String)> = match command.as_str() {
-        "launch" => adapter::run("launch.sh", &args, &[]).map_err(|message| ("launch", message)),
-        "orchestrator" => adapter::run("bin/orchestrator.sh", &args, &[])
-            .map_err(|message| ("orchestrator", message)),
-        "status" => {
-            adapter::run("bin/status.sh", &args, &[]).map_err(|message| ("status", message))
-        }
-        "watch" => adapter::run("bin/watch.sh", &args, &[]).map_err(|message| ("watch", message)),
+        "launch" => runtime::launch(&args).map_err(|message| ("launch", message)),
+        "orchestrator" => runtime::orchestrator(&args).map_err(|message| ("orchestrator", message)),
+        "status" => runtime::status(&args).map_err(|message| ("status", message)),
+        "watch" => runtime::watch(&args).map_err(|message| ("watch", message)),
         "dag" => dag::run(&args)
             .map(|_| ExitCode::SUCCESS)
             .map_err(|message| ("dag", message)),

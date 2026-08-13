@@ -28,7 +28,7 @@ flowchart LR
 
 `launch.sh` starts the orchestrator and exports the target root, state
 directory, prompt modules, CLI choices, write policy, and verifier iteration
-cap. The orchestrator delegates through `bin/subagent.sh`; assignments,
+cap. The orchestrator delegates through `multiagent subagent`; assignments,
 checkpoints, findings, todos, validation leases, and verifier evidence are
 persisted under `MULTIAGENT_STATE_DIR`. `multiagent_framework/` implements the
 state, snapshot, verification, and final-gate primitives shared by runtime and

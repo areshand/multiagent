@@ -537,7 +537,7 @@ def cmd_value(args):
     print(state[args.key])
 
 
-parser = argparse.ArgumentParser(prog="bin/workflow.sh")
+parser = argparse.ArgumentParser(prog="multiagent workflow")
 sub = parser.add_subparsers(dest="command", required=True)
 
 init = sub.add_parser("init")

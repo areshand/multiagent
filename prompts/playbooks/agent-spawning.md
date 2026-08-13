@@ -23,7 +23,7 @@ for outputs assigned elsewhere.
 Before spawning a worker, create durable assignment metadata:
 
 ```bash
-bin/subagent.sh assignment-create worker-01-task \
+multiagent subagent assignment-create worker-01-task \
   --assignment-id ASSIGNMENT_ID \
   --role exploitation \
   --workflow-id "$MULTIAGENT_WORKFLOW_ID" \
@@ -31,15 +31,15 @@ bin/subagent.sh assignment-create worker-01-task \
   --plan-id PLAN_ID \
   --branch BRANCH \
   --owned PATH[,PATH...]
-bin/subagent.sh worktree-create worker-01-task
-bin/subagent.sh checkpoint-update worker-01-task --step "assignment created" --status assigned
+multiagent subagent worktree-create worker-01-task
+multiagent subagent checkpoint-update worker-01-task --step "assignment created" --status assigned
 ```
 
 Use a separate git worktree per worker unless the user explicitly directs
 otherwise. Spawn from that worktree path:
 
 ```bash
-WORKTREE_PATH="$(bin/subagent.sh worktree-show worker-01-task | awk -F= '$1 == "path" {print $2}')"
+WORKTREE_PATH="$(multiagent subagent worktree-show worker-01-task | awk -F= '$1 == "path" {print $2}')"
 WORKER_CLI="${WORKER_CLI:-claude}"
 case "$WORKER_CLI" in
   codex)
@@ -62,21 +62,21 @@ instead of sending instructions.
 
 ## Long-Running Subagent Skill
 
-Prefer `bin/subagent.sh spawn` for named long-running subagents because it
+Prefer `multiagent subagent spawn` for named long-running subagents because it
 persists context:
 
 ```bash
-bin/subagent.sh spawn subagent-build-watch --instruction "FIRST_INSTRUCTION_TEXT"
-bin/subagent.sh poll subagent-build-watch
-bin/subagent.sh inspect subagent-build-watch --lines 160
-bin/subagent.sh finalize subagent-build-watch
+multiagent subagent spawn subagent-build-watch --instruction "FIRST_INSTRUCTION_TEXT"
+multiagent subagent poll subagent-build-watch
+multiagent subagent inspect subagent-build-watch --lines 160
+multiagent subagent finalize subagent-build-watch
 ```
 
 For a bounded worker in the current worktree, `spawn` can create the durable
 assignment and worker in one command:
 
 ```bash
-bin/subagent.sh spawn worker-02-repair \
+multiagent subagent spawn worker-02-repair \
   --own src/affected/,tests/affected/ \
   -- "FIRST_INSTRUCTION_TEXT"
 ```
@@ -92,7 +92,7 @@ progress, before stopping, and whenever a blocker appears.
 Read-only scouts are temporary evidence gatherers. Before spawning the first
 edit-capable worker, poll or inspect any active scout once, persist the useful
 ledger/findings, then finalize or kill the scout if it is still running. Do not
-let an active generic scout block `bin/subagent.sh spawn` for the implementation
+let an active generic scout block `multiagent subagent spawn` for the implementation
 worker. Use `MULTIAGENT_ALLOW_PARALLEL_WORKERS=1` only when you intentionally
 want parallel disjoint workers and have recorded non-overlapping ownership.
 
@@ -109,10 +109,10 @@ blocking repair work. Blocking verifier findings must be recorded as structured
 finding artifacts before the orchestrator turns them into bounded repair todos.
 
 ```bash
-SUBAGENT_CLI="$VERIFIER_CLI" bin/subagent.sh spawn verifier-01-task --instruction "FIRST_INSTRUCTION_TEXT"
+SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn verifier-01-task --instruction "FIRST_INSTRUCTION_TEXT"
 ```
 
-Run `bin/subagent.sh assignment-check WORKER_NAME` before relying on verifier
+Run `multiagent subagent assignment-check WORKER_NAME` before relying on verifier
 results. Resolve branch or file ownership rejection before verification.
 
 Use the configurable iteration cap:
@@ -131,9 +131,9 @@ hidden-contract probes, assumption challenges, and the instruction to Run a
 Ponytail over-engineering pass.
 The orchestrator decides which findings become accepted follow-up; never pass
 raw verifier findings directly to the worker as orders. Convert accepted
-blocking findings into `bin/subagent.sh todo-create ...` records with objective
+blocking findings into `multiagent subagent todo-create ...` records with objective
 done criteria, assign workers from open todos, require worker resolution
-evidence, then close the todo with `bin/subagent.sh todo-close ...` only after
+evidence, then close the todo with `multiagent subagent todo-close ...` only after
 verifier recheck. `resolved` is a handoff state, not acceptance.
 
 When a worker says `required-path-outside-owned:` or names a required path
@@ -158,16 +158,16 @@ continue indefinitely: the next state must be a source diff,
 `required-path-outside-owned: RELATIVE_PATH`, `validation-repair-needed:`, or
 blocked status with a source-visible reason.
 
-After `bin/subagent.sh kill NAME` or `bin/subagent.sh finalize NAME`, ensure the
+After `multiagent subagent kill NAME` or `multiagent subagent finalize NAME`, ensure the
 assignment no longer owns paths before reusing them. If needed, run
-`bin/subagent.sh assignment-status NAME failed` for killed workers or
-`bin/subagent.sh assignment-status NAME done` for finalized workers before
+`multiagent subagent assignment-status NAME failed` for killed workers or
+`multiagent subagent assignment-status NAME done` for finalized workers before
 creating the replacement assignment.
 
 Before final acceptance, run:
 
 ```bash
-bin/subagent.sh gate-check
+multiagent subagent gate-check
 ```
 
 Do not accept while required findings are unqueued or repair todos are open,
@@ -179,10 +179,10 @@ evidence and verifier closure evidence.
 When the user asks for agent progress, run:
 
 ```bash
-bin/status.sh
+multiagent status
 ```
 
 Report only actual agents: worker windows and named subagents. Exclude the
 orchestrator. If the helper fails, fall back to `tmux list-windows`,
 `tmux capture-pane` for each non-orchestrator worker, and
-`bin/subagent.sh poll NAME` for named subagents.
+`multiagent subagent poll NAME` for named subagents.

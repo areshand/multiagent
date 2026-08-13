@@ -213,6 +213,17 @@ class OnDemandImageManager:
         return native_solver_source_digest(self.native_solver_source)[:16]
 
     @staticmethod
+    def _rust_builder_lines() -> list[str]:
+        return [
+            "FROM rust:1.85-alpine AS multiagent-builder",
+            "RUN apk add --no-cache musl-dev",
+            "WORKDIR /build",
+            "COPY multiagent/Cargo.toml multiagent/Cargo.lock ./",
+            "COPY multiagent/src ./src",
+            "RUN cargo build --release --locked",
+        ]
+
+    @staticmethod
     def _skip_repo_bake_path(path: Path) -> bool:
         return skip_repo_bake_path(path)
 
@@ -246,7 +257,8 @@ class OnDemandImageManager:
         return (
             [
                 "COPY multiagent/ /opt/multiagent/",
-                "RUN chmod +x /opt/multiagent/launch.sh /opt/multiagent/bin/*.sh",
+                "COPY --from=multiagent-builder /build/target/release/multiagent /opt/multiagent/bin/multiagent",
+                "RUN chmod +x /opt/multiagent/launch.sh /opt/multiagent/bin/multiagent",
             ],
             "python3 -m evaluation.native_solver.solve_swe_prod",
         )
@@ -297,7 +309,11 @@ class OnDemandImageManager:
         context_dir.mkdir(parents=True, exist_ok=True)
         copy_lines, package_hint = self._copy_native_solver_source(context_dir)
         dockerfile = context_dir / "Dockerfile"
-        dockerfile_lines = [f"FROM {image}", f'LABEL {SOLVER_SOURCE_LABEL}="{solver_digest}"']
+        dockerfile_lines = [
+            *self._rust_builder_lines(),
+            f"FROM {image}",
+            f'LABEL {SOLVER_SOURCE_LABEL}="{solver_digest}"',
+        ]
         if "tmux" in package_hint or "prod" in package_hint:
             dockerfile_lines.append(
                 "RUN if ! command -v tmux >/dev/null 2>&1; then "

@@ -23,13 +23,13 @@ const ROLES: &[&str] = &[
 ];
 
 const USAGE: &str = r#"Usage:
-  bin/dag.sh init WORKFLOW_ID --title TEXT [--owner NAME]
-  bin/dag.sh add-node WORKFLOW_ID NODE_ID --agent NAME --assignment-id ID --role ROLE --branch BRANCH --owned PATH[,PATH...] [--depends-on NODE[,NODE...]] [--status STATUS] [--decision-id ID] [--plan-id ID]
-  bin/dag.sh status WORKFLOW_ID NODE_ID STATUS [--reason TEXT]
-  bin/dag.sh ready WORKFLOW_ID
-  bin/dag.sh blocked WORKFLOW_ID
-  bin/dag.sh show WORKFLOW_ID
-  bin/dag.sh list"#;
+  multiagent dag init WORKFLOW_ID --title TEXT [--owner NAME]
+  multiagent dag add-node WORKFLOW_ID NODE_ID --agent NAME --assignment-id ID --role ROLE --branch BRANCH --owned PATH[,PATH...] [--depends-on NODE[,NODE...]] [--status STATUS] [--decision-id ID] [--plan-id ID]
+  multiagent dag status WORKFLOW_ID NODE_ID STATUS [--reason TEXT]
+  multiagent dag ready WORKFLOW_ID
+  multiagent dag blocked WORKFLOW_ID
+  multiagent dag show WORKFLOW_ID
+  multiagent dag list"#;
 
 pub fn run(args: &[String]) -> Result<(), String> {
     if args.is_empty() {
@@ -78,6 +78,7 @@ impl Store {
         fs::create_dir_all(&directory).map_err(io_error("create workflow directory"))?;
         let file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(directory.join(".dag.lock"))
