@@ -43,6 +43,8 @@ def refresh_aggregate(args: argparse.Namespace) -> None:
         str(args.aggregate_json),
         "--report",
         str(args.report_dir / "swe-bench-pro-official-aggregate.md"),
+        "--report-dir",
+        str(args.report_dir),
         "--suggest-shard-size",
         str(args.shard_size),
         "--swe-bench-pro-repo-path",

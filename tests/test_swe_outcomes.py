@@ -41,6 +41,7 @@ _install_evalscope_stubs()
 from evaluation import evalscope_multiagent_native_runner  # noqa: E402
 from evaluation import swe_bench_pro  # noqa: E402
 from evaluation import swe_bench_pro_official_aggregate  # noqa: E402
+from evaluation import swe_bench_pro_run_parallel_shards  # noqa: E402
 from evaluation.native_solver import swe_prod_lifecycle  # noqa: E402
 from evaluation.native_solver import swe_prod_repository  # noqa: E402
 
@@ -229,6 +230,24 @@ class NativeOutcomeTest(unittest.TestCase):
 
 
 class AggregateOutcomeTest(unittest.TestCase):
+    def test_parallel_refresh_aggregates_from_configured_report_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report_dir = Path(directory) / "custom-reports"
+            args = SimpleNamespace(
+                aggregate_json=report_dir / "aggregate.json",
+                report_dir=report_dir,
+                shard_size=5,
+                swe_bench_pro_repo_path=Path("/tmp/swe-bench-pro"),
+                aggregate_reports=None,
+            )
+
+            with mock.patch.object(swe_bench_pro_run_parallel_shards, "run_checked") as run_checked:
+                swe_bench_pro_run_parallel_shards.refresh_aggregate(args)
+
+            command = run_checked.call_args.args[0]
+            report_dir_index = command.index("--report-dir")
+            self.assertEqual(command[report_dir_index + 1], str(report_dir))
+
     def test_default_discovery_accepts_custom_parallel_report_prefix(self):
         with tempfile.TemporaryDirectory() as directory:
             reports = Path(directory)
