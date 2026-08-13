@@ -158,8 +158,8 @@ The only supported SWE Bench Pro entrypoint is
 the task image; there is no scaffold, single-agent, proxy, or custom solver
 fallback.
 
-`evaluation/support` is not a framework or daemon. It contains Python readers
-and evidence analysis used only by evaluation. The long-lived execution units
+`evaluation/support` is not a framework or daemon. It contains status and
+provenance utilities used only by evaluation. The long-lived execution units
 remain the orchestrator, worker, scout, and verifier CLI processes inside tmux.
 
 ## Prompt Modules
@@ -220,9 +220,9 @@ same hash. This is enabled by default through
 
 The Rust runtime under `src/` is the production implementation behind these
 invariants. Python modules under `evaluation/support/` are evaluation-only
-readers and evidence helpers. Evaluation adapters may add benchmark-specific
-task discovery or probes, but they must consume the same durable contracts
-instead of implementing a second acceptance protocol.
+status and provenance helpers. Evaluation adapters may add benchmark-specific
+task discovery, but they must pass solver output to the benchmark rather than
+implementing a second acceptance protocol.
 
 `prompts/playbooks/orchestration-routing.md` contains the detailed role-routing
 workflow for contract scouts, scope guards, validation coordinators, worker

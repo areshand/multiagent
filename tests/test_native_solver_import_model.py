@@ -46,15 +46,12 @@ class NativeSolverImportModelTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("--multiagent-root", result.stdout)
 
-    def test_entrypoint_preserves_legacy_export_enumeration(self) -> None:
+    def test_entrypoint_exposes_only_submission_entrypoints(self) -> None:
         from evaluation.native_solver import solve_swe_prod
 
-        namespace = {}
-        exec("from evaluation.native_solver.solve_swe_prod import *", namespace)
-        for name in ("final_diff_sha256", "git_diff", "run_prod_solver"):
-            self.assertIn(name, solve_swe_prod.__dict__)
-            self.assertIn(name, dir(solve_swe_prod))
-            self.assertIs(namespace[name], getattr(solve_swe_prod, name))
+        self.assertIs(solve_swe_prod.run_prod_solver, solve_swe_prod._lifecycle.run_prod_solver)
+        self.assertFalse(hasattr(solve_swe_prod, "validation_coverage_blockers"))
+        self.assertFalse(hasattr(solve_swe_prod, "implementation_scope_blockers"))
 
     def test_launcher_uses_exact_container_module_command(self) -> None:
         launcher = assigned_string(
@@ -94,9 +91,8 @@ class NativeSolverImportModelTest(unittest.TestCase):
             self.assertTrue((baked_root / "evaluation" / "__init__.py").is_file())
             self.assertTrue((baked_root / "evaluation" / "native_solver" / "__init__.py").is_file())
             self.assertTrue((baked_root / "evaluation" / "support" / "__init__.py").is_file())
-            self.assertTrue(
-                (baked_root / "evaluation" / "support" / "coding" / "__init__.py").is_file()
-            )
+            self.assertTrue((baked_root / "evaluation" / "support" / "state.py").is_file())
+            self.assertEqual(list((baked_root / "evaluation" / "support" / "coding").glob("*.py")), [])
             self.assertFalse((baked_root / "multiagent_framework").exists())
             self.assertEqual(package_hint, f"python3 -m {MODULE_ENTRYPOINT}")
             self.assertEqual(

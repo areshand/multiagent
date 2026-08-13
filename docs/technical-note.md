@@ -121,11 +121,9 @@ no shared mutable state except declared artifacts.
     scorer-only metadata outside every agent context.
 
 This repository implements the snapshot primitive in
-[`../evaluation/support/snapshot.py`](../evaluation/support/snapshot.py),
-hash-bound build and behavior evidence in
-[`../evaluation/support/verification.py`](../evaluation/support/verification.py),
-and durable finding/todo gate integration in
-[`../evaluation/support/gate.py`](../evaluation/support/gate.py).
+[`../src/snapshot.rs`](../src/snapshot.rs) and durable hash-bound finding/TODO
+gate integration in [`../src/subagent.rs`](../src/subagent.rs). Benchmark
+adapters do not repeat these checks before submitting a workspace.
 
 ## Improvements over a single unconstrained agent loop
 

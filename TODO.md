@@ -21,28 +21,21 @@ Position the project as:
   than a reproducible single run.
 - [x] Add an architecture diagram and a three-minute demonstration.
 - [x] Prioritize orchestration, evaluation, and runtime rigor over UI work.
-- [x] Preserve the benchmark denominator when the production solver rejects its
-  own patch through a typed production-owned terminal outcome: discard the
-  rejected diff, score an explicit no-submission workspace through the official
-  verifier, and keep ambiguous exits, timeouts, and runner/infra failures
-  fail-closed.
+- [x] Preserve the benchmark denominator by passing every normally completed
+  solver workspace to the official verifier. Keep only launch, process,
+  timeout, and workspace-collection failures fail-closed.
 
-### Evaluation Support Boundary
+### Adapter Submission Boundary
 
-- [x] Move generic contract reasoning from
-  `evaluation/native_solver/swe_prod_contracts.py` into
-  `evaluation/support/coding/contracts.py`.
-- [x] Promote public issue requirement extraction, issue-coverage gating,
-  data-provenance contracts, migration/history contracts, and generic contract
-  ledger rules into reusable evaluation helpers.
-- [x] Keep only SWE-specific metadata sanitization, benchmark prompt-envelope
-  handling, runtime file paths, and adapter rendering under `evaluation/`.
-- [x] Remove dead compatibility paths where sanitized metadata makes official
-  test fields, `requirements`, or `interface` unreachable.
-- [x] Add support-level tests proving the contract helpers have no SWE Bench,
-  EvalScope, benchmark-row, hidden-test, or `EVAL_*` dependencies.
-- [x] Make the SWE contracts module a thin adapter over the support contract
-  model instead of an independent contract engine.
+- [x] Keep only public metadata sanitization, runtime bootstrap, lifecycle
+  observation, workspace materialization, and runner transport in the adapter.
+- [x] Remove adapter-owned issue-coverage, provenance, history, build, parser,
+  UI, Go-package, and evidence-marker acceptance gates.
+- [x] Treat terminal status as a diagnostic stop signal rather than submission
+  permission.
+- [x] Submit blocked, internally timed-out, and markerless runs whenever the
+  adapter can still complete a reliable workspace handoff.
+- [x] Leave patch correctness exclusively to the official SWE-bench verifier.
 
 ### Native Solver Import Model
 

@@ -128,8 +128,8 @@ from being an independently reproducible single benchmark run.
 The production-only benchmark implementation was established at
 [`f4e23920f6a519bc72790f66eaa8c7bb57804925`](https://github.com/areshand/multiagent/commit/f4e23920f6a519bc72790f66eaa8c7bb57804925).
 That commit removed scaffold, proxy, noop, and alternate solver fallbacks. Use a
-newer immutable commit containing the typed terminal-outcome contract described
-below, and record its full SHA rather than relying on a branch name.
+newer immutable commit containing the pass-through submission boundary
+described below, and record its full SHA rather than relying on a branch name.
 
 Prerequisites:
 
@@ -220,16 +220,13 @@ hash mismatches. The SWE adapter then recomputes the sample selection, score,
 native outcomes, runtime versions, image IDs, platform, model, and solver-source
 digest from those bound artifacts. It does not trust manifest booleans.
 
-A production submission-gate rejection is an end-to-end solver miss, not a
-missing benchmark row. The production lifecycle must first publish a typed,
-machine-readable `submission_gate_rejection` outcome and its dedicated exit
-code. The native runner then preserves diagnostics, resets the task checkout so
-the rejected diff cannot reach the verifier, and lets the official verifier
-score the resulting no-submission workspace. The summary records that row as
-`no_submission`; it stays in the denominator. Legacy `rc=2`, malformed or
-missing outcome evidence, timeouts, and process/container/evaluator failures
-remain fail-closed instead of being guessed from prose or silently converted to
-zero.
+The native adapter is not a second verifier. It launches the production
+workflow, sanitizes private benchmark metadata, observes terminal status, and
+leaves the current task diff for EvalScope. `completed`, `blocked`, an internal
+deadline, or a missing status marker do not suppress a patch: after a normal
+adapter handoff, the official SWE-bench verifier scores whatever diff remains.
+Only launch failures, process crashes, outer task timeouts, and failures that
+prevent collecting the workspace abort the evaluation.
 
 The command does not reproduce the tuned historical `36/50` aggregate by
 construction. The current image baker still requests unpinned `@openai/codex`;

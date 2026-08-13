@@ -1,15 +1,12 @@
-"""Focused tests for production terminal outcomes and SWE aggregation."""
+"""Focused tests for SWE submission handoff and aggregation."""
 
 from __future__ import annotations
 
-import asyncio
 import json
-import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
-from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -44,25 +41,15 @@ _install_evalscope_stubs()
 from evaluation import evalscope_multiagent_native_runner  # noqa: E402
 from evaluation import swe_bench_pro  # noqa: E402
 from evaluation import swe_bench_pro_official_aggregate  # noqa: E402
-from evaluation.native_solver import solve_swe_prod  # noqa: E402
-from evaluation.native_solver import swe_prod_transitions  # noqa: E402
-from evaluation.native_solver.swe_prod_types import LifecycleProgress  # noqa: E402
-from evaluation.support.coding.outcomes import (  # noqa: E402
-    SUBMISSION_GATE_REJECTION,
-    load_terminal_outcome,
-)
-
-
-class _NoSubmissionEnv:
-    def __init__(self) -> None:
-        self.calls = []
-
-    async def exec(self, args, **kwargs):
-        self.calls.append((args, kwargs))
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+from evaluation.native_solver import swe_prod_lifecycle  # noqa: E402
+from evaluation.native_solver import swe_prod_repository  # noqa: E402
 
 
 class NativeOutcomeTest(unittest.TestCase):
+    def test_runner_has_no_submission_rejection_path(self):
+        self.assertFalse(hasattr(evalscope_multiagent_native_runner, "is_submission_gate_rejection"))
+        self.assertFalse(hasattr(evalscope_multiagent_native_runner.MultiagentNativeRunner, "_score_no_submission"))
+
     def test_shard_problem_statement_uses_relative_sample_id(self):
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)
@@ -86,252 +73,86 @@ class NativeOutcomeTest(unittest.TestCase):
             self.assertEqual(absolute_index, 6)
             self.assertEqual(metadata, {"problem_statement": "public issue 6"})
 
-    @unittest.skipUnless(shutil.which("git"), "git is required for lifecycle transitions")
-    def test_exhausted_no_diff_status_becomes_typed_rejection(self):
+    def test_blocked_status_with_patch_is_handed_to_official_scorer(self):
+        completed = SimpleNamespace(returncode=0, stdout="codex-cli 1.0\n", stderr="")
+        launch = SimpleNamespace(returncode=0, stdout="launched\n", stderr="")
+        run_results = iter([completed, launch, completed])
+        final_diff = "diff --git a/source.py b/source.py\n+fixed = True\n"
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prompt = root / "prompt.md"
+            prompt.write_text("prompt", encoding="utf-8")
+            lifecycle_patches = {
+                "require_path": mock.DEFAULT,
+                "multiagent_command": mock.Mock(return_value=["multiagent"]),
+                "find_codex_cli": mock.Mock(return_value="/usr/bin/codex"),
+                "git_head": mock.Mock(return_value="a" * 40),
+                "cleanup_initial_environment_diff": mock.DEFAULT,
+                "run": mock.Mock(side_effect=lambda *_args, **_kwargs: next(run_results)),
+                "write_codex_bridge": mock.DEFAULT,
+                "write_apply_patch_helper": mock.DEFAULT,
+                "write_rg_fallback": mock.DEFAULT,
+                "write_go_singleflight_wrapper": mock.DEFAULT,
+                "read_prompt": mock.Mock(return_value="public task"),
+                "read_task_metadata": mock.Mock(return_value={}),
+                "make_prompt": mock.Mock(return_value=prompt),
+                "toolchain_path_prefixes": mock.Mock(return_value=[]),
+                "ensure_cache_dir": mock.Mock(return_value=str(root)),
+                "tmux_has_session": mock.Mock(return_value=True),
+                "status": mock.Mock(
+                    return_value={"status": "blocked", "reason": "internal validation was inconclusive"}
+                ),
+                "capture_session": mock.DEFAULT,
+                "materialize_committed_changes": mock.DEFAULT,
+                "mark_untracked_source_intent_to_add": mock.DEFAULT,
+                "git_diff": mock.Mock(return_value=final_diff),
+            }
+            with (
+                mock.patch.multiple(swe_prod_lifecycle, **lifecycle_patches),
+                mock.patch.object(
+                    swe_prod_lifecycle.shutil,
+                    "which",
+                    side_effect=lambda name: "/usr/bin/tmux" if name == "tmux" else None,
+                ),
+                mock.patch.object(swe_prod_lifecycle.time, "sleep"),
+                mock.patch.dict(
+                    swe_prod_lifecycle.os.environ,
+                    {"EVAL_CODEX_AUTH_MODE": "chatgpt", "CODEX_ACCESS_TOKEN": "test-token"},
+                ),
+            ):
+                result = swe_prod_lifecycle.run_prod_solver(None, root, root, 60)
+                git_diff_mock = swe_prod_lifecycle.git_diff
+
+        self.assertEqual(result, 0)
+        git_diff_mock.assert_called_once_with(root)
+
+    def test_workspace_handoff_includes_new_source_and_test_files(self):
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)
             subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-            policy = replace(
-                solve_swe_prod.LifecyclePolicy.from_environment(lambda _name, default: default),
-                no_diff_blocked_retry_limit=0,
-            )
-            progress = LifecycleProgress()
-            with mock.patch.object(
-                swe_prod_transitions, "active_verifier_subagent_summaries", return_value=[]
-            ):
-                with mock.patch.object(
-                    swe_prod_transitions, "create_no_diff_stall_repair_state", return_value=[]
-                ):
-                    transition = swe_prod_transitions.handle_blocked_status(
-                        current_status={
-                            "status": "blocked",
-                            "reason": "bounded workers produced no source diff",
-                        },
-                        workdir=repo,
-                        issue="Implement the public requirement.",
-                        task_metadata={},
-                        session="test-session",
-                        policy=policy,
-                        relaunch_orchestrator_for_blockers=lambda *_args, **_kwargs: False,
-                        progress=progress,
-                    )
-
-            self.assertEqual(transition, "break")
-            self.assertEqual(progress.exit_code, 2)
-            self.assertEqual(progress.outcome, "blocked")
-            self.assertEqual(progress.terminal_outcome, SUBMISSION_GATE_REJECTION)
-
-    def test_rejection_requires_dedicated_exit_and_complete_schema(self):
-        payload = {
-            "schema_version": 1,
-            "outcome": "submission_gate_rejection",
-            "reason": "final gate rejected the patch",
-            "blockers": ["missing build evidence"],
-        }
-
-        self.assertTrue(evalscope_multiagent_native_runner.is_submission_gate_rejection(3, payload))
-        self.assertFalse(evalscope_multiagent_native_runner.is_submission_gate_rejection(2, payload))
-        self.assertFalse(
-            evalscope_multiagent_native_runner.is_submission_gate_rejection(3, {**payload, "reason": ""})
-        )
-        self.assertFalse(
-            evalscope_multiagent_native_runner.is_submission_gate_rejection(3, {**payload, "schema_version": 2})
-        )
-
-    def test_no_submission_discards_rejected_diff(self):
-        env = _NoSubmissionEnv()
-        runner = object.__new__(evalscope_multiagent_native_runner.MultiagentNativeRunner)
-        runner._working_dir = "/app"
-
-        result = asyncio.run(
-            runner._score_no_submission(
-                env,
-                sample_id="sample-1",
-                result=SimpleNamespace(returncode=3, duration=1.5, timed_out=False),
-                stdout_tail="",
-                stderr_tail="",
-                diagnostics="typed gate rejection",
-                reason="submission_gate_rejection",
-                runtime_identity={"codex_version": "codex-cli 0.144.1", "node_version": "v22.12.0"},
-            )
-        )
-
-        self.assertEqual(result.metrics["submission_status"], "no_submission")
-        self.assertEqual(env.calls[0][0], ["bash", "-lc", "git reset --hard HEAD && git clean -fd"])
-        self.assertEqual(env.calls[0][1]["cwd"], "/app")
-
-    @unittest.skipUnless(shutil.which("git"), "git is required for lifecycle finalization")
-    def test_final_gate_publishes_production_owned_outcome(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            repo = root / "repo"
-            repo.mkdir()
-            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
             subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
             subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
-            (repo / "README.md").write_text("base\n", encoding="utf-8")
-            subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+            (repo / "base.py").write_text("base = True\n", encoding="utf-8")
+            subprocess.run(["git", "add", "base.py"], cwd=repo, check=True)
             subprocess.run(
-                ["git", "-c", "commit.gpgsign=false", "commit", "-qm", "base"], cwd=repo, check=True
+                ["git", "-c", "commit.gpgsign=false", "commit", "-qm", "base"],
+                cwd=repo,
+                check=True,
             )
-            head = subprocess.run(
-                ["git", "rev-parse", "HEAD"], cwd=repo, check=True, text=True, capture_output=True
-            ).stdout.strip()
-            original_status = solve_swe_prod.STATUS_PATH
-            original_terminal = solve_swe_prod.TERMINAL_OUTCOME_PATH
-            original_emit = swe_prod_transitions.emit_failure_diagnostics
-            try:
-                solve_swe_prod.STATUS_PATH = root / "status.json"
-                solve_swe_prod.TERMINAL_OUTCOME_PATH = root / "terminal-outcome.json"
-                solve_swe_prod.STATUS_PATH.write_text(
-                    json.dumps(
-                        {"status": "blocked", "reason": "final gate rejected", "blockers": ["compile failed"]}
-                    ),
-                    encoding="utf-8",
-                )
-                swe_prod_transitions.emit_failure_diagnostics = lambda _session: None
-                progress = LifecycleProgress(
-                    exit_code=2,
-                    outcome="blocked",
-                    terminal_outcome=SUBMISSION_GATE_REJECTION,
-                )
+            (repo / "feature.py").write_text("fixed = True\n", encoding="utf-8")
+            (repo / "tests").mkdir()
+            (repo / "tests" / "test_feature.py").write_text("def test_feature(): pass\n", encoding="utf-8")
 
-                returncode = swe_prod_transitions.finalize_solver_run(
-                    workdir=repo,
-                    start_head=head,
-                    issue="Fix the public issue.",
-                    task_metadata={},
-                    session="test-session",
-                    progress=progress,
-                )
+            swe_prod_repository.ACTIVE_START_HEAD = None
+            exposed = swe_prod_repository.mark_untracked_source_intent_to_add(repo)
+            diff = swe_prod_repository.git_diff(repo)
 
-                self.assertEqual(returncode, 3)
-                published = load_terminal_outcome(solve_swe_prod.TERMINAL_OUTCOME_PATH)
-                self.assertEqual(published["outcome"], SUBMISSION_GATE_REJECTION)
-                self.assertEqual(published["reason"], "final gate rejected")
-            finally:
-                swe_prod_transitions.emit_failure_diagnostics = original_emit
-                solve_swe_prod.STATUS_PATH = original_status
-                solve_swe_prod.TERMINAL_OUTCOME_PATH = original_terminal
+        self.assertEqual(exposed, ["feature.py", "tests/test_feature.py"])
+        self.assertIn("feature.py", diff)
+        self.assertIn("tests/test_feature.py", diff)
 
-    @unittest.skipUnless(shutil.which("git"), "git is required for lifecycle finalization")
-    def test_patch_bearing_blocked_exit_is_typed_at_finalization(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            repo = root / "repo"
-            repo.mkdir()
-            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
-            subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
-            readme = repo / "README.md"
-            readme.write_text("base\n", encoding="utf-8")
-            subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
-            subprocess.run(
-                ["git", "-c", "commit.gpgsign=false", "commit", "-qm", "base"], cwd=repo, check=True
-            )
-            head = subprocess.run(
-                ["git", "rev-parse", "HEAD"], cwd=repo, check=True, text=True, capture_output=True
-            ).stdout.strip()
-            readme.write_text("base\nrejected patch\n", encoding="utf-8")
-            original_status = solve_swe_prod.STATUS_PATH
-            original_terminal = solve_swe_prod.TERMINAL_OUTCOME_PATH
-            original_emit = swe_prod_transitions.emit_failure_diagnostics
-            try:
-                solve_swe_prod.STATUS_PATH = root / "status.json"
-                solve_swe_prod.TERMINAL_OUTCOME_PATH = root / "terminal-outcome.json"
-                solve_swe_prod.STATUS_PATH.write_text(
-                    json.dumps(
-                        {
-                            "status": "blocked",
-                            "reason": "final validation remained unresolved",
-                            "blockers": ["missing durable completion marker"],
-                        }
-                    ),
-                    encoding="utf-8",
-                )
-                swe_prod_transitions.emit_failure_diagnostics = lambda _session: None
-                progress = LifecycleProgress(exit_code=2, outcome="blocked")
-
-                with mock.patch.object(
-                    swe_prod_transitions,
-                    "coverage_probe_commands",
-                    return_value=[],
-                ):
-                    returncode = swe_prod_transitions.finalize_solver_run(
-                        workdir=repo,
-                        start_head=head,
-                        issue="Fix the public issue.",
-                        task_metadata={},
-                        session="test-session",
-                        progress=progress,
-                    )
-
-                self.assertEqual(returncode, 3)
-                self.assertEqual(progress.terminal_outcome, SUBMISSION_GATE_REJECTION)
-                published = load_terminal_outcome(solve_swe_prod.TERMINAL_OUTCOME_PATH)
-                self.assertEqual(published["outcome"], SUBMISSION_GATE_REJECTION)
-                self.assertEqual(published["reason"], "final validation remained unresolved")
-            finally:
-                swe_prod_transitions.emit_failure_diagnostics = original_emit
-                solve_swe_prod.STATUS_PATH = original_status
-                solve_swe_prod.TERMINAL_OUTCOME_PATH = original_terminal
-
-    @unittest.skipUnless(shutil.which("git"), "git is required for lifecycle finalization")
-    def test_no_diff_checkpoint_block_is_typed_at_finalization(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            repo = root / "repo"
-            repo.mkdir()
-            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
-            subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
-            (repo / "README.md").write_text("base\n", encoding="utf-8")
-            subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
-            subprocess.run(
-                ["git", "-c", "commit.gpgsign=false", "commit", "-qm", "base"], cwd=repo, check=True
-            )
-            head = subprocess.run(
-                ["git", "rev-parse", "HEAD"], cwd=repo, check=True, text=True, capture_output=True
-            ).stdout.strip()
-            original_status = solve_swe_prod.STATUS_PATH
-            original_terminal = solve_swe_prod.TERMINAL_OUTCOME_PATH
-            original_emit = swe_prod_transitions.emit_failure_diagnostics
-            try:
-                solve_swe_prod.STATUS_PATH = root / "status.json"
-                solve_swe_prod.TERMINAL_OUTCOME_PATH = root / "terminal-outcome.json"
-                solve_swe_prod.STATUS_PATH.write_text(
-                    json.dumps(
-                        {
-                            "status": "blocked",
-                            "reason": "checkpoint ended without a materialized patch",
-                            "blockers": ["bounded worker ended before editing"],
-                        }
-                    ),
-                    encoding="utf-8",
-                )
-                swe_prod_transitions.emit_failure_diagnostics = lambda _session: None
-                progress = LifecycleProgress(exit_code=2, outcome="blocked")
-
-                returncode = swe_prod_transitions.finalize_solver_run(
-                    workdir=repo,
-                    start_head=head,
-                    issue="Fix the public issue.",
-                    task_metadata={},
-                    session="test-session",
-                    progress=progress,
-                )
-
-                self.assertEqual(returncode, 3)
-                self.assertEqual(progress.terminal_outcome, SUBMISSION_GATE_REJECTION)
-                published = load_terminal_outcome(solve_swe_prod.TERMINAL_OUTCOME_PATH)
-                self.assertEqual(published["outcome"], SUBMISSION_GATE_REJECTION)
-                self.assertEqual(published["reason"], "checkpoint ended without a materialized patch")
-            finally:
-                swe_prod_transitions.emit_failure_diagnostics = original_emit
-                solve_swe_prod.STATUS_PATH = original_status
-                solve_swe_prod.TERMINAL_OUTCOME_PATH = original_terminal
-
-    def test_summary_keeps_no_submission_in_denominator(self):
+    def test_summary_counts_submitted_patch_even_when_official_score_is_zero(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             work_dir = root / "work"
@@ -342,9 +163,8 @@ class NativeOutcomeTest(unittest.TestCase):
             report_path = report_dir / "swe_bench_pro.json"
             report_path.write_text('{"score": 0.0, "num": 1}\n', encoding="utf-8")
             (log_dir / "eval_log.log").write_text(
-                "multiagent-native exited: sample=0 rc=3 wall=1.5s timed_out=False\n"
-                'multiagent-native runtime: sample=0 identity={"codex_version":"codex-cli 0.144.1","node_version":"v22.12.0"}\n'
-                "multiagent-native no-submission: sample=0 original_rc=3 reason=submission_gate_rejection\n",
+                "multiagent-native exited: sample=0 rc=0 wall=1.5s timed_out=False\n"
+                'multiagent-native runtime: sample=0 identity={"codex_version":"codex-cli 0.144.1","node_version":"v22.12.0"}\n',
                 encoding="utf-8",
             )
             args = self._summary_args(root, work_dir)
@@ -366,10 +186,10 @@ class NativeOutcomeTest(unittest.TestCase):
                 status="completed",
             )
 
-            self.assertIsNone(payload["clean_native_score"])
+            self.assertEqual(payload["clean_native_score"], 0.0)
             self.assertEqual(payload["end_to_end_score"], 0.0)
             self.assertTrue(payload["official_verifier_evidence"])
-            self.assertEqual(payload["native_runner"]["outcome_counts"]["no_submission"], 1)
+            self.assertEqual(payload["native_runner"]["outcome_counts"]["clean_patch"], 1)
             self.assertEqual(
                 payload["native_runner"]["latest"]["runtime_identity"]["codex_version"],
                 "codex-cli 0.144.1",
@@ -422,7 +242,7 @@ class AggregateOutcomeTest(unittest.TestCase):
 
             self.assertEqual(discovered, [shard])
 
-    def test_verified_patch_and_no_submission_weight_to_half(self):
+    def test_passing_and_failing_submitted_patches_weight_to_half(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             benchmark_repo = root / "benchmark"
@@ -441,7 +261,7 @@ class AggregateOutcomeTest(unittest.TestCase):
                 json.dumps(self._summary(rows, 0, 1.0, "clean_patch")), encoding="utf-8"
             )
             (reports / "row-1.json").write_text(
-                json.dumps(self._summary(rows, 1, 0.0, "no_submission")), encoding="utf-8"
+                json.dumps(self._summary(rows, 1, 0.0, "clean_patch")), encoding="utf-8"
             )
             args = SimpleNamespace(
                 swe_bench_pro_repo_path=benchmark_repo,

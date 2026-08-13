@@ -147,22 +147,18 @@ image.
 
 `evaluation.native_solver.solve_swe_prod` is the packaged container entrypoint,
 launched with `python3 -m` from `/opt/multiagent`. Its modules own SWE-specific
-metadata sanitization, bootstrap, lifecycle, and public-probe policy. Exact Git
-snapshots, final-diff hash verification, atomic status, and generic coding
-guardrails live under `evaluation/support/`. They are imported only by
-evaluation processes; normal production launches remain Rust-only.
+metadata sanitization, runtime bootstrap, lifecycle observation, and workspace
+handoff. Terminal status is diagnostic: the adapter does not parse validation
+evidence or pre-accept a patch. On a normal solver exit, EvalScope extracts the
+current `/app` diff and passes it to the official verifier.
 
 Solver prompts and baked source must remain no-leak: they may use issue text,
 visible source, local tests, docs, public APIs, and runtime evidence, but not
 benchmark row identity, hidden tests, prior official failures, or learned
-fixture answers. Adapter probes are additional pre-submission evidence; the
-official verifier remains authoritative.
-
-`EVAL_VALIDATION_PROBE_TIMEOUT` caps each adapter-selected public probe at 300
-seconds by default. The adapter helper defaults to advisory mode and does not
-edit source. The production-native progress watchdog can launch one bounded
-repair worker after a non-empty diff remains stale; it uses only
-repository-visible evidence and is part of the production convergence loop.
+fixture answers. Validation belongs to the production multiagent workflow;
+acceptance belongs exclusively to the official SWE-bench verifier. Adapter
+timeouts and crashes remain runner failures because they prevent a reliable
+workspace handoff.
 
 ## Security Model
 

@@ -67,10 +67,10 @@ decisions, DAGs, lifecycle transitions, assignments, findings, repair todos,
 validation leases, validation subprocesses, tmux process orchestration, status,
 watching, and recovery. `launch.sh` is the source-checkout bootstrap: it locates
 or builds the Rust executable and immediately runs `multiagent launch`. tmux—not
-shell or Rust—continues to own the PTY. Python under `evaluation/support/`
-contains evaluation-only evidence and provenance helpers; it is neither a
-production framework nor a daemon. SWE Bench Pro imports those helpers while
-driving the production Rust path, rather than implementing a second solver. See
+shell or Rust—continues to own the PTY. Python under `evaluation/` is limited to
+benchmark execution, status reading, and provenance. The SWE Bench Pro adapter
+drives the production Rust path and transports its workspace diff to the
+official scorer; it does not implement a second solver or acceptance gate. See
 [the control-plane boundary](docs/control-plane-boundary.md).
 
 ## Run With Agents
