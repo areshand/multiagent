@@ -4,6 +4,11 @@ Use this playbook when the orchestrator must decide which specialist role or
 workflow to run next. Keep the core orchestrator prompt focused on intent,
 ownership, and decisions; load these details only when routing work.
 
+All implementation routing occurs inside the persisted lifecycle from
+`prompts/playbooks/implementation-lifecycle.md`: pre-implementation authority
+review, bounded implementation, independent post-implementation reviews, then
+either completion or a TODO-driven return to pre-implementation.
+
 Before implementation, load `prompts/playbooks/intent-contract.md` if the
 contract is ambiguous or proxy/scaffold risk is present. Before planning
 multi-worker waves or competing explorations, load
@@ -116,6 +121,11 @@ raw verifier findings directly to the worker as orders. Accepted blocking
 findings become todo queue items with done criteria, and a todo is retired only
 through `bin/subagent.sh todo-close ...` after a verifier accepts the worker's
 resolution evidence.
+
+Mirror every accepted follow-up into the lifecycle TODO queue. If any active
+lifecycle TODO remains, return from post-implementation to pre-implementation
+before spawning another writable worker so evidence and decision ownership are
+re-evaluated.
 
 If a worker reports `required-path-outside-owned:` or otherwise names an exact
 source path needed outside its owned paths, treat that as a blocking finding/todo

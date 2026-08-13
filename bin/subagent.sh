@@ -6,12 +6,13 @@ ROOT="${MULTIAGENT_ROOT:-$(pwd)}"
 STATE_DIR="${MULTIAGENT_STATE_DIR:-$ROOT/.multiagent}"
 LOG_DIR="${MULTIAGENT_LOG_DIR:-$STATE_DIR/logs}"
 POLICY_FILE="${MULTIAGENT_WRITE_POLICY:-$ROOT/docs/write-policy.paths}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 CODEX_BIN="${CODEX_BIN:-codex}"
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 WORKER_CLI="${WORKER_CLI:-claude}"
 SUBAGENT_CLI="${SUBAGENT_CLI:-$WORKER_CLI}"
 VERIFIER_CLI="${VERIFIER_CLI:-codex}"
-MULTIAGENT_HELPER="${MULTIAGENT_HELPER:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")}"
+MULTIAGENT_HELPER="${MULTIAGENT_HELPER:-$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")}"
 MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER="${MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER:-1}"
 PROMPT_MODULE_ROOT="${MULTIAGENT_PROMPT_MODULE_ROOT:-$ROOT}"
 FRAMEWORK_MODULE_ROOT="${MULTIAGENT_FRAMEWORK_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -172,7 +173,9 @@ role_prompt_path() {
   local role="$2"
   local lower_name
   lower_name="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')"
-  if [[ "$lower_name" == *build-verifier* ]]; then
+  if [[ "$lower_name" == *decision-authority-reviewer* ]]; then
+    printf '%s\n' "$PROMPT_MODULE_ROOT/prompts/roles/decision-authority-reviewer.md"
+  elif [[ "$lower_name" == *build-verifier* ]]; then
     printf '%s\n' "$PROMPT_MODULE_ROOT/prompts/roles/build-verifier.md"
   elif [[ "$role" == "verifier" || "$role" == "reviewer" || "$lower_name" == *verifier* || "$lower_name" == *review* ]]; then
     printf '%s\n' "$PROMPT_MODULE_ROOT/prompts/verifier.md"
@@ -537,6 +540,50 @@ get_assignment_status() {
   fi
 }
 
+lifecycle_enforced() {
+  [[ "${MULTIAGENT_LIFECYCLE_ENFORCEMENT:-0}" == "1" ]]
+}
+
+workflow_value() {
+  local workflow_id="$1"
+  local key="$2"
+  "$SCRIPT_DIR/workflow.sh" value "$workflow_id" "$key"
+}
+
+gate_implementation_assignment() {
+  local workflow_id="$1"
+  local decision_id="$2"
+  local plan_id="$3"
+  [[ -x "$SCRIPT_DIR/workflow.sh" ]] || die "missing lifecycle helper: $SCRIPT_DIR/workflow.sh"
+  [[ -n "$workflow_id" ]] || die "lifecycle enforcement requires --workflow-id for exploitation assignments"
+  [[ -n "$decision_id" ]] || die "lifecycle enforcement requires --decision-id for exploitation assignments"
+  [[ -n "$plan_id" ]] || die "lifecycle enforcement requires --plan-id for exploitation assignments"
+  "$SCRIPT_DIR/workflow.sh" gate "$workflow_id" implementation \
+    --decision-id "$decision_id" --plan-id "$plan_id" >/dev/null || \
+    die "workflow implementation gate rejected assignment for workflow $workflow_id"
+}
+
+validated_assignment_context_path() {
+  local name="$1"
+  lifecycle_enforced || return 1
+  [[ -f "$(assignment_meta_file "$name")" ]] || return 1
+
+  local role workflow_id decision_id plan_id assignment_revision current_revision context_path
+  role="$(read_assignment_value "$name" role || true)"
+  [[ "$role" == "exploitation" ]] || return 1
+  workflow_id="$(read_assignment_value "$name" workflow_id || true)"
+  decision_id="$(read_assignment_value "$name" decision_id || true)"
+  plan_id="$(read_assignment_value "$name" plan_id || true)"
+  gate_implementation_assignment "$workflow_id" "$decision_id" "$plan_id"
+  assignment_revision="$(read_assignment_value "$name" decision_revision || true)"
+  current_revision="$(workflow_value "$workflow_id" decision_revision)"
+  [[ -n "$assignment_revision" && "$assignment_revision" == "$current_revision" ]] || \
+    die "assignment decision revision is stale: assignment=${assignment_revision:-missing} workflow=$current_revision"
+  context_path="$(read_assignment_value "$name" implementation_context || true)"
+  [[ -f "$context_path" ]] || die "assignment approved implementation context is missing: $context_path"
+  printf '%s\n' "$context_path"
+}
+
 status_is_active_worker() {
   local status="$1"
   case "$status" in
@@ -748,6 +795,10 @@ assignment_create() {
       die "invalid role '$role' (expected exploitation|exploration|reflection|architecture|qa|verifier|scout)"
       ;;
   esac
+  if [[ "$role" == "exploitation" ]] && lifecycle_enforced; then
+    [[ -n "$workflow_id" ]] || workflow_id="${MULTIAGENT_WORKFLOW_ID:-}"
+    gate_implementation_assignment "$workflow_id" "$decision_id" "$plan_id"
+  fi
   if [[ -z "$start_commit" ]]; then
     start_commit="$(git -C "$ROOT" rev-parse HEAD)"
   else
@@ -755,7 +806,12 @@ assignment_create() {
     start_commit="$(git -C "$ROOT" rev-parse "$start_commit^{commit}")"
   fi
 
-  local dir owned_file item normalized
+  local dir owned_file item normalized decision_revision="" implementation_context="" implementation_context_sha256=""
+  if [[ "$role" == "exploitation" ]] && lifecycle_enforced; then
+    decision_revision="$(workflow_value "$workflow_id" decision_revision)"
+    implementation_context="$(workflow_value "$workflow_id" implementation_context)"
+    implementation_context_sha256="$(workflow_value "$workflow_id" implementation_context_sha256)"
+  fi
   dir="$(assignment_dir "$name")"
   mkdir -p "$dir"
   owned_file="$(assignment_owned_file "$name")"
@@ -784,6 +840,9 @@ verifier_cli=$VERIFIER_CLI
 role=$role
 decision_id=$decision_id
 plan_id=$plan_id
+decision_revision=$decision_revision
+implementation_context=$implementation_context
+implementation_context_sha256=$implementation_context_sha256
 workflow_id=$workflow_id
 node_id=$node_id
 depends_on=$depends_on
@@ -1303,6 +1362,16 @@ spawn_subagent() {
     fi
   fi
 
+  local implementation_context_path=""
+  if implementation_context_path="$(validated_assignment_context_path "$name")"; then
+    [[ -n "$instruction_file" ]] || \
+      die "lifecycle-enforced exploitation spawn requires --instruction-file with the complete approved implementation context"
+    local required_context
+    required_context="$(cat "$implementation_context_path")"
+    [[ -n "$required_context" && "$instruction" == *"$required_context"* ]] || \
+      die "exploitation instruction does not contain the complete approved implementation context"
+  fi
+
   local dir
   dir="$(subagent_dir "$name")"
   mkdir -p "$dir" "$LOG_DIR"
@@ -1333,8 +1402,8 @@ EOF
       cat "$prompt_file"
     } >>"$dir/transcript.log"
   fi
-  printf -v command "cd %q && export MULTIAGENT_SESSION=%q MULTIAGENT_ROOT=%q MULTIAGENT_STATE_DIR=%q MULTIAGENT_LOG_DIR=%q MULTIAGENT_WRITE_POLICY=%q MULTIAGENT_SUBAGENT_NAME=%q MULTIAGENT_HELPER=%q WORKER_CLI=%q SUBAGENT_CLI=%q VERIFIER_CLI=%q CODEX_BIN=%q CLAUDE_BIN=%q MULTIAGENT_CODEX_EXEC=%q PATH=%q && %s; rc=\$?; printf '\\nfinal status: codex exec exited rc=%%s\\n' \$rc; sleep infinity" \
-    "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$LOG_DIR" "$POLICY_FILE" "$name" "$MULTIAGENT_HELPER" "$WORKER_CLI" "$cli" "$VERIFIER_CLI" "$CODEX_BIN" "$CLAUDE_BIN" "${MULTIAGENT_CODEX_EXEC:-0}" "$PATH" "$(build_cli_command "$cli" "$ROOT" "$prompt_file" "$output_file")"
+  printf -v command "cd %q && export MULTIAGENT_SESSION=%q MULTIAGENT_ROOT=%q MULTIAGENT_STATE_DIR=%q MULTIAGENT_LOG_DIR=%q MULTIAGENT_WRITE_POLICY=%q MULTIAGENT_WORKFLOW_ID=%q MULTIAGENT_LIFECYCLE_ENFORCEMENT=%q MULTIAGENT_SUBAGENT_NAME=%q MULTIAGENT_HELPER=%q WORKER_CLI=%q SUBAGENT_CLI=%q VERIFIER_CLI=%q CODEX_BIN=%q CLAUDE_BIN=%q MULTIAGENT_CODEX_EXEC=%q PATH=%q && %s; rc=\$?; printf '\\nfinal status: codex exec exited rc=%%s\\n' \$rc; sleep infinity" \
+    "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$LOG_DIR" "$POLICY_FILE" "${MULTIAGENT_WORKFLOW_ID:-}" "${MULTIAGENT_LIFECYCLE_ENFORCEMENT:-0}" "$name" "$MULTIAGENT_HELPER" "$WORKER_CLI" "$cli" "$VERIFIER_CLI" "$CODEX_BIN" "$CLAUDE_BIN" "${MULTIAGENT_CODEX_EXEC:-0}" "$PATH" "$(build_cli_command "$cli" "$ROOT" "$prompt_file" "$output_file")"
   tmux new-window -d -t "$SESSION" -n "$name" "$command"
   pipe_log "$name"
   set_status "$name" "running"
@@ -1584,6 +1653,11 @@ restore_subagent() {
 
   local instruction command
   instruction="$(restore_instruction "$name" "$prior_status" "$dir")"
+  local implementation_context_path=""
+  if implementation_context_path="$(validated_assignment_context_path "$name")"; then
+    instruction+=$'\n\n## Approved Implementation Context\n\n'
+    instruction+="$(cat "$implementation_context_path")"
+  fi
   printf '%s\n' "$(timestamp) prior_status=$prior_status action=$action reason=$reason force=$force cli=$cli" >>"$dir/restore_events.log"
   {
     printf '\n----- restore seed %s -----\n' "$(timestamp)"
@@ -1599,8 +1673,8 @@ restore_subagent() {
     prompt_file="$dir/restore-instruction.txt"
     printf '%s\n' "$instruction" >"$prompt_file"
   fi
-  printf -v command "cd %q && export MULTIAGENT_SESSION=%q MULTIAGENT_ROOT=%q MULTIAGENT_STATE_DIR=%q MULTIAGENT_LOG_DIR=%q MULTIAGENT_WRITE_POLICY=%q MULTIAGENT_SUBAGENT_NAME=%q MULTIAGENT_HELPER=%q MULTIAGENT_SUBAGENT_RESTORED=1 WORKER_CLI=%q SUBAGENT_CLI=%q VERIFIER_CLI=%q CODEX_BIN=%q CLAUDE_BIN=%q MULTIAGENT_CODEX_EXEC=%q PATH=%q && %s; rc=\$?; printf '\\nfinal status: codex exec exited rc=%%s\\n' \$rc; sleep infinity" \
-    "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$LOG_DIR" "$POLICY_FILE" "$name" "$MULTIAGENT_HELPER" "$WORKER_CLI" "$cli" "$VERIFIER_CLI" "$CODEX_BIN" "$CLAUDE_BIN" "${MULTIAGENT_CODEX_EXEC:-0}" "$PATH" "$(build_cli_command "$cli" "$ROOT" "$prompt_file" "$output_file")"
+  printf -v command "cd %q && export MULTIAGENT_SESSION=%q MULTIAGENT_ROOT=%q MULTIAGENT_STATE_DIR=%q MULTIAGENT_LOG_DIR=%q MULTIAGENT_WRITE_POLICY=%q MULTIAGENT_WORKFLOW_ID=%q MULTIAGENT_LIFECYCLE_ENFORCEMENT=%q MULTIAGENT_SUBAGENT_NAME=%q MULTIAGENT_HELPER=%q MULTIAGENT_SUBAGENT_RESTORED=1 WORKER_CLI=%q SUBAGENT_CLI=%q VERIFIER_CLI=%q CODEX_BIN=%q CLAUDE_BIN=%q MULTIAGENT_CODEX_EXEC=%q PATH=%q && %s; rc=\$?; printf '\\nfinal status: codex exec exited rc=%%s\\n' \$rc; sleep infinity" \
+    "$ROOT" "$SESSION" "$ROOT" "$STATE_DIR" "$LOG_DIR" "$POLICY_FILE" "${MULTIAGENT_WORKFLOW_ID:-}" "${MULTIAGENT_LIFECYCLE_ENFORCEMENT:-0}" "$name" "$MULTIAGENT_HELPER" "$WORKER_CLI" "$cli" "$VERIFIER_CLI" "$CODEX_BIN" "$CLAUDE_BIN" "${MULTIAGENT_CODEX_EXEC:-0}" "$PATH" "$(build_cli_command "$cli" "$ROOT" "$prompt_file" "$output_file")"
   tmux new-window -d -t "$SESSION" -n "$name" "$command"
   pipe_log "$name"
   set_status "$name" "running"
