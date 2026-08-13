@@ -451,6 +451,11 @@ def handle_blocked_status(
         )
         if created_state:
             log("no-diff stall structured repair state recorded: " + ", ".join(created_state))
+        # Exhausting bounded implementation attempts with no source patch is a
+        # production submission-gate rejection, not runner infrastructure
+        # failure. Publish the typed outcome during finalization so EvalScope
+        # can score an explicit no-submission row instead of aborting the shard.
+        progress.terminal_outcome = SUBMISSION_GATE_REJECTION
     if (
         diff.strip()
         and blocked_status_needs_diff_reconciliation(current_status)
