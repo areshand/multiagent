@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${MULTIAGENT_USE_LEGACY_DECISION:-0}" != "1" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+  exec "$SCRIPT_DIR/multiagent" decision "$@"
+fi
+
 ROOT="${MULTIAGENT_ROOT:-$(pwd)}"
 STATE_DIR="${MULTIAGENT_STATE_DIR:-$ROOT/.multiagent}"
 

@@ -982,6 +982,7 @@ PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 "$ROOT/tests/test_provenan
 PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 "$ROOT/tests/test_native_solver_import_model.py"
 PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 "$ROOT/tests/test_swe_outcomes.py"
 PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 "$ROOT/tests/test_swe_provenance.py"
+PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 "$ROOT/tests/test_migration_contracts.py"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "multiagent-native requires runtime Codex auth JSON"
 assert_file_not_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" '"OPENAI_API_KEY": bridge.trial_token'
 assert_file_not_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" '"OPENAI_BASE_URL": f"{bridge.base_url}'

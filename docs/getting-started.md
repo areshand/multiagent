@@ -20,13 +20,14 @@ This project launches a tmux session with one `orchestrator` window. The orchest
 ## Requirements
 
 - `tmux`
-- Python 3.8 or newer; the framework control plane uses only the Python standard library, so no `pip install` or virtual environment is required
+- Rust 1.75 or newer and Cargo when running from a source checkout
+- Python 3.8 or newer for evaluation adapters and remaining compatibility evidence audits; no `pip install` or virtual environment is required
 - Codex CLI or Claude CLI, according to the configured orchestrator and agent roles
 
 `launch.sh` checks these executable prerequisites before creating the tmux
-session. Python is a runtime dependency of the general framework, not only of
-the SWE evaluation adapter: structured state, findings, verification evidence,
-and exact Git snapshot binding use it.
+session. Durable production state and exact Git snapshot binding run in the
+Rust `multiagent` CLI. Python remains required while compatibility gate audits
+and evaluation clients are still present.
 
 ## Launch
 
@@ -100,15 +101,16 @@ flowchart TD
         Launch["launch.sh: export config and initialize state"] --> Tmux["tmux session with orchestrator window"]
         Prompts["orchestrator_prompt.md plus role/playbook modules"] --> Orchestrator["Orchestrator CLI process"]
         Tmux --> Orchestrator
-        Orchestrator --> Helper["bin/subagent.sh control plane"]
+        Orchestrator --> Helper["bin/multiagent Rust control plane"]
 
         Helper --> Worker["Worker tmux windows"]
         Helper --> Verifier["Scout and verifier tmux windows"]
-        Helper --> Runtime["multiagent_framework Python 3.8+ stdlib runtime"]
+        Helper --> Runtime["Rust durable-state and snapshot runtime"]
         Runtime --> Snapshot["Exact Git snapshot and final-diff hash"]
         Runtime --> Evidence["Build and behavior evidence checks"]
         Runtime --> Guardrails["Generic coding and hidden-contract guardrails"]
         Runtime --> Status["Atomic status and structured gate integration"]
+        Adapter --> Python["Python evaluation compatibility client"]
 
         Worker --> Durable[("assignments, checkpoints, resolutions")]
         Verifier --> Durable
@@ -141,9 +143,9 @@ The invocation sequence is:
    only when needed.
 3. The orchestrator calls `bin/subagent.sh` to create assignments, spawn tmux
    workers/scouts/verifiers, monitor them, and persist structured artifacts.
-4. `subagent.sh` invokes `python3 -m multiagent_framework.cli snapshot` when
-   binding a verifier to the exact staged and unstaged diff. Evaluation adapters
-   also import the same framework evidence, state, gate, and guardrail APIs.
+4. `subagent.sh` invokes `bin/multiagent snapshot` when binding a verifier to
+   the exact staged and unstaged diff. Evaluation adapters consume the same v1
+   state and evidence contracts through the Python compatibility client.
 5. Workers edit the target repository. Verifiers independently inspect the
    live diff and write findings or hash-bound acceptance evidence.
 6. `gate-check` accepts only when blocking findings/todos are closed, required
@@ -155,11 +157,10 @@ The only supported SWE Bench Pro entrypoint is
 the task image; there is no scaffold, single-agent, proxy, or custom solver
 fallback.
 
-`multiagent_framework` is not a daemon. It is shared in-process Python code and
-a short-lived CLI used by the shell control plane and adapters. It requires
-Python 3.8 or newer but has no third-party Python package dependency. The
-long-lived execution units are the orchestrator, worker, scout, and verifier CLI
-processes inside tmux.
+`multiagent_framework` is not a daemon. It is the Python evaluation and
+compatibility client for the Rust-owned v1 contracts. The long-lived execution
+units remain the orchestrator, worker, scout, and verifier CLI processes inside
+tmux.
 
 ## Prompt Modules
 
@@ -217,16 +218,12 @@ exact current `final-diff-sha256`; closed todo rechecks are audited against that
 same hash. This is enabled by default through
 `MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1`.
 
-The Python runtime under `multiagent_framework/` is the shared implementation
-behind these invariants. `snapshot.py` captures staged and unstaged Git changes
-against `HEAD`, `verification.py` validates build and behavior evidence against
-that exact hash, `state.py` atomically publishes machine-readable lifecycle
-state, `gate.py` invokes the durable finding/todo submission gate, and
-`coding/guardrails.py` derives source/test/package risks from a
-coding task without evaluator answers. `bin/subagent.sh` uses this runtime when
-binding a verifier instruction to its spawn-time diff. Evaluation adapters may
-add benchmark-specific task discovery or probes, but they must consume these
-framework primitives instead of implementing a second acceptance protocol.
+The Rust runtime under `src/` is the shared production implementation behind
+these invariants. The Python modules under `multiagent_framework/` remain
+evaluation-facing readers, evidence helpers, and compatibility APIs. Evaluation
+adapters may add benchmark-specific task discovery or probes, but they must
+consume the same durable contracts instead of implementing a second acceptance
+protocol.
 
 `prompts/playbooks/orchestration-routing.md` contains the detailed role-routing
 workflow for contract scouts, scope guards, validation coordinators, worker

@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-for command in git python3; do
+for command in cargo git python3; do
   if ! command -v "$command" >/dev/null 2>&1; then
     printf 'demo: missing required command: %s\n' "$command" >&2
     exit 1
@@ -28,7 +28,7 @@ ma() {
   MULTIAGENT_STATE_DIR="$STATE_DIR" \
   MULTIAGENT_FRAMEWORK_ROOT="$REPO_ROOT" \
   MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
-    "$REPO_ROOT/bin/subagent.sh" "$@"
+    "$REPO_ROOT/bin/multiagent" subagent "$@"
 }
 
 expect_gate_rejection() {
@@ -92,9 +92,8 @@ printf '[3/5] Apply the worker repair and bind its evidence to the exact diff\n'
 printf 'orchestrated\n' >"$TARGET_ROOT/answer.txt"
 (cd "$TARGET_ROOT" && ./check.sh)
 SNAPSHOT="$(
-  PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
-    python3 -m multiagent_framework.cli snapshot \
-      --root "$TARGET_ROOT" --base HEAD --format shell
+  "$REPO_ROOT/bin/multiagent" snapshot \
+    --root "$TARGET_ROOT" --base HEAD --format shell
 )"
 read -r FINAL_DIFF_SHA CHANGED_FILES <<<"$SNAPSHOT"
 if [[ "$CHANGED_FILES" != "1" ]]; then

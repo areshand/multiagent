@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${MULTIAGENT_USE_LEGACY_PROMPT_BUNDLE:-0}" != "1" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+  exec "$SCRIPT_DIR/multiagent" prompt-bundle "$@"
+fi
+
 usage() {
   cat <<'USAGE'
 Usage:

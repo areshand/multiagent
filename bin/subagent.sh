@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${MULTIAGENT_USE_LEGACY_SUBAGENT_STATE:-0}" != "1" ]]; then
+  case "${1:-}" in
+    assignment-create|assignment-show|assignment-status|assignment-check|checkpoint-update|checkpoint-show|worktree-create|worktree-show|worktree-remove|finding-create|finding-show|finding-list|finding-dismiss|todo-create|todo-show|todo-list|todo-assign|todo-status|resolution-create|todo-close|validation-lease-acquire|validation-lease-status|validation-lease-show|validation-lease-list|validation-run)
+      SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+      exec "$SCRIPT_DIR/multiagent" subagent "$@"
+      ;;
+  esac
+fi
+
 SESSION="${MULTIAGENT_SESSION:-multiagent}"
 ROOT="${MULTIAGENT_ROOT:-$(pwd)}"
 STATE_DIR="${MULTIAGENT_STATE_DIR:-$ROOT/.multiagent}"
@@ -15,7 +24,6 @@ VERIFIER_CLI="${VERIFIER_CLI:-codex}"
 MULTIAGENT_HELPER="${MULTIAGENT_HELPER:-$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")}"
 MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER="${MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER:-1}"
 PROMPT_MODULE_ROOT="${MULTIAGENT_PROMPT_MODULE_ROOT:-$ROOT}"
-FRAMEWORK_MODULE_ROOT="${MULTIAGENT_FRAMEWORK_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 if [[ -n "${MULTIAGENT_EXTRA_PATH:-}" ]]; then
   PATH="$MULTIAGENT_EXTRA_PATH:$PATH"
   export PATH
@@ -251,9 +259,7 @@ append_verifier_diff_binding() {
       return
       ;;
   esac
-  require_cmd python3
-  snapshot="$(PYTHONPATH="$FRAMEWORK_MODULE_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
-    python3 -m multiagent_framework.cli snapshot --root "$ROOT" --base HEAD --format shell)" || \
+  snapshot="$("$SCRIPT_DIR/multiagent" snapshot --root "$ROOT" --base HEAD --format shell)" || \
     die "could not capture final diff through framework snapshot runtime"
   read -r diff_hash changed_files <<<"$snapshot"
   if [[ "$changed_files" -eq 0 ]]; then
@@ -1354,7 +1360,7 @@ spawn_subagent() {
       done
     else
       current_branch="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)"
-      assignment_create "$name" \
+      "$SCRIPT_DIR/multiagent" subagent assignment-create "$name" \
         --assignment-id "spawn-$name" \
         --branch "$current_branch" \
         --owned "$owned_csv" \
@@ -1408,7 +1414,7 @@ EOF
   pipe_log "$name"
   set_status "$name" "running"
   if [[ -f "$(assignment_meta_file "$name")" ]]; then
-    set_assignment_status "$name" "running"
+    "$SCRIPT_DIR/multiagent" subagent assignment-status "$name" running >/dev/null
   fi
 
   capture_subagent "$name" || true
@@ -1733,7 +1739,7 @@ finalize_subagent() {
   fi
   set_status "$name" "finalized"
   if [[ -f "$(assignment_meta_file "$name")" ]]; then
-    set_assignment_status "$name" "done"
+    "$SCRIPT_DIR/multiagent" subagent assignment-status "$name" done >/dev/null
   fi
   printf '%s\n' "$(timestamp)" >"$(subagent_dir "$name")/finalized_at"
   printf 'finalized %s\n' "$name"
@@ -1751,7 +1757,7 @@ kill_subagent() {
   fi
   set_status "$name" "killed"
   if [[ -f "$(assignment_meta_file "$name")" ]]; then
-    set_assignment_status "$name" "failed"
+    "$SCRIPT_DIR/multiagent" subagent assignment-status "$name" failed >/dev/null
   fi
   printf 'killed %s\n' "$name"
 }

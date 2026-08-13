@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${MULTIAGENT_USE_LEGACY_POLICY:-0}" != "1" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+  exec "$SCRIPT_DIR/multiagent" policy "$@"
+fi
+
 ROOT="${MULTIAGENT_ROOT:-$(pwd)}"
 POLICY_FILE="${MULTIAGENT_WRITE_POLICY:-$ROOT/docs/write-policy.paths}"
 
