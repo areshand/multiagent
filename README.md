@@ -92,6 +92,9 @@ records prompt hashes, and initializes durable lifecycle state under:
 $MULTIAGENT_STATE_DIR/workflows/$MULTIAGENT_WORKFLOW_ID/lifecycle/
 ```
 
+`bin/workflow.sh` is the shell entry point; the importable lifecycle state
+machine and CLI implementation live in `multiagent_framework/workflow.py`.
+
 The enforced normal path is `pre-implementation -> implementation ->
 post-implementation`. An independent authority review identifies consequential
 choices and whether the user or orchestrator owns each one. Writable workers
