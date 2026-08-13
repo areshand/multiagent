@@ -151,11 +151,13 @@ class MultiagentNativeRunner(AgentRunner):
         bridge: BridgeEndpoint,
     ) -> AgentRunResult:
         raw_metadata = dict(task.metadata or {})
+        sample_id = raw_metadata.get("sample_id")
+        sample_index = _absolute_sample_index(self._swe_bench_pro_sample_offset, sample_id)
         metadata = _public_solver_metadata(dict(task.metadata or {}))
         metadata.update(
             _public_problem_statement_metadata(
                 self._swe_bench_pro_repo_path,
-                self._swe_bench_pro_sample_offset,
+                sample_index,
                 existing=metadata,
             )
         )
@@ -177,9 +179,9 @@ class MultiagentNativeRunner(AgentRunner):
         shell_command = (
             f"{command} > {shlex.quote(_STDOUT_FILE)} 2> {shlex.quote(_STDERR_FILE)}"
         )
-        sample_id = raw_metadata.get("sample_id")
         logger.info(
-            f"multiagent-native launching: sample={sample_id} timeout={task.timeout}s "
+            f"multiagent-native launching: sample={sample_id} official_index={sample_index} "
+            f"timeout={task.timeout}s "
             f"cwd={self._working_dir} command={command!r}"
         )
         runtime_identity: dict[str, Any] = {}
@@ -484,3 +486,15 @@ def _public_problem_statement_metadata(
     except (OSError, json.JSONDecodeError):
         return {}
     return {}
+
+
+def _absolute_sample_index(sample_offset: int, sample_id: Any) -> int:
+    """Map EvalScope's shard-relative sample id to the official dataset row."""
+
+    try:
+        relative_index = int(sample_id)
+    except (TypeError, ValueError):
+        return sample_offset
+    if relative_index < 0:
+        return sample_offset
+    return sample_offset + relative_index

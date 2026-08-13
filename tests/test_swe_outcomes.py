@@ -63,6 +63,29 @@ class _NoSubmissionEnv:
 
 
 class NativeOutcomeTest(unittest.TestCase):
+    def test_shard_problem_statement_uses_relative_sample_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            helper = repo / "helper_code"
+            helper.mkdir()
+            dataset = helper / "sweap_eval_full_v2.jsonl"
+            dataset.write_text(
+                "\n".join(
+                    json.dumps({"problem_statement": f"public issue {index}"})
+                    for index in range(7)
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            absolute_index = evalscope_multiagent_native_runner._absolute_sample_index(5, "1")
+            metadata = evalscope_multiagent_native_runner._public_problem_statement_metadata(
+                str(repo), absolute_index
+            )
+
+            self.assertEqual(absolute_index, 6)
+            self.assertEqual(metadata, {"problem_statement": "public issue 6"})
+
     @unittest.skipUnless(shutil.which("git"), "git is required for lifecycle transitions")
     def test_exhausted_no_diff_status_becomes_typed_rejection(self):
         with tempfile.TemporaryDirectory() as directory:
