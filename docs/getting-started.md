@@ -158,9 +158,9 @@ The only supported SWE Bench Pro entrypoint is
 the task image; there is no scaffold, single-agent, proxy, or custom solver
 fallback.
 
-`multiagent_framework` is not a daemon. It contains Python readers and evidence
-analysis used by evaluation. The long-lived execution units remain the
-orchestrator, worker, scout, and verifier CLI processes inside tmux.
+`evaluation/support` is not a framework or daemon. It contains Python readers
+and evidence analysis used only by evaluation. The long-lived execution units
+remain the orchestrator, worker, scout, and verifier CLI processes inside tmux.
 
 ## Prompt Modules
 
@@ -219,7 +219,7 @@ same hash. This is enabled by default through
 `MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1`.
 
 The Rust runtime under `src/` is the production implementation behind these
-invariants. Python modules under `multiagent_framework/` are evaluation-facing
+invariants. Python modules under `evaluation/support/` are evaluation-only
 readers and evidence helpers. Evaluation adapters may add benchmark-specific
 task discovery or probes, but they must consume the same durable contracts
 instead of implementing a second acceptance protocol.

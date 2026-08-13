@@ -27,7 +27,7 @@ from evalscope.api.agent import AgentEnvironment
 from evalscope.api.registry import register_runner
 from evalscope.utils.logger import get_logger
 
-from multiagent_framework.coding.outcomes import (
+from evaluation.support.coding.outcomes import (
     SCHEMA_VERSION as TERMINAL_OUTCOME_SCHEMA_VERSION,
     SUBMISSION_GATE_REJECTION,
     SUBMISSION_GATE_REJECTION_EXIT_CODE,

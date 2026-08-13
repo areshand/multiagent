@@ -1,4 +1,4 @@
-"""Locate and invoke the Rust multiagent control-plane executable."""
+"""Locate the Rust control-plane executable for evaluation adapters."""
 
 from __future__ import annotations
 
@@ -7,15 +7,15 @@ import shutil
 from pathlib import Path
 
 
-def multiagent_command(framework_root: Path) -> list[str]:
+def multiagent_command(repo_root: Path) -> list[str]:
     """Return the executable prefix for the Rust CLI, or an empty list if absent."""
 
     configured = os.environ.get("MULTIAGENT_BIN", "").strip()
     candidates = [
         Path(configured) if configured else None,
-        framework_root / "bin" / "multiagent",
-        framework_root / "target" / "release" / "multiagent",
-        framework_root / "target" / "debug" / "multiagent",
+        repo_root / "bin" / "multiagent",
+        repo_root / "target" / "release" / "multiagent",
+        repo_root / "target" / "debug" / "multiagent",
     ]
     installed = shutil.which("multiagent")
     if installed:
@@ -26,8 +26,8 @@ def multiagent_command(framework_root: Path) -> list[str]:
     return []
 
 
-def multiagent_subcommand(framework_root: Path, command: str, *args: str) -> list[str]:
+def multiagent_subcommand(repo_root: Path, command: str, *args: str) -> list[str]:
     """Build a Rust CLI argv vector for one control-plane subcommand."""
 
-    executable = multiagent_command(framework_root)
+    executable = multiagent_command(repo_root)
     return [*executable, command, *args] if executable else []

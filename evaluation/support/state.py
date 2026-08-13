@@ -1,4 +1,4 @@
-"""Atomic machine-readable lifecycle state."""
+"""Atomic machine-readable lifecycle state for evaluation processes."""
 
 from __future__ import annotations
 

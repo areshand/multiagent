@@ -1,8 +1,8 @@
-"""Compatibility facade with explicit framework-owned coding guardrails."""
+"""Native-solver facade over evaluation-owned coding guardrails."""
 
 from __future__ import annotations
 
-from multiagent_framework.coding.guardrails import (
+from evaluation.support.coding.guardrails import (
     changed_go_package_args,
     coverage_probe_commands,
     dependency_contract_changed,

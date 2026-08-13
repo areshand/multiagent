@@ -68,10 +68,19 @@ def skip_repo_bake_path(path: Path) -> bool:
         if path in {Path("evaluation"), Path("evaluation/__init__.py")}:
             return False
         native_solver_root = Path("evaluation/native_solver")
+        support_root = Path("evaluation/support")
         is_solver_module = path.parent == native_solver_root and path.suffix == ".py"
         is_solver_template = len(path.parts) >= 3 and Path(*path.parts[:3]) == native_solver_root / "templates"
+        is_support_module = (
+            len(path.parts) >= 3
+            and path.parts[:2] == ("evaluation", "support")
+            and path.suffix == ".py"
+        )
         if path not in {native_solver_root, native_solver_root / "templates"} and not (
-            is_solver_module or is_solver_template
+            is_solver_module
+            or is_solver_template
+            or path in {support_root, support_root / "coding"}
+            or is_support_module
         ):
             return True
     if len(path.parts) >= 2 and path.parts[0] == "evaluation" and path.parts[1] in {"reports", "runs"}:

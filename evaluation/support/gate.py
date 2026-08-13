@@ -1,4 +1,4 @@
-"""Framework submission-gate integration."""
+"""Evaluation integration for the Rust submission gate."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ CommandRunner = Callable[..., subprocess.CompletedProcess]
 
 def structured_repair_gate_blockers(
     *,
-    framework_root: Path,
+    repo_root: Path,
     worktree: Path,
     state_dirs: Iterable[Path],
     runner: CommandRunner = subprocess.run,
@@ -23,7 +23,7 @@ def structured_repair_gate_blockers(
 ) -> list[str]:
     """Run the durable finding/todo gate for each populated state store."""
 
-    command = multiagent_subcommand(framework_root, "subagent")
+    command = multiagent_subcommand(repo_root, "subagent")
     if not command:
         return []
 
@@ -40,7 +40,7 @@ def structured_repair_gate_blockers(
         env.update({"MULTIAGENT_ROOT": str(worktree), "MULTIAGENT_STATE_DIR": str(state_dir)})
         result = runner(
             [*command, "gate-check"],
-            cwd=framework_root,
+            cwd=repo_root,
             env=env,
             timeout=timeout,
         )

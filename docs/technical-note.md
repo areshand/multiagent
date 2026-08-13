@@ -121,11 +121,11 @@ no shared mutable state except declared artifacts.
     scorer-only metadata outside every agent context.
 
 This repository implements the snapshot primitive in
-[`../multiagent_framework/snapshot.py`](../multiagent_framework/snapshot.py),
+[`../evaluation/support/snapshot.py`](../evaluation/support/snapshot.py),
 hash-bound build and behavior evidence in
-[`../multiagent_framework/verification.py`](../multiagent_framework/verification.py),
+[`../evaluation/support/verification.py`](../evaluation/support/verification.py),
 and durable finding/todo gate integration in
-[`../multiagent_framework/gate.py`](../multiagent_framework/gate.py).
+[`../evaluation/support/gate.py`](../evaluation/support/gate.py).
 
 ## Improvements over a single unconstrained agent loop
 

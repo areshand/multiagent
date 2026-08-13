@@ -1,4 +1,4 @@
-"""Exact Git snapshot and changed-code primitives."""
+"""Exact Git snapshot and changed-code analysis primitives."""
 
 from __future__ import annotations
 

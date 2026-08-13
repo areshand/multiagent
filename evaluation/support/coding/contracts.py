@@ -1,4 +1,4 @@
-"""Reusable contract extraction, evidence gates, and ledger rendering."""
+"""Evaluation contract extraction, evidence gates, and ledger rendering."""
 
 from __future__ import annotations
 
@@ -342,7 +342,7 @@ def build_contract_ledger(
     public_symbols: Iterable[str] = (),
     context_excerpt: str = "",
 ) -> ContractLedger:
-    """Build a framework ledger from public task inputs."""
+    """Build a contract ledger from public task inputs."""
 
     return ContractLedger.from_issue(issue, public_symbols, context_excerpt)
 
@@ -469,7 +469,7 @@ def render_contract_ledger(
     completion_rules: Sequence[str] = DEFAULT_COMPLETION_RULES,
     context_limit: int = 6000,
 ) -> str:
-    """Render a framework contract ledger as stable Markdown."""
+    """Render an evaluation contract ledger as stable Markdown."""
 
     sections = ["# " + title, ""]  # type: List[str]
     sections.extend(introduction)

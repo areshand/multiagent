@@ -27,21 +27,21 @@ Position the project as:
   verifier, and keep ambiguous exits, timeouts, and runner/infra failures
   fail-closed.
 
-### Framework Contract Boundary
+### Evaluation Support Boundary
 
 - [x] Move generic contract reasoning from
   `evaluation/native_solver/swe_prod_contracts.py` into
-  `multiagent_framework/coding/contracts.py`.
+  `evaluation/support/coding/contracts.py`.
 - [x] Promote public issue requirement extraction, issue-coverage gating,
   data-provenance contracts, migration/history contracts, and generic contract
-  ledger rules into reusable framework APIs.
+  ledger rules into reusable evaluation helpers.
 - [x] Keep only SWE-specific metadata sanitization, benchmark prompt-envelope
   handling, runtime file paths, and adapter rendering under `evaluation/`.
 - [x] Remove dead compatibility paths where sanitized metadata makes official
   test fields, `requirements`, or `interface` unreachable.
-- [x] Add framework-level tests proving the contract APIs have no SWE Bench,
+- [x] Add support-level tests proving the contract helpers have no SWE Bench,
   EvalScope, benchmark-row, hidden-test, or `EVAL_*` dependencies.
-- [x] Make the SWE contracts module a thin adapter over the framework contract
+- [x] Make the SWE contracts module a thin adapter over the support contract
   model instead of an independent contract engine.
 
 ### Native Solver Import Model

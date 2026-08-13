@@ -15,8 +15,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from multiagent_framework.cli import multiagent_command, multiagent_subcommand
-from multiagent_framework.state import AtomicStatusStore
+from evaluation.support.cli import multiagent_command, multiagent_subcommand
+from evaluation.support.state import AtomicStatusStore
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -693,7 +693,7 @@ class AtomicStateCompatibilityTest(unittest.TestCase):
             def replace_during_sleep(_seconds):
                 path.write_text('{"status":"completed","result":"new"}', encoding="utf-8")
 
-            with mock.patch("multiagent_framework.state.time.sleep", side_effect=replace_during_sleep):
+            with mock.patch("evaluation.support.state.time.sleep", side_effect=replace_during_sleep):
                 self.assertEqual(store.read(), {"status": "publishing"})
 
 

@@ -21,10 +21,11 @@ allocate or emulate a PTY; tmux continues to own terminal lifecycle and
 interactive process semantics. This keeps PTY behavior without preserving shell
 implementations.
 
-Python is the evaluation client and reusable evidence-analysis layer. SWE Bench
-adapters read version-1 state and evidence, derive benchmark-specific evidence,
-and publish evaluator results. Whenever evaluation needs a production state
-transition, it invokes the Rust binary instead of implementing a second writer.
+Python under `evaluation/` is limited to benchmark adapters and reusable
+evidence analysis under `evaluation/support/`. SWE Bench adapters read version-1
+state and evidence, derive benchmark-specific evidence, and publish evaluator
+results. Whenever evaluation needs a production state transition, it invokes
+the Rust binary instead of implementing a second writer.
 
 The important benefit is not command rendering or startup speed. A single
 locked writer makes overlap checks, duplicate detection, lifecycle gates,

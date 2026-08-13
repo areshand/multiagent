@@ -31,9 +31,9 @@ exports the target root, state directory, prompt modules, CLI choices, write
 policy, and verifier iteration cap before starting the orchestrator. The
 orchestrator delegates through `multiagent subagent`; assignments,
 checkpoints, findings, todos, validation leases, and verifier evidence are
-persisted under `MULTIAGENT_STATE_DIR`. Python modules in
-`multiagent_framework/` provide evaluation-side artifact readers and evidence
-analysis; they do not implement a second control plane.
+persisted under `MULTIAGENT_STATE_DIR`. Python modules in `evaluation/support/`
+provide evaluation-only artifact readers and evidence analysis; they do not
+implement a second control plane or participate in normal launches.
 
 Workers own disjoint writable paths. Scouts and verifiers are read-only. The
 orchestrator alone accepts follow-up work and decides whether the final gate can

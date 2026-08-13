@@ -784,18 +784,18 @@ assert_file_contains "$ROOT/README.md" "Parallel DAG Discipline"
 assert_file_contains "$ROOT/README.md" "Structured Repair Loop"
 assert_file_contains "$ROOT/README.md" "finding-todo-loop.md"
 assert_file_contains "$ROOT/README.md" "todo-close"
-assert_file_contains "$ROOT/README.md" "multiagent_framework/"
+assert_file_contains "$ROOT/README.md" "evaluation/support/"
 assert_file_contains "$ROOT/README.md" "## System Flow"
 assert_file_contains "$ROOT/README.md" "flowchart TD"
-assert_file_contains "$ROOT/README.md" '`multiagent_framework` is not a daemon'
+assert_file_contains "$ROOT/README.md" 'evaluation-only evidence and provenance helpers'
 assert_file_contains "$ROOT/README.md" 'orchestration` adapter covers planning behavior'
 assert_file_contains "$ROOT/README.md" "evaluation/tasks"
 assert_file_contains "$ROOT/evaluation/README.md" "large-update-300"
 assert_file_contains "$ROOT/evaluation/README.md" "Low-signal orchestration cases"
 assert_file_contains "$ROOT/evaluation/README.md" "EVAL_VALIDATION_PROBE_TIMEOUT"
-assert_file_contains "$ROOT/multiagent_framework/coding/guardrails.py" "Return source-derived blockers without evaluator answer leakage"
-assert_file_contains "$ROOT/multiagent_framework/coding/guardrails.py" "hidden-test-shaped commands"
-assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "Compatibility facade"
+assert_file_contains "$ROOT/evaluation/support/coding/guardrails.py" "Return source-derived blockers without evaluator answer leakage"
+assert_file_contains "$ROOT/evaluation/support/coding/guardrails.py" "hidden-test-shaped commands"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" "Native-solver facade"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "MULTIAGENT_PROMPT_MODULE_ROOT"
 assert_file_contains "$ROOT/src/runtime.rs" "MULTIAGENT_PROMPT_MODULE_ROOT"
 assert_file_not_contains "$ROOT/launch.sh" "python"
@@ -958,7 +958,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_transitions.py" "r
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_types.py" "EVAL_VERIFIER_INFRA_RESUME_LIMIT"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_evidence.py" "stale-visible-reconciliation-passed:"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_contracts.py" "STALE_VISIBLE_RECONCILIATION_PATH"
-assert_file_contains "$ROOT/multiagent_framework/coding/guardrails.py" "must not inject evaluator-row-specific probes"
+assert_file_contains "$ROOT/evaluation/support/coding/guardrails.py" "must not inject evaluator-row-specific probes"
 assert_file_contains "$ROOT/evaluation/README.md" "adapter helper defaults to advisory mode"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "_public_solver_metadata(dict(task.metadata or {}))"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" '"fail_to_pass"'
@@ -1010,25 +1010,25 @@ assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_contracts.py" "pub
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_lifecycle.py" "solver metadata is public-only"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_checkpoints.py" "orchestrator exited with unverified source diff"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_checkpoints.py" "and not orchestrator_exited_without_status(text)"
-assert_file_contains "$ROOT/multiagent_framework/coding/guardrails.py" "changed_python_test_commands"
-assert_file_contains "$ROOT/multiagent_framework/coding/guardrails.py" "changed_go_feature_test_commands"
+assert_file_contains "$ROOT/evaluation/support/coding/guardrails.py" "changed_python_test_commands"
+assert_file_contains "$ROOT/evaluation/support/coding/guardrails.py" "changed_go_feature_test_commands"
 for solver_module in \
   "$ROOT/evaluation/native_solver/solve_swe_prod.py" \
   "$ROOT"/evaluation/native_solver/swe_prod_*.py \
-  "$ROOT"/multiagent_framework/*.py \
-  "$ROOT"/multiagent_framework/coding/*.py
+  "$ROOT"/evaluation/support/*.py \
+  "$ROOT"/evaluation/support/coding/*.py
 do
   assert_file_not_contains "$solver_module" "EVAL_ALLOW_EXPECTED_TEST_GUIDANCE"
   assert_file_not_contains "$solver_module" "official_test_contract_text"
   assert_file_not_contains "$solver_module" "full official contract"
   assert_file_not_contains "$solver_module" "Official requirements/interface excerpt"
 done
-for framework_module in "$ROOT"/multiagent_framework/*.py "$ROOT"/multiagent_framework/coding/*.py; do
-  assert_file_not_contains "$framework_module" "SWE Bench"
-  assert_file_not_contains "$framework_module" "EvalScope"
-  assert_file_not_contains "$framework_module" "official expected"
-  assert_file_not_contains "$framework_module" "/tmp/multiagent-prod-swe"
-  assert_file_not_contains "$framework_module" "EVAL_"
+for support_module in "$ROOT"/evaluation/support/*.py "$ROOT"/evaluation/support/coding/*.py; do
+  assert_file_not_contains "$support_module" "SWE Bench"
+  assert_file_not_contains "$support_module" "EvalScope"
+  assert_file_not_contains "$support_module" "official expected"
+  assert_file_not_contains "$support_module" "/tmp/multiagent-prod-swe"
+  assert_file_not_contains "$support_module" "EVAL_"
 done
 for prompt_path in \
   "$ROOT/prompts/worker.md" \
@@ -1060,9 +1060,10 @@ from evaluation.native_solver import solve_swe_prod
 from evaluation import swe_bench_pro
 from evaluation.swe_bench_pro_on_demand import OnDemandImageManager
 from evaluation import swe_bench_pro_run_parallel_shards
-from multiagent_framework import AtomicStatusStore, RepositorySnapshot
-from multiagent_framework import build_verification_has_evidence as framework_build_evidence
-from multiagent_framework import structured_repair_gate_blockers as framework_gate_blockers
+from evaluation.support.gate import structured_repair_gate_blockers as support_gate_blockers
+from evaluation.support.snapshot import RepositorySnapshot
+from evaluation.support.state import AtomicStatusStore
+from evaluation.support.verification import build_verification_has_evidence as support_build_evidence
 
 structured_diff = "diff --git a/src/service.py b/src/service.py\n+def fixed():\n+    return True\n"
 structured_hash = solve_swe_prod.final_diff_sha256(structured_diff)
@@ -1080,7 +1081,7 @@ structured_acceptance = "ACCEPTED\n" + json.dumps(
     }
 )
 assert solve_swe_prod.build_verification_has_evidence(structured_acceptance, structured_diff)
-assert framework_build_evidence(structured_acceptance, structured_diff)
+assert support_build_evidence(structured_acceptance, structured_diff)
 structured_failed = structured_acceptance.replace('"rc": 0', '"rc": 1')
 assert not solve_swe_prod.build_verification_has_evidence(structured_failed, structured_diff)
 
@@ -1100,8 +1101,8 @@ with tempfile.TemporaryDirectory() as td:
         gate_calls.append((args, kwargs))
         return SimpleNamespace(returncode=1, stdout="reject\topen-blocking-finding", stderr="")
 
-    gate_blockers = framework_gate_blockers(
-        framework_root=root,
+    gate_blockers = support_gate_blockers(
+        repo_root=root,
         worktree=root,
         state_dirs=(gate_state,),
         runner=rejecting_gate_runner,
@@ -1868,8 +1869,8 @@ solver_modules = [
     root / "evaluation/native_solver/solve_swe_prod.py",
     *sorted((root / "evaluation/native_solver").glob("swe_prod_*.py")),
 ]
-framework_modules = sorted((root / "multiagent_framework").rglob("*.py"))
-runtime_modules = [*solver_modules, *framework_modules]
+support_modules = sorted((root / "evaluation/support").rglob("*.py"))
+runtime_modules = [*solver_modules, *support_modules]
 combined_solver_source = "\n".join(path.read_text(encoding="utf-8") for path in runtime_modules)
 solver_source = combined_solver_source
 entrypoint_lines = len((root / "evaluation/native_solver/solve_swe_prod.py").read_text(encoding="utf-8").splitlines())
@@ -2434,10 +2435,10 @@ for included in (
     "evaluation/native_solver/swe_prod_types.py",
     "evaluation/native_solver/swe_prod_validation.py",
     "evaluation/native_solver/templates/swe_autonomous_appendix.md",
-    "multiagent_framework",
-    "multiagent_framework/snapshot.py",
-    "multiagent_framework/verification.py",
-    "multiagent_framework/coding/guardrails.py",
+    "evaluation/support",
+    "evaluation/support/snapshot.py",
+    "evaluation/support/verification.py",
+    "evaluation/support/coding/guardrails.py",
 ):
     assert not OnDemandImageManager._skip_repo_bake_path(Path(included)), included
 
@@ -2462,7 +2463,10 @@ with tempfile.TemporaryDirectory() as td:
     assert (baked_root / "evaluation/native_solver/solve_swe_prod.py").is_file()
     assert (baked_root / "evaluation/native_solver/__init__.py").is_file()
     assert (baked_root / "evaluation/__init__.py").is_file()
-    assert (baked_root / "multiagent_framework/verification.py").is_file()
+    assert (baked_root / "evaluation/support/__init__.py").is_file()
+    assert (baked_root / "evaluation/support/coding/__init__.py").is_file()
+    assert (baked_root / "evaluation/support/verification.py").is_file()
+    assert not (baked_root / "multiagent_framework").exists()
     assert not (baked_root / "evaluation/swe_bench_pro.py").exists()
     assert not (baked_root / "tests").exists()
 

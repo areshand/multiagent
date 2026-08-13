@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from multiagent_framework.provenance import (
+from evaluation.support.provenance import (
     capture_git_identity,
     copy_artifact_bundle,
     sha256_file,
@@ -83,7 +83,7 @@ class ArtifactBundleTest(unittest.TestCase):
             copy_artifact_bundle(self.bundle, {"../result": self.source})
 
     def test_source_is_python38_and_within_line_budget(self):
-        source = (ROOT / "multiagent_framework/provenance.py").read_text(encoding="utf-8")
+        source = (ROOT / "evaluation/support/provenance.py").read_text(encoding="utf-8")
         ast.parse(source, feature_version=(3, 8))
         self.assertLessEqual(len(source.splitlines()), 220)
 

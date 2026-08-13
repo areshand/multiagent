@@ -1,4 +1,4 @@
-"""Machine-checkable verifier evidence bound to a final Git diff."""
+"""Evaluation of verifier evidence bound to a final Git diff."""
 
 from __future__ import annotations
 

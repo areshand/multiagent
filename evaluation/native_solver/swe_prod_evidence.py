@@ -9,19 +9,23 @@ import subprocess
 import time
 from pathlib import Path
 
-from multiagent_framework import (
-    AtomicStatusStore,
-    behavior_verification_has_evidence as _framework_behavior_verification_has_evidence,
-    build_verification_has_evidence as _framework_build_verification_has_evidence,
-    changed_code_paths_from_diff as _framework_changed_code_paths_from_diff,
-    changed_paths_from_diff as _framework_changed_paths_from_diff,
-    final_diff_sha256 as _framework_final_diff_sha256,
-    is_test_path as _framework_is_test_path,
-    multiagent_subcommand,
-    structured_repair_gate_blockers as _framework_structured_repair_gate_blockers,
-    verifier_passing_commands as _framework_verifier_passing_commands,
-    verifier_rechecked_todo as _framework_verifier_rechecked_todo,
-    verifier_text_covers_resolution_commands as _framework_verifier_text_covers_resolution_commands,
+from evaluation.support.cli import multiagent_subcommand
+from evaluation.support.gate import (
+    structured_repair_gate_blockers as _support_structured_repair_gate_blockers,
+)
+from evaluation.support.snapshot import (
+    changed_code_paths_from_diff as _support_changed_code_paths_from_diff,
+    changed_paths_from_diff as _support_changed_paths_from_diff,
+    final_diff_sha256 as _support_final_diff_sha256,
+    is_test_path as _support_is_test_path,
+)
+from evaluation.support.state import AtomicStatusStore
+from evaluation.support.verification import (
+    behavior_verification_has_evidence as _support_behavior_verification_has_evidence,
+    build_verification_has_evidence as _support_build_verification_has_evidence,
+    verifier_passing_commands as _support_verifier_passing_commands,
+    verifier_rechecked_todo as _support_verifier_rechecked_todo,
+    verifier_text_covers_resolution_commands as _support_verifier_text_covers_resolution_commands,
 )
 
 from .swe_prod_contracts import (
@@ -50,8 +54,8 @@ from .swe_prod_guardrails import (
 from .swe_prod_repository import git_diff
 
 def structured_repair_gate_blockers() -> list[str]:
-    return _framework_structured_repair_gate_blockers(
-        framework_root=DEFAULT_MULTIAGENT_ROOT,
+    return _support_structured_repair_gate_blockers(
+        repo_root=DEFAULT_MULTIAGENT_ROOT,
         worktree=DEFAULT_WORKDIR,
         state_dirs=(RUNTIME_ROOT, RUNTIME_ROOT / "state"),
         runner=run,
@@ -172,15 +176,15 @@ def create_no_diff_stall_repair_state(
 
 
 def verifier_text_covers_resolution_commands(text: str, commands: list[dict[str, object]]) -> bool:
-    return _framework_verifier_text_covers_resolution_commands(text, commands)
+    return _support_verifier_text_covers_resolution_commands(text, commands)
 
 
 def verifier_passing_commands(text: str) -> list[dict[str, object]]:
-    return _framework_verifier_passing_commands(text)
+    return _support_verifier_passing_commands(text)
 
 
 def verifier_rechecked_todo(text: str, todo_id: str) -> bool:
-    return _framework_verifier_rechecked_todo(text, todo_id)
+    return _support_verifier_rechecked_todo(text, todo_id)
 
 
 def migrate_runtime_fallback_todo_resolution(
@@ -1844,27 +1848,27 @@ SOURCE_CLAIM_EXTENSIONS = (
 
 
 def changed_paths_from_diff(diff: str) -> set[str]:
-    return _framework_changed_paths_from_diff(diff)
+    return _support_changed_paths_from_diff(diff)
 
 
 def final_diff_sha256(diff: str) -> str:
-    return _framework_final_diff_sha256(diff)
+    return _support_final_diff_sha256(diff)
 
 
 def is_test_path(path: str) -> bool:
-    return _framework_is_test_path(path)
+    return _support_is_test_path(path)
 
 
 def changed_code_paths_from_diff(diff: str) -> list[str]:
-    return _framework_changed_code_paths_from_diff(diff)
+    return _support_changed_code_paths_from_diff(diff)
 
 
 def build_verification_has_evidence(text: str, diff: str) -> bool:
-    return _framework_build_verification_has_evidence(text, diff)
+    return _support_build_verification_has_evidence(text, diff)
 
 
 def behavior_verification_has_evidence(text: str, diff: str) -> bool:
-    return _framework_behavior_verification_has_evidence(text, diff)
+    return _support_behavior_verification_has_evidence(text, diff)
 
 
 def policy_collection_partition_risk(diff: str) -> bool:

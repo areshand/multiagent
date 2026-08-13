@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Mapping
 
 from evaluation.swe_bench_pro import native_runner_summary_from_text
 from evaluation.swe_bench_pro_on_demand import SOLVER_SOURCE_LABEL, native_solver_source_digest
-from multiagent_framework.provenance import (
+from evaluation.support.provenance import (
     capture_git_identity,
     copy_artifact_bundle,
     sha256_file,

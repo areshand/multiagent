@@ -7,7 +7,7 @@ import shutil
 import time
 from pathlib import Path
 
-from multiagent_framework import multiagent_command
+from evaluation.support.cli import multiagent_command
 
 from . import swe_prod_repository as _repository
 from .swe_prod_bootstrap import (

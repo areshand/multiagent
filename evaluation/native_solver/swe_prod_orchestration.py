@@ -5,7 +5,7 @@ import json
 import re
 from pathlib import Path
 
-from multiagent_framework import multiagent_subcommand
+from evaluation.support.cli import multiagent_subcommand
 
 from .swe_prod_contracts import (
     CONTRACT_LEDGER_PATH,

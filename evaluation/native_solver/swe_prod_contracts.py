@@ -23,7 +23,7 @@ import time
 import traceback
 from pathlib import Path
 
-from multiagent_framework.coding import contracts as framework_contracts
+from evaluation.support.coding import contracts as support_contracts
 
 from .swe_prod_guardrails import (
     changed_go_package_args,
@@ -218,21 +218,21 @@ SWE_ISSUE_ENVELOPE_MARKERS = (
 
 
 def public_issue_text_for_coverage(issue: str) -> str:
-    return framework_contracts.public_issue_text(issue, SWE_ISSUE_ENVELOPE_MARKERS)
+    return support_contracts.public_issue_text(issue, SWE_ISSUE_ENVELOPE_MARKERS)
 
 
 def issue_coverage_requirements(issue: str) -> list[dict[str, object]]:
-    return framework_contracts.issue_coverage_requirements(public_issue_text_for_coverage(issue))
+    return support_contracts.issue_coverage_requirements(public_issue_text_for_coverage(issue))
 
 
 def issue_coverage_blockers(issue: str, evidence_text: str) -> list[str]:
-    return framework_contracts.issue_coverage_blockers(public_issue_text_for_coverage(issue), evidence_text)
+    return support_contracts.issue_coverage_blockers(public_issue_text_for_coverage(issue), evidence_text)
 
 
-data_provenance_required = framework_contracts.data_provenance_required
-data_provenance_blockers = framework_contracts.data_provenance_blockers
-historical_contract_required = framework_contracts.historical_contract_required
-historical_contract_blockers = framework_contracts.historical_contract_blockers
+data_provenance_required = support_contracts.data_provenance_required
+data_provenance_blockers = support_contracts.data_provenance_blockers
+historical_contract_required = support_contracts.historical_contract_required
+historical_contract_blockers = support_contracts.historical_contract_blockers
 
 
 def contract_ledger_text(issue: str, metadata: dict[str, object] | None = None) -> str:
@@ -241,12 +241,12 @@ def contract_ledger_text(issue: str, metadata: dict[str, object] | None = None) 
     coverage_issue = issue_with_public_problem_text(issue, solver_metadata)
     symbols = required_public_symbols(coverage_issue, solver_metadata)
     contract_excerpt = metadata_problem_text(solver_metadata)
-    ledger = framework_contracts.ContractLedger.from_issue(
+    ledger = support_contracts.ContractLedger.from_issue(
         public_issue_text_for_coverage(coverage_issue),
         public_symbols=symbols,
         context_excerpt=contract_excerpt,
     )
-    return framework_contracts.render_contract_ledger(
+    return support_contracts.render_contract_ledger(
         ledger,
         title="SWE Bench Pro Contract Ledger",
         introduction=(
@@ -276,7 +276,7 @@ def contract_coverage_items_excerpt(
     limit: int = 5000,
 ) -> str:
     public_issue = public_issue_text_for_coverage(issue_with_public_problem_text(issue, metadata))
-    return framework_contracts.contract_coverage_items_excerpt(public_issue, limit=limit)
+    return support_contracts.contract_coverage_items_excerpt(public_issue, limit=limit)
 
 
 def official_expected_test_blockers(metadata: dict[str, object], current_status: dict[str, object]) -> list[str]:

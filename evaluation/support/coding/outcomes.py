@@ -1,4 +1,4 @@
-"""Machine-readable terminal outcomes for coding-task runners."""
+"""Terminal outcome contract shared by solver and benchmark evaluator."""
 
 from __future__ import annotations
 

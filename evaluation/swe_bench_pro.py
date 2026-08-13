@@ -21,7 +21,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-from multiagent_framework.coding.outcomes import SUBMISSION_GATE_REJECTION_EXIT_CODE
+from evaluation.support.coding.outcomes import SUBMISSION_GATE_REJECTION_EXIT_CODE
 
 
 DEFAULT_REPORT_DIR = Path("evaluation/reports")

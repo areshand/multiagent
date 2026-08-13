@@ -1,18 +1,18 @@
-"""Focused tests for the framework contract boundary."""
+"""Focused tests for the evaluation-support contract boundary."""
 
 import ast
 import tempfile
 import unittest
 from pathlib import Path
 
-from multiagent_framework.coding import contracts, outcomes
+from evaluation.support.coding import contracts, outcomes
 from evaluation.native_solver import swe_prod_contracts
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-class ContractFrameworkTest(unittest.TestCase):
+class ContractSupportTest(unittest.TestCase):
     def test_terminal_outcome_is_atomic_and_typed(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "terminal-outcome.json"
@@ -102,8 +102,8 @@ class ContractFrameworkTest(unittest.TestCase):
         self.assertIn("issue-widget-config", rendered)
         self.assertIn("Completion rules:", rendered)
 
-    def test_framework_source_is_python38_and_environment_neutral(self):
-        source = (ROOT / "multiagent_framework/coding/contracts.py").read_text(encoding="utf-8")
+    def test_support_source_is_python38_and_environment_neutral(self):
+        source = (ROOT / "evaluation/support/coding/contracts.py").read_text(encoding="utf-8")
         ast.parse(source, feature_version=(3, 8))
         forbidden = (
             "swe_bench",
@@ -118,7 +118,7 @@ class ContractFrameworkTest(unittest.TestCase):
 
 
 class SweContractAdapterTest(unittest.TestCase):
-    def test_adapter_reuses_framework_gates(self):
+    def test_adapter_reuses_support_gates(self):
         issue = "Cache config must persist.\nAudit request errors should be logged."
         self.assertEqual(
             swe_prod_contracts.issue_coverage_requirements(issue),

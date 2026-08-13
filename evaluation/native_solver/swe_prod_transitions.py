@@ -4,7 +4,7 @@ import json
 import time
 from pathlib import Path
 
-from multiagent_framework.coding.outcomes import (
+from evaluation.support.coding.outcomes import (
     SUBMISSION_GATE_REJECTION,
     SUBMISSION_GATE_REJECTION_EXIT_CODE,
     publish_terminal_outcome,

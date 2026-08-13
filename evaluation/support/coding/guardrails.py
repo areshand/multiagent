@@ -1,3 +1,5 @@
+"""Source-derived coding guardrails used by the production evaluation adapter."""
+
 from __future__ import annotations
 
 import json
@@ -924,7 +926,7 @@ def explicit_source_paths_from_text(workdir: Path, text: str) -> list[str]:
 def deprecated_noop_probe_command() -> list[str]:
     """Deprecated compatibility hook.
 
-    The framework must not inject evaluator-row-specific probes. Keep the
+    Evaluation support must not inject evaluator-row-specific probes. Keep the
     hook for internal compatibility, but do not return a privileged command.
     """
     return []

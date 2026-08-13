@@ -45,7 +45,7 @@ from evaluation import swe_bench_pro_official_aggregate  # noqa: E402
 from evaluation.native_solver import solve_swe_prod  # noqa: E402
 from evaluation.native_solver import swe_prod_transitions  # noqa: E402
 from evaluation.native_solver.swe_prod_types import LifecycleProgress  # noqa: E402
-from multiagent_framework.coding.outcomes import (  # noqa: E402
+from evaluation.support.coding.outcomes import (  # noqa: E402
     SUBMISSION_GATE_REJECTION,
     load_terminal_outcome,
 )
