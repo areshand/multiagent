@@ -3,7 +3,7 @@
 # Default allowed write root is $MULTIAGENT_ROOT for the launched session.
 # Orchestrator-owned: workers should not edit this file directly.
 # Add approvals only with:
-#   bin/write-policy.sh approve PATH --actor ACTOR --assignment-id ID --reason TEXT [--force]
+#   multiagent policy approve PATH --actor ACTOR --assignment-id ID --reason TEXT [--force]
 #
 # Records are TSV:
 #   approval<TAB>timestamp<TAB>actor<TAB>assignment_id<TAB>requested_path<TAB>canonical_path<TAB>reason<TAB>force

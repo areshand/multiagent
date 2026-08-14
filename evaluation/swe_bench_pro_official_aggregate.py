@@ -21,6 +21,7 @@ from evaluation.swe_bench_pro import DEFAULT_PRO_REPO, load_official_instances, 
 
 DEFAULT_JSON = Path("evaluation/reports/swe-bench-pro-official-aggregate.json")
 DEFAULT_REPORT = Path("evaluation/reports/swe-bench-pro-official-aggregate.md")
+DEFAULT_REPORT_PATTERNS = ["*-offset*-count*.json"]
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -281,7 +282,7 @@ def main() -> int:
     parser.add_argument(
         "--reports",
         nargs="+",
-        default=["swe-bench-pro-production*-offset*-count*.json"],
+        default=DEFAULT_REPORT_PATTERNS,
         help="report paths or glob patterns relative to --report-dir",
     )
     parser.add_argument("--suggest-shard-size", type=int, default=10)

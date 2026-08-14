@@ -68,7 +68,7 @@ waves, competing explorations, or blocked-subtree routing.
 
 The launcher includes `prompts/playbooks/implementation-lifecycle.md` in the
 initial prompt. Treat it as the canonical phase and authority workflow. Read
-the persisted lifecycle state and use `bin/workflow.sh` for transitions,
+the persisted lifecycle state and use `multiagent workflow` for transitions,
 reviews, TODO convergence, and completion; do not bypass it with a direct
 writable worker launch.
 
@@ -93,7 +93,7 @@ The launch script exports:
 - `MULTIAGENT_VERIFIER_MAX_ITERATIONS`: escalation threshold, default `3`; never an acceptance condition.
 - `ORCHESTRATOR_CLI`: CLI used for this orchestrator, default `codex`.
 - `WORKER_CLI`: CLI to use when manually spawning worker windows, default `claude`.
-- `SUBAGENT_CLI`: CLI used by `bin/subagent.sh spawn`, defaults to `WORKER_CLI`.
+- `SUBAGENT_CLI`: CLI used by `multiagent subagent spawn`, defaults to `WORKER_CLI`.
 - `VERIFIER_CLI`: CLI to use for verifier agents, default `codex`.
 
 Supported CLI values are `codex` and `claude`. Keep the orchestrator on Codex
@@ -113,7 +113,7 @@ tmux display-message -p '#S'
 At the start of every orchestrator run, list the current tmux session, worker
 windows, named subagent windows, and persisted assignment/subagent directories.
 Be ready to accept user direction by default. Do not inspect recovery state and
-do not run `bin/subagent.sh recover-plan` on a clean launch.
+do not run `multiagent subagent recover-plan` on a clean launch.
 
 Clean launch:
 
@@ -126,7 +126,7 @@ When `MULTIAGENT_RESUME=1`, the launch was explicitly started with
 `prompts/playbooks/recovery.md` and run:
 
 ```bash
-bin/subagent.sh recover-plan
+multiagent subagent recover-plan
 ```
 
 Read the plan before spawning replacement work.
@@ -186,15 +186,15 @@ Core routing rules:
 - Treat blocking verifier output as structured state. Load
   `prompts/playbooks/finding-todo-loop.md`; require verifier findings, convert
   accepted blocking findings into todos, route bounded repair workers from open
-  todos, close accepted resolutions with `bin/subagent.sh todo-close ...`, and
-  run `bin/subagent.sh gate-check` before final acceptance.
+  todos, close accepted resolutions with `multiagent subagent todo-close ...`, and
+  run `multiagent subagent gate-check` before final acceptance.
 - If a worker reports failed relevant validation, do not treat the failure as a
   verifier-only paperwork issue. Capture the failing command/output, release or
   record the validation lease, and spawn a fresh bounded repair worker over the
   implicated source paths before any completion decision. A verifier may review
   the failure and repair plan, but source-only acceptance cannot override a
   failing relevant visible test, fixture, compile, or component check.
-- Use `SUBAGENT_CLI="$VERIFIER_CLI" bin/subagent.sh spawn ...` for scout,
+- Use `SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn ...` for scout,
   coordinator, and verifier roles unless the user directs otherwise.
 - Keep safety non-negotiable: capture before sending input, avoid overlapping
   ownership, keep verifiers read-only, run `assignment-check` before accepting,

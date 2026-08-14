@@ -45,16 +45,16 @@ reflection, architecture review, or QA beyond a single worker assignment.
 
 ## Decision Logs
 
-Use `bin/decision.sh` to record alternatives, assumptions, selected plans, and
+Use `multiagent decision` to record alternatives, assumptions, selected plans, and
 outcomes. Workers propose evidence; the orchestrator commits decisions and owns
 pivots or rollbacks.
 
 Supported command pattern:
 
 ```bash
-bin/decision.sh init DEC-001 --title "Which approach should we use?"
-bin/decision.sh add-alternative DEC-001 --plan-id PLAN-A --summary "First approach" --proposed-by worker-01
-bin/decision.sh add-assumption DEC-001 --assumption-id ASSUME-1 --statement "Critical dependency remains available"
-bin/decision.sh commit DEC-001 --selected-plan PLAN-A --reason "Best supported by evidence"
-bin/decision.sh show DEC-001
+multiagent decision init DEC-001 --title "Which approach should we use?"
+multiagent decision add-alternative DEC-001 --plan-id PLAN-A --summary "First approach" --proposed-by worker-01
+multiagent decision add-assumption DEC-001 --assumption-id ASSUME-1 --statement "Critical dependency remains available"
+multiagent decision commit DEC-001 --selected-plan PLAN-A --reason "Best supported by evidence"
+multiagent decision show DEC-001
 ```

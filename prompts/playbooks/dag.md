@@ -19,9 +19,9 @@ nodes, modify workflow structure, or abandon nodes without orchestrator approval
 
 ## Sequencing Loop
 
-1. Initialize the workflow with `bin/dag.sh init`.
-2. Add nodes with `bin/dag.sh add-node`.
-3. Compute ready nodes with `bin/dag.sh ready`.
+1. Initialize the workflow with `multiagent dag init`.
+2. Add nodes with `multiagent dag add-node`.
+3. Compute ready nodes with `multiagent dag ready`.
 4. Spawn agents only for ready nodes using normal assignment metadata.
 5. Mark nodes `running`, `done`, `blocked`, `failed`, or `skipped` based on agent reports.
 6. Recompute ready nodes after each status change.

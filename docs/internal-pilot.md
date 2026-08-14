@@ -55,7 +55,7 @@ The runnable package is under `examples/internal-pilot/`:
 - `evidence.schema.json`: required per-cell evidence fields.
 - `test_pilot.py`: no-network fixture tests for validation and evidence capture.
 
-Python 3.8+, Git, and Bash are required. The included live drivers additionally
+Rust 1.75/Cargo, Python 3.8+, Git, and Bash are required. The included live drivers additionally
 require Codex CLI; the orchestrated driver requires tmux. Run from a clean,
 committed harness checkout so provenance identifies all executed code.
 

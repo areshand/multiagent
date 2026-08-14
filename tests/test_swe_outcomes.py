@@ -1,16 +1,15 @@
-"""Focused tests for production terminal outcomes and SWE aggregation."""
+"""Focused tests for SWE submission handoff and aggregation."""
 
 from __future__ import annotations
 
-import asyncio
 import json
-import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 
 def _install_evalscope_stubs() -> None:
@@ -42,119 +41,122 @@ _install_evalscope_stubs()
 from evaluation import evalscope_multiagent_native_runner  # noqa: E402
 from evaluation import swe_bench_pro  # noqa: E402
 from evaluation import swe_bench_pro_official_aggregate  # noqa: E402
-from evaluation.native_solver import solve_swe_prod  # noqa: E402
-from evaluation.native_solver import swe_prod_transitions  # noqa: E402
-from evaluation.native_solver.swe_prod_types import LifecycleProgress  # noqa: E402
-from multiagent_framework.coding.outcomes import (  # noqa: E402
-    SUBMISSION_GATE_REJECTION,
-    load_terminal_outcome,
-)
-
-
-class _NoSubmissionEnv:
-    def __init__(self) -> None:
-        self.calls = []
-
-    async def exec(self, args, **kwargs):
-        self.calls.append((args, kwargs))
-        return SimpleNamespace(returncode=0, stdout="", stderr="")
+from evaluation import swe_bench_pro_run_parallel_shards  # noqa: E402
+from evaluation.native_solver import swe_prod_lifecycle  # noqa: E402
+from evaluation.native_solver import swe_prod_repository  # noqa: E402
 
 
 class NativeOutcomeTest(unittest.TestCase):
-    def test_rejection_requires_dedicated_exit_and_complete_schema(self):
-        payload = {
-            "schema_version": 1,
-            "outcome": "submission_gate_rejection",
-            "reason": "final gate rejected the patch",
-            "blockers": ["missing build evidence"],
-        }
-
-        self.assertTrue(evalscope_multiagent_native_runner.is_submission_gate_rejection(3, payload))
-        self.assertFalse(evalscope_multiagent_native_runner.is_submission_gate_rejection(2, payload))
+    def test_runner_has_no_submission_rejection_path(self):
+        self.assertFalse(hasattr(evalscope_multiagent_native_runner, "is_submission_gate_rejection"))
+        self.assertFalse(hasattr(evalscope_multiagent_native_runner.MultiagentNativeRunner, "_score_no_submission"))
         self.assertFalse(
-            evalscope_multiagent_native_runner.is_submission_gate_rejection(3, {**payload, "reason": ""})
-        )
-        self.assertFalse(
-            evalscope_multiagent_native_runner.is_submission_gate_rejection(3, {**payload, "schema_version": 2})
+            hasattr(evalscope_multiagent_native_runner.MultiagentNativeRunner, "_collect_rejection_diagnostics")
         )
 
-    def test_no_submission_discards_rejected_diff(self):
-        env = _NoSubmissionEnv()
-        runner = object.__new__(evalscope_multiagent_native_runner.MultiagentNativeRunner)
-        runner._working_dir = "/app"
-
-        result = asyncio.run(
-            runner._score_no_submission(
-                env,
-                sample_id="sample-1",
-                result=SimpleNamespace(returncode=3, duration=1.5, timed_out=False),
-                stdout_tail="",
-                stderr_tail="",
-                diagnostics="typed gate rejection",
-                reason="submission_gate_rejection",
-                runtime_identity={"codex_version": "codex-cli 0.144.1", "node_version": "v22.12.0"},
+    def test_shard_problem_statement_uses_relative_sample_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            helper = repo / "helper_code"
+            helper.mkdir()
+            dataset = helper / "sweap_eval_full_v2.jsonl"
+            dataset.write_text(
+                "\n".join(
+                    json.dumps({"problem_statement": f"public issue {index}"})
+                    for index in range(7)
+                )
+                + "\n",
+                encoding="utf-8",
             )
-        )
 
-        self.assertEqual(result.metrics["submission_status"], "no_submission")
-        self.assertEqual(env.calls[0][0], ["bash", "-lc", "git reset --hard HEAD && git clean -fd"])
-        self.assertEqual(env.calls[0][1]["cwd"], "/app")
+            absolute_index = evalscope_multiagent_native_runner._absolute_sample_index(5, "1")
+            metadata = evalscope_multiagent_native_runner._public_problem_statement_metadata(
+                str(repo), absolute_index
+            )
 
-    @unittest.skipUnless(shutil.which("git"), "git is required for lifecycle finalization")
-    def test_final_gate_publishes_production_owned_outcome(self):
+            self.assertEqual(absolute_index, 6)
+            self.assertEqual(metadata, {"problem_statement": "public issue 6"})
+
+    def test_orchestrator_exit_prepares_workspace_for_official_scorer(self):
+        completed = SimpleNamespace(returncode=0, stdout="codex-cli 1.0\n", stderr="")
+
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            repo = root / "repo"
-            repo.mkdir()
+            prompt = root / "prompt.md"
+            prompt.write_text("prompt", encoding="utf-8")
+            lifecycle_patches = {
+                "require_path": mock.DEFAULT,
+                "multiagent_command": mock.Mock(return_value=["multiagent"]),
+                "find_codex_cli": mock.Mock(return_value="/usr/bin/codex"),
+                "git_head": mock.Mock(return_value="a" * 40),
+                "run": mock.Mock(return_value=completed),
+                "write_codex_bridge": mock.DEFAULT,
+                "write_apply_patch_helper": mock.DEFAULT,
+                "write_rg_fallback": mock.DEFAULT,
+                "read_prompt": mock.Mock(return_value="public task"),
+                "read_task_metadata": mock.Mock(return_value={}),
+                "make_prompt": mock.Mock(return_value=prompt),
+                "toolchain_path_prefixes": mock.Mock(return_value=[]),
+                "ensure_cache_dir": mock.Mock(return_value=str(root)),
+                "tmux_has_session": mock.Mock(return_value=True),
+                "tmux_has_orchestrator": mock.Mock(return_value=False),
+                "materialize_committed_changes": mock.DEFAULT,
+                "mark_untracked_intent_to_add": mock.DEFAULT,
+            }
+            with mock.patch.multiple(swe_prod_lifecycle, **lifecycle_patches):
+                with mock.patch.object(
+                    swe_prod_lifecycle.shutil,
+                    "which",
+                    side_effect=lambda name: "/usr/bin/tmux" if name == "tmux" else None,
+                ):
+                    with mock.patch.object(swe_prod_lifecycle.time, "sleep"):
+                        with mock.patch.dict(
+                            swe_prod_lifecycle.os.environ,
+                            {
+                                "EVAL_CODEX_AUTH_MODE": "bridge",
+                                "OPENAI_BASE_URL": "http://127.0.0.1:1/v1",
+                                "OPENAI_API_KEY": "test-key",
+                            },
+                        ):
+                            result = swe_prod_lifecycle.run_prod_solver(None, root, root, 60)
+                            materialize = swe_prod_lifecycle.materialize_committed_changes
+                            expose_untracked = swe_prod_lifecycle.mark_untracked_intent_to_add
+
+        self.assertEqual(result, 0)
+        materialize.assert_called_once_with(root, "a" * 40)
+        expose_untracked.assert_called_once_with(root)
+
+    def test_workspace_handoff_includes_new_source_and_test_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
             subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
             subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
             subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
-            (repo / "README.md").write_text("base\n", encoding="utf-8")
-            subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+            (repo / "base.py").write_text("base = True\n", encoding="utf-8")
+            subprocess.run(["git", "add", "base.py"], cwd=repo, check=True)
             subprocess.run(
-                ["git", "-c", "commit.gpgsign=false", "commit", "-qm", "base"], cwd=repo, check=True
+                ["git", "-c", "commit.gpgsign=false", "commit", "-qm", "base"],
+                cwd=repo,
+                check=True,
             )
-            head = subprocess.run(
-                ["git", "rev-parse", "HEAD"], cwd=repo, check=True, text=True, capture_output=True
-            ).stdout.strip()
-            original_status = solve_swe_prod.STATUS_PATH
-            original_terminal = solve_swe_prod.TERMINAL_OUTCOME_PATH
-            original_emit = swe_prod_transitions.emit_failure_diagnostics
-            try:
-                solve_swe_prod.STATUS_PATH = root / "status.json"
-                solve_swe_prod.TERMINAL_OUTCOME_PATH = root / "terminal-outcome.json"
-                solve_swe_prod.STATUS_PATH.write_text(
-                    json.dumps(
-                        {"status": "blocked", "reason": "final gate rejected", "blockers": ["compile failed"]}
-                    ),
-                    encoding="utf-8",
-                )
-                swe_prod_transitions.emit_failure_diagnostics = lambda _session: None
-                progress = LifecycleProgress(
-                    exit_code=2,
-                    outcome="blocked",
-                    terminal_outcome=SUBMISSION_GATE_REJECTION,
-                )
+            (repo / "feature.py").write_text("fixed = True\n", encoding="utf-8")
+            (repo / "tests").mkdir()
+            (repo / "tests" / "test_feature.py").write_text("def test_feature(): pass\n", encoding="utf-8")
 
-                returncode = swe_prod_transitions.finalize_solver_run(
-                    workdir=repo,
-                    start_head=head,
-                    issue="Fix the public issue.",
-                    task_metadata={},
-                    session="test-session",
-                    progress=progress,
-                )
+            exposed = swe_prod_repository.mark_untracked_intent_to_add(repo)
+            diff = subprocess.run(
+                ["git", "diff", "--binary"],
+                cwd=repo,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+            ).stdout
 
-                self.assertEqual(returncode, 3)
-                published = load_terminal_outcome(solve_swe_prod.TERMINAL_OUTCOME_PATH)
-                self.assertEqual(published["outcome"], SUBMISSION_GATE_REJECTION)
-                self.assertEqual(published["reason"], "final gate rejected")
-            finally:
-                swe_prod_transitions.emit_failure_diagnostics = original_emit
-                solve_swe_prod.STATUS_PATH = original_status
-                solve_swe_prod.TERMINAL_OUTCOME_PATH = original_terminal
+        self.assertEqual(exposed, ["feature.py", "tests/test_feature.py"])
+        self.assertIn("feature.py", diff)
+        self.assertIn("tests/test_feature.py", diff)
 
-    def test_summary_keeps_no_submission_in_denominator(self):
+    def test_summary_counts_submitted_patch_even_when_official_score_is_zero(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             work_dir = root / "work"
@@ -165,9 +167,8 @@ class NativeOutcomeTest(unittest.TestCase):
             report_path = report_dir / "swe_bench_pro.json"
             report_path.write_text('{"score": 0.0, "num": 1}\n', encoding="utf-8")
             (log_dir / "eval_log.log").write_text(
-                "multiagent-native exited: sample=0 rc=3 wall=1.5s timed_out=False\n"
-                'multiagent-native runtime: sample=0 identity={"codex_version":"codex-cli 0.144.1","node_version":"v22.12.0"}\n'
-                "multiagent-native no-submission: sample=0 original_rc=3 reason=submission_gate_rejection\n",
+                "multiagent-native exited: sample=0 rc=0 wall=1.5s timed_out=False\n"
+                'multiagent-native runtime: sample=0 identity={"codex_version":"codex-cli 0.144.1","node_version":"v22.12.0"}\n',
                 encoding="utf-8",
             )
             args = self._summary_args(root, work_dir)
@@ -189,10 +190,10 @@ class NativeOutcomeTest(unittest.TestCase):
                 status="completed",
             )
 
-            self.assertIsNone(payload["clean_native_score"])
+            self.assertEqual(payload["clean_native_score"], 0.0)
             self.assertEqual(payload["end_to_end_score"], 0.0)
             self.assertTrue(payload["official_verifier_evidence"])
-            self.assertEqual(payload["native_runner"]["outcome_counts"]["no_submission"], 1)
+            self.assertEqual(payload["native_runner"]["outcome_counts"]["clean_patch"], 1)
             self.assertEqual(
                 payload["native_runner"]["latest"]["runtime_identity"]["codex_version"],
                 "codex-cli 0.144.1",
@@ -230,7 +231,40 @@ class NativeOutcomeTest(unittest.TestCase):
 
 
 class AggregateOutcomeTest(unittest.TestCase):
-    def test_verified_patch_and_no_submission_weight_to_half(self):
+    def test_parallel_refresh_aggregates_from_configured_report_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report_dir = Path(directory) / "custom-reports"
+            args = SimpleNamespace(
+                aggregate_json=report_dir / "aggregate.json",
+                report_dir=report_dir,
+                shard_size=5,
+                swe_bench_pro_repo_path=Path("/tmp/swe-bench-pro"),
+                aggregate_reports=None,
+            )
+
+            with mock.patch.object(swe_bench_pro_run_parallel_shards, "run_checked") as run_checked:
+                swe_bench_pro_run_parallel_shards.refresh_aggregate(args)
+
+            command = run_checked.call_args.args[0]
+            report_dir_index = command.index("--report-dir")
+            self.assertEqual(command[report_dir_index + 1], str(report_dir))
+
+    def test_default_discovery_accepts_custom_parallel_report_prefix(self):
+        with tempfile.TemporaryDirectory() as directory:
+            reports = Path(directory)
+            shard = reports / "swe-bench-pro-7971da1-w0-offset0-count5.json"
+            sidecar = reports / "swe-bench-pro-7971da1-w0-offset0-count5-config.json"
+            shard.write_text("{}", encoding="utf-8")
+            sidecar.write_text("{}", encoding="utf-8")
+
+            discovered = swe_bench_pro_official_aggregate.discover_reports(
+                reports,
+                swe_bench_pro_official_aggregate.DEFAULT_REPORT_PATTERNS,
+            )
+
+            self.assertEqual(discovered, [shard])
+
+    def test_passing_and_failing_submitted_patches_weight_to_half(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             benchmark_repo = root / "benchmark"
@@ -249,7 +283,7 @@ class AggregateOutcomeTest(unittest.TestCase):
                 json.dumps(self._summary(rows, 0, 1.0, "clean_patch")), encoding="utf-8"
             )
             (reports / "row-1.json").write_text(
-                json.dumps(self._summary(rows, 1, 0.0, "no_submission")), encoding="utf-8"
+                json.dumps(self._summary(rows, 1, 0.0, "clean_patch")), encoding="utf-8"
             )
             args = SimpleNamespace(
                 swe_bench_pro_repo_path=benchmark_repo,

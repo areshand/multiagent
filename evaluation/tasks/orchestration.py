@@ -59,7 +59,7 @@ def _plan_json(workers: list[dict[str, Any]], first_wave: list[str], commands: l
 
 def _assignment_command(node_id: str, owned: str) -> str:
     return (
-        f"bin/subagent.sh assignment-create worker-{node_id} "
+        f"multiagent subagent assignment-create worker-{node_id} "
         f"--assignment-id UPDATE-{node_id} --branch worker/{node_id} --owned {owned} "
         f"&& tmux new-window -d -t \"$MULTIAGENT_SESSION\" -n worker-{node_id} \"$WORKER_COMMAND\""
     )
@@ -344,8 +344,8 @@ def score_plan(workdir: Path, scenario: Scenario) -> Score:
     )
     command_text = "\n".join(first_wave_commands)
     commands_cover_first_wave = all(node_id in command_text for node_id in first_wave)
-    uses_repo_spawn_commands = "bin/subagent.sh assignment-create" in command_text and (
-        "tmux new-window" in command_text or "bin/subagent.sh spawn" in command_text
+    uses_repo_spawn_commands = "multiagent subagent assignment-create" in command_text and (
+        "tmux new-window" in command_text or "multiagent subagent spawn" in command_text
     )
     consolidation_deps = set(_string_list(nodes[scenario.consolidation].get("depends_on")))
     required_before_consolidation = set(scenario.dependencies[scenario.consolidation])

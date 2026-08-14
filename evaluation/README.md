@@ -137,7 +137,7 @@ python3 -m evaluation.swe_bench_pro_run_parallel_shards \
 Capture and revalidate a completed run with
 `python3 -m evaluation.swe_bench_pro_provenance`. The benchmark-specific
 semantic checks consume reusable Git and artifact-integrity primitives from
-`multiagent_framework.provenance`; see `docs/benchmark.md` for the full command.
+`evaluation.support.provenance`; see `docs/benchmark.md` for the full command.
 
 The evaluator accepts only the production repository root as bake input. It
 does not support noop, devnull, proxy, single-agent, standalone-file, or custom
@@ -146,23 +146,20 @@ at runtime, scrubbed when the solver exits, and never included in the baked
 image.
 
 `evaluation.native_solver.solve_swe_prod` is the packaged container entrypoint,
-launched with `python3 -m` from `/opt/multiagent`. Its modules own SWE-specific
-metadata sanitization, bootstrap, lifecycle, and public-probe policy. Exact Git
-snapshots, final-diff hash verification, atomic status, and generic coding
-guardrails live under `multiagent_framework/` and are shared by normal
-production launches.
+launched with `python3 -m` from `/opt/multiagent`. The adapter only starts the
+workflow, waits for the Rust orchestrator process, exposes committed and
+untracked workspace changes, and returns control to EvalScope. It does not
+inspect status narratives, run validation gates, filter files, or score the
+patch. EvalScope extracts the current `/app` diff and passes it to the official
+verifier.
 
 Solver prompts and baked source must remain no-leak: they may use issue text,
 visible source, local tests, docs, public APIs, and runtime evidence, but not
 benchmark row identity, hidden tests, prior official failures, or learned
-fixture answers. Adapter probes are additional pre-submission evidence; the
-official verifier remains authoritative.
-
-`EVAL_VALIDATION_PROBE_TIMEOUT` caps each adapter-selected public probe at 300
-seconds by default. The adapter helper defaults to advisory mode and does not
-edit source. The production-native progress watchdog can launch one bounded
-repair worker after a non-empty diff remains stale; it uses only
-repository-visible evidence and is part of the production convergence loop.
+fixture answers. Validation belongs to the production multiagent workflow;
+acceptance belongs exclusively to the official SWE-bench verifier. Adapter
+timeouts and crashes remain runner failures because they prevent a reliable
+workspace handoff.
 
 ## Security Model
 

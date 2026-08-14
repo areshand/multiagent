@@ -38,7 +38,7 @@ infrastructure operation. It does not prove task correctness.
 ### Prerequisites
 
 - A Git checkout of the target task repository.
-- `tmux` and Python 3.8 or newer.
+- Rust 1.75/Cargo, `tmux`, and Python 3.8 or newer.
 - Installed and authenticated Codex and Claude CLIs.
 - An isolated environment for benchmark tasks, preferably a disposable
   container or VM with network and credential exposure explicitly controlled.
@@ -121,11 +121,9 @@ no shared mutable state except declared artifacts.
     scorer-only metadata outside every agent context.
 
 This repository implements the snapshot primitive in
-[`../multiagent_framework/snapshot.py`](../multiagent_framework/snapshot.py),
-hash-bound build and behavior evidence in
-[`../multiagent_framework/verification.py`](../multiagent_framework/verification.py),
-and durable finding/todo gate integration in
-[`../multiagent_framework/gate.py`](../multiagent_framework/gate.py).
+[`../src/snapshot.rs`](../src/snapshot.rs) and durable hash-bound finding/TODO
+gate integration in [`../src/subagent.rs`](../src/subagent.rs). Benchmark
+adapters do not repeat these checks before submitting a workspace.
 
 ## Improvements over a single unconstrained agent loop
 

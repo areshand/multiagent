@@ -2,11 +2,9 @@
 set -euo pipefail
 
 FRAMEWORK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+MULTIAGENT="$FRAMEWORK_ROOT/target/debug/multiagent"
 TEST_TMP="$(mktemp -d)"
 trap 'rm -rf "$TEST_TMP"' EXIT
-
-PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$FRAMEWORK_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
-  python3 -c 'from multiagent_framework.workflow import main; assert callable(main)'
 
 assert_contains() {
   local file="$1"
@@ -38,7 +36,7 @@ printf '%s\n' \
   'must-not-do: change public behavior' >"$IMPLEMENTATION_CONTEXT"
 
 PROMPT_BUNDLE="$TEST_TMP/orchestrator-bundle.md"
-"$FRAMEWORK_ROOT/bin/prompt-bundle.sh" \
+"$MULTIAGENT" prompt-bundle \
   --orchestrator "$FRAMEWORK_ROOT/orchestrator_prompt.md" \
   --lifecycle "$FRAMEWORK_ROOT/prompts/playbooks/implementation-lifecycle.md" \
   --output "$PROMPT_BUNDLE" >/dev/null
@@ -46,16 +44,16 @@ assert_contains "$PROMPT_BUNDLE" "BEGIN MANDATORY IMPLEMENTATION LIFECYCLE"
 assert_contains "$PROMPT_BUNDLE" "post-implementation -> pre-implementation"
 
 wf() {
-  MULTIAGENT_STATE_DIR="$TEST_STATE" "$FRAMEWORK_ROOT/bin/workflow.sh" "$@"
+  MULTIAGENT_STATE_DIR="$TEST_STATE" "$MULTIAGENT" workflow "$@"
 }
 
 wf init WF-LIFECYCLE >/dev/null
-MULTIAGENT_STATE_DIR="$TEST_STATE" "$FRAMEWORK_ROOT/bin/decision.sh" init DEC-1 \
+MULTIAGENT_STATE_DIR="$TEST_STATE" "$MULTIAGENT" decision init DEC-1 \
   --title "Lifecycle decision" --owner orchestrator >/dev/null
-MULTIAGENT_STATE_DIR="$TEST_STATE" "$FRAMEWORK_ROOT/bin/decision.sh" add-alternative DEC-1 \
+MULTIAGENT_STATE_DIR="$TEST_STATE" "$MULTIAGENT" decision add-alternative DEC-1 \
   --plan-id PLAN-1 --summary "Implement approved lifecycle plan" \
   --proposed-by orchestrator >/dev/null
-MULTIAGENT_STATE_DIR="$TEST_STATE" "$FRAMEWORK_ROOT/bin/decision.sh" commit DEC-1 \
+MULTIAGENT_STATE_DIR="$TEST_STATE" "$MULTIAGENT" decision commit DEC-1 \
   --selected-plan PLAN-1 --reason "Authority review and evidence support this plan" >/dev/null
 if wf transition WF-LIFECYCLE implementation >"$TEST_TMP/no-permit.out" 2>&1; then
   echo "expected implementation without a permit to fail" >&2
@@ -85,7 +83,7 @@ wf transition WF-LIFECYCLE implementation >/dev/null
 
 MULTIAGENT_ROOT="$TEST_REPO" MULTIAGENT_STATE_DIR="$TEST_STATE" \
   MULTIAGENT_WORKFLOW_ID=WF-LIFECYCLE MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
-  "$FRAMEWORK_ROOT/bin/subagent.sh" assignment-create worker-lifecycle \
+  "$MULTIAGENT" subagent assignment-create worker-lifecycle \
     --assignment-id LIFE-1 --role exploitation \
     --workflow-id WF-LIFECYCLE --decision-id DEC-1 --plan-id PLAN-1 \
     --branch "$TEST_BRANCH" --owned README.md >/dev/null
@@ -101,10 +99,10 @@ fi
 assert_contains "$TEST_TMP/context-drift.out" "approved implementation context changed"
 
 SKIP_STATE="$TEST_TMP/skip-state"
-MULTIAGENT_STATE_DIR="$SKIP_STATE" "$FRAMEWORK_ROOT/bin/workflow.sh" init WF-SKIP >/dev/null
-MULTIAGENT_STATE_DIR="$SKIP_STATE" "$FRAMEWORK_ROOT/bin/workflow.sh" add-todo WF-SKIP TODO-SKIP \
+MULTIAGENT_STATE_DIR="$SKIP_STATE" "$MULTIAGENT" workflow init WF-SKIP >/dev/null
+MULTIAGENT_STATE_DIR="$SKIP_STATE" "$MULTIAGENT" workflow add-todo WF-SKIP TODO-SKIP \
   --kind evidence --summary "requires unavailable environment" >/dev/null
-if MULTIAGENT_STATE_DIR="$SKIP_STATE" "$FRAMEWORK_ROOT/bin/workflow.sh" resolve-todo WF-SKIP TODO-SKIP \
+if MULTIAGENT_STATE_DIR="$SKIP_STATE" "$MULTIAGENT" workflow resolve-todo WF-SKIP TODO-SKIP \
   --resolution skipped --reason-code unavailable-now --reason "environment unavailable" \
   --authority orchestrator --evidence "probe failed" >"$TEST_TMP/invalid-skip.out" 2>&1; then
   echo "expected unavailable-now skip without destination to fail" >&2
@@ -116,15 +114,15 @@ LOOP_STATE="$TEST_TMP/loop-state"
 LOOP_CONTEXT="$TEST_TMP/loop-implementation-context.md"
 printf 'revision 1\n' >"$LOOP_CONTEXT"
 loop() {
-  MULTIAGENT_STATE_DIR="$LOOP_STATE" "$FRAMEWORK_ROOT/bin/workflow.sh" "$@"
+  MULTIAGENT_STATE_DIR="$LOOP_STATE" "$MULTIAGENT" workflow "$@"
 }
 loop init WF-LOOP >/dev/null
-MULTIAGENT_STATE_DIR="$LOOP_STATE" "$FRAMEWORK_ROOT/bin/decision.sh" init DEC-LOOP \
+MULTIAGENT_STATE_DIR="$LOOP_STATE" "$MULTIAGENT" decision init DEC-LOOP \
   --title "Loop decision" --owner orchestrator >/dev/null
-MULTIAGENT_STATE_DIR="$LOOP_STATE" "$FRAMEWORK_ROOT/bin/decision.sh" add-alternative DEC-LOOP \
+MULTIAGENT_STATE_DIR="$LOOP_STATE" "$MULTIAGENT" decision add-alternative DEC-LOOP \
   --plan-id PLAN-LOOP --summary "Implement and re-evaluate findings" \
   --proposed-by orchestrator >/dev/null
-MULTIAGENT_STATE_DIR="$LOOP_STATE" "$FRAMEWORK_ROOT/bin/decision.sh" commit DEC-LOOP \
+MULTIAGENT_STATE_DIR="$LOOP_STATE" "$MULTIAGENT" decision commit DEC-LOOP \
   --selected-plan PLAN-LOOP --reason "Recorded lifecycle plan" >/dev/null
 loop record-review WF-LOOP AUTH-LOOP \
   --type decision-authority --verdict pass --evidence "authority passed" >/dev/null
@@ -161,7 +159,7 @@ loop transition WF-LOOP complete >/dev/null
 MULTIAGENT_ROOT="$TEST_REPO" MULTIAGENT_STATE_DIR="$LOOP_STATE" \
   MULTIAGENT_WORKFLOW_ID=WF-LOOP MULTIAGENT_RUN_ID=RUN-LIFECYCLE \
   MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
-  "$FRAMEWORK_ROOT/bin/orchestrator.sh" complete >"$TEST_TMP/complete.out"
+  "$MULTIAGENT" orchestrator complete >"$TEST_TMP/complete.out"
 assert_contains "$TEST_TMP/complete.out" $'run completed\tRUN-LIFECYCLE'
 
 echo "implementation lifecycle tests passed"

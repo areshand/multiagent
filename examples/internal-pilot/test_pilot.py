@@ -231,7 +231,7 @@ class PilotFixtureTest(unittest.TestCase):
         self.assertIn("orchestrated complete", completed.stdout)
         full_prompt = (cell / "orchestrator-prompt.md").read_text(encoding="utf-8")
         self.assertIn("fixture orchestrated prompt", full_prompt)
-        self.assertIn(str(fake_harness / "bin" / "subagent.sh"), full_prompt)
+        self.assertIn("$MULTIAGENT_BIN subagent", full_prompt)
 
 
 if __name__ == "__main__":

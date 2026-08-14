@@ -19,7 +19,7 @@ Treat each expensive validation target as having one active lease:
 The orchestrator owns the lease table. Prefer durable helper records over notes:
 
 ```bash
-bin/subagent.sh validation-run go-ofrep \
+multiagent subagent validation-run go-ofrep \
   --owner worker-02-fix \
   --target "./internal/server/ofrep ./internal/server/evaluation" \
   --resource-risk "go test under Docker/Rosetta" \
@@ -33,13 +33,13 @@ command return code. It rejects a second active lease for the same target.
 For externally managed or already-running commands, use the lower-level helpers:
 
 ```bash
-bin/subagent.sh validation-lease-acquire go-ofrep \
+multiagent subagent validation-lease-acquire go-ofrep \
   --owner worker-02-fix \
   --target "./internal/server/ofrep ./internal/server/evaluation" \
   --command "go test ./internal/server/ofrep ./internal/server/evaluation" \
   --resource-risk "go test under Docker/Rosetta"
 
-bin/subagent.sh validation-lease-status go-ofrep passed \
+multiagent subagent validation-lease-status go-ofrep passed \
   --result-json '{"command":"go test ./internal/server/ofrep ./internal/server/evaluation","returncode":0}'
 ```
 

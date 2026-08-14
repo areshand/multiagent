@@ -10,11 +10,11 @@ playbooks must not weaken its gates.
 Read the active workflow before routing work:
 
 ```bash
-bin/workflow.sh status "$MULTIAGENT_WORKFLOW_ID"
+multiagent workflow status "$MULTIAGENT_WORKFLOW_ID"
 ```
 
 Do not infer the current phase from conversation history. Use the persisted
-phase and record every transition with `bin/workflow.sh transition`.
+phase and record every transition with `multiagent workflow transition`.
 
 ## Phase Machine
 
@@ -42,7 +42,7 @@ Group TODOs that depend on the same choice. Record alternatives, assumptions,
 evidence, and the proposed choice. Evidence collection must state its question,
 sources, expected signal, and stop condition.
 
-Use `bin/decision.sh` for durable alternatives, assumptions, the committed plan,
+Use `multiagent decision` for durable alternatives, assumptions, the committed plan,
 and later reflection. The lifecycle record is the phase/authority gate around
 that decision ledger; it does not replace the ledger.
 
@@ -60,7 +60,7 @@ user before committing any user-owned decision.
 Spawn that review read-only through the normal subagent path, for example:
 
 ```bash
-SUBAGENT_CLI="$VERIFIER_CLI" bin/subagent.sh spawn decision-authority-reviewer \
+SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn decision-authority-reviewer \
   --role reviewer --instruction-file AUTHORITY_REVIEW_INPUT
 ```
 
@@ -68,17 +68,17 @@ Create an approved implementation context document containing the selected
 plan, decision and plan IDs, authority and approval basis, intended outcome,
 rejected alternatives and reasons, must-do and must-not-do constraints, migration choice,
 responsibility boundary, affected paths, unresolved questions, and revision.
-Commit the selected alternative with `bin/decision.sh commit`, then record the
+Commit the selected alternative with `multiagent decision commit`, then record the
 passed authority review and approved context with:
 
 ```bash
-bin/workflow.sh prepare-implementation "$MULTIAGENT_WORKFLOW_ID" \
+multiagent workflow prepare-implementation "$MULTIAGENT_WORKFLOW_ID" \
   --decision-id DECISION_ID \
   --plan-id PLAN_ID \
   --decision-revision REVISION \
   --implementation-context CONTEXT_PATH \
   --authority-review REVIEW_ID
-bin/workflow.sh transition "$MULTIAGENT_WORKFLOW_ID" implementation
+multiagent workflow transition "$MULTIAGENT_WORKFLOW_ID" implementation
 ```
 
 Do not leave active evidence or decision TODOs when entering implementation.
@@ -99,7 +99,7 @@ When implementation stops, capture worker output, stop or freeze every writer,
 record the candidate diff hash, and enter post-implementation:
 
 ```bash
-bin/workflow.sh transition "$MULTIAGENT_WORKFLOW_ID" post-implementation \
+multiagent workflow transition "$MULTIAGENT_WORKFLOW_ID" post-implementation \
   --diff-hash DIFF_HASH
 ```
 
@@ -112,8 +112,8 @@ Run independent reviews against the frozen candidate diff:
 - `technical`: verify behavior and the accepted contract;
 - `reflection`: compare expected and actual results and identify improvements.
 
-Record each review with `bin/workflow.sh record-review`. Every actionable
-finding must be added with `bin/workflow.sh add-todo`; a review with findings is
+Record each review with `multiagent workflow record-review`. Every actionable
+finding must be added with `multiagent workflow add-todo`; a review with findings is
 not a terminal review.
 
 Technical verifier findings must also use the existing structured
@@ -137,7 +137,7 @@ to skip a user-owned requirement or accept user-visible residual risk.
 If active TODOs remain, return to pre-implementation:
 
 ```bash
-bin/workflow.sh transition "$MULTIAGENT_WORKFLOW_ID" pre-implementation
+multiagent workflow transition "$MULTIAGENT_WORKFLOW_ID" pre-implementation
 ```
 
 This increments the iteration and invalidates the prior implementation permit.
@@ -149,12 +149,12 @@ decision is unanswered, and all four required reviews pass against the current
 candidate diff hash:
 
 ```bash
-bin/workflow.sh completion-check "$MULTIAGENT_WORKFLOW_ID"
-bin/workflow.sh transition "$MULTIAGENT_WORKFLOW_ID" complete
-bin/orchestrator.sh complete
+multiagent workflow completion-check "$MULTIAGENT_WORKFLOW_ID"
+multiagent workflow transition "$MULTIAGENT_WORKFLOW_ID" complete
+multiagent orchestrator complete
 ```
 
-The final command also runs `bin/subagent.sh gate-check`, so lifecycle reviews
+The final command also runs `multiagent subagent gate-check`, so lifecycle reviews
 cannot substitute for hash-bound technical finding and TODO closure.
 
 `MULTIAGENT_VERIFIER_MAX_ITERATIONS` is an escalation threshold, not an

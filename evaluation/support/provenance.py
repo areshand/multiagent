@@ -1,4 +1,4 @@
-"""Portable provenance primitives for Git checkouts and artifact bundles."""
+"""Portable evaluation provenance primitives for Git checkouts and artifacts."""
 
 import hashlib
 import ntpath

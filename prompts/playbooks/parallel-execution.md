@@ -27,7 +27,7 @@ Balance exploration and exploitation deliberately:
   enough.
 - Keep exploration branches independent; synthesize them through the
   orchestrator or a consolidation role.
-- Record major alternatives and outcomes with `bin/decision.sh` when useful.
+- Record major alternatives and outcomes with `multiagent decision` when useful.
 - Stop exploring when extra evidence is unlikely to change the selected plan.
 
 Load `prompts/roles/organizational-learning.md` when assigning explicit

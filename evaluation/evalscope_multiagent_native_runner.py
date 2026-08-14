@@ -5,12 +5,9 @@ the per-instance SWE Bench Pro container, then EvalScope's SWE Bench Pro
 adapter extracts ``git diff`` from ``/app`` and sends that patch to the
 official verifier.
 
-The production SWE adapter publishes a typed terminal outcome and uses a
-dedicated exit code when its public-contract gate rejects a patch. That rejected
-diff is never forwarded. Instead, the runner restores the clean task checkout
-and lets the official verifier score an explicit no-submission outcome.
-Ambiguous exits, task timeouts, and unexpected runner or infrastructure
-failures still abort the evaluation.
+The production SWE adapter does not inspect or score patches. It only runs the
+workflow; EvalScope collects the resulting workspace diff. Task timeouts and
+runner or infrastructure failures still abort the evaluation.
 """
 
 from __future__ import annotations
@@ -27,20 +24,11 @@ from evalscope.api.agent import AgentEnvironment
 from evalscope.api.registry import register_runner
 from evalscope.utils.logger import get_logger
 
-from multiagent_framework.coding.outcomes import (
-    SCHEMA_VERSION as TERMINAL_OUTCOME_SCHEMA_VERSION,
-    SUBMISSION_GATE_REJECTION,
-    SUBMISSION_GATE_REJECTION_EXIT_CODE,
-)
-
-
 logger = get_logger()
 _PROMPT_FILE = "/tmp/evalscope-native-multiagent-prompt.txt"
 _METADATA_FILE = "/tmp/evalscope-native-multiagent-metadata.json"
 _STDOUT_FILE = "/tmp/evalscope-native-multiagent-stdout.log"
 _STDERR_FILE = "/tmp/evalscope-native-multiagent-stderr.log"
-_DIAGNOSTICS_FILE = "/tmp/evalscope-native-multiagent-diagnostics.txt"
-_TERMINAL_OUTCOME_FILE = "/tmp/multiagent-prod-swe/terminal-outcome.json"
 _RUNTIME_IDENTITY_FILE = "/tmp/multiagent-prod-swe/runtime-identity.json"
 _DEFAULT_SOLVER_COMMAND = "/tmp/evalscope-native-multiagent-solver.sh"
 _PUBLIC_METADATA_KEYS = {
@@ -61,6 +49,12 @@ _PRIVATE_SOLVER_METADATA_KEYS = {
 }
 _SOLVER_LAUNCHER = """#!/usr/bin/env bash
 set -euo pipefail
+
+# AgentEnvironment supplies an explicit environment to this launcher. Keep the
+# baked Codex runtime discoverable even when the base image's login PATH is not
+# inherited (some official task images otherwise find codex but not its node
+# interpreter).
+export PATH="/opt/codex-node/bin:/opt/node22/bin:/usr/local/bin:${PATH:-/usr/bin:/bin}"
 
 prompt_file="${EVAL_TASK_PROMPT_FILE:-/tmp/evalscope-native-multiagent-prompt.txt}"
 timeout_args=()
@@ -86,21 +80,6 @@ def solver_internal_timeout(agent_timeout: float) -> int:
     reserve = int(os.environ.get("EVAL_NATIVE_SOLVER_TIMEOUT_RESERVE", "600"))
     reserve = max(90, min(reserve, int(agent_timeout) - 300))
     return max(300, int(agent_timeout) - reserve)
-
-
-def is_submission_gate_rejection(returncode: int, payload: dict[str, Any]) -> bool:
-    """Accept only the dedicated exit code plus a complete production-owned outcome."""
-
-    blockers = payload.get("blockers")
-    return (
-        returncode == SUBMISSION_GATE_REJECTION_EXIT_CODE
-        and payload.get("schema_version") == TERMINAL_OUTCOME_SCHEMA_VERSION
-        and payload.get("outcome") == SUBMISSION_GATE_REJECTION
-        and isinstance(payload.get("reason"), str)
-        and bool(str(payload["reason"]).strip())
-        and isinstance(blockers, list)
-        and all(isinstance(blocker, str) for blocker in blockers)
-    )
 
 
 @register_runner("multiagent-native")
@@ -145,11 +124,13 @@ class MultiagentNativeRunner(AgentRunner):
         bridge: BridgeEndpoint,
     ) -> AgentRunResult:
         raw_metadata = dict(task.metadata or {})
+        sample_id = raw_metadata.get("sample_id")
+        sample_index = _absolute_sample_index(self._swe_bench_pro_sample_offset, sample_id)
         metadata = _public_solver_metadata(dict(task.metadata or {}))
         metadata.update(
             _public_problem_statement_metadata(
                 self._swe_bench_pro_repo_path,
-                self._swe_bench_pro_sample_offset,
+                sample_index,
                 existing=metadata,
             )
         )
@@ -171,9 +152,9 @@ class MultiagentNativeRunner(AgentRunner):
         shell_command = (
             f"{command} > {shlex.quote(_STDOUT_FILE)} 2> {shlex.quote(_STDERR_FILE)}"
         )
-        sample_id = raw_metadata.get("sample_id")
         logger.info(
-            f"multiagent-native launching: sample={sample_id} timeout={task.timeout}s "
+            f"multiagent-native launching: sample={sample_id} official_index={sample_index} "
+            f"timeout={task.timeout}s "
             f"cwd={self._working_dir} command={command!r}"
         )
         runtime_identity: dict[str, Any] = {}
@@ -197,34 +178,11 @@ class MultiagentNativeRunner(AgentRunner):
         stderr = await env.exec(["bash", "-lc", f"tail -c 4000 {shlex.quote(_STDERR_FILE)} 2>/dev/null || true"])
         stdout_tail = (stdout.stdout or "")[-4000:]
         stderr_tail = (stderr.stdout or "")[-4000:]
-        diagnostics = ""
         if result.timed_out:
-            diagnostics = await self._collect_rejection_diagnostics(env)
-            logger.error("multiagent-native rejection diagnostics:\n%s", diagnostics[-60000:])
-            raise RunnerTimeoutError(
-                "multiagent-native timed out after "
-                f"{task.timeout}s; refusing to convert an ambiguous timeout into a scored outcome\n"
-                f"{diagnostics[-8000:]}"
-            )
+            raise RunnerTimeoutError(f"multiagent-native timed out after {task.timeout}s")
         elif result.returncode != 0:
-            diagnostics = await self._collect_rejection_diagnostics(env)
-            logger.error("multiagent-native rejection diagnostics:\n%s", diagnostics[-60000:])
-            terminal_outcome = await self._read_terminal_outcome(env)
-            if is_submission_gate_rejection(result.returncode, terminal_outcome):
-                return await self._score_no_submission(
-                    env,
-                    sample_id=sample_id,
-                    result=result,
-                    stdout_tail=stdout_tail,
-                    stderr_tail=stderr_tail,
-                    diagnostics=diagnostics,
-                    reason=SUBMISSION_GATE_REJECTION,
-                    runtime_identity=runtime_identity,
-                )
-            tail = (stderr_tail + "\n" + stdout_tail + "\n" + diagnostics).strip()[-12000:]
-            raise RuntimeError(
-                f"multiagent-native exited unexpectedly with code {result.returncode}; refusing to score: {tail}"
-            )
+            tail = (stderr_tail + "\n" + stdout_tail).strip()[-8000:]
+            raise RuntimeError(f"multiagent-native exited with code {result.returncode}: {tail}")
         return AgentRunResult(
             output=stdout_tail,
             metrics={
@@ -232,7 +190,6 @@ class MultiagentNativeRunner(AgentRunner):
                 "returncode": result.returncode,
                 "timed_out": result.timed_out,
                 "stderr_tail": stderr_tail,
-                "diagnostics_tail": diagnostics[-4000:],
                 "runtime_identity": runtime_identity,
             },
         )
@@ -247,101 +204,6 @@ class MultiagentNativeRunner(AgentRunner):
         except json.JSONDecodeError:
             return {}
         return payload if isinstance(payload, dict) else {}
-
-    async def _read_terminal_outcome(self, env: AgentEnvironment) -> dict[str, Any]:
-        return await self._read_json_file(env, _TERMINAL_OUTCOME_FILE)
-
-    async def _score_no_submission(
-        self,
-        env: AgentEnvironment,
-        *,
-        sample_id: Any,
-        result: Any,
-        stdout_tail: str,
-        stderr_tail: str,
-        diagnostics: str,
-        reason: str,
-        runtime_identity: dict[str, Any],
-    ) -> AgentRunResult:
-        cleanup = await env.exec(
-            ["bash", "-lc", "git reset --hard HEAD && git clean -fd"],
-            timeout=90,
-            cwd=self._working_dir,
-        )
-        if cleanup.returncode != 0:
-            tail = ((cleanup.stderr or "") + "\n" + (cleanup.stdout or "")).strip()[-4000:]
-            raise RuntimeError(f"could not materialize clean no-submission workspace: {tail}")
-        logger.info(
-            f"multiagent-native no-submission: sample={sample_id} "
-            f"original_rc={result.returncode} reason={reason}"
-        )
-        return AgentRunResult(
-            output=f"production multiagent produced no accepted submission ({reason})",
-            metrics={
-                "wall_time": result.duration,
-                "returncode": result.returncode,
-                "timed_out": result.timed_out,
-                "submission_status": "no_submission",
-                "no_submission_reason": reason,
-                "stderr_tail": stderr_tail,
-                "stdout_tail": stdout_tail,
-                "diagnostics_tail": diagnostics[-4000:],
-                "runtime_identity": runtime_identity,
-            },
-        )
-
-    async def _collect_rejection_diagnostics(self, env: AgentEnvironment) -> str:
-        """Collect public/source diagnostics before EvalScope deletes the task container."""
-
-        workdir = shlex.quote(self._working_dir)
-        diagnostics_file = shlex.quote(_DIAGNOSTICS_FILE)
-        script = f"""
-set +e
-cd {workdir} 2>/dev/null || true
-out={diagnostics_file}
-: > "$out"
-section() {{
-  printf '\\n===== %s =====\\n' "$1" >> "$out"
-}}
-copy_file_tail() {{
-  label="$1"
-  path="$2"
-  bytes="$3"
-  section "$label"
-  if [ -f "$path" ]; then
-    tail -c "$bytes" "$path" >> "$out" 2>&1
-  else
-    printf 'missing: %s\\n' "$path" >> "$out"
-  fi
-}}
-copy_file_tail status.json /tmp/multiagent-prod-swe/status.json 12000
-copy_file_tail source-owner-candidates /tmp/multiagent-prod-swe/source-owner-candidates.md 12000
-copy_file_tail helper-validation-probe /tmp/multiagent-prod-swe/helper-validation-probe.txt 12000
-copy_file_tail stale-visible-reconciliation /tmp/multiagent-prod-swe/stale-visible-reconciliation.txt 8000
-copy_file_tail multi-value-probe /tmp/multiagent-prod-swe/multi-value-probe.txt 8000
-copy_file_tail failure-diagnostics /tmp/multiagent-prod-swe/failure-diagnostics.txt 20000
-copy_file_tail native-stdout {_STDOUT_FILE} 8000
-copy_file_tail native-stderr {_STDERR_FILE} 8000
-section git-status
-git status --short >> "$out" 2>&1
-section git-diff-name-only
-git diff --name-only HEAD -- >> "$out" 2>&1
-section git-diff-stat
-git diff --stat HEAD -- >> "$out" 2>&1
-section git-diff-check
-git diff --check HEAD -- >> "$out" 2>&1
-section git-diff-tail
-git diff HEAD -- | tail -c 30000 >> "$out" 2>&1
-copy_file_tail final-status.json /tmp/multiagent-prod-swe/status.json 12000
-copy_file_tail final-failure-diagnostics /tmp/multiagent-prod-swe/failure-diagnostics.txt 20000
-# The returned report is tail-bounded. Repeat process logs after the source
-# diff so a large patch cannot truncate the actual crash or exit cause.
-copy_file_tail final-native-stdout {_STDOUT_FILE} 12000
-copy_file_tail final-native-stderr {_STDERR_FILE} 12000
-tail -c 60000 "$out" 2>/dev/null || true
-"""
-        result = await env.exec(["bash", "-lc", script], timeout=90)
-        return ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
 
     async def _write_file(self, env: AgentEnvironment, path: str, content: str) -> None:
         encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
@@ -478,3 +340,15 @@ def _public_problem_statement_metadata(
     except (OSError, json.JSONDecodeError):
         return {}
     return {}
+
+
+def _absolute_sample_index(sample_offset: int, sample_id: Any) -> int:
+    """Map EvalScope's shard-relative sample id to the official dataset row."""
+
+    try:
+        relative_index = int(sample_id)
+    except (TypeError, ValueError):
+        return sample_offset
+    if relative_index < 0:
+        return sample_offset
+    return sample_offset + relative_index
