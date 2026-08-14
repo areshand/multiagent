@@ -905,30 +905,32 @@ assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "visible tests"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "real production entrypoint"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "overreach boundary"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "adapter-parity contract"
-assert_file_contains "$ROOT/evaluation/README.md" "Terminal status is diagnostic"
+assert_file_contains "$ROOT/evaluation/README.md" "The adapter only starts the"
 assert_file_contains "$ROOT/evaluation/README.md" "official SWE-bench verifier"
-assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_lifecycle.py" "official SWE-bench verifier decides correctness"
+assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_lifecycle.py" "workspace prepared for EvalScope submission"
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_lifecycle.py" '"MULTIAGENT_PROMPT_MODULE_ROOT": str(repo_root)'
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_lifecycle.py" '"GOMODCACHE": ensure_cache_dir(RUNTIME_ROOT / "go-mod-cache")'
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "adapter does not parse validation narratives"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "blocked status does not cause the adapter to discard"
-assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "status.json"
-assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "does not score or pre-accept patches"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "adapter only transports"
+assert_file_not_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "status.json"
+assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "does not inspect or score patches"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "_public_solver_metadata(dict(task.metadata or {}))"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" '"fail_to_pass"'
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" '"test_patch"'
-assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "_collect_rejection_diagnostics"
-assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "git diff --stat HEAD --"
-assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "diagnostics_tail"
+assert_file_not_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "_collect_rejection_diagnostics"
+assert_file_not_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "git diff --check HEAD --"
+assert_file_not_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "diagnostics_tail"
 assert_file_not_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "multiagent-native no-submission"
 assert_file_not_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "git reset --hard HEAD"
 assert_file_not_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "SUBMISSION_GATE_REJECTION"
 assert_file_contains "$ROOT/evaluation/swe_bench_pro.py" '"submission_policy": "pass current workspace diff'
-assert_file_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "crashed before submission handoff"
+assert_file_not_contains "$ROOT/evaluation/native_solver/solve_swe_prod.py" "status.json"
+assert_file_not_contains "$ROOT/evaluation/native_solver/swe_prod_bootstrap.py" "singleflight"
+assert_file_not_contains "$ROOT/evaluation/native_solver/swe_prod_lifecycle.py" "validation"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "solver_internal_timeout"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "EVAL_NATIVE_SOLVER_TIMEOUT_RESERVE"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "python3 -m evaluation.native_solver.solve_swe_prod"
 for obsolete_adapter_path in \
+  "$ROOT/evaluation/native_solver/swe_prod_evidence.py" \
   "$ROOT/evaluation/native_solver/swe_prod_checkpoints.py" \
   "$ROOT/evaluation/native_solver/swe_prod_guardrails.py" \
   "$ROOT/evaluation/native_solver/swe_prod_orchestration.py" \

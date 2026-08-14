@@ -13,8 +13,6 @@ from pathlib import Path
 DEFAULT_MULTIAGENT_ROOT = Path("/opt/multiagent")
 DEFAULT_WORKDIR = Path("/app")
 RUNTIME_ROOT = Path("/tmp/multiagent-prod-swe")
-STATUS_PATH = RUNTIME_ROOT / "status.json"
-FAILURE_DIAGNOSTICS_PATH = RUNTIME_ROOT / "failure-diagnostics.txt"
 RUNTIME_IDENTITY_PATH = RUNTIME_ROOT / "runtime-identity.json"
 TASK_METADATA_PATH = Path(os.environ.get("EVAL_TASK_METADATA_FILE", "/tmp/evalscope-native-multiagent-metadata.json"))
 CODEX_WRAPPER = RUNTIME_ROOT / "codex-bridge"

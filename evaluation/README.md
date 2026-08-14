@@ -146,11 +146,12 @@ at runtime, scrubbed when the solver exits, and never included in the baked
 image.
 
 `evaluation.native_solver.solve_swe_prod` is the packaged container entrypoint,
-launched with `python3 -m` from `/opt/multiagent`. Its modules own SWE-specific
-metadata sanitization, runtime bootstrap, lifecycle observation, and workspace
-handoff. Terminal status is diagnostic: the adapter does not parse validation
-evidence or pre-accept a patch. On a normal solver exit, EvalScope extracts the
-current `/app` diff and passes it to the official verifier.
+launched with `python3 -m` from `/opt/multiagent`. The adapter only starts the
+workflow, waits for the Rust orchestrator process, exposes committed and
+untracked workspace changes, and returns control to EvalScope. It does not
+inspect status narratives, run validation gates, filter files, or score the
+patch. EvalScope extracts the current `/app` diff and passes it to the official
+verifier.
 
 Solver prompts and baked source must remain no-leak: they may use issue text,
 visible source, local tests, docs, public APIs, and runtime evidence, but not

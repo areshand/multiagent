@@ -8,12 +8,10 @@ from pathlib import Path
 
 from evaluation.support.cli import multiagent_command
 
-from . import swe_prod_repository as _repository
 from .swe_prod_bootstrap import (
     require_path,
     write_apply_patch_helper,
     write_codex_bridge,
-    write_go_singleflight_wrapper,
     write_rg_fallback,
 )
 from .swe_prod_contracts import (
@@ -26,35 +24,59 @@ from .swe_prod_contracts import (
     read_task_metadata,
     run,
 )
-from .swe_prod_evidence import (
-    capture_session,
-    ensure_cache_dir,
-    find_codex_cli,
-    status,
-    tmux_has_session,
-    toolchain_path_prefixes,
-)
 from .swe_prod_repository import (
-    cleanup_initial_environment_diff,
-    git_diff,
     git_head,
     make_prompt,
-    mark_untracked_source_intent_to_add,
+    mark_untracked_intent_to_add,
     materialize_committed_changes,
 )
 
 
-_TERMINAL_STATES = {"blocked", "complete", "completed", "done"}
+def find_codex_cli() -> str | None:
+    found = shutil.which("codex")
+    if found:
+        return found
+    for candidate in (
+        Path("/opt/node22/bin/codex"),
+        Path("/usr/local/bin/codex"),
+        Path("/usr/bin/codex"),
+        Path("/root/.npm-global/bin/codex"),
+    ):
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
+
+
+def ensure_cache_dir(path: Path) -> str:
+    path.mkdir(parents=True, exist_ok=True)
+    return str(path)
+
+
+def toolchain_path_prefixes() -> list[str]:
+    candidates = (
+        Path("/usr/local/go/bin"),
+        Path("/usr/lib/go/bin"),
+        Path("/opt/go/bin"),
+        Path("/usr/local/bin"),
+        Path("/usr/bin"),
+    )
+    return [str(path) for path in candidates if (path / "go").exists()]
+
+
+def tmux_has_session(session: str) -> bool:
+    return run(["tmux", "has-session", "-t", session], timeout=10).returncode == 0
+
+
+def tmux_has_orchestrator(session: str) -> bool:
+    result = run(["tmux", "list-windows", "-t", session, "-F", "#W"], timeout=10)
+    return result.returncode == 0 and "orchestrator" in result.stdout.splitlines()
 
 
 def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, timeout: int) -> int:
     """Run the production workflow and leave its current diff for SWE-bench.
 
-    This adapter owns process setup, public-input sanitization, and workspace
-    transport. It deliberately does not decide whether the produced patch is
-    correct. Terminal status, internal validation, and lifecycle state are
-    retained as diagnostics; the official SWE-bench verifier is the only patch
-    acceptance authority.
+    The adapter only starts the workflow and exposes its final workspace diff.
+    EvalScope and the official SWE-bench verifier own evaluation.
     """
 
     require_path(repo_root / "launch.sh", "production multiagent launcher")
@@ -81,8 +103,6 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
         )
 
     start_head = git_head(workdir)
-    _repository.ACTIVE_START_HEAD = start_head
-    cleanup_initial_environment_diff(workdir, start_head)
     RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
     RUNTIME_IDENTITY_PATH.unlink(missing_ok=True)
 
@@ -109,7 +129,6 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     write_codex_bridge(real_codex, os.environ.get("EVAL_NATIVE_SOLVER_MODEL", "gpt-5"), auth_mode)
     write_apply_patch_helper()
     write_rg_fallback()
-    write_go_singleflight_wrapper()
 
     issue = read_prompt(prompt_path)
     task_metadata = read_task_metadata()
@@ -155,43 +174,16 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     launch_tail = ((launch.stderr or "") + "\n" + (launch.stdout or "")).strip()[-4000:]
     if launch.returncode != 0:
         raise RuntimeError(f"production multiagent launch failed: {launch_tail}")
-    time.sleep(2)
-    if not tmux_has_session(session):
-        raise RuntimeError(f"production multiagent launch exited without a live tmux session: {launch_tail[-1000:]}")
 
     deadline = time.monotonic() + timeout
-    last_capture = 0.0
-    stop_reason = "internal timeout"
     try:
-        while time.monotonic() < deadline:
-            try:
-                materialize_committed_changes(workdir, start_head)
-                mark_untracked_source_intent_to_add(workdir)
-            except Exception as exc:
-                log(f"could not refresh worker changes during polling: {exc}")
-
-            current_status = status()
-            state = str(current_status.get("status", "")).lower()
-            if state in _TERMINAL_STATES:
-                stop_reason = f"solver status={state}"
-                break
-            if not tmux_has_session(session):
-                stop_reason = "multiagent session exited"
-                break
-            if time.monotonic() - last_capture > 60:
-                capture_session(session)
-                last_capture = time.monotonic()
+        while time.monotonic() < deadline and tmux_has_orchestrator(session):
             time.sleep(5)
     finally:
-        capture_session(session)
-        run(["tmux", "kill-session", "-t", session], timeout=30)
+        if tmux_has_session(session):
+            run(["tmux", "kill-session", "-t", session], timeout=30)
 
     materialize_committed_changes(workdir, start_head)
-    mark_untracked_source_intent_to_add(workdir)
-    final_diff = git_diff(workdir)
-    final_status = status()
-    log(
-        f"submission handoff: reason={stop_reason} status={str(final_status.get('status', '')).lower() or 'missing'} "
-        f"diff_bytes={len(final_diff.encode('utf-8'))}; official SWE-bench verifier decides correctness"
-    )
+    mark_untracked_intent_to_add(workdir)
+    log("workspace prepared for EvalScope submission")
     return 0

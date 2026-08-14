@@ -50,6 +50,9 @@ class NativeOutcomeTest(unittest.TestCase):
     def test_runner_has_no_submission_rejection_path(self):
         self.assertFalse(hasattr(evalscope_multiagent_native_runner, "is_submission_gate_rejection"))
         self.assertFalse(hasattr(evalscope_multiagent_native_runner.MultiagentNativeRunner, "_score_no_submission"))
+        self.assertFalse(
+            hasattr(evalscope_multiagent_native_runner.MultiagentNativeRunner, "_collect_rejection_diagnostics")
+        )
 
     def test_shard_problem_statement_uses_relative_sample_id(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -74,11 +77,8 @@ class NativeOutcomeTest(unittest.TestCase):
             self.assertEqual(absolute_index, 6)
             self.assertEqual(metadata, {"problem_statement": "public issue 6"})
 
-    def test_blocked_status_with_patch_is_handed_to_official_scorer(self):
+    def test_orchestrator_exit_prepares_workspace_for_official_scorer(self):
         completed = SimpleNamespace(returncode=0, stdout="codex-cli 1.0\n", stderr="")
-        launch = SimpleNamespace(returncode=0, stdout="launched\n", stderr="")
-        run_results = iter([completed, launch, completed])
-        final_diff = "diff --git a/source.py b/source.py\n+fixed = True\n"
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -89,25 +89,19 @@ class NativeOutcomeTest(unittest.TestCase):
                 "multiagent_command": mock.Mock(return_value=["multiagent"]),
                 "find_codex_cli": mock.Mock(return_value="/usr/bin/codex"),
                 "git_head": mock.Mock(return_value="a" * 40),
-                "cleanup_initial_environment_diff": mock.DEFAULT,
-                "run": mock.Mock(side_effect=lambda *_args, **_kwargs: next(run_results)),
+                "run": mock.Mock(return_value=completed),
                 "write_codex_bridge": mock.DEFAULT,
                 "write_apply_patch_helper": mock.DEFAULT,
                 "write_rg_fallback": mock.DEFAULT,
-                "write_go_singleflight_wrapper": mock.DEFAULT,
                 "read_prompt": mock.Mock(return_value="public task"),
                 "read_task_metadata": mock.Mock(return_value={}),
                 "make_prompt": mock.Mock(return_value=prompt),
                 "toolchain_path_prefixes": mock.Mock(return_value=[]),
                 "ensure_cache_dir": mock.Mock(return_value=str(root)),
                 "tmux_has_session": mock.Mock(return_value=True),
-                "status": mock.Mock(
-                    return_value={"status": "blocked", "reason": "internal validation was inconclusive"}
-                ),
-                "capture_session": mock.DEFAULT,
+                "tmux_has_orchestrator": mock.Mock(return_value=False),
                 "materialize_committed_changes": mock.DEFAULT,
-                "mark_untracked_source_intent_to_add": mock.DEFAULT,
-                "git_diff": mock.Mock(return_value=final_diff),
+                "mark_untracked_intent_to_add": mock.DEFAULT,
             }
             with mock.patch.multiple(swe_prod_lifecycle, **lifecycle_patches):
                 with mock.patch.object(
@@ -125,10 +119,12 @@ class NativeOutcomeTest(unittest.TestCase):
                             },
                         ):
                             result = swe_prod_lifecycle.run_prod_solver(None, root, root, 60)
-                            git_diff_mock = swe_prod_lifecycle.git_diff
+                            materialize = swe_prod_lifecycle.materialize_committed_changes
+                            expose_untracked = swe_prod_lifecycle.mark_untracked_intent_to_add
 
         self.assertEqual(result, 0)
-        git_diff_mock.assert_called_once_with(root)
+        materialize.assert_called_once_with(root, "a" * 40)
+        expose_untracked.assert_called_once_with(root)
 
     def test_workspace_handoff_includes_new_source_and_test_files(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -147,9 +143,14 @@ class NativeOutcomeTest(unittest.TestCase):
             (repo / "tests").mkdir()
             (repo / "tests" / "test_feature.py").write_text("def test_feature(): pass\n", encoding="utf-8")
 
-            swe_prod_repository.ACTIVE_START_HEAD = None
-            exposed = swe_prod_repository.mark_untracked_source_intent_to_add(repo)
-            diff = swe_prod_repository.git_diff(repo)
+            exposed = swe_prod_repository.mark_untracked_intent_to_add(repo)
+            diff = subprocess.run(
+                ["git", "diff", "--binary"],
+                cwd=repo,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+            ).stdout
 
         self.assertEqual(exposed, ["feature.py", "tests/test_feature.py"])
         self.assertIn("feature.py", diff)

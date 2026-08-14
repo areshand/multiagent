@@ -146,7 +146,7 @@ class SyntheticDependencyError(ImportError):
 original_import = builtins.__import__
 
 def fail_lifecycle_dependency(name, globals=None, locals=None, fromlist=(), level=0):
-    if level == 1 and "swe_prod_repository" in (fromlist or ()):
+    if name.endswith("swe_prod_repository") or (level == 1 and "swe_prod_repository" in (fromlist or ())):
         raise SyntheticDependencyError("synthetic-native-solver-dependency")
     return original_import(name, globals, locals, fromlist, level)
 
