@@ -31,34 +31,24 @@ multiagent subagent assignment-create worker-01-task \
   --plan-id PLAN_ID \
   --branch BRANCH \
   --owned PATH[,PATH...]
-multiagent subagent worktree-create worker-01-task
 multiagent subagent checkpoint-update worker-01-task --step "assignment created" --status assigned
 ```
 
-Use a separate git worktree per worker unless the user explicitly directs
-otherwise. Spawn from that worktree path:
+For the normal single-writer path, spawn through the Rust supervisor in the
+shared target workspace. The trusted worker role receives workspace-write
+access while the orchestrator remains unable to edit that workspace:
 
 ```bash
-WORKTREE_PATH="$(multiagent subagent worktree-show worker-01-task | awk -F= '$1 == "path" {print $2}')"
-WORKER_CLI="${WORKER_CLI:-claude}"
-case "$WORKER_CLI" in
-  codex)
-    WORKER_COMMAND="cd '$WORKTREE_PATH' && ${CODEX_BIN:-codex} --cd '$WORKTREE_PATH' --dangerously-bypass-approvals-and-sandbox --no-alt-screen"
-    ;;
-  claude)
-    WORKER_COMMAND="cd '$WORKTREE_PATH' && ${CLAUDE_BIN:-claude} --dangerously-skip-permissions"
-    ;;
-  *)
-    echo "Unsupported WORKER_CLI: $WORKER_CLI" >&2
-    exit 2
-    ;;
-esac
-tmux new-window -d -t "$MULTIAGENT_SESSION" -n "worker-01-task" "$WORKER_COMMAND"
+SUBAGENT_CLI="$WORKER_CLI" multiagent subagent spawn worker-01-task \
+  --role worker --instruction-file WORKER_INSTRUCTION
+multiagent subagent wait worker-01-task --timeout 1800
 ```
 
-Capture repeatedly until the selected CLI prompt is visible. If the pane shows
-authentication/setup blockers or never becomes ready, report the blocker
-instead of sending instructions.
+The supervisor handles readiness and capture. Inspect a terminal `blocked` or
+`failed` result instead of treating it as completion. Separate git worktrees
+remain available for intentionally parallel, disjoint assignments, but require
+an explicit integration step before completion; do not use them for the normal
+SWE single-writer path.
 
 ## Long-Running Subagent Skill
 
@@ -67,7 +57,7 @@ persists context:
 
 ```bash
 multiagent subagent spawn subagent-build-watch --instruction "FIRST_INSTRUCTION_TEXT"
-multiagent subagent poll subagent-build-watch
+multiagent subagent wait subagent-build-watch --timeout 900
 multiagent subagent inspect subagent-build-watch --lines 160
 multiagent subagent finalize subagent-build-watch
 ```

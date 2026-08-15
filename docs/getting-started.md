@@ -72,15 +72,21 @@ workers and generic named subagents too:
 ORCHESTRATOR_CLI=codex WORKER_CLI=codex SUBAGENT_CLI=codex ./launch.sh
 ```
 
-Codex launches with `--cd`, `--dangerously-bypass-approvals-and-sandbox`, and
-`--no-alt-screen`. Claude launches from the target worktree/root with
-`claude --dangerously-skip-permissions`; Codex-only flags are intentionally not
-passed to Claude.
+The Rust supervisor assigns Codex access from trusted process roles. On hosts
+where Codex's native sandbox is available, the orchestrator starts in the
+durable state directory with `workspace-write`, workers start in the target
+repository with `workspace-write`, and scouts/authority reviewers use
+`read-only`. The production Linux-container adapter uses separate unprivileged
+Unix identities instead because nested bubblewrap is unavailable under Docker's
+default seccomp profile. In both cases the orchestrator can read the target but
+cannot write it, while workers can. Claude remains a compatibility path and
+does not provide Codex's native role boundary outside the production adapter.
 
-`--root` selects the target project repo for `MULTIAGENT_ROOT`, state, write
-policy, and the orchestrator CLI working directory. The default orchestrator
-prompt is still loaded from this launcher's directory, so cross-repo launches do
-not need an `orchestrator_prompt.md` in the target repo. Set
+`--root` selects the target project repo for `MULTIAGENT_ROOT`, state, and write
+policy. The orchestrator CLI works from the durable state directory and reads
+the target repository without write access. The default orchestrator prompt is
+still loaded from this launcher's directory, so cross-repo launches do not need
+an `orchestrator_prompt.md` in the target repo. Set
 `MULTIAGENT_PROMPT=/path/to/prompt.md` to override that default.
 
 ## System Flow
@@ -451,11 +457,13 @@ orchestrator/user decision:
 multiagent policy approve /tmp --actor orchestrator --assignment-id build-logs --reason "user approved shared temp output" --force
 ```
 
-Mechanical enforcement is limited to the helper's policy checks and startup
-visibility. Codex is still launched with
-`--dangerously-bypass-approvals-and-sandbox`, so shell sandboxing is not
-enforcing the boundary. The orchestrator and worker instructions require agents
-to check and follow the policy before writes.
+For Codex roles, the OS boundary mechanically prevents the orchestrator,
+authority reviewers, and scouts from writing the target repository. On native
+hosts that boundary is Codex's sandbox; in the production Linux container it is
+Unix ownership plus a permanent role UID drop. The write-policy helper remains
+responsible for explicit writes outside the normal role root. Claude
+compatibility processes do not receive this mechanical boundary on native
+hosts.
 
 ## Assignment Metadata and Acceptance
 
@@ -465,9 +473,11 @@ work starts:
 ```bash
 multiagent subagent assignment-create worker-01-docs \
   --assignment-id docs-001 \
-  --branch worker/docs-001 \
+  --branch "$(git rev-parse --abbrev-ref HEAD)" \
   --owned README.md,orchestrator_prompt.md
-multiagent subagent worktree-create worker-01-docs
+SUBAGENT_CLI="$WORKER_CLI" multiagent subagent spawn worker-01-docs \
+  --role worker --instruction-file /path/to/worker-instruction.md
+multiagent subagent wait worker-01-docs --timeout 1800
 multiagent subagent assignment-show worker-01-docs
 multiagent subagent assignment-status worker-01-docs running
 multiagent subagent checkpoint-update worker-01-docs --step "started implementation" --status running
@@ -531,7 +541,7 @@ Use `multiagent subagent` for named subagents that should keep working or monito
 ```bash
 multiagent subagent spawn subagent-ci-monitor --instruction "Monitor CI and report status changes."
 SUBAGENT_CLI=claude multiagent subagent spawn subagent-ci-monitor --instruction "Monitor CI and report status changes."
-multiagent subagent poll subagent-ci-monitor
+multiagent subagent wait subagent-ci-monitor --timeout 900
 multiagent subagent inspect subagent-ci-monitor --lines 160
 multiagent subagent recover-plan
 multiagent subagent restore subagent-ci-monitor

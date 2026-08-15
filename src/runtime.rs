@@ -8,7 +8,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Output};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const STATUS_HEADER: &str =
     "TYPE\tNAME\tSTATUS\tWINDOW\tLAST_PROGRESS\tSTATE_DIR\tROLE\tDECISION_ID\tPLAN_ID\tWORKFLOW_ID\tNODE_ID\n";
@@ -27,6 +27,27 @@ struct RuntimeConfig {
     codex_bin: String,
     claude_bin: String,
     code_exec: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CodexAccess {
+    ReadOnly,
+    WorkspaceWrite,
+}
+
+const ORCHESTRATOR_UID: u32 = 10001;
+const WRITER_UID: u32 = 10002;
+const READER_UID: u32 = 10003;
+#[cfg(target_os = "linux")]
+const ROLE_GID: u32 = 10001;
+
+impl CodexAccess {
+    fn sandbox(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read-only",
+            Self::WorkspaceWrite => "workspace-write",
+        }
+    }
 }
 
 impl RuntimeConfig {
@@ -194,6 +215,7 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
         state_dir.join("assignments"),
         state_dir.join("worktrees"),
         state_dir.join("runtime_state"),
+        state_dir.join("tmp"),
         log_dir.clone(),
     ] {
         fs::create_dir_all(directory).map_err(io_error("create runtime directory"))?;
@@ -271,6 +293,9 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
         &state_dir.join("orchestrator-last-message.txt"),
         resume,
     )?;
+    if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
+        prepare_uid_state_permissions(&state_dir)?;
+    }
     tmux_checked(&[
         "new-session",
         "-d",
@@ -282,6 +307,14 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
     ])?;
     tmux_checked(&["select-window", "-t", &format!("{session}:orchestrator")])?;
     pipe_log(&session, "orchestrator", &log_dir)?;
+    if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
+        grant_uid_tmux_access(&session)?;
+        atomic_write(
+            &state_dir.join("runtime_state/tmux-access-ready"),
+            "ready\n",
+            "tmux access marker",
+        )?;
+    }
 
     println!("Started tmux session: {session}");
     println!("Attach with: tmux attach -t {session}");
@@ -383,10 +416,20 @@ fn launch_environment(
             "MULTIAGENT_EXTRA_PATH",
             env_nonempty("MULTIAGENT_EXTRA_PATH").unwrap_or_default(),
         ),
+        (
+            "MULTIAGENT_UID_SANDBOX",
+            env_nonempty("MULTIAGENT_UID_SANDBOX").unwrap_or_else(|| "0".into()),
+        ),
+        ("TMPDIR", state.join("tmp").display().to_string()),
         ("MULTIAGENT_BIN", executable.display().to_string()),
         ("PATH", env::var("PATH").unwrap_or_default()),
     ] {
         values.insert(key.into(), value);
+    }
+    if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
+        if let Some(home) = env_nonempty("CODEX_HOME") {
+            values.insert("HOME".into(), home);
+        }
     }
     values
 }
@@ -410,6 +453,21 @@ fn write_bootstrap(
     for (key, value) in environment {
         text.push_str(&format!("export {key}={}\n", shell_escape(value)));
     }
+    if environment
+        .get("MULTIAGENT_UID_SANDBOX")
+        .map(String::as_str)
+        == Some("1")
+    {
+        text.push_str(&format!(
+            "until [[ -f {} ]]; do sleep 0.05; done\n",
+            shell_escape(
+                &Path::new(&environment["MULTIAGENT_STATE_DIR"])
+                    .join("runtime_state/tmux-access-ready")
+                    .display()
+                    .to_string()
+            )
+        ));
+    }
     text.push_str(&format!(
         "printf 'Multiagent launch mode: MULTIAGENT_RESUME=%s (%s)\\n' {} {}\n",
         u8::from(resume),
@@ -417,13 +475,27 @@ fn write_bootstrap(
     ));
     let command = build_cli_command(
         cli,
-        root,
+        environment
+            .get("MULTIAGENT_STATE_DIR")
+            .map(Path::new)
+            .unwrap_or(root),
         Some(prompt),
         Some(last_message),
         codex_bin,
         claude_bin,
         env::var("MULTIAGENT_CODEX_EXEC").as_deref() == Ok("1"),
+        CodexAccess::WorkspaceWrite,
     )?;
+    let command = wrap_linux_role_sandbox(
+        &command,
+        Path::new(
+            environment
+                .get("MULTIAGENT_BIN")
+                .ok_or_else(|| "missing MULTIAGENT_BIN in launch environment".to_string())?,
+        ),
+        role_write_roots(root, Path::new(&environment["MULTIAGENT_STATE_DIR"]), false),
+        ORCHESTRATOR_UID,
+    );
     text.push_str(&command);
     text.push('\n');
     atomic_write(path, &text, "orchestrator bootstrap")?;
@@ -806,6 +878,7 @@ pub fn subagent(args: &[String]) -> Result<ExitCode, String> {
             let name = one_name("poll", &args[1..])?;
             poll(&cfg, name, true)?;
         }
+        "wait" => wait(&cfg, &args[1..])?,
         "inspect" => inspect(&cfg, &args[1..])?,
         "recover-plan" => recover_plan(&cfg, &args[1..])?,
         "restore" => restore(&cfg, &args[1..])?,
@@ -819,7 +892,7 @@ pub fn subagent(args: &[String]) -> Result<ExitCode, String> {
 
 fn print_subagent_usage() {
     println!(
-        "Usage:\n  multiagent subagent spawn NAME [--own PATH[,PATH...] ...] [--role ROLE] [--instruction TEXT | --instruction-file PATH | -- TEXT]\n  multiagent subagent list|recover-plan|restore-all|gate-check\n  multiagent subagent poll|inspect|restore|finalize|kill NAME [OPTIONS]\n\nAll durable state and tmux subprocess orchestration are implemented by the Rust CLI."
+        "Usage:\n  multiagent subagent spawn NAME [--own PATH[,PATH...] ...] [--role ROLE] [--instruction TEXT | --instruction-file PATH | -- TEXT]\n  multiagent subagent list|recover-plan|restore-all|gate-check\n  multiagent subagent poll|inspect|restore|finalize|kill NAME [OPTIONS]\n  multiagent subagent wait NAME [--timeout SECONDS] [--poll-interval SECONDS]\n\nAll durable state and tmux subprocess orchestration are implemented by the Rust CLI."
     );
 }
 
@@ -890,6 +963,7 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
     instruction = compose_role_instruction(cfg, name, &role, &instruction)?;
     instruction = append_verifier_diff_binding(cfg, name, &role, &instruction)?;
     let assignment_role = assignment_role_for_spawn(cfg, name, &role);
+    let access = codex_access_for_spawn(cfg, name, &role);
 
     require_command("tmux")?;
     let cli = &cfg.subagent_cli;
@@ -947,9 +1021,11 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
     fs::create_dir_all(&cfg.logs).map_err(io_error("create subagent log directory"))?;
     let executable = env::current_exe().map_err(io_error("resolve multiagent executable"))?;
     let metadata = format!(
-        "name={name}\nsession={}\nroot={}\nwrite_policy={}\nlog_file={}\ncli={cli}\ncli_bin={binary}\nhelper={}\ncreated_at={}\n",
+        "name={name}\nsession={}\nroot={}\nrole={}\ncodex_access={}\nwrite_policy={}\nlog_file={}\ncli={cli}\ncli_bin={binary}\nhelper={}\ncreated_at={}\n",
         cfg.session,
         cfg.root.display(),
+        if role.is_empty() { assignment_role } else { &role },
+        access.sandbox(),
         cfg.policy.display(),
         cfg.logs.join(format!("{name}.log")).display(),
         executable.display(),
@@ -978,7 +1054,18 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         &cfg.codex_bin,
         &cfg.claude_bin,
         cfg.code_exec,
+        access,
     )?;
+    let cli_command = wrap_linux_role_sandbox(
+        &cli_command,
+        &executable,
+        role_write_roots(&cfg.root, &cfg.state, access == CodexAccess::WorkspaceWrite),
+        if access == CodexAccess::WorkspaceWrite {
+            WRITER_UID
+        } else {
+            READER_UID
+        },
+    );
     let command = subagent_shell_command(cfg, name, cli, &executable, &cli_command, false);
     tmux_checked(&["new-window", "-d", "-t", &cfg.session, "-n", name, &command])?;
     pipe_log(&cfg.session, name, &cfg.logs)?;
@@ -1032,6 +1119,63 @@ fn poll(cfg: &RuntimeConfig, name: &str, report: bool) -> Result<(), String> {
     } else {
         set_subagent_status(cfg, name, "missing")?;
         Err(format!("could not capture subagent: {name}"))
+    }
+}
+
+fn wait(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
+    let name = args
+        .first()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "wait requires NAME".to_string())?;
+    validate_name(name)?;
+    let mut timeout = 900.0f64;
+    let mut interval = 1.0f64;
+    let mut index = 1;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--timeout" => {
+                timeout = required_value(args, index, "wait --timeout")?
+                    .parse()
+                    .map_err(|_| "wait --timeout must be a non-negative number".to_string())?;
+                index += 2;
+            }
+            "--poll-interval" => {
+                interval = required_value(args, index, "wait --poll-interval")?
+                    .parse()
+                    .map_err(|_| {
+                        "wait --poll-interval must be a non-negative number".to_string()
+                    })?;
+                index += 2;
+            }
+            other => return Err(format!("unknown wait argument: {other}")),
+        }
+    }
+    if !timeout.is_finite() || timeout < 0.0 {
+        return Err("wait --timeout must be a non-negative number".into());
+    }
+    if !interval.is_finite() || interval < 0.0 {
+        return Err("wait --poll-interval must be a non-negative number".into());
+    }
+
+    let deadline = Instant::now() + Duration::from_secs_f64(timeout);
+    loop {
+        poll(cfg, name, false)?;
+        let status = read_trimmed(&cfg.state.join("subagents").join(name).join("status"))
+            .unwrap_or_else(|| "unknown".into());
+        if matches!(
+            status.as_str(),
+            "done" | "failed" | "blocked" | "exited" | "finalized" | "killed" | "missing"
+        ) {
+            println!("{name}\t{status}");
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            println!("{name}\t{status}");
+            return Err(format!(
+                "timed out after {timeout} seconds waiting for subagent: {name}"
+            ));
+        }
+        thread::sleep(Duration::from_secs_f64(interval));
     }
 }
 
@@ -1205,6 +1349,10 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         .cloned()
         .unwrap_or_else(|| cfg.subagent_cli.clone());
     validate_cli(&cli)?;
+    let access = match metadata.get("codex_access").map(String::as_str) {
+        Some("read-only") => CodexAccess::ReadOnly,
+        _ => CodexAccess::WorkspaceWrite,
+    };
     let binary = cfg.cli_bin(&cli)?;
     require_command(binary)?;
     if !tmux_success(&["has-session", "-t", &cfg.session]) {
@@ -1273,7 +1421,18 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         &cfg.codex_bin,
         &cfg.claude_bin,
         cfg.code_exec,
+        access,
     )?;
+    let cli_command = wrap_linux_role_sandbox(
+        &cli_command,
+        &executable,
+        role_write_roots(&cfg.root, &cfg.state, access == CodexAccess::WorkspaceWrite),
+        if access == CodexAccess::WorkspaceWrite {
+            WRITER_UID
+        } else {
+            READER_UID
+        },
+    );
     let command = subagent_shell_command(cfg, name, &cli, &executable, &cli_command, true);
     tmux_checked(&["new-window", "-d", "-t", &cfg.session, "-n", name, &command])?;
     pipe_log(&cfg.session, name, &cfg.logs)?;
@@ -1421,6 +1580,35 @@ fn assignment_role_for_spawn<'a>(cfg: &RuntimeConfig, name: &str, role: &'a str)
             Some("acceptance-scout.md" | "contract-scout.md") => "scout",
             _ => "exploitation",
         },
+    }
+}
+
+fn codex_access_for_spawn(cfg: &RuntimeConfig, name: &str, role: &str) -> CodexAccess {
+    let lower = name.to_ascii_lowercase();
+    let prompt = role_prompt_path(cfg, name, role).and_then(|path| {
+        path.file_name()
+            .map(|value| value.to_string_lossy().to_string())
+    });
+    if role == "reviewer"
+        || role == "scout"
+        || lower.contains("decision-authority-reviewer")
+        || matches!(
+            prompt.as_deref(),
+            Some(
+                "acceptance-scout.md"
+                    | "contract-scout.md"
+                    | "decision-authority-reviewer.md"
+                    | "scope-guard.md"
+                    | "validation-coordinator.md"
+            )
+        )
+    {
+        CodexAccess::ReadOnly
+    } else {
+        // Workers need source writes. Technical/build verifiers retain workspace
+        // writes because repository-local compilers and test runners commonly
+        // create build artifacts; their role prompt still forbids source edits.
+        CodexAccess::WorkspaceWrite
     }
 }
 
@@ -1576,6 +1764,7 @@ fn reject_parallel_generic_worker_spawn(cfg: &RuntimeConfig, name: &str) -> Resu
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_cli_command(
     cli: &str,
     cwd: &Path,
@@ -1584,13 +1773,15 @@ fn build_cli_command(
     codex_bin: &str,
     claude_bin: &str,
     codex_exec: bool,
+    access: CodexAccess,
 ) -> Result<String, String> {
     match cli {
         "codex" if codex_exec => {
             let mut command = format!(
-                "{} exec --cd {} --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox",
+                "{} exec --cd {} --skip-git-repo-check {}",
                 shell_escape(codex_bin),
-                shell_escape(&cwd.display().to_string())
+                shell_escape(&cwd.display().to_string()),
+                codex_safety_args(access, true),
             );
             if let Some(path) = output {
                 command.push_str(&format!(
@@ -1608,9 +1799,10 @@ fn build_cli_command(
         }
         "codex" => {
             let mut command = format!(
-                "{} --cd {} --dangerously-bypass-approvals-and-sandbox --no-alt-screen",
+                "{} --cd {} {} --no-alt-screen",
                 shell_escape(codex_bin),
-                shell_escape(&cwd.display().to_string())
+                shell_escape(&cwd.display().to_string()),
+                codex_safety_args(access, false),
             );
             if let Some(path) = prompt {
                 command.push_str(&format!(
@@ -1637,6 +1829,168 @@ fn build_cli_command(
             "unsupported CLI '{cli}' (expected codex or claude)"
         )),
     }
+}
+
+#[cfg(target_os = "linux")]
+fn codex_safety_args(_access: CodexAccess, _exec: bool) -> String {
+    // Docker's default seccomp profile blocks the user namespaces required by
+    // Codex/bubblewrap. The enclosing role-exec Landlock boundary is inherited
+    // by Codex and every model-generated child process, so Codex itself must not
+    // attempt a second sandbox.
+    "--dangerously-bypass-approvals-and-sandbox".into()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn codex_safety_args(access: CodexAccess, exec: bool) -> String {
+    if exec {
+        format!("--sandbox {} -c approval_policy=never", access.sandbox())
+    } else {
+        format!("--sandbox {} --ask-for-approval never", access.sandbox())
+    }
+}
+
+fn role_write_roots(root: &Path, state: &Path, include_source: bool) -> Vec<PathBuf> {
+    let mut paths = BTreeSet::from([state.to_path_buf()]);
+    if include_source {
+        paths.insert(root.to_path_buf());
+    }
+    for key in [
+        "CODEX_HOME",
+        "GOCACHE",
+        "GOMODCACHE",
+        "MULTIAGENT_ROLE_SHARED_WRITE_DIR",
+    ] {
+        if let Some(path) = env_path(key) {
+            if path.exists() {
+                paths.insert(path);
+            }
+        }
+    }
+    for path in [PathBuf::from("/dev/null"), PathBuf::from("/dev/tty")] {
+        if path.exists() {
+            paths.insert(path);
+        }
+    }
+    paths.into_iter().collect()
+}
+
+#[cfg(target_os = "linux")]
+fn wrap_linux_role_sandbox(
+    command: &str,
+    executable: &Path,
+    write_roots: Vec<PathBuf>,
+    uid: u32,
+) -> String {
+    if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
+        return format!(
+            "{} role-exec --uid {uid} --gid {ROLE_GID} -- /bin/sh -c {}",
+            shell_escape(&executable.display().to_string()),
+            shell_escape(command)
+        );
+    }
+    let allowances = write_roots
+        .into_iter()
+        .map(|path| {
+            format!(
+                "--allow-write {}",
+                shell_escape(&path.display().to_string())
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(
+        "{} role-exec {allowances} -- /bin/sh -c {}",
+        shell_escape(&executable.display().to_string()),
+        shell_escape(command)
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn prepare_uid_state_permissions(state: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fn visit(path: &Path) -> Result<(), String> {
+        let metadata = fs::symlink_metadata(path).map_err(io_error("inspect uid sandbox path"))?;
+        chown_path(path, ORCHESTRATOR_UID, ROLE_GID)?;
+        if metadata.is_dir() {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o2770))
+                .map_err(io_error("set uid sandbox directory permissions"))?;
+            for entry in fs::read_dir(path).map_err(io_error("read uid sandbox directory"))? {
+                visit(&entry.map_err(io_error("read uid sandbox entry"))?.path())?;
+            }
+        } else if metadata.is_file() {
+            let executable = metadata.permissions().mode() & 0o111 != 0;
+            fs::set_permissions(
+                path,
+                fs::Permissions::from_mode(if executable { 0o770 } else { 0o660 }),
+            )
+            .map_err(io_error("set uid sandbox file permissions"))?;
+        }
+        Ok(())
+    }
+
+    visit(state)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn prepare_uid_state_permissions(_state: &Path) -> Result<(), String> {
+    Err("MULTIAGENT_UID_SANDBOX is only supported on Linux".into())
+}
+
+#[cfg(target_os = "linux")]
+fn grant_uid_tmux_access(session: &str) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let output = tmux_output(&["display-message", "-p", "-t", session, "#{socket_path}"])?;
+    if !output.status.success() {
+        return Err(format!(
+            "resolve tmux socket: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let socket = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    let parent = socket
+        .parent()
+        .ok_or_else(|| format!("tmux socket has no parent: {}", socket.display()))?;
+    chown_path(parent, 0, ROLE_GID)?;
+    fs::set_permissions(parent, fs::Permissions::from_mode(0o710))
+        .map_err(io_error("set tmux socket directory permissions"))?;
+    chown_path(&socket, 0, ROLE_GID)?;
+    fs::set_permissions(&socket, fs::Permissions::from_mode(0o770))
+        .map_err(io_error("set tmux socket permissions"))?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn grant_uid_tmux_access(_session: &str) -> Result<(), String> {
+    Err("MULTIAGENT_UID_SANDBOX is only supported on Linux".into())
+}
+
+#[cfg(target_os = "linux")]
+fn chown_path(path: &Path, uid: u32, gid: u32) -> Result<(), String> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let raw = CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| format!("path contains NUL: {}", path.display()))?;
+    if unsafe { libc::lchown(raw.as_ptr(), uid, gid) } != 0 {
+        return Err(format!(
+            "chown {}: {}",
+            path.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn wrap_linux_role_sandbox(
+    command: &str,
+    _executable: &Path,
+    _write_roots: Vec<PathBuf>,
+    _uid: u32,
+) -> String {
+    command.into()
 }
 
 fn subagent_shell_command(

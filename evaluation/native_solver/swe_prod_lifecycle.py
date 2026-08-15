@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 import time
 from pathlib import Path
 
@@ -30,6 +31,62 @@ from .swe_prod_repository import (
     mark_untracked_intent_to_add,
     materialize_committed_changes,
 )
+
+
+ORCHESTRATOR_UID = 10001
+WRITER_UID = 10002
+ROLE_GID = 10001
+
+
+def prepare_role_filesystem(workdir: Path) -> None:
+    """Give worker processes source writes without giving them to the orchestrator."""
+
+    def prepare_tree(root: Path, uid: int, *, group_write: bool) -> None:
+        paths = [root]
+        paths.extend(root.rglob("*"))
+        for path in paths:
+            try:
+                info = path.lstat()
+                os.chown(path, uid, ROLE_GID, follow_symlinks=False)
+                if stat.S_ISLNK(info.st_mode):
+                    continue
+                mode = stat.S_IMODE(info.st_mode)
+                mode &= ~stat.S_IWOTH
+                mode |= stat.S_IRGRP
+                if stat.S_ISDIR(info.st_mode):
+                    mode |= stat.S_IXGRP
+                if group_write:
+                    mode |= stat.S_IWGRP
+                else:
+                    mode &= ~stat.S_IWGRP
+                os.chmod(path, mode, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+
+    prepare_tree(workdir, WRITER_UID, group_write=False)
+    prepare_tree(CODEX_HOME, ORCHESTRATOR_UID, group_write=True)
+    for cache in (RUNTIME_ROOT / "go-build-cache", RUNTIME_ROOT / "go-mod-cache"):
+        prepare_tree(cache, WRITER_UID, group_write=True)
+
+    global_git_config = CODEX_HOME / ".gitconfig"
+    global_git_config.write_text(
+        f"[safe]\n\tdirectory = {workdir}\n",
+        encoding="utf-8",
+    )
+    os.chown(global_git_config, ORCHESTRATOR_UID, ROLE_GID)
+    os.chmod(global_git_config, 0o660)
+
+
+def restore_workspace_owner(workdir: Path) -> None:
+    """Return the frozen workspace to the container owner for patch transport."""
+
+    paths = [workdir]
+    paths.extend(workdir.rglob("*"))
+    for path in paths:
+        try:
+            os.chown(path, 0, 0, follow_symlinks=False)
+        except FileNotFoundError:
+            continue
 
 
 def find_codex_cli() -> str | None:
@@ -160,6 +217,8 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
             "CODEX_HOME": str(CODEX_HOME),
             "MULTIAGENT_CODEX_EXEC": os.environ.get("MULTIAGENT_CODEX_EXEC", "1"),
             "MULTIAGENT_EXTRA_PATH": str(RUNTIME_ROOT),
+            "MULTIAGENT_ROLE_SHARED_WRITE_DIR": str(RUNTIME_ROOT),
+            "MULTIAGENT_UID_SANDBOX": "1",
             "PATH": ":".join(part for part in path_parts if part),
             "GOCACHE": ensure_cache_dir(RUNTIME_ROOT / "go-build-cache"),
             "GOMODCACHE": ensure_cache_dir(RUNTIME_ROOT / "go-mod-cache"),
@@ -167,6 +226,8 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
             "MULTIAGENT_READY_DELAY": os.environ.get("MULTIAGENT_READY_DELAY", "1"),
         }
     )
+
+    prepare_role_filesystem(workdir)
 
     launch_args = [str(repo_root / "launch.sh"), "--session", session, "--root", str(workdir), "--no-attach"]
     log(f"launching production multiagent session={session} root={workdir} repo={repo_root}")
@@ -183,6 +244,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
         if tmux_has_session(session):
             run(["tmux", "kill-session", "-t", session], timeout=30)
 
+    restore_workspace_owner(workdir)
     materialize_committed_changes(workdir, start_head)
     mark_untracked_intent_to_add(workdir)
     log("workspace prepared for EvalScope submission")

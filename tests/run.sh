@@ -254,7 +254,9 @@ assert_file_contains "$TMPDIR/launch.out" "Dashboard: MULTIAGENT_SESSION=launch-
 LAUNCH_BOOTSTRAP="$LAUNCH_STATE/orchestrator-bootstrap.sh"
 assert_file_contains "$MOCK_TMUX_LOG" "$(printf '%q' "$LAUNCH_BOOTSTRAP")"
 assert_file_contains "$MOCK_TMUX_LOG" "pipe-pane launch-cross-repo:orchestrator cat >> $LAUNCH_STATE/logs/orchestrator.log"
-assert_file_contains "$LAUNCH_BOOTSTRAP" "--cd $LAUNCH_TARGET"
+assert_file_contains "$LAUNCH_BOOTSTRAP" "--cd $LAUNCH_STATE"
+assert_file_contains "$LAUNCH_BOOTSTRAP" "--sandbox workspace-write"
+assert_file_not_contains "$LAUNCH_BOOTSTRAP" "--dangerously-bypass-approvals-and-sandbox"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "export MULTIAGENT_RESUME=0"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "export MULTIAGENT_LOG_DIR=$LAUNCH_STATE/logs"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "export MULTIAGENT_VERIFIER_MAX_ITERATIONS=3"
@@ -739,7 +741,8 @@ assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "todo-close"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "gate-check"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "required-path-outside-owned:"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "ownership blocker"
-assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" 'WORKER_CLI="${WORKER_CLI:-claude}"'
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" 'SUBAGENT_CLI="$WORKER_CLI" multiagent subagent spawn'
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "multiagent subagent wait worker-01-task"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "Orchestration Routing Playbook"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "Contract Scout Workflow"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "Scope Guard Workflow"
@@ -1385,7 +1388,8 @@ assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-01-docs/instructi
 assert_file_contains "$MOCK_TMUX_LOG" "send-key test-session:verifier-01-docs Read and follow the assignment in"
 verifier_spawn_line="$(grep -F "new-window -d test-session verifier-01-docs " "$MOCK_TMUX_LOG")"
 [[ "$verifier_spawn_line" == *"--cd $ROOT"* ]]
-[[ "$verifier_spawn_line" == *"--dangerously-bypass-approvals-and-sandbox --no-alt-screen"* ]]
+[[ "$verifier_spawn_line" == *"--sandbox workspace-write --ask-for-approval never --no-alt-screen"* ]]
+[[ "$verifier_spawn_line" != *"--dangerously-bypass-approvals-and-sandbox"* ]]
 
 printf 'Codex prompt ready\n' >"$MOCK_TMUX_CAPTURES/verifier-owned-01.txt"
 SUBAGENT_CLI="$VERIFIER_CLI" "$MULTIAGENT" subagent spawn verifier-owned-01 \
@@ -1430,7 +1434,29 @@ assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/codex-exec-protocol/instru
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/codex-exec-protocol/instruction.txt" "Inspect /app"
 codex_exec_spawn_line="$(grep -F "new-window -d test-session codex-exec-protocol " "$MOCK_TMUX_LOG")"
 [[ "$codex_exec_spawn_line" == *"exec --cd $ROOT"* ]]
+[[ "$codex_exec_spawn_line" == *"--sandbox workspace-write -c approval_policy=never"* ]]
 [[ "$codex_exec_spawn_line" == *"--output-last-message"* ]]
+
+printf 'final status: codex exec exited rc=0\n' >"$MOCK_TMUX_CAPTURES/codex-exec-protocol.txt"
+codex_wait_output="$(MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$MULTIAGENT" subagent wait codex-exec-protocol --timeout 1 --poll-interval 0)"
+[[ "$codex_wait_output" == $'codex-exec-protocol\tdone' ]]
+
+printf 'Codex exec prompt ready\n' >"$MOCK_TMUX_CAPTURES/decision-authority-read-only.txt"
+MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$MULTIAGENT" subagent spawn decision-authority-read-only \
+  --role reviewer --instruction "Review the proposed authority"
+authority_spawn_line="$(grep -F "new-window -d test-session decision-authority-read-only " "$MOCK_TMUX_LOG")"
+[[ "$authority_spawn_line" == *"exec --cd $ROOT"* ]]
+[[ "$authority_spawn_line" == *"--sandbox read-only -c approval_policy=never"* ]]
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/decision-authority-read-only/meta.env" "role=reviewer"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/decision-authority-read-only/meta.env" "codex_access=read-only"
+
+printf 'Progress update: still running\n' >"$MOCK_TMUX_CAPTURES/decision-authority-read-only.txt"
+if MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$MULTIAGENT" subagent wait decision-authority-read-only --timeout 0 --poll-interval 0 >"$TMPDIR/authority-wait-timeout.out" 2>&1; then
+  echo "expected bounded subagent wait to time out for a running reviewer" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/authority-wait-timeout.out" $'decision-authority-read-only\trunning'
+assert_file_contains "$TMPDIR/authority-wait-timeout.out" "timed out after 0 seconds"
 
 printf 'Codex exec prompt ready\n' >"$MOCK_TMUX_CAPTURES/verifier-exec-role.txt"
 VERIFIER_DIFF_ROOT="$TMPDIR/verifier-diff-root"

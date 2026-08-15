@@ -755,7 +755,10 @@ def main() -> int:
         default=Path(auth_from_env).expanduser() if auth_from_env else None,
         help="host path to Codex auth.json copied into each live task container at runtime; never baked into images",
     )
-    parser.add_argument("--native-codex-auth-container-home", default="/root/.codex-multiagent-prod")
+    parser.add_argument(
+        "--native-codex-auth-container-home",
+        default="/tmp/multiagent-prod-swe/codex-home",
+    )
     parser.add_argument(
         "--native-trace-dir",
         type=Path,

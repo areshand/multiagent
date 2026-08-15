@@ -62,7 +62,12 @@ Spawn that review read-only through the normal subagent path, for example:
 ```bash
 SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn decision-authority-reviewer \
   --role reviewer --instruction-file AUTHORITY_REVIEW_INPUT
+multiagent subagent wait decision-authority-reviewer --timeout 900
 ```
+
+Do not continue merely because an immediate poll still reports `running`.
+Inspect the completed or blocked result after the bounded wait and persist its
+actual authority finding before preparing implementation.
 
 Create an approved implementation context document containing the selected
 plan, decision and plan IDs, authority and approval basis, intended outcome,

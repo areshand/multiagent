@@ -3,6 +3,7 @@ mod dag;
 mod decision;
 mod policy;
 mod prompt_bundle;
+mod role_sandbox;
 mod runtime;
 mod snapshot;
 mod subagent;
@@ -49,6 +50,7 @@ fn main() -> ExitCode {
         "prompt-bundle" => prompt_bundle::run(&args)
             .map(|_| ExitCode::SUCCESS)
             .map_err(|message| ("prompt-bundle", message)),
+        "role-exec" => role_sandbox::run(&args).map_err(|message| ("role-exec", message)),
         "snapshot" => snapshot::run(&args)
             .map(|_| ExitCode::SUCCESS)
             .map_err(|message| ("snapshot", message)),

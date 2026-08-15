@@ -99,7 +99,7 @@ class MultiagentNativeRunner(AgentRunner):
         working_dir: str = "/app",
         model_name: str = "gpt-5",
         codex_auth_json: str = "",
-        codex_auth_container_home: str = "/root/.codex-multiagent-prod",
+        codex_auth_container_home: str = "/tmp/multiagent-prod-swe/codex-home",
         swe_bench_pro_repo_path: str = "",
         swe_bench_pro_sample_offset: int = 0,
         trace_output_dir: str = "",
@@ -110,7 +110,9 @@ class MultiagentNativeRunner(AgentRunner):
         self._codex_auth_json = codex_auth_json.strip()
         if not self._codex_auth_json:
             raise ValueError("multiagent-native requires runtime Codex auth JSON")
-        self._codex_auth_container_home = codex_auth_container_home.rstrip("/") or "/root/.codex-multiagent-prod"
+        self._codex_auth_container_home = (
+            codex_auth_container_home.rstrip("/") or "/tmp/multiagent-prod-swe/codex-home"
+        )
         self._swe_bench_pro_repo_path = swe_bench_pro_repo_path.strip()
         self._swe_bench_pro_sample_offset = swe_bench_pro_sample_offset
         self._trace_output_dir = Path(trace_output_dir).expanduser().resolve() if trace_output_dir.strip() else None

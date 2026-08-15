@@ -156,7 +156,10 @@ def main() -> int:
     parser.add_argument("--on-demand-min-free-gb", type=float, default=50.0)
     parser.add_argument("--native-solver-source", type=Path, default=DEFAULT_NATIVE_SOLVER_SOURCE)
     parser.add_argument("--native-codex-auth-json", type=Path, required=True)
-    parser.add_argument("--native-codex-auth-container-home", default="/root/.codex-multiagent-prod")
+    parser.add_argument(
+        "--native-codex-auth-container-home",
+        default="/tmp/multiagent-prod-swe/codex-home",
+    )
     parser.add_argument(
         "--native-trace-dir",
         type=Path,

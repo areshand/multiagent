@@ -101,6 +101,8 @@ class NativeOutcomeTest(unittest.TestCase):
                 "make_prompt": mock.Mock(return_value=prompt),
                 "toolchain_path_prefixes": mock.Mock(return_value=[]),
                 "ensure_cache_dir": mock.Mock(return_value=str(root)),
+                "prepare_role_filesystem": mock.DEFAULT,
+                "restore_workspace_owner": mock.DEFAULT,
                 "tmux_has_session": mock.Mock(return_value=True),
                 "tmux_has_orchestrator": mock.Mock(return_value=False),
                 "materialize_committed_changes": mock.DEFAULT,
@@ -124,10 +126,24 @@ class NativeOutcomeTest(unittest.TestCase):
                             result = swe_prod_lifecycle.run_prod_solver(None, root, root, 60)
                             materialize = swe_prod_lifecycle.materialize_committed_changes
                             expose_untracked = swe_prod_lifecycle.mark_untracked_intent_to_add
+                            prepare_roles = swe_prod_lifecycle.prepare_role_filesystem
+                            restore_owner = swe_prod_lifecycle.restore_workspace_owner
+                            launch_env = next(
+                                call.kwargs["env"]
+                                for call in swe_prod_lifecycle.run.call_args_list
+                                if call.kwargs.get("env") is not None
+                                and call.args
+                                and isinstance(call.args[0], list)
+                                and call.args[0]
+                                and str(call.args[0][0]).endswith("launch.sh")
+                            )
 
         self.assertEqual(result, 0)
         materialize.assert_called_once_with(root, "a" * 40)
         expose_untracked.assert_called_once_with(root)
+        prepare_roles.assert_called_once_with(root)
+        restore_owner.assert_called_once_with(root)
+        self.assertEqual(launch_env["MULTIAGENT_UID_SANDBOX"], "1")
 
     def test_workspace_handoff_includes_new_source_and_test_files(self):
         with tempfile.TemporaryDirectory() as directory:
