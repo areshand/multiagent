@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -227,7 +230,67 @@ class NativeOutcomeTest(unittest.TestCase):
             native_solver_source=Path(__file__).resolve().parents[1],
             native_codex_auth_json="",
             native_codex_auth_container_home="/root/.codex-multiagent-prod",
+            native_trace_dir=root / "traces",
         )
+
+
+class NativeTraceExportTest(unittest.IsolatedAsyncioTestCase):
+    async def test_runner_exports_hash_verified_trace_archive_per_official_row(self):
+        archive = (b"multiagent-trace\n" * 20000) + b"tail"
+        expected_digest = hashlib.sha256(archive).hexdigest()
+
+        class FakeEnvironment:
+            def __init__(self):
+                self.commands = []
+
+            async def exec(self, cmd, **_kwargs):
+                script = cmd[-1]
+                self.commands.append(script)
+                if "tar -C" in script:
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout=f"{len(archive)}\t{expected_digest}\n",
+                        stderr="",
+                    )
+                match = re.search(r"skip=(\d+)", script)
+                if match:
+                    index = int(match.group(1))
+                    start = index * evalscope_multiagent_native_runner._TRACE_CHUNK_BYTES
+                    chunk = archive[start:start + evalscope_multiagent_native_runner._TRACE_CHUNK_BYTES]
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout=base64.b64encode(chunk).decode("ascii") + "\n",
+                        stderr="",
+                    )
+                raise AssertionError(f"unexpected command: {script}")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            runner = evalscope_multiagent_native_runner.MultiagentNativeRunner(
+                codex_auth_json=str(root / "auth.json"),
+                trace_output_dir=str(root / "traces"),
+            )
+            environment = FakeEnvironment()
+
+            exported = await runner._export_trace_bundle(
+                environment,
+                sample_id="2",
+                sample_index=7,
+                instance_id="instance_qutebrowser",
+            )
+
+            archive_path = root / "traces" / "official-row-000007" / "multiagent-trace.tar.gz"
+            manifest_path = archive_path.with_name("manifest.json")
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+            self.assertEqual(archive_path.read_bytes(), archive)
+            self.assertEqual(exported["path"], str(archive_path))
+            self.assertEqual(exported["sha256"], expected_digest)
+            self.assertEqual(manifest["official_index"], 7)
+            self.assertEqual(manifest["instance_id"], "instance_qutebrowser")
+            self.assertEqual(manifest["archive_sha256"], expected_digest)
+            self.assertIn("/tmp/multiagent-prod-swe/state", environment.commands[0])
+            self.assertNotIn("/app/.multiagent", environment.commands[0])
 
 
 class AggregateOutcomeTest(unittest.TestCase):
@@ -248,6 +311,40 @@ class AggregateOutcomeTest(unittest.TestCase):
             command = run_checked.call_args.args[0]
             report_dir_index = command.index("--report-dir")
             self.assertEqual(command[report_dir_index + 1], str(report_dir))
+
+    def test_parallel_worker_uses_shared_configured_trace_directory(self):
+        args = SimpleNamespace(
+            report_prefix_template="run-w{worker}-offset{offset}-count{count}",
+            work_root=Path("/tmp/work"),
+            report_dir=Path("/tmp/reports"),
+            swe_bench_pro_repo_path=Path("/tmp/swe"),
+            agent_model_name="gpt-5.4",
+            max_steps=250,
+            agent_timeout=3600,
+            native_solver_source=Path("/tmp/solver"),
+            native_codex_auth_json=Path("/tmp/auth.json"),
+            native_codex_auth_container_home="/root/.codex",
+            native_trace_dir=Path("/tmp/run-traces"),
+            on_demand_min_free_gb=50,
+            evalscope_path=None,
+            memory_limit="20g",
+            cpu_limit="",
+            persistent_cache=False,
+            persistent_cache_root=Path("/tmp/cache"),
+            persistent_cache_mode="rw",
+            workers=2,
+            ignore_errors=False,
+        )
+
+        command = swe_bench_pro_run_parallel_shards.build_worker_command(
+            args,
+            offset=5,
+            count=5,
+            worker_index=1,
+        )
+
+        trace_index = command.index("--native-trace-dir")
+        self.assertEqual(command[trace_index + 1], "/tmp/run-traces")
 
     def test_default_discovery_accepts_custom_parallel_report_prefix(self):
         with tempfile.TemporaryDirectory() as directory:

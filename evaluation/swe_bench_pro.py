@@ -30,6 +30,7 @@ DEFAULT_CONFIG_JSON = DEFAULT_REPORT_DIR / "swe-bench-pro-production-config.json
 DEFAULT_CONFIG_YAML = DEFAULT_REPORT_DIR / "swe-bench-pro-production-task-config.yaml"
 DEFAULT_PREFLIGHT_OUTPUT = DEFAULT_REPORT_DIR / "swe-bench-pro-official-preflight.json"
 DEFAULT_ON_DEMAND_IMAGE_STATUS = DEFAULT_REPORT_DIR / "swe-bench-pro-on-demand-image-status.json"
+DEFAULT_NATIVE_TRACE_DIR = DEFAULT_REPORT_DIR / "swe-bench-pro-traces"
 DEFAULT_IMAGE_ARCHIVE_DIR = Path("/private/tmp/swe-bench-pro-image-preload")
 DEFAULT_PERSISTENT_CACHE_ROOT = Path("/private/tmp/swe-bench-pro-persistent-cache")
 DEFAULT_NATIVE_SOLVER_SOURCE = Path(__file__).resolve().parents[1]
@@ -154,6 +155,7 @@ def evaluation_config(args: argparse.Namespace) -> dict[str, Any]:
                 "working_dir": args.agent_working_dir,
                 "swe_bench_pro_repo_path": str(args.swe_bench_pro_repo_path),
                 "swe_bench_pro_sample_offset": args.sample_offset,
+                "trace_output_dir": str(args.native_trace_dir),
             },
         },
         "work_dir": str(args.work_dir),
@@ -631,6 +633,7 @@ def summarize_result(
             "native_solver_source": str(args.native_solver_source),
             "native_codex_auth_mode": "chatgpt-auth-json",
             "native_codex_auth_container_home": args.native_codex_auth_container_home,
+            "native_trace_dir": str(args.native_trace_dir),
             "submission_policy": "pass current workspace diff to the official SWE-bench verifier",
         },
         "on_demand_image_status": (
@@ -753,6 +756,12 @@ def main() -> int:
         help="host path to Codex auth.json copied into each live task container at runtime; never baked into images",
     )
     parser.add_argument("--native-codex-auth-container-home", default="/root/.codex-multiagent-prod")
+    parser.add_argument(
+        "--native-trace-dir",
+        type=Path,
+        default=DEFAULT_NATIVE_TRACE_DIR,
+        help="host directory for per-official-row multiagent trace archives exported before task containers close",
+    )
     parser.add_argument("--api-url", default=os.environ.get("EVALSCOPE_MODEL_API_URL", "http://127.0.0.1:8765/v1"))
     parser.add_argument("--api-key", default=os.environ.get("EVALSCOPE_MODEL_API_KEY", "EMPTY"))
     parser.add_argument("--limit", type=parse_limit, default=1)
@@ -807,6 +816,8 @@ def main() -> int:
         parser.error("--native-codex-auth-json or NATIVE_CODEX_AUTH_JSON is required for a production evaluation")
     if args.native_codex_auth_json and not args.native_codex_auth_json.is_file():
         parser.error(f"Codex auth file does not exist: {args.native_codex_auth_json}")
+    if args.native_trace_dir.exists() and not args.native_trace_dir.is_dir():
+        parser.error(f"--native-trace-dir must be a directory: {args.native_trace_dir}")
 
     config = evaluation_config(args)
     write_config(config, args.config_json, args.config_yaml)

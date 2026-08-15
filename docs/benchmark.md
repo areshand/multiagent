@@ -174,6 +174,7 @@ python3 -m evaluation.swe_bench_pro \
   --config-yaml "$RUN_ROOT/config.yaml" \
   --preflight-output "$RUN_ROOT/preflight.json" \
   --on-demand-image-status "$RUN_ROOT/images.json" \
+  --native-trace-dir "$RUN_ROOT/traces" \
   --report-prefix "$RUN_ID" \
   --agent-model-name gpt-5.4 \
   --sample-offset 0 \
@@ -189,6 +190,21 @@ python3 -m evaluation.swe_bench_pro \
   --persistent-cache-root "$RUN_ROOT/cache" \
   --persistent-cache-mode rw
 ```
+
+The native runner exports each task container's multiagent state before the
+container closes. Traces are stored under
+`$RUN_ROOT/traces/official-row-NNNNNN/` as a hash-verified
+`multiagent-trace.tar.gz` plus `manifest.json`. The archive contains the
+orchestrator log, subagent transcripts, structured workflow/checkpoint state,
+runtime identity, and native runner stdout/stderr. It is written on successful,
+failed, and timed-out solver exits, remains outside `/app`, and is never part of
+the submitted patch or official scoring. Treat the raw archives as private
+artifacts because agent transcripts can contain source and environment details.
+
+Parallel shard runs accept the same `--native-trace-dir`; all workers write
+unique directories keyed by the absolute official row number. If the option is
+omitted, the single-run command uses `evaluation/reports/swe-bench-pro-traces`,
+while the parallel launcher uses `REPORT_DIR/traces`.
 
 After the run completes, capture a relocatable evidence bundle. The command
 fails if any source checkout is dirty, any row lacks official verifier/native

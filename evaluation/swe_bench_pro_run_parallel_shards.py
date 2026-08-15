@@ -106,6 +106,8 @@ def build_worker_command(
         str(args.native_codex_auth_json),
         "--native-codex-auth-container-home",
         args.native_codex_auth_container_home,
+        "--native-trace-dir",
+        str(args.native_trace_dir),
         "--on-demand-min-free-gb",
         str(args.on_demand_min_free_gb),
         "--no-docker-inspect",
@@ -155,6 +157,11 @@ def main() -> int:
     parser.add_argument("--native-solver-source", type=Path, default=DEFAULT_NATIVE_SOLVER_SOURCE)
     parser.add_argument("--native-codex-auth-json", type=Path, required=True)
     parser.add_argument("--native-codex-auth-container-home", default="/root/.codex-multiagent-prod")
+    parser.add_argument(
+        "--native-trace-dir",
+        type=Path,
+        help="shared host directory for per-official-row multiagent trace archives; defaults to REPORT_DIR/traces",
+    )
     parser.add_argument("--persistent-cache", action="store_true")
     parser.add_argument("--persistent-cache-root", type=Path, default=Path("/private/tmp/swe-bench-pro-persistent-cache"))
     parser.add_argument("--persistent-cache-mode", default="rw", choices=["rw", "ro"])
@@ -164,6 +171,9 @@ def main() -> int:
     parser.add_argument("--report-prefix-template", default="swe-bench-pro-production-w{worker}-offset{offset}-count{count}")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+
+    if args.native_trace_dir is None:
+        args.native_trace_dir = args.report_dir / "traces"
 
     if args.workers < 1 or args.shard_size < 1:
         parser.error("--workers and --shard-size must be >= 1")
