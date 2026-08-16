@@ -1401,7 +1401,7 @@ verifier_spawn_line="$(grep -F "new-window -d test-session verifier-01-docs " "$
 if [[ "$HOST_KERNEL" == Linux ]]; then
   [[ "$verifier_spawn_line" == *"$MULTIAGENT role-exec"* ]]
   [[ "$verifier_spawn_line" == *"--dangerously-bypass-approvals-and-sandbox"* ]]
-  [[ "$verifier_spawn_line" != *"--allow-write $ROOT"* ]]
+  [[ "$verifier_spawn_line" == *"--allow-write $ROOT"* ]]
 else
   [[ "$verifier_spawn_line" == *"--sandbox workspace-write --ask-for-approval never --no-alt-screen"* ]]
   [[ "$verifier_spawn_line" != *"--dangerously-bypass-approvals-and-sandbox"* ]]
@@ -1453,6 +1453,7 @@ codex_exec_spawn_line="$(grep -F "new-window -d test-session codex-exec-protocol
 if [[ "$HOST_KERNEL" == Linux ]]; then
   [[ "$codex_exec_spawn_line" == *"$MULTIAGENT role-exec"* ]]
   [[ "$codex_exec_spawn_line" == *"--dangerously-bypass-approvals-and-sandbox"* ]]
+  [[ "$codex_exec_spawn_line" == *"--allow-write $ROOT"* ]]
 else
   [[ "$codex_exec_spawn_line" == *"--sandbox workspace-write -c approval_policy=never"* ]]
 fi
