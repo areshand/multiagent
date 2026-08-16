@@ -23,6 +23,22 @@ destructive or difficult-to-reverse behavior, material scope or cost, and
 conflict with a prior explicit user decision. Treat uncertain authority as
 user-owned.
 
+The original request is itself the user's decision for every behavior it
+explicitly specifies. Do not reopen that behavior merely because the repository
+contains multiple lookup helpers, representations, legacy paths, synonyms, or
+possible edge-case policies. Read the task's clauses together; explanatory
+parentheticals and named canonical forms refine the contract rather than create
+new alternatives. Choosing the narrowest source-backed implementation that
+directly realizes an explicit requirement is orchestrator-owned.
+
+Return `user-choice-required` only when at least two materially different
+public outcomes remain compatible with the complete explicit request, bounded
+source/test evidence does not select between them, and choosing one would add,
+remove, or contradict public behavior. Name the exact unresolved conflict. Do
+not escalate hypothetical collisions, normalization policies, compatibility
+variants, or other unrequested behavior; preserve existing behavior and use the
+narrowest contract-compatible default instead.
+
 Return only:
 
 1. `verdict:` `orchestrator-may-decide`, `user-choice-required`, or
@@ -33,6 +49,9 @@ Return only:
    conditions.
 5. `user-question:` compact alternatives and tradeoffs when user choice is
    required; otherwise `none`.
+6. `review-record: type=decision-authority verdict=pass diff=-` when the verdict
+   is `orchestrator-may-decide`; otherwise
+   `review-record: type=decision-authority verdict=findings diff=-`.
 
 Do not use agent agreement or majority preference as authority. A passing
 review means the orchestrator may proceed under the recorded authority; it is

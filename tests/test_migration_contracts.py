@@ -20,7 +20,9 @@ from evaluation.support.state import AtomicStatusStore
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-MULTIAGENT = PROJECT_ROOT / "target" / "debug" / "multiagent"
+MULTIAGENT = Path(
+    os.environ.get("MULTIAGENT_BIN", PROJECT_ROOT / "target" / "debug" / "multiagent")
+)
 CLI_PREFIX = {
     "decision": ["decision"],
     "dag": ["dag"],

@@ -52,6 +52,14 @@ destructive or difficult-to-reverse behavior, material scope or cost, or a
 prior explicit user decision. Treat uncertain authority as user-owned. Evidence
 may clarify a choice but does not transfer authority.
 
+The user's explicit task contract is already approved public behavior. Do not
+ask the user to choose it again or reinterpret repository alternatives as an
+unanswered product decision. A user-owned question exists only when two
+materially different outcomes both remain consistent with the complete request
+after bounded source/test inspection. Otherwise select the narrowest
+backward-compatible implementation of the stated contract and record that
+source-backed choice as orchestrator-owned.
+
 For consequential or uncertain decisions, run the independent
 `decision-authority-reviewer` role. It must check both the proposed authority
 and whether the TODOs or proposed assignment contain omitted decisions. Ask the
@@ -62,7 +70,12 @@ Spawn that review read-only through the normal subagent path, for example:
 ```bash
 SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn decision-authority-reviewer \
   --role reviewer --instruction-file AUTHORITY_REVIEW_INPUT
+multiagent subagent wait decision-authority-reviewer --timeout 900
 ```
+
+Do not continue merely because an immediate poll still reports `running`.
+Inspect the completed or blocked result after the bounded wait and persist its
+actual authority finding before preparing implementation.
 
 Create an approved implementation context document containing the selected
 plan, decision and plan IDs, authority and approval basis, intended outcome,
@@ -112,9 +125,19 @@ Run independent reviews against the frozen candidate diff:
 - `technical`: verify behavior and the accepted contract;
 - `reflection`: compare expected and actual results and identify improvements.
 
-Record each review with `multiagent workflow record-review`. Every actionable
-finding must be added with `multiagent workflow add-todo`; a review with findings is
-not a terminal review.
+Every reviewer final message must include an exact durable marker on its own
+line: `review-record: type=TYPE verdict=pass|findings diff=DIFF_HASH` (use
+`diff=-` for decision-authority). A Markdown list prefix or enclosing backticks
+are accepted as cosmetic formatting, but surrounding prose is not. Wait for and finalize that reviewer before
+recording its result. Record each review with `multiagent workflow
+record-review ... --reviewer REVIEWER_NAME`; the supervisor rejects an
+orchestrator-authored verdict that is not backed by the finalized read-only
+reviewer's matching marker. The supervisor also scans finalized reviewer
+messages: a findings marker for the current candidate cannot be discarded by
+launching a replacement reviewer and recording only the later pass. Record the
+finding, route it through the repair loop, and begin a new lifecycle iteration
+before attempting completion. Every actionable finding must be added with
+`multiagent workflow add-todo`; a review with findings is not a terminal review.
 
 Technical verifier findings must also use the existing structured
 `finding-create -> todo-create -> resolution-create -> todo-close` protocol in
@@ -156,6 +179,10 @@ multiagent orchestrator complete
 
 The final command also runs `multiagent subagent gate-check`, so lifecycle reviews
 cannot substitute for hash-bound technical finding and TODO closure.
+After it succeeds, the candidate is sealed: stop launching workers or reviewers
+and do not mutate the repository. The privileged writer bridge independently
+rechecks the live lifecycle phase and rejects any post-completion writer, even
+if a shell command overrides `MULTIAGENT_LIFECYCLE_ENFORCEMENT`.
 
 `MULTIAGENT_VERIFIER_MAX_ITERATIONS` is an escalation threshold, not an
 acceptance condition. At the threshold, reconsider the route, surface a

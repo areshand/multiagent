@@ -16,7 +16,9 @@ RUNTIME_ROOT = Path("/tmp/multiagent-prod-swe")
 RUNTIME_IDENTITY_PATH = RUNTIME_ROOT / "runtime-identity.json"
 TASK_METADATA_PATH = Path(os.environ.get("EVAL_TASK_METADATA_FILE", "/tmp/evalscope-native-multiagent-metadata.json"))
 CODEX_WRAPPER = RUNTIME_ROOT / "codex-bridge"
-CODEX_HOME = Path(os.environ.get("CODEX_HOME", "/root/.codex-multiagent-prod"))
+CODEX_HOME = Path(os.environ.get("CODEX_HOME", "/tmp/multiagent-prod-swe/codex-home"))
+ROLE_CODEX_HOME_ROOT = RUNTIME_ROOT / "role-codex-homes"
+TMUX_SOCKET = RUNTIME_ROOT / "state" / "runtime_state" / "tmux.sock"
 APPLY_PATCH_WRAPPER = RUNTIME_ROOT / "apply_patch"
 STABLE_APPLY_PATCH = Path("/usr/local/bin/apply_patch")
 

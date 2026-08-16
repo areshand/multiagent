@@ -41,7 +41,8 @@ const ENV_ORDER: &[&str] = &[
     "updated_at",
 ];
 const TODO_HEADER: &str = "todo_id\tkind\tsummary\torigin\tstatus\tassignment_id\tresolution\treason_code\treason\tevidence\tauthority\tdestination\tresume_condition\titeration\tupdated_at";
-const REVIEW_HEADER: &str = "review_id\ttype\tverdict\tdiff_hash\tevidence\titeration\trecorded_at";
+const REVIEW_HEADER: &str =
+    "review_id\ttype\tverdict\tdiff_hash\tevidence\titeration\trecorded_at\treviewer";
 
 const USAGE: &str = r#"Usage:
   multiagent workflow init WORKFLOW_ID
@@ -52,7 +53,7 @@ const USAGE: &str = r#"Usage:
   multiagent workflow add-todo WORKFLOW_ID TODO_ID --kind KIND --summary TEXT [--origin TEXT]
   multiagent workflow todo-status WORKFLOW_ID TODO_ID STATUS [--assignment-id ID]
   multiagent workflow resolve-todo WORKFLOW_ID TODO_ID --resolution STATUS --evidence TEXT [OPTIONS]
-  multiagent workflow record-review WORKFLOW_ID REVIEW_ID --type TYPE --verdict VERDICT [--diff-hash HASH] --evidence TEXT
+  multiagent workflow record-review WORKFLOW_ID REVIEW_ID --type TYPE --verdict VERDICT [--diff-hash HASH] --evidence TEXT [--reviewer NAME]
   multiagent workflow gate WORKFLOW_ID implementation|completion [--decision-id ID] [--plan-id ID]
   multiagent workflow completion-check WORKFLOW_ID
   multiagent workflow value WORKFLOW_ID KEY"#;
@@ -171,7 +172,7 @@ impl Todo {
 
 #[derive(Clone)]
 struct Review {
-    fields: [String; 7],
+    fields: [String; 8],
 }
 impl Review {
     fn parse(line: &str) -> Self {
@@ -607,6 +608,7 @@ fn record_review(args: &[String]) -> Result<(), String> {
     let kind = required(&o, "--type")?;
     let verdict = required(&o, "--verdict")?;
     let evidence = required(&o, "--evidence")?;
+    let reviewer = opt(&o, "--reviewer");
     let requested_diff = opt(&o, "--diff-hash");
     if !REVIEW_TYPES.contains(&kind) {
         return Err(format!("invalid review type: {kind}"));
@@ -634,6 +636,12 @@ fn record_review(args: &[String]) -> Result<(), String> {
         }
         requested_diff
     };
+    if reviewer_evidence_required() {
+        if reviewer.is_empty() {
+            return Err("reviewer-backed lifecycle requires --reviewer NAME".into());
+        }
+        validate_reviewer_evidence(&store, reviewer, kind, verdict, diff)?;
+    }
     let mut rows = read_reviews(&p.reviews)?;
     if rows.iter().any(|r| r.get(0) == review_id) {
         return Err(format!("review already exists: {review_id}"));
@@ -647,6 +655,7 @@ fn record_review(args: &[String]) -> Result<(), String> {
             evidence.into(),
             state_value(&state, "iteration").into(),
             timestamp(),
+            reviewer.into(),
         ],
     });
     write_reviews(&p.reviews, &rows)?;
@@ -788,6 +797,17 @@ fn completion_state(store: &Store, id: &str) -> Result<BTreeMap<String, String>,
     }
     let iteration = state_value(&state, "iteration");
     let reviews = read_reviews(&p.reviews)?;
+    let findings: BTreeSet<&str> = reviews
+        .iter()
+        .filter(|r| r.get(5) == iteration && r.get(3) == diff && r.get(2) == "findings")
+        .map(|r| r.get(1))
+        .collect();
+    if !findings.is_empty() {
+        return Err(format!(
+            "completion blocked by current-diff review findings: {}",
+            findings.into_iter().collect::<Vec<_>>().join(",")
+        ));
+    }
     let passed: BTreeSet<&str> = reviews
         .iter()
         .filter(|r| r.get(5) == iteration && r.get(3) == diff && r.get(2) == "pass")
@@ -804,8 +824,184 @@ fn completion_state(store: &Store, id: &str) -> Result<BTreeMap<String, String>,
             missing.join(",")
         ));
     }
+    if reviewer_evidence_required() {
+        let unrecorded = unrecorded_reviewer_findings(store, id, diff, &reviews)?;
+        if !unrecorded.is_empty() {
+            return Err(format!(
+                "completion blocked by unrecorded reviewer findings: {}",
+                unrecorded.join(",")
+            ));
+        }
+        let unfinished = active_reviewers(store)?;
+        if !unfinished.is_empty() {
+            return Err(format!(
+                "completion blocked by active reviewers: {}",
+                unfinished.join(",")
+            ));
+        }
+        for review in reviews.iter().filter(|row| {
+            row.get(5) == iteration
+                && row.get(3) == diff
+                && row.get(2) == "pass"
+                && POST_REVIEWS.contains(&row.get(1))
+        }) {
+            let reviewer = review.get(7);
+            if reviewer.is_empty() {
+                return Err(format!(
+                    "passing {} review is missing durable reviewer evidence",
+                    review.get(1)
+                ));
+            }
+            validate_reviewer_evidence(store, reviewer, review.get(1), "pass", diff)?;
+        }
+    }
     validate_context(&state)?;
     Ok(state)
+}
+
+fn unrecorded_reviewer_findings(
+    store: &Store,
+    workflow_id: &str,
+    diff: &str,
+    reviews: &[Review],
+) -> Result<Vec<String>, String> {
+    let root = store.state_dir.join("subagents");
+    if !root.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut unrecorded = Vec::new();
+    for entry in fs::read_dir(&root).map_err(io_error("read subagents directory"))? {
+        let dir = entry.map_err(io_error("read subagent entry"))?.path();
+        if !dir.is_dir() {
+            continue;
+        }
+        let metadata = read_simple_env(&dir.join("meta.env"))?;
+        if state_value(&metadata, "role") != "reviewer"
+            || state_value(&metadata, "codex_access") != "read-only"
+        {
+            continue;
+        }
+        let reviewer_workflow = state_value(&metadata, "workflow_id");
+        if !reviewer_workflow.is_empty() && reviewer_workflow != workflow_id {
+            continue;
+        }
+        let status = fs::read_to_string(dir.join("status")).unwrap_or_default();
+        if status.trim() != "finalized" || !dir.join("finalized_at").is_file() {
+            continue;
+        }
+        let message = fs::read_to_string(dir.join("last-message.txt")).unwrap_or_default();
+        let reviewer = dir
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("unknown");
+        for kind in POST_REVIEWS {
+            let marker = format!("review-record: type={kind} verdict=findings diff={diff}");
+            if !message
+                .lines()
+                .any(|line| review_marker_matches(line, &marker))
+            {
+                continue;
+            }
+            let recorded = reviews.iter().any(|row| {
+                row.get(1) == *kind
+                    && row.get(2) == "findings"
+                    && row.get(3) == diff
+                    && row.get(7) == reviewer
+            });
+            if !recorded {
+                unrecorded.push(format!("{reviewer}:{kind}"));
+            }
+        }
+    }
+    unrecorded.sort();
+    unrecorded.dedup();
+    Ok(unrecorded)
+}
+
+fn reviewer_evidence_required() -> bool {
+    config::lifecycle_enforced()
+}
+
+fn validate_reviewer_evidence(
+    store: &Store,
+    reviewer: &str,
+    kind: &str,
+    verdict: &str,
+    diff: &str,
+) -> Result<(), String> {
+    valid_id("reviewer name", reviewer)?;
+    let dir = store.state_dir.join("subagents").join(reviewer);
+    let metadata = read_simple_env(&dir.join("meta.env"))?;
+    if state_value(&metadata, "role") != "reviewer"
+        || state_value(&metadata, "codex_access") != "read-only"
+    {
+        return Err(format!(
+            "reviewer evidence must come from a read-only reviewer role: {reviewer}"
+        ));
+    }
+    let status = fs::read_to_string(dir.join("status"))
+        .map_err(|_| format!("reviewer status is missing: {reviewer}"))?;
+    if status.trim() != "finalized" || !dir.join("finalized_at").is_file() {
+        return Err(format!("reviewer is not finalized: {reviewer}"));
+    }
+    let message = fs::read_to_string(dir.join("last-message.txt"))
+        .map_err(|_| format!("reviewer final message is missing: {reviewer}"))?;
+    let marker = format!("review-record: type={kind} verdict={verdict} diff={diff}");
+    if !message
+        .lines()
+        .any(|line| review_marker_matches(line, &marker))
+    {
+        return Err(format!(
+            "reviewer {reviewer} final message is missing marker: {marker}"
+        ));
+    }
+    Ok(())
+}
+
+fn review_marker_matches(line: &str, marker: &str) -> bool {
+    let mut value = line.trim();
+    if let Some((prefix, rest)) = value.split_once(' ') {
+        let numbered = prefix
+            .strip_suffix('.')
+            .or_else(|| prefix.strip_suffix(')'))
+            .is_some_and(|number| !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()));
+        if numbered || matches!(prefix, "-" | "*") {
+            value = rest.trim_start();
+        }
+    }
+    if value.starts_with('`') && value.ends_with('`') && value.len() >= 2 {
+        value = &value[1..value.len() - 1];
+    }
+    value == marker
+}
+
+fn active_reviewers(store: &Store) -> Result<Vec<String>, String> {
+    let root = store.state_dir.join("subagents");
+    if !root.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut active = Vec::new();
+    for entry in fs::read_dir(&root).map_err(io_error("read subagents directory"))? {
+        let dir = entry.map_err(io_error("read subagent entry"))?.path();
+        if !dir.is_dir() {
+            continue;
+        }
+        let metadata = read_simple_env(&dir.join("meta.env"))?;
+        if state_value(&metadata, "role") != "reviewer" {
+            continue;
+        }
+        let status = fs::read_to_string(dir.join("status")).unwrap_or_default();
+        if matches!(status.trim(), "starting" | "pending" | "running") {
+            active.push(
+                dir.file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("unknown")
+                    .to_string(),
+            );
+        }
+    }
+    active.sort();
+    Ok(active)
 }
 
 fn validate_context(state: &BTreeMap<String, String>) -> Result<(), String> {
@@ -1045,5 +1241,17 @@ mod tests {
             fields: std::array::from_fn(|i| format!("v{i}")),
         };
         assert_eq!(Todo::parse(&row.line()).fields, row.fields);
+    }
+
+    #[test]
+    fn review_markers_allow_only_cosmetic_markdown_wrapping() {
+        let marker = "review-record: type=scope verdict=pass diff=abc";
+        assert!(review_marker_matches(marker, marker));
+        assert!(review_marker_matches(&format!("3. `{marker}`"), marker));
+        assert!(review_marker_matches(&format!("- `{marker}`"), marker));
+        assert!(!review_marker_matches(
+            &format!("evidence includes {marker}"),
+            marker
+        ));
     }
 }

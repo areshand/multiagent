@@ -97,10 +97,13 @@ The launch script exports:
 - `VERIFIER_CLI`: CLI to use for verifier agents, default `codex`.
 
 Supported CLI values are `codex` and `claude`. Keep the orchestrator on Codex
-unless the user explicitly asks otherwise. Codex commands use `--cd`,
-`--dangerously-bypass-approvals-and-sandbox`, and `--no-alt-screen`. Claude
-commands start from the target worktree/root and use
-`claude --dangerously-skip-permissions`.
+unless the user explicitly asks otherwise. The Rust supervisor maps trusted
+roles to enforced access profiles: the orchestrator can write durable state but
+the target repository is read-only, workers can write the target workspace,
+and scouts/authority reviewers are read-only. Native hosts use Codex sandboxes;
+production Linux containers use unprivileged role identities. Do not bypass the Rust spawn path
+with direct `codex`, `claude`, or `tmux new-window` commands. Claude does not
+provide the same role-level OS sandbox and is retained only for compatibility.
 
 If a variable is missing, infer the tmux session with:
 
@@ -143,7 +146,10 @@ Use one verifier window per worker assignment at a time. A verifier is a
 read-only reviewer, not a second implementer.
 
 Before spawning a replacement worker for the same owned files, poll the existing
-worker and either finalize/kill it or explicitly wait. If validation ownership
+worker and either finalize/kill it or explicitly wait. Prefer the bounded
+`multiagent subagent wait NAME --timeout SECONDS` command when a result is
+required before continuing; one immediate poll is not evidence that an agent is
+stalled. If validation ownership
 is unclear, use the validation coordinator role before adding more workers.
 
 ## Role Routing

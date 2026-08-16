@@ -2,7 +2,7 @@
 set -euo pipefail
 
 FRAMEWORK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-MULTIAGENT="$FRAMEWORK_ROOT/target/debug/multiagent"
+MULTIAGENT="${MULTIAGENT_BIN:-$FRAMEWORK_ROOT/target/debug/multiagent}"
 TEST_TMP="$(mktemp -d)"
 trap 'rm -rf "$TEST_TMP"' EXIT
 
@@ -27,6 +27,19 @@ git -C "$TEST_REPO" add README.md
 git -C "$TEST_REPO" commit -q -m initial
 TEST_BRANCH="$(git -C "$TEST_REPO" branch --show-current)"
 
+BYPASS_STATE="$TEST_TMP/bypass-state"
+if MULTIAGENT_ROOT="$TEST_REPO" MULTIAGENT_STATE_DIR="$BYPASS_STATE" \
+  MULTIAGENT_UID_SANDBOX=1 MULTIAGENT_LIFECYCLE_ENFORCEMENT=0 \
+  "$MULTIAGENT" subagent assignment-create worker-bypass \
+    --assignment-id BYPASS-1 --role exploitation \
+    --branch "$TEST_BRANCH" --owned README.md \
+    >"$TEST_TMP/lifecycle-env-bypass.out" 2>&1; then
+  echo "expected UID-isolated orchestrator to reject lifecycle environment bypass" >&2
+  exit 1
+fi
+assert_contains "$TEST_TMP/lifecycle-env-bypass.out" \
+  "lifecycle enforcement requires --workflow-id"
+
 IMPLEMENTATION_CONTEXT="$TEST_TMP/approved-implementation-context.md"
 printf '%s\n' \
   '# Approved implementation context' \
@@ -48,6 +61,28 @@ wf() {
 }
 
 wf init WF-LIFECYCLE >/dev/null
+
+wf init WF-REVIEW-EVIDENCE >/dev/null
+if MULTIAGENT_STATE_DIR="$TEST_STATE" MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
+  "$MULTIAGENT" workflow record-review WF-REVIEW-EVIDENCE AUTH-MISSING \
+  --type decision-authority --verdict pass --evidence "claimed pass" \
+  >"$TEST_TMP/missing-reviewer-evidence.out" 2>&1; then
+  echo "expected enforced review without reviewer evidence to fail" >&2
+  exit 1
+fi
+assert_contains "$TEST_TMP/missing-reviewer-evidence.out" "requires --reviewer NAME"
+REVIEWER_STATE="$TEST_STATE/subagents/authority-reviewer-test"
+mkdir -p "$REVIEWER_STATE"
+printf '%s\n' 'role=reviewer' 'codex_access=read-only' >"$REVIEWER_STATE/meta.env"
+printf 'finalized\n' >"$REVIEWER_STATE/status"
+printf '2026-08-15T00:00:00Z\n' >"$REVIEWER_STATE/finalized_at"
+printf 'review-record: type=decision-authority verdict=pass diff=-\n' \
+  >"$REVIEWER_STATE/last-message.txt"
+MULTIAGENT_STATE_DIR="$TEST_STATE" MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
+  "$MULTIAGENT" workflow record-review WF-REVIEW-EVIDENCE AUTH-DURABLE \
+  --type decision-authority --verdict pass --evidence "durable reviewer pass" \
+  --reviewer authority-reviewer-test >/dev/null
+
 MULTIAGENT_STATE_DIR="$TEST_STATE" "$MULTIAGENT" decision init DEC-1 \
   --title "Lifecycle decision" --owner orchestrator >/dev/null
 MULTIAGENT_STATE_DIR="$TEST_STATE" "$MULTIAGENT" decision add-alternative DEC-1 \
@@ -150,16 +185,67 @@ loop transition WF-LOOP post-implementation --diff-hash DIFF-FINAL >/dev/null
 loop resolve-todo WF-LOOP TODO-FOLLOWUP \
   --resolution completed --evidence "repair and verifier recheck passed" >/dev/null
 for review_type in decision-drift scope technical reflection; do
+  if [[ "$review_type" == "technical" ]]; then
+    reviewer_name="verifier-technical"
+  else
+    reviewer_name="reviewer-$review_type"
+  fi
+  reviewer_state="$LOOP_STATE/subagents/$reviewer_name"
+  mkdir -p "$reviewer_state"
+  printf '%s\n' 'role=reviewer' 'codex_access=read-only' >"$reviewer_state/meta.env"
+  printf 'finalized\n' >"$reviewer_state/status"
+  printf '2026-08-15T00:00:00Z\n' >"$reviewer_state/finalized_at"
+  if [[ "$review_type" == "technical" ]]; then
+    printf 'ACCEPTED\nreview-record: type=technical verdict=pass diff=DIFF-FINAL\n' \
+      >"$reviewer_state/last-message.txt"
+  else
+    printf 'review-record: type=%s verdict=pass diff=DIFF-FINAL\n' "$review_type" \
+      >"$reviewer_state/last-message.txt"
+  fi
   loop record-review WF-LOOP "REVIEW-$review_type" \
     --type "$review_type" --verdict pass --diff-hash DIFF-FINAL \
-    --evidence "$review_type passed" >/dev/null
+    --evidence "$review_type passed" --reviewer "$reviewer_name" >/dev/null
 done
+FINDINGS_STATE="$TEST_TMP/findings-state"
+cp -R "$LOOP_STATE" "$FINDINGS_STATE"
+UNRECORDED_REVIEWER="$FINDINGS_STATE/subagents/reviewer-unrecorded-findings"
+mkdir -p "$UNRECORDED_REVIEWER"
+printf '%s\n' 'role=reviewer' 'codex_access=read-only' 'workflow_id=WF-LOOP' \
+  >"$UNRECORDED_REVIEWER/meta.env"
+printf 'finalized\n' >"$UNRECORDED_REVIEWER/status"
+printf '2026-08-15T00:00:00Z\n' >"$UNRECORDED_REVIEWER/finalized_at"
+printf 'review-record: type=technical verdict=findings diff=DIFF-FINAL\n' \
+  >"$UNRECORDED_REVIEWER/last-message.txt"
+if MULTIAGENT_STATE_DIR="$FINDINGS_STATE" MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
+  "$MULTIAGENT" workflow completion-check WF-LOOP \
+  >"$TEST_TMP/unrecorded-reviewer-findings.out" 2>&1; then
+  echo "expected unrecorded reviewer findings to block completion" >&2
+  exit 1
+fi
+assert_contains "$TEST_TMP/unrecorded-reviewer-findings.out" \
+  "completion blocked by unrecorded reviewer findings: reviewer-unrecorded-findings:technical"
+MULTIAGENT_STATE_DIR="$FINDINGS_STATE" MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
+  "$MULTIAGENT" workflow record-review WF-LOOP REVIEW-UNRESOLVED \
+    --type technical --verdict findings --diff-hash DIFF-FINAL \
+    --evidence "reviewer found a source defect" \
+    --reviewer reviewer-unrecorded-findings >/dev/null
+if MULTIAGENT_STATE_DIR="$FINDINGS_STATE" MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
+  "$MULTIAGENT" workflow completion-check WF-LOOP \
+  >"$TEST_TMP/current-reviewer-findings.out" 2>&1; then
+  echo "expected recorded current-diff findings to block completion" >&2
+  exit 1
+fi
+assert_contains "$TEST_TMP/current-reviewer-findings.out" \
+  "completion blocked by current-diff review findings: technical"
 loop completion-check WF-LOOP >/dev/null
 loop transition WF-LOOP complete >/dev/null
-MULTIAGENT_ROOT="$TEST_REPO" MULTIAGENT_STATE_DIR="$LOOP_STATE" \
+if ! MULTIAGENT_ROOT="$TEST_REPO" MULTIAGENT_STATE_DIR="$LOOP_STATE" \
   MULTIAGENT_WORKFLOW_ID=WF-LOOP MULTIAGENT_RUN_ID=RUN-LIFECYCLE \
   MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
-  "$MULTIAGENT" orchestrator complete >"$TEST_TMP/complete.out"
+  "$MULTIAGENT" orchestrator complete >"$TEST_TMP/complete.out" 2>&1; then
+  cat "$TEST_TMP/complete.out" >&2
+  exit 1
+fi
 assert_contains "$TEST_TMP/complete.out" $'run completed\tRUN-LIFECYCLE'
 
 echo "implementation lifecycle tests passed"

@@ -13,9 +13,12 @@ runner or infrastructure failures still abort the evaluation.
 from __future__ import annotations
 
 import base64
+import datetime as dt
+import hashlib
 import json
 import os
 import shlex
+import uuid
 from pathlib import Path
 from typing import Any, Dict
 
@@ -30,6 +33,8 @@ _METADATA_FILE = "/tmp/evalscope-native-multiagent-metadata.json"
 _STDOUT_FILE = "/tmp/evalscope-native-multiagent-stdout.log"
 _STDERR_FILE = "/tmp/evalscope-native-multiagent-stderr.log"
 _RUNTIME_IDENTITY_FILE = "/tmp/multiagent-prod-swe/runtime-identity.json"
+_TRACE_ARCHIVE_FILE = "/tmp/evalscope-native-multiagent-trace.tar.gz"
+_TRACE_CHUNK_BYTES = 256 * 1024
 _DEFAULT_SOLVER_COMMAND = "/tmp/evalscope-native-multiagent-solver.sh"
 _PUBLIC_METADATA_KEYS = {
     "language",
@@ -94,9 +99,10 @@ class MultiagentNativeRunner(AgentRunner):
         working_dir: str = "/app",
         model_name: str = "gpt-5",
         codex_auth_json: str = "",
-        codex_auth_container_home: str = "/root/.codex-multiagent-prod",
+        codex_auth_container_home: str = "/tmp/multiagent-prod-swe/codex-home",
         swe_bench_pro_repo_path: str = "",
         swe_bench_pro_sample_offset: int = 0,
+        trace_output_dir: str = "",
         **_: Any,
     ) -> None:
         self._working_dir = working_dir or "/app"
@@ -104,9 +110,12 @@ class MultiagentNativeRunner(AgentRunner):
         self._codex_auth_json = codex_auth_json.strip()
         if not self._codex_auth_json:
             raise ValueError("multiagent-native requires runtime Codex auth JSON")
-        self._codex_auth_container_home = codex_auth_container_home.rstrip("/") or "/root/.codex-multiagent-prod"
+        self._codex_auth_container_home = (
+            codex_auth_container_home.rstrip("/") or "/tmp/multiagent-prod-swe/codex-home"
+        )
         self._swe_bench_pro_repo_path = swe_bench_pro_repo_path.strip()
         self._swe_bench_pro_sample_offset = swe_bench_pro_sample_offset
+        self._trace_output_dir = Path(trace_output_dir).expanduser().resolve() if trace_output_dir.strip() else None
 
     async def setup(self, env: AgentEnvironment) -> None:
         await self._write_file(env, _DEFAULT_SOLVER_COMMAND, _SOLVER_LAUNCHER)
@@ -158,6 +167,8 @@ class MultiagentNativeRunner(AgentRunner):
             f"cwd={self._working_dir} command={command!r}"
         )
         runtime_identity: dict[str, Any] = {}
+        trace_export: dict[str, Any] = {}
+        trace_export_error: Exception | None = None
         try:
             result = await env.exec(["bash", "-lc", shell_command], timeout=task.timeout, env=env_vars, cwd=self._working_dir)
         finally:
@@ -165,6 +176,21 @@ class MultiagentNativeRunner(AgentRunner):
                 runtime_identity = await self._read_json_file(env, _RUNTIME_IDENTITY_FILE)
             except Exception as exc:
                 logger.warning(f"multiagent-native could not read runtime identity: {exc!r}")
+            if self._trace_output_dir is not None:
+                try:
+                    trace_export = await self._export_trace_bundle(
+                        env,
+                        sample_id=sample_id,
+                        sample_index=sample_index,
+                        instance_id=raw_metadata.get("instance_id"),
+                    )
+                except Exception as exc:
+                    trace_export_error = exc
+                    logger.error(
+                        "multiagent-native could not export trace for official_index=%s: %r",
+                        sample_index,
+                        exc,
+                    )
             await self._scrub_codex_auth(env)
         logger.info(
             f"multiagent-native exited: sample={sample_id} rc={result.returncode} "
@@ -178,6 +204,11 @@ class MultiagentNativeRunner(AgentRunner):
         stderr = await env.exec(["bash", "-lc", f"tail -c 4000 {shlex.quote(_STDERR_FILE)} 2>/dev/null || true"])
         stdout_tail = (stdout.stdout or "")[-4000:]
         stderr_tail = (stderr.stdout or "")[-4000:]
+        if trace_export_error is not None:
+            raise RuntimeError(
+                f"multiagent-native could not export the configured trace for official_index={sample_index}: "
+                f"{trace_export_error}"
+            ) from trace_export_error
         if result.timed_out:
             raise RunnerTimeoutError(f"multiagent-native timed out after {task.timeout}s")
         elif result.returncode != 0:
@@ -191,8 +222,134 @@ class MultiagentNativeRunner(AgentRunner):
                 "timed_out": result.timed_out,
                 "stderr_tail": stderr_tail,
                 "runtime_identity": runtime_identity,
+                "trace_export": trace_export,
             },
         )
+
+    async def _export_trace_bundle(
+        self,
+        env: AgentEnvironment,
+        *,
+        sample_id: Any,
+        sample_index: int,
+        instance_id: Any,
+    ) -> dict[str, Any]:
+        """Copy the container-local multiagent trace into a host-side row archive."""
+
+        if self._trace_output_dir is None:
+            return {}
+
+        prepare_script = f"""
+set -euo pipefail
+stage=/tmp/evalscope-native-multiagent-trace-stage
+archive={shlex.quote(_TRACE_ARCHIVE_FILE)}
+rm -rf -- "$stage"
+mkdir -p "$stage/runner"
+if [[ -d /tmp/multiagent-prod-swe/state ]]; then
+  cp -a /tmp/multiagent-prod-swe/state "$stage/state"
+  rm -f -- "$stage/state/runtime_state/tmux.sock"
+else
+  printf 'multiagent state directory was not created\n' > "$stage/state-missing.txt"
+fi
+for source in {_STDOUT_FILE} {_STDERR_FILE} {_RUNTIME_IDENTITY_FILE}; do
+  if [[ -f "$source" ]]; then
+    cp -a "$source" "$stage/runner/$(basename "$source")"
+  fi
+done
+tar -C "$stage" -czf "$archive" .
+size=$(wc -c < "$archive" | tr -d '[:space:]')
+digest=$(sha256sum "$archive" | awk '{{print $1}}')
+printf '%s\t%s\n' "$size" "$digest"
+"""
+        prepared = await env.exec(["bash", "-lc", prepare_script], timeout=120)
+        if prepared.returncode != 0:
+            detail = ((prepared.stderr or "") + "\n" + (prepared.stdout or "")).strip()[-4000:]
+            raise RuntimeError(f"could not prepare container trace archive: {detail}")
+        fields = (prepared.stdout or "").strip().splitlines()[-1].split("\t")
+        if len(fields) != 2:
+            raise RuntimeError(f"container trace archive metadata is malformed: {prepared.stdout!r}")
+        try:
+            expected_size = int(fields[0])
+        except ValueError as exc:
+            raise RuntimeError(f"container trace archive size is invalid: {fields[0]!r}") from exc
+        expected_digest = fields[1].strip().lower()
+        if expected_size < 1 or len(expected_digest) != 64:
+            raise RuntimeError(
+                f"container trace archive metadata is invalid: size={expected_size} sha256={expected_digest!r}"
+            )
+
+        row_dir = self._trace_output_dir / f"official-row-{sample_index:06d}"
+        row_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        archive_path = row_dir / "multiagent-trace.tar.gz"
+        temporary_path = row_dir / f".{archive_path.name}.{uuid.uuid4().hex}.tmp"
+        digest = hashlib.sha256()
+        written = 0
+        try:
+            with temporary_path.open("wb") as handle:
+                for chunk_index in range((expected_size + _TRACE_CHUNK_BYTES - 1) // _TRACE_CHUNK_BYTES):
+                    chunk_script = (
+                        "set -o pipefail; "
+                        f"dd if={shlex.quote(_TRACE_ARCHIVE_FILE)} bs={_TRACE_CHUNK_BYTES} "
+                        f"skip={chunk_index} count=1 status=none | base64"
+                    )
+                    chunk_result = await env.exec(["bash", "-lc", chunk_script], timeout=120)
+                    if chunk_result.returncode != 0:
+                        detail = ((chunk_result.stderr or "") + "\n" + (chunk_result.stdout or "")).strip()[-2000:]
+                        raise RuntimeError(f"could not read trace archive chunk {chunk_index}: {detail}")
+                    try:
+                        chunk = base64.b64decode((chunk_result.stdout or "").encode("ascii"), validate=False)
+                    except (UnicodeEncodeError, ValueError) as exc:
+                        raise RuntimeError(f"trace archive chunk {chunk_index} is not valid base64") from exc
+                    if not chunk:
+                        raise RuntimeError(f"trace archive chunk {chunk_index} is empty")
+                    handle.write(chunk)
+                    digest.update(chunk)
+                    written += len(chunk)
+            if written != expected_size:
+                raise RuntimeError(f"trace archive size mismatch: expected {expected_size}, copied {written}")
+            actual_digest = digest.hexdigest()
+            if actual_digest != expected_digest:
+                raise RuntimeError(
+                    f"trace archive digest mismatch: expected {expected_digest}, copied {actual_digest}"
+                )
+            temporary_path.chmod(0o600)
+            temporary_path.replace(archive_path)
+        finally:
+            temporary_path.unlink(missing_ok=True)
+
+        manifest = {
+            "captured_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+            "official_index": sample_index,
+            "sample_id": None if sample_id is None else str(sample_id),
+            "instance_id": None if instance_id is None else str(instance_id),
+            "archive": archive_path.name,
+            "archive_bytes": expected_size,
+            "archive_sha256": expected_digest,
+            "container_state_dir": "/tmp/multiagent-prod-swe/state",
+            "submission_workspace": self._working_dir,
+        }
+        manifest_path = row_dir / "manifest.json"
+        manifest_tmp = row_dir / f".{manifest_path.name}.{uuid.uuid4().hex}.tmp"
+        try:
+            manifest_tmp.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+            manifest_tmp.chmod(0o600)
+            manifest_tmp.replace(manifest_path)
+        finally:
+            manifest_tmp.unlink(missing_ok=True)
+
+        logger.info(
+            "multiagent-native trace exported: official_index=%s path=%s bytes=%s sha256=%s",
+            sample_index,
+            archive_path,
+            expected_size,
+            expected_digest,
+        )
+        return {
+            "path": str(archive_path),
+            "manifest": str(manifest_path),
+            "bytes": expected_size,
+            "sha256": expected_digest,
+        }
 
     async def _read_json_file(self, env: AgentEnvironment, path: str) -> dict[str, Any]:
         result = await env.exec(["bash", "-lc", f"cat {shlex.quote(path)} 2>/dev/null || true"], timeout=30)
@@ -283,7 +440,11 @@ PY
 
     async def _scrub_codex_auth(self, env: AgentEnvironment) -> None:
         home = shlex.quote(self._codex_auth_container_home)
-        result = await env.exec(["bash", "-lc", f"rm -rf -- {home}"], timeout=30)
+        role_homes = shlex.quote("/tmp/multiagent-prod-swe/role-codex-homes")
+        result = await env.exec(
+            ["bash", "-lc", f"rm -rf -- {home} {role_homes}"],
+            timeout=30,
+        )
         if result.returncode != 0:
             tail = ((result.stderr or "") + "\n" + (result.stdout or "")).strip()[-1000:]
             logger.warning(f"multiagent-native failed to scrub Codex auth home: {tail}")
