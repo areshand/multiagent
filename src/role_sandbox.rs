@@ -2,6 +2,39 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
+#[cfg(unix)]
+use std::sync::atomic::{AtomicI32, Ordering};
+
+#[cfg(unix)]
+static SUPERVISED_CHILD: AtomicI32 = AtomicI32::new(0);
+
+#[cfg(unix)]
+pub fn gate_setuid_invocation(command: &str) -> Result<(), String> {
+    let real_uid = unsafe { libc::getuid() };
+    let effective_uid = unsafe { libc::geteuid() };
+    if effective_uid != 0 || real_uid == 0 {
+        return Ok(());
+    }
+    if privileged_command_allowed(command) {
+        return Ok(());
+    }
+    if unsafe { libc::setuid(real_uid) } != 0 {
+        return Err(format!(
+            "drop setuid privilege for {command}: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+fn privileged_command_allowed(command: &str) -> bool {
+    command == "role-agent-exec"
+}
+
+#[cfg(not(unix))]
+pub fn gate_setuid_invocation(_command: &str) -> Result<(), String> {
+    Ok(())
+}
 
 pub fn run(args: &[String]) -> Result<ExitCode, String> {
     let mut write_roots = BTreeSet::new();
@@ -50,6 +83,124 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
         restrict_writes(&write_roots.into_iter().collect::<Vec<_>>())?;
     }
     exec(command, command_args)
+}
+
+/// Run a role process under a minimal privileged supervisor.
+///
+/// The tmux server runs as the orchestrator UID while the role process runs as
+/// a different UID.  tmux therefore cannot reliably signal a writer after the
+/// identity transition.  Keep the setuid process as a wait-only parent whose
+/// real UID remains the orchestrator UID, and place the writer in its own
+/// process group.  When tmux closes the pane, the parent receives the signal
+/// and terminates the complete writer process group before it exits.
+#[cfg(unix)]
+pub fn run_supervised(
+    uid: u32,
+    gid: u32,
+    command: &str,
+    args: &[String],
+) -> Result<ExitCode, String> {
+    install_supervisor_signal_handlers()?;
+
+    let _parent_pid = unsafe { libc::getpid() };
+    let child = unsafe { libc::fork() };
+    if child < 0 {
+        return Err(format!(
+            "fork role process: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    if child == 0 {
+        if unsafe { libc::setpgid(0, 0) } != 0 {
+            unsafe { libc::_exit(126) };
+        }
+        #[cfg(target_os = "linux")]
+        {
+            if unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) } != 0
+                || unsafe { libc::getppid() } != _parent_pid
+            {
+                unsafe { libc::_exit(126) };
+            }
+        }
+        if drop_identity(uid, gid).is_err() {
+            unsafe { libc::_exit(126) };
+        }
+        use std::os::unix::process::CommandExt;
+        let _ = Command::new(command).args(args).exec();
+        unsafe { libc::_exit(127) };
+    }
+
+    // Close the fork-to-setpgid race so a pane-close signal can always target
+    // the child's group. EACCES merely means the child already exec'd.
+    unsafe {
+        libc::setpgid(child, child);
+    }
+    SUPERVISED_CHILD.store(child, Ordering::SeqCst);
+
+    let mut status = 0;
+    loop {
+        let waited = unsafe { libc::waitpid(child, &mut status, 0) };
+        if waited == child {
+            break;
+        }
+        if waited < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+            continue;
+        }
+        SUPERVISED_CHILD.store(0, Ordering::SeqCst);
+        return Err(format!(
+            "wait for role process: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    SUPERVISED_CHILD.store(0, Ordering::SeqCst);
+
+    if libc::WIFEXITED(status) {
+        return Ok(ExitCode::from(libc::WEXITSTATUS(status) as u8));
+    }
+    if libc::WIFSIGNALED(status) {
+        return Ok(ExitCode::from((128 + libc::WTERMSIG(status)).min(255) as u8));
+    }
+    Ok(ExitCode::FAILURE)
+}
+
+#[cfg(not(unix))]
+pub fn run_supervised(
+    _uid: u32,
+    _gid: u32,
+    _command: &str,
+    _args: &[String],
+) -> Result<ExitCode, String> {
+    Err("supervised role execution requires Unix".into())
+}
+
+#[cfg(unix)]
+extern "C" fn terminate_supervised_child(_signal: libc::c_int) {
+    let child = SUPERVISED_CHILD.load(Ordering::SeqCst);
+    if child > 0 {
+        // A pane close is a cancellation boundary. SIGKILL prevents a detached
+        // CLI or one of its tool children from writing after kill returns.
+        unsafe {
+            libc::kill(-child, libc::SIGKILL);
+            libc::kill(child, libc::SIGKILL);
+        }
+    }
+}
+
+#[cfg(unix)]
+fn install_supervisor_signal_handlers() -> Result<(), String> {
+    for signal in [libc::SIGHUP, libc::SIGINT, libc::SIGTERM, libc::SIGQUIT] {
+        let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+        action.sa_sigaction = terminate_supervised_child as usize;
+        if unsafe { libc::sigemptyset(&mut action.sa_mask) } != 0
+            || unsafe { libc::sigaction(signal, &action, std::ptr::null_mut()) } != 0
+        {
+            return Err(format!(
+                "install role supervisor signal handler: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn parse_id(args: &[String], index: usize, flag: &str) -> Result<u32, String> {
@@ -268,5 +419,18 @@ mod linux {
             ));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::privileged_command_allowed;
+
+    #[test]
+    fn setuid_gate_only_retains_privilege_for_fixed_agent_launch() {
+        assert!(privileged_command_allowed("role-agent-exec"));
+        for command in ["role-exec", "subagent", "launch", "snapshot", "workflow"] {
+            assert!(!privileged_command_allowed(command));
+        }
     }
 }

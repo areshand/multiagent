@@ -642,6 +642,7 @@ assert_file_contains "$ROOT/orchestrator_prompt.md" "Do not inspect recovery sta
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'When `MULTIAGENT_RESUME=1`'
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'Only in that mode'
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'MULTIAGENT_VERIFIER_MAX_ITERATIONS'
+assert_file_contains "$ROOT/docs/control-plane-boundary.md" "preventing detached or late"
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn'
 assert_file_contains "$ROOT/orchestrator_prompt.md" "Core Disciplines"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "intent-contract.md"

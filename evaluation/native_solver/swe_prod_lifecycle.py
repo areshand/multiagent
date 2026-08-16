@@ -18,8 +18,10 @@ from .swe_prod_bootstrap import (
 from .swe_prod_contracts import (
     CODEX_HOME,
     CODEX_WRAPPER,
+    ROLE_CODEX_HOME_ROOT,
     RUNTIME_IDENTITY_PATH,
     RUNTIME_ROOT,
+    TMUX_SOCKET,
     log,
     read_prompt,
     read_task_metadata,
@@ -35,10 +37,11 @@ from .swe_prod_repository import (
 
 ORCHESTRATOR_UID = 10001
 WRITER_UID = 10002
+READER_UID = 10003
 ROLE_GID = 10001
 
 
-def prepare_role_filesystem(workdir: Path) -> None:
+def prepare_role_filesystem(workdir: Path, role_launcher: Path) -> None:
     """Give worker processes source writes without giving them to the orchestrator."""
 
     def prepare_tree(root: Path, uid: int, *, group_write: bool) -> None:
@@ -59,22 +62,43 @@ def prepare_role_filesystem(workdir: Path) -> None:
                     mode |= stat.S_IWGRP
                 else:
                     mode &= ~stat.S_IWGRP
-                os.chmod(path, mode, follow_symlinks=False)
+                # Some benchmark images expose Python builds where chmod does
+                # not implement follow_symlinks=False. lstat above already
+                # proves this is not a symlink, so the portable call is safe.
+                os.chmod(path, mode)
             except FileNotFoundError:
                 continue
 
     prepare_tree(workdir, WRITER_UID, group_write=False)
-    prepare_tree(CODEX_HOME, ORCHESTRATOR_UID, group_write=True)
+
+    os.chown(role_launcher, 0, 0)
+    os.chmod(role_launcher, 0o4755)
+
+    # Codex creates private config, lock, and SQLite files at runtime. Sharing a
+    # single CODEX_HOME across different role UIDs lets the orchestrator make
+    # its own home unreadable to later workers. Seed an independent home for
+    # each identity instead; auth is copied at runtime and is never baked into
+    # the task image or trace bundle.
+    ROLE_CODEX_HOME_ROOT.mkdir(parents=True, exist_ok=True)
+    seed_files = [path for path in (CODEX_HOME / "auth.json", CODEX_HOME / "config.toml") if path.is_file()]
+    for role, uid in (
+        ("orchestrator", ORCHESTRATOR_UID),
+        ("writer", WRITER_UID),
+        ("reader", READER_UID),
+    ):
+        home = ROLE_CODEX_HOME_ROOT / role
+        home.mkdir(parents=True, exist_ok=True)
+        for source in seed_files:
+            shutil.copyfile(source, home / source.name)
+        (home / ".gitconfig").write_text(
+            f"[safe]\n\tdirectory = {workdir}\n",
+            encoding="utf-8",
+        )
+        prepare_tree(home, uid, group_write=False)
+        os.chmod(home, 0o700)
+
     for cache in (RUNTIME_ROOT / "go-build-cache", RUNTIME_ROOT / "go-mod-cache"):
         prepare_tree(cache, WRITER_UID, group_write=True)
-
-    global_git_config = CODEX_HOME / ".gitconfig"
-    global_git_config.write_text(
-        f"[safe]\n\tdirectory = {workdir}\n",
-        encoding="utf-8",
-    )
-    os.chown(global_git_config, ORCHESTRATOR_UID, ROLE_GID)
-    os.chmod(global_git_config, 0o660)
 
 
 def restore_workspace_owner(workdir: Path) -> None:
@@ -121,11 +145,15 @@ def toolchain_path_prefixes() -> list[str]:
 
 
 def tmux_has_session(session: str) -> bool:
-    return run(["tmux", "has-session", "-t", session], timeout=10).returncode == 0
+    command = ["tmux", "-S", str(TMUX_SOCKET), "has-session", "-t", session]
+    return run(command, timeout=10).returncode == 0
 
 
 def tmux_has_orchestrator(session: str) -> bool:
-    result = run(["tmux", "list-windows", "-t", session, "-F", "#W"], timeout=10)
+    result = run(
+        ["tmux", "-S", str(TMUX_SOCKET), "list-windows", "-t", session, "-F", "#W"],
+        timeout=10,
+    )
     return result.returncode == 0 and "orchestrator" in result.stdout.splitlines()
 
 
@@ -193,7 +221,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     autonomous_prompt = make_prompt(repo_root, workdir, issue, task_metadata)
     session = f"swe-prod-{os.getpid()}"
     toolchain_prefix = ":".join(toolchain_path_prefixes())
-    path_parts = [str(RUNTIME_ROOT)]
+    path_parts = [str(RUNTIME_ROOT), str(repo_root / "bin")]
     if toolchain_prefix:
         path_parts.append(toolchain_prefix)
     path_parts.append(os.environ.get("PATH", ""))
@@ -215,6 +243,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
             "VERIFIER_CLI": "codex",
             "CODEX_BIN": str(CODEX_WRAPPER),
             "CODEX_HOME": str(CODEX_HOME),
+            "MULTIAGENT_CODEX_HOME_ROOT": str(ROLE_CODEX_HOME_ROOT),
             "MULTIAGENT_CODEX_EXEC": os.environ.get("MULTIAGENT_CODEX_EXEC", "1"),
             "MULTIAGENT_EXTRA_PATH": str(RUNTIME_ROOT),
             "MULTIAGENT_ROLE_SHARED_WRITE_DIR": str(RUNTIME_ROOT),
@@ -227,7 +256,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
         }
     )
 
-    prepare_role_filesystem(workdir)
+    prepare_role_filesystem(workdir, Path(multiagent_command(repo_root)[0]))
 
     launch_args = [str(repo_root / "launch.sh"), "--session", session, "--root", str(workdir), "--no-attach"]
     log(f"launching production multiagent session={session} root={workdir} repo={repo_root}")
@@ -242,7 +271,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
             time.sleep(5)
     finally:
         if tmux_has_session(session):
-            run(["tmux", "kill-session", "-t", session], timeout=30)
+            run(["tmux", "-S", str(TMUX_SOCKET), "kill-session", "-t", session], timeout=30)
 
     restore_workspace_owner(workdir)
     materialize_committed_changes(workdir, start_head)

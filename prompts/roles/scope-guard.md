@@ -49,6 +49,9 @@ Return only:
 4. `must-preserve:` contract items the next worker/verifier must carry forward.
 5. `validation-gaps:` exact tests/probes/source inspections still needed.
 6. `routing:` recommended next worker or verifier assignment, with owned paths.
+7. `review-record: type=scope verdict=pass|findings diff=DIFF_HASH`, using the
+   candidate diff hash supplied in the assignment. Only an unqualified
+   `scope-verdict: accept` maps to `pass`.
 
 Keep the report compact enough for the orchestrator to paste into verifier or
 follow-up worker instructions.

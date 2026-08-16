@@ -247,6 +247,7 @@ rm -rf -- "$stage"
 mkdir -p "$stage/runner"
 if [[ -d /tmp/multiagent-prod-swe/state ]]; then
   cp -a /tmp/multiagent-prod-swe/state "$stage/state"
+  rm -f -- "$stage/state/runtime_state/tmux.sock"
 else
   printf 'multiagent state directory was not created\n' > "$stage/state-missing.txt"
 fi
@@ -439,7 +440,11 @@ PY
 
     async def _scrub_codex_auth(self, env: AgentEnvironment) -> None:
         home = shlex.quote(self._codex_auth_container_home)
-        result = await env.exec(["bash", "-lc", f"rm -rf -- {home}"], timeout=30)
+        role_homes = shlex.quote("/tmp/multiagent-prod-swe/role-codex-homes")
+        result = await env.exec(
+            ["bash", "-lc", f"rm -rf -- {home} {role_homes}"],
+            timeout=30,
+        )
         if result.returncode != 0:
             tail = ((result.stderr or "") + "\n" + (result.stdout or "")).strip()[-1000:]
             logger.warning(f"multiagent-native failed to scrub Codex auth home: {tail}")

@@ -33,6 +33,10 @@ fn main() -> ExitCode {
     }
 
     let command = args.remove(0);
+    if let Err(message) = role_sandbox::gate_setuid_invocation(&command) {
+        eprintln!("multiagent: {message}");
+        return ExitCode::from(1);
+    }
     let result: Result<ExitCode, (&str, String)> = match command.as_str() {
         "launch" => runtime::launch(&args).map_err(|message| ("launch", message)),
         "orchestrator" => runtime::orchestrator(&args).map_err(|message| ("orchestrator", message)),
@@ -51,6 +55,9 @@ fn main() -> ExitCode {
             .map(|_| ExitCode::SUCCESS)
             .map_err(|message| ("prompt-bundle", message)),
         "role-exec" => role_sandbox::run(&args).map_err(|message| ("role-exec", message)),
+        "role-agent-exec" => {
+            runtime::role_agent_exec(&args).map_err(|message| ("role-agent-exec", message))
+        }
         "snapshot" => snapshot::run(&args)
             .map(|_| ExitCode::SUCCESS)
             .map_err(|message| ("snapshot", message)),

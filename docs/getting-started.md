@@ -78,9 +78,16 @@ durable state directory with `workspace-write`, workers start in the target
 repository with `workspace-write`, and scouts/authority reviewers use
 `read-only`. The production Linux-container adapter uses separate unprivileged
 Unix identities instead because nested bubblewrap is unavailable under Docker's
-default seccomp profile. In both cases the orchestrator can read the target but
-cannot write it, while workers can. Claude remains a compatibility path and
-does not provide Codex's native role boundary outside the production adapter.
+default seccomp profile. Its tmux server runs as the non-writing orchestrator
+identity. A narrowly gated, setuid Rust entrypoint may only start the fixed
+Codex subagent command recorded for a named role; all other invocations
+permanently drop back to the caller UID. Each role also receives a private
+Codex runtime home so one role's private lock/config files cannot stall another.
+The isolated orchestrator's real UID makes lifecycle enforcement mandatory, so
+shell-level environment overrides cannot authorize a writer after completion.
+In both environments the orchestrator can read the target but cannot write it,
+while workers can. Claude remains a compatibility path and does not provide
+Codex's native role boundary outside the production adapter.
 
 `--root` selects the target project repo for `MULTIAGENT_ROOT`, state, and write
 policy. The orchestrator CLI works from the durable state directory and reads
@@ -460,8 +467,14 @@ multiagent policy approve /tmp --actor orchestrator --assignment-id build-logs -
 For Codex roles, the OS boundary mechanically prevents the orchestrator,
 authority reviewers, and scouts from writing the target repository. On native
 hosts that boundary is Codex's sandbox; in the production Linux container it is
-Unix ownership plus a permanent role UID drop. The write-policy helper remains
-responsible for explicit writes outside the normal role root. Claude
+Unix ownership plus a permanent role UID drop. The tmux server itself has the
+orchestrator UID, so bypassing the Rust CLI to open a raw pane still produces a
+non-writing process. The only privileged transition is the fixed
+`role-agent-exec` path, which validates persisted role metadata and a
+root-owned, non-group-writable Codex bridge before dropping to the writer or
+reader UID. Generic `role-exec` calls from the orchestrator lose setuid
+privilege before dispatch. The write-policy helper remains responsible for
+explicit writes outside the normal role root. Claude
 compatibility processes do not receive this mechanical boundary on native
 hosts.
 

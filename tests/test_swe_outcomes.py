@@ -50,12 +50,80 @@ from evaluation.native_solver import swe_prod_repository  # noqa: E402
 
 
 class NativeOutcomeTest(unittest.TestCase):
+    def test_autonomous_authority_does_not_reopen_explicit_task_behavior(self):
+        root = Path(__file__).resolve().parents[1]
+        reviewer = (root / "prompts/roles/decision-authority-reviewer.md").read_text(
+            encoding="utf-8"
+        )
+        lifecycle = (root / "prompts/playbooks/implementation-lifecycle.md").read_text(
+            encoding="utf-8"
+        )
+        autonomous = (
+            root / "evaluation/native_solver/templates/swe_autonomous_appendix.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("original request is itself the user's decision", reviewer)
+        self.assertIn("at least two materially different", reviewer)
+        self.assertIn("explicit task contract is already approved", lifecycle)
+        self.assertIn("This run has no interactive user", autonomous)
+        self.assertIn("narrowest backward-compatible interpretation", autonomous)
+
     def test_runner_has_no_submission_rejection_path(self):
         self.assertFalse(hasattr(evalscope_multiagent_native_runner, "is_submission_gate_rejection"))
         self.assertFalse(hasattr(evalscope_multiagent_native_runner.MultiagentNativeRunner, "_score_no_submission"))
         self.assertFalse(
             hasattr(evalscope_multiagent_native_runner.MultiagentNativeRunner, "_collect_rejection_diagnostics")
         )
+
+    def test_role_filesystem_seeds_private_codex_home_per_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workdir = root / "repo"
+            workdir.mkdir()
+            (workdir / "source.py").write_text("value = 1\n", encoding="utf-8")
+            launcher = root / "multiagent"
+            launcher.write_text("binary", encoding="utf-8")
+            staging = root / "staging-home"
+            staging.mkdir()
+            (staging / "auth.json").write_text('{"token":"test"}', encoding="utf-8")
+            (staging / "config.toml").write_text("model = 'test'\n", encoding="utf-8")
+            role_homes = root / "role-homes"
+            runtime = root / "runtime"
+
+            with mock.patch.multiple(
+                swe_prod_lifecycle,
+                CODEX_HOME=staging,
+                ROLE_CODEX_HOME_ROOT=role_homes,
+                RUNTIME_ROOT=runtime,
+            ):
+                with mock.patch.object(swe_prod_lifecycle.os, "chown"):
+                    with mock.patch.object(
+                        swe_prod_lifecycle.os,
+                        "chmod",
+                        wraps=swe_prod_lifecycle.os.chmod,
+                    ) as chmod:
+                        swe_prod_lifecycle.prepare_role_filesystem(workdir, launcher)
+
+            for role in ("orchestrator", "writer", "reader"):
+                home = role_homes / role
+                self.assertEqual((home / "auth.json").read_text(encoding="utf-8"), '{"token":"test"}')
+                self.assertTrue((home / "config.toml").is_file())
+                self.assertIn("directory =", (home / ".gitconfig").read_text(encoding="utf-8"))
+                self.assertEqual(home.stat().st_mode & 0o777, 0o700)
+            chmod.assert_any_call(launcher, 0o4755)
+            self.assertTrue(
+                all("follow_symlinks" not in call.kwargs for call in chmod.call_args_list),
+                "role filesystem setup must work on Python builds without chmod follow_symlinks support",
+            )
+
+    def test_runner_monitors_the_orchestrator_tmux_socket(self):
+        completed = SimpleNamespace(returncode=0, stdout="orchestrator\n", stderr="")
+        with mock.patch.object(swe_prod_lifecycle, "run", return_value=completed) as run:
+            self.assertTrue(swe_prod_lifecycle.tmux_has_session("session-1"))
+            self.assertTrue(swe_prod_lifecycle.tmux_has_orchestrator("session-1"))
+
+        for call in run.call_args_list:
+            self.assertEqual(call.args[0][:3], ["tmux", "-S", str(swe_prod_lifecycle.TMUX_SOCKET)])
 
     def test_shard_problem_statement_uses_relative_sample_id(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -141,9 +209,13 @@ class NativeOutcomeTest(unittest.TestCase):
         self.assertEqual(result, 0)
         materialize.assert_called_once_with(root, "a" * 40)
         expose_untracked.assert_called_once_with(root)
-        prepare_roles.assert_called_once_with(root)
+        prepare_roles.assert_called_once_with(root, Path("multiagent"))
         restore_owner.assert_called_once_with(root)
         self.assertEqual(launch_env["MULTIAGENT_UID_SANDBOX"], "1")
+        self.assertEqual(
+            launch_env["MULTIAGENT_CODEX_HOME_ROOT"],
+            str(swe_prod_lifecycle.ROLE_CODEX_HOME_ROOT),
+        )
 
     def test_workspace_handoff_includes_new_source_and_test_files(self):
         with tempfile.TemporaryDirectory() as directory:

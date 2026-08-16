@@ -39,7 +39,7 @@ trust_level = "trusted"
         CODEX_WRAPPER.write_text(
             f"""#!/usr/bin/env bash
 set -euo pipefail
-export CODEX_HOME={str(CODEX_HOME)!r}
+export CODEX_HOME="${{CODEX_HOME:-{str(CODEX_HOME)!s}}}"
 {codex_exec}
   -c 'model_provider="openai"' \\
   -c 'model="{model}"' \\
@@ -53,7 +53,7 @@ export CODEX_HOME={str(CODEX_HOME)!r}
     CODEX_WRAPPER.write_text(
         f"""#!/usr/bin/env bash
 set -euo pipefail
-export CODEX_HOME={str(CODEX_HOME)!r}
+export CODEX_HOME="${{CODEX_HOME:-{str(CODEX_HOME)!s}}}"
 {codex_exec}
   -c 'model_provider="evalscope"' \\
   -c 'model_providers.evalscope.name="EvalScope Bridge"' \\

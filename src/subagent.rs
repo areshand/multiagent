@@ -468,7 +468,7 @@ fn assignment_create(args: &[String]) -> Result<(), String> {
     reject_overlap(&assignments, &options.name, &options.role, &owned)?;
 
     let start_commit = resolve_commit(&root, &options.start_commit)?;
-    let lifecycle_enforced = env::var("MULTIAGENT_LIFECYCLE_ENFORCEMENT").as_deref() == Ok("1");
+    let lifecycle_enforced = config::lifecycle_enforced();
     let workflow_id =
         if lifecycle_enforced && options.role == "exploitation" && options.workflow_id.is_empty() {
             env::var("MULTIAGENT_WORKFLOW_ID").unwrap_or_default()
@@ -978,7 +978,7 @@ fn verifier_dirs(state: &Path) -> Result<Vec<PathBuf>, String> {
                 .and_then(|value| value.to_str())
                 .unwrap_or("")
                 .to_ascii_lowercase();
-            name.contains("verifier") || name.contains("review")
+            name.contains("verifier") && !name.contains("build-verifier")
         })
         .collect())
 }

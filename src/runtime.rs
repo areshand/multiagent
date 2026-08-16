@@ -1,4 +1,4 @@
-use crate::{config, policy};
+use crate::{config, policy, role_sandbox};
 use chrono::{Local, SecondsFormat, Utc};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -35,10 +35,9 @@ enum CodexAccess {
     WorkspaceWrite,
 }
 
-const ORCHESTRATOR_UID: u32 = 10001;
+const ORCHESTRATOR_UID: u32 = config::ORCHESTRATOR_UID;
 const WRITER_UID: u32 = 10002;
 const READER_UID: u32 = 10003;
-#[cfg(target_os = "linux")]
 const ROLE_GID: u32 = 10001;
 
 impl CodexAccess {
@@ -89,6 +88,107 @@ impl RuntimeConfig {
             )),
         }
     }
+}
+
+pub fn role_agent_exec(args: &[String]) -> Result<ExitCode, String> {
+    let (name, restored) = match args {
+        [name] => (name.as_str(), false),
+        [name, flag] if flag == "--restore" => (name.as_str(), true),
+        _ => return Err("usage: multiagent role-agent-exec NAME [--restore]".into()),
+    };
+    validate_name(name)?;
+    if env::var("MULTIAGENT_UID_SANDBOX").as_deref() != Ok("1") {
+        return Err("role-agent-exec requires MULTIAGENT_UID_SANDBOX=1".into());
+    }
+    #[cfg(unix)]
+    if unsafe { libc::getuid() } != ORCHESTRATOR_UID {
+        return Err("role-agent-exec is reserved for the orchestrator UID".into());
+    }
+
+    let cfg = RuntimeConfig::load()?;
+    if !cfg.code_exec {
+        return Err("role-agent-exec requires MULTIAGENT_CODEX_EXEC=1".into());
+    }
+    let dir = cfg.state.join("subagents").join(name);
+    let metadata = read_env(&dir.join("meta.env"))?;
+    if metadata.get("name").map(String::as_str) != Some(name)
+        || metadata.get("cli").map(String::as_str) != Some("codex")
+        || metadata.get("cli_bin").map(String::as_str) != Some(cfg.codex_bin.as_str())
+    {
+        return Err("role-agent-exec metadata does not match the requested Codex agent".into());
+    }
+    let access = match metadata.get("codex_access").map(String::as_str) {
+        Some("read-only") => CodexAccess::ReadOnly,
+        Some("workspace-write") => CodexAccess::WorkspaceWrite,
+        _ => return Err("role-agent-exec metadata has invalid codex_access".into()),
+    };
+    validate_privileged_codex_bridge(Path::new(&cfg.codex_bin))?;
+    let prompt = dir.join(if restored {
+        "restore-instruction.txt"
+    } else {
+        "instruction.txt"
+    });
+    if !prompt.is_file() {
+        return Err(format!(
+            "role-agent-exec instruction is missing: {}",
+            prompt.display()
+        ));
+    }
+    let instruction = fs::read_to_string(&prompt).map_err(io_error("read role instruction"))?;
+    if access == CodexAccess::WorkspaceWrite {
+        // The setuid bridge is the final write-authority boundary. Recheck the
+        // assignment against live lifecycle state here so an orchestrator
+        // cannot gain a writer by overriding launch-time environment flags.
+        validate_implementation_context(&cfg, name, Some(&prompt), &instruction)?;
+    }
+    let output = dir.join("last-message.txt");
+    let command = build_cli_command(
+        "codex",
+        &cfg.root,
+        Some(&prompt),
+        Some(&output),
+        &cfg.codex_bin,
+        &cfg.claude_bin,
+        true,
+        access,
+    )?;
+    let supervisor_pid = dir.join("supervisor.pid");
+    atomic_write(
+        &supervisor_pid,
+        &format!("{}\n", std::process::id()),
+        "role supervisor pid",
+    )?;
+    let result = role_sandbox::run_supervised(
+        if access == CodexAccess::WorkspaceWrite {
+            WRITER_UID
+        } else {
+            READER_UID
+        },
+        ROLE_GID,
+        "/bin/sh",
+        &["-c".into(), command],
+    );
+    let _ = fs::remove_file(supervisor_pid);
+    result
+}
+
+#[cfg(unix)]
+fn validate_privileged_codex_bridge(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let metadata = fs::metadata(path).map_err(io_error("inspect privileged Codex bridge"))?;
+    if !metadata.is_file() || metadata.uid() != 0 || metadata.permissions().mode() & 0o022 != 0 {
+        return Err(format!(
+            "privileged Codex bridge must be a root-owned, non-group-writable executable: {}",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn validate_privileged_codex_bridge(_path: &Path) -> Result<(), String> {
+    Err("role-agent-exec requires Unix".into())
 }
 
 pub fn launch(args: &[String]) -> Result<ExitCode, String> {
@@ -164,12 +264,23 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
     {
         return Err("MULTIAGENT_VERIFIER_MAX_ITERATIONS must be a positive integer".into());
     }
-    let lifecycle_enforcement =
-        env_nonempty("MULTIAGENT_LIFECYCLE_ENFORCEMENT").unwrap_or_else(|| "1".into());
+    let lifecycle_enforcement = if config::lifecycle_enforced() {
+        "1".into()
+    } else {
+        env_nonempty("MULTIAGENT_LIFECYCLE_ENFORCEMENT").unwrap_or_else(|| "1".into())
+    };
     if !matches!(lifecycle_enforcement.as_str(), "0" | "1") {
         return Err("MULTIAGENT_LIFECYCLE_ENFORCEMENT must be 0 or 1".into());
     }
     require_command("tmux")?;
+    if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
+        fs::create_dir_all(state_dir.join("runtime_state"))
+            .map_err(io_error("create tmux socket directory"))?;
+        env::set_var(
+            "MULTIAGENT_TMUX_SOCKET",
+            state_dir.join("runtime_state/tmux.sock"),
+        );
+    }
     let orchestrator_bin = if orchestrator_cli == "codex" {
         &codex_bin
     } else {
@@ -296,19 +407,24 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
     if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
         prepare_uid_state_permissions(&state_dir)?;
     }
-    tmux_checked(&[
+    let bootstrap_command = format!("bash {}", shell_escape(&bootstrap.display().to_string()));
+    let new_session = [
         "new-session",
         "-d",
         "-s",
         &session,
         "-n",
         "orchestrator",
-        &format!("bash {}", shell_escape(&bootstrap.display().to_string())),
-    ])?;
+        &bootstrap_command,
+    ];
+    if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
+        tmux_checked_as_uid(&new_session, &executable, ORCHESTRATOR_UID)?;
+    } else {
+        tmux_checked(&new_session)?;
+    }
     tmux_checked(&["select-window", "-t", &format!("{session}:orchestrator")])?;
     pipe_log(&session, "orchestrator", &log_dir)?;
     if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
-        grant_uid_tmux_access(&session)?;
         atomic_write(
             &state_dir.join("runtime_state/tmux-access-ready"),
             "ready\n",
@@ -420,6 +536,14 @@ fn launch_environment(
             "MULTIAGENT_UID_SANDBOX",
             env_nonempty("MULTIAGENT_UID_SANDBOX").unwrap_or_else(|| "0".into()),
         ),
+        (
+            "MULTIAGENT_CODEX_HOME_ROOT",
+            env_nonempty("MULTIAGENT_CODEX_HOME_ROOT").unwrap_or_default(),
+        ),
+        (
+            "MULTIAGENT_TMUX_SOCKET",
+            env_nonempty("MULTIAGENT_TMUX_SOCKET").unwrap_or_default(),
+        ),
         ("TMPDIR", state.join("tmp").display().to_string()),
         ("MULTIAGENT_BIN", executable.display().to_string()),
         ("PATH", env::var("PATH").unwrap_or_default()),
@@ -427,8 +551,10 @@ fn launch_environment(
         values.insert(key.into(), value);
     }
     if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
-        if let Some(home) = env_nonempty("CODEX_HOME") {
-            values.insert("HOME".into(), home);
+        if let Some(root) = env_nonempty("MULTIAGENT_CODEX_HOME_ROOT") {
+            let home = Path::new(&root).join("orchestrator");
+            values.insert("CODEX_HOME".into(), home.display().to_string());
+            values.insert("HOME".into(), home.display().to_string());
         }
     }
     values
@@ -458,6 +584,7 @@ fn write_bootstrap(
         .map(String::as_str)
         == Some("1")
     {
+        text.push_str("umask 0007\n");
         text.push_str(&format!(
             "until [[ -f {} ]]; do sleep 0.05; done\n",
             shell_escape(
@@ -486,16 +613,27 @@ fn write_bootstrap(
         env::var("MULTIAGENT_CODEX_EXEC").as_deref() == Ok("1"),
         CodexAccess::WorkspaceWrite,
     )?;
-    let command = wrap_linux_role_sandbox(
-        &command,
-        Path::new(
-            environment
-                .get("MULTIAGENT_BIN")
-                .ok_or_else(|| "missing MULTIAGENT_BIN in launch environment".to_string())?,
-        ),
-        role_write_roots(root, Path::new(&environment["MULTIAGENT_STATE_DIR"]), false),
-        ORCHESTRATOR_UID,
-    );
+    let command = if environment
+        .get("MULTIAGENT_UID_SANDBOX")
+        .map(String::as_str)
+        == Some("1")
+    {
+        // The tmux server and every ordinary pane already run as the
+        // non-writing orchestrator UID. Only the narrowly gated setuid role
+        // launcher may transition a subagent pane to a writer/reader UID.
+        command
+    } else {
+        wrap_linux_role_sandbox(
+            &command,
+            Path::new(
+                environment
+                    .get("MULTIAGENT_BIN")
+                    .ok_or_else(|| "missing MULTIAGENT_BIN in launch environment".to_string())?,
+            ),
+            role_write_roots(root, Path::new(&environment["MULTIAGENT_STATE_DIR"]), false),
+            ORCHESTRATOR_UID,
+        )
+    };
     text.push_str(&command);
     text.push('\n');
     atomic_write(path, &text, "orchestrator bootstrap")?;
@@ -531,7 +669,7 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
     if args != ["complete"] {
         return Err(format!("unknown command: {}", args[0]));
     }
-    if env::var("MULTIAGENT_LIFECYCLE_ENFORCEMENT").as_deref() == Ok("1") {
+    if config::lifecycle_enforced() {
         let workflow_id = env_nonempty("MULTIAGENT_WORKFLOW_ID")
             .ok_or_else(|| "lifecycle enforcement requires MULTIAGENT_WORKFLOW_ID".to_string())?;
         run_self_quiet(&["workflow", "completion-check", &workflow_id])?;
@@ -1021,11 +1159,12 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
     fs::create_dir_all(&cfg.logs).map_err(io_error("create subagent log directory"))?;
     let executable = env::current_exe().map_err(io_error("resolve multiagent executable"))?;
     let metadata = format!(
-        "name={name}\nsession={}\nroot={}\nrole={}\ncodex_access={}\nwrite_policy={}\nlog_file={}\ncli={cli}\ncli_bin={binary}\nhelper={}\ncreated_at={}\n",
+        "name={name}\nsession={}\nroot={}\nrole={}\ncodex_access={}\nworkflow_id={}\nwrite_policy={}\nlog_file={}\ncli={cli}\ncli_bin={binary}\nhelper={}\ncreated_at={}\n",
         cfg.session,
         cfg.root.display(),
         if role.is_empty() { assignment_role } else { &role },
         access.sandbox(),
+        env_nonempty("MULTIAGENT_WORKFLOW_ID").unwrap_or_default(),
         cfg.policy.display(),
         cfg.logs.join(format!("{name}.log")).display(),
         executable.display(),
@@ -1046,27 +1185,38 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         )?;
         prompt_file = Some(path);
     }
-    let cli_command = build_cli_command(
-        cli,
-        &cfg.root,
-        prompt_file.as_deref(),
-        Some(&output_file),
-        &cfg.codex_bin,
-        &cfg.claude_bin,
-        cfg.code_exec,
-        access,
-    )?;
-    let cli_command = wrap_linux_role_sandbox(
-        &cli_command,
-        &executable,
-        role_write_roots(&cfg.root, &cfg.state, access == CodexAccess::WorkspaceWrite),
-        if access == CodexAccess::WorkspaceWrite {
-            WRITER_UID
-        } else {
-            READER_UID
-        },
-    );
-    let command = subagent_shell_command(cfg, name, cli, &executable, &cli_command, false);
+    let cli_command = if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
+        if cli != "codex" || !cfg.code_exec {
+            return Err("UID role isolation requires codex exec subagents".into());
+        }
+        format!(
+            "{} role-agent-exec {}",
+            shell_escape(&executable.display().to_string()),
+            shell_escape(name)
+        )
+    } else {
+        let command = build_cli_command(
+            cli,
+            &cfg.root,
+            prompt_file.as_deref(),
+            Some(&output_file),
+            &cfg.codex_bin,
+            &cfg.claude_bin,
+            cfg.code_exec,
+            access,
+        )?;
+        wrap_linux_role_sandbox(
+            &command,
+            &executable,
+            role_write_roots(&cfg.root, &cfg.state, access == CodexAccess::WorkspaceWrite),
+            if access == CodexAccess::WorkspaceWrite {
+                WRITER_UID
+            } else {
+                READER_UID
+            },
+        )
+    };
+    let command = subagent_shell_command(cfg, name, cli, &executable, &cli_command, access, false);
     tmux_checked(&["new-window", "-d", "-t", &cfg.session, "-n", name, &command])?;
     pipe_log(&cfg.session, name, &cfg.logs)?;
     set_subagent_status(cfg, name, "running")?;
@@ -1413,27 +1563,38 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         None
     };
     let executable = env::current_exe().map_err(io_error("resolve multiagent executable"))?;
-    let cli_command = build_cli_command(
-        &cli,
-        &cfg.root,
-        prompt_file.as_deref(),
-        Some(&output_file),
-        &cfg.codex_bin,
-        &cfg.claude_bin,
-        cfg.code_exec,
-        access,
-    )?;
-    let cli_command = wrap_linux_role_sandbox(
-        &cli_command,
-        &executable,
-        role_write_roots(&cfg.root, &cfg.state, access == CodexAccess::WorkspaceWrite),
-        if access == CodexAccess::WorkspaceWrite {
-            WRITER_UID
-        } else {
-            READER_UID
-        },
-    );
-    let command = subagent_shell_command(cfg, name, &cli, &executable, &cli_command, true);
+    let cli_command = if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
+        if cli != "codex" || !cfg.code_exec {
+            return Err("UID role isolation requires codex exec subagents".into());
+        }
+        format!(
+            "{} role-agent-exec {} --restore",
+            shell_escape(&executable.display().to_string()),
+            shell_escape(name)
+        )
+    } else {
+        let command = build_cli_command(
+            &cli,
+            &cfg.root,
+            prompt_file.as_deref(),
+            Some(&output_file),
+            &cfg.codex_bin,
+            &cfg.claude_bin,
+            cfg.code_exec,
+            access,
+        )?;
+        wrap_linux_role_sandbox(
+            &command,
+            &executable,
+            role_write_roots(&cfg.root, &cfg.state, access == CodexAccess::WorkspaceWrite),
+            if access == CodexAccess::WorkspaceWrite {
+                WRITER_UID
+            } else {
+                READER_UID
+            },
+        )
+    };
+    let command = subagent_shell_command(cfg, name, &cli, &executable, &cli_command, access, true);
     tmux_checked(&["new-window", "-d", "-t", &cfg.session, "-n", name, &command])?;
     pipe_log(&cfg.session, name, &cfg.logs)?;
     set_subagent_status(cfg, name, "running")?;
@@ -1504,9 +1665,13 @@ fn finalize(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
 fn kill(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
     let name = one_name("kill", args)?;
     require_command("tmux")?;
+    let supervisor_pid = read_supervisor_pid(cfg, name);
     if window_exists(&cfg.session, name) {
         let _ = capture_subagent(cfg, name);
         tmux_checked(&["kill-window", "-t", &format!("{}:{name}", cfg.session)])?;
+    }
+    if let Some(pid) = supervisor_pid {
+        wait_for_process_exit(pid, name)?;
     }
     set_subagent_status(cfg, name, "killed")?;
     if cfg
@@ -1519,6 +1684,36 @@ fn kill(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         run_self_quiet(&["subagent", "assignment-status", name, "failed"])?;
     }
     println!("killed {name}");
+    Ok(())
+}
+
+fn read_supervisor_pid(cfg: &RuntimeConfig, name: &str) -> Option<u32> {
+    read_trimmed(
+        &cfg.state
+            .join("subagents")
+            .join(name)
+            .join("supervisor.pid"),
+    )
+    .and_then(|value| value.parse().ok())
+}
+
+#[cfg(unix)]
+fn wait_for_process_exit(pid: u32, name: &str) -> Result<(), String> {
+    for _ in 0..100 {
+        let alive = unsafe { libc::kill(pid as libc::pid_t, 0) } == 0
+            || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM);
+        if !alive {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    Err(format!(
+        "subagent process did not exit after pane close: {name} pid={pid}"
+    ))
+}
+
+#[cfg(not(unix))]
+fn wait_for_process_exit(_pid: u32, _name: &str) -> Result<(), String> {
     Ok(())
 }
 
@@ -1670,7 +1865,7 @@ fn validate_implementation_context(
 }
 
 fn implementation_context(cfg: &RuntimeConfig, name: &str) -> Result<Option<PathBuf>, String> {
-    if env::var("MULTIAGENT_LIFECYCLE_ENFORCEMENT").as_deref() != Ok("1") {
+    if !config::lifecycle_enforced() {
         return Ok(None);
     }
     let meta_path = cfg
@@ -1879,15 +2074,8 @@ fn wrap_linux_role_sandbox(
     command: &str,
     executable: &Path,
     write_roots: Vec<PathBuf>,
-    uid: u32,
+    _uid: u32,
 ) -> String {
-    if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
-        return format!(
-            "{} role-exec --uid {uid} --gid {ROLE_GID} -- /bin/sh -c {}",
-            shell_escape(&executable.display().to_string()),
-            shell_escape(command)
-        );
-    }
     let allowances = write_roots
         .into_iter()
         .map(|path| {
@@ -1938,35 +2126,6 @@ fn prepare_uid_state_permissions(_state: &Path) -> Result<(), String> {
 }
 
 #[cfg(target_os = "linux")]
-fn grant_uid_tmux_access(session: &str) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let output = tmux_output(&["display-message", "-p", "-t", session, "#{socket_path}"])?;
-    if !output.status.success() {
-        return Err(format!(
-            "resolve tmux socket: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    let socket = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-    let parent = socket
-        .parent()
-        .ok_or_else(|| format!("tmux socket has no parent: {}", socket.display()))?;
-    chown_path(parent, 0, ROLE_GID)?;
-    fs::set_permissions(parent, fs::Permissions::from_mode(0o710))
-        .map_err(io_error("set tmux socket directory permissions"))?;
-    chown_path(&socket, 0, ROLE_GID)?;
-    fs::set_permissions(&socket, fs::Permissions::from_mode(0o770))
-        .map_err(io_error("set tmux socket permissions"))?;
-    Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn grant_uid_tmux_access(_session: &str) -> Result<(), String> {
-    Err("MULTIAGENT_UID_SANDBOX is only supported on Linux".into())
-}
-
-#[cfg(target_os = "linux")]
 fn chown_path(path: &Path, uid: u32, gid: u32) -> Result<(), String> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
@@ -1999,10 +2158,11 @@ fn subagent_shell_command(
     cli: &str,
     executable: &Path,
     cli_command: &str,
+    access: CodexAccess,
     restored: bool,
 ) -> String {
     let workflow_id = env_nonempty("MULTIAGENT_WORKFLOW_ID").unwrap_or_default();
-    let lifecycle = env_nonempty("MULTIAGENT_LIFECYCLE_ENFORCEMENT").unwrap_or_else(|| "0".into());
+    let lifecycle = u8::from(config::lifecycle_enforced()).to_string();
     let path = env::var("PATH").unwrap_or_default();
     let mut values = vec![
         ("MULTIAGENT_SESSION", cfg.session.clone()),
@@ -2025,13 +2185,25 @@ fn subagent_shell_command(
     if restored {
         values.push(("MULTIAGENT_SUBAGENT_RESTORED", "1".into()));
     }
+    if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
+        if let Some(root) = env_nonempty("MULTIAGENT_CODEX_HOME_ROOT") {
+            let role = if access == CodexAccess::WorkspaceWrite {
+                "writer"
+            } else {
+                "reader"
+            };
+            let home = Path::new(&root).join(role).display().to_string();
+            values.push(("CODEX_HOME", home.clone()));
+            values.push(("HOME", home));
+        }
+    }
     let exports = values
         .into_iter()
         .map(|(key, value)| format!("{key}={}", shell_escape(&value)))
         .collect::<Vec<_>>()
         .join(" ");
     format!(
-        "cd {} && export {exports} && {cli_command}; rc=$?; printf '\\nfinal status: codex exec exited rc=%s\\n' $rc; sleep infinity",
+        "cd {} && umask 0007 && export {exports} && {cli_command}; rc=$?; printf '\\nfinal status: codex exec exited rc=%s\\n' $rc; sleep infinity",
         shell_escape(&cfg.root.display().to_string())
     )
 }
@@ -2226,12 +2398,30 @@ fn infer_status(cfg: &RuntimeConfig, name: &str) -> String {
 
 fn accepted_report(text: &str) -> bool {
     text.lines().any(|line| {
-        let value = line.trim().to_ascii_lowercase();
+        let value = normalize_report_line(line).to_ascii_lowercase();
         value == "accepted"
             || value.starts_with("accepted ")
             || value.starts_with("verdict: accepted")
             || value.starts_with("verdict=accepted")
+            || (value.starts_with("review-record: type=") && value.contains(" verdict=pass diff="))
     })
+}
+
+fn normalize_report_line(line: &str) -> &str {
+    let mut value = line.trim();
+    if let Some((prefix, rest)) = value.split_once(' ') {
+        let numbered = prefix
+            .strip_suffix('.')
+            .or_else(|| prefix.strip_suffix(')'))
+            .is_some_and(|number| !number.is_empty() && number.chars().all(|c| c.is_ascii_digit()));
+        if numbered || matches!(prefix, "-" | "*") {
+            value = rest.trim_start();
+        }
+    }
+    if value.starts_with('`') && value.ends_with('`') && value.len() >= 2 {
+        value = &value[1..value.len() - 1];
+    }
+    value
 }
 
 fn looks_blocked_report(text: &str) -> bool {
@@ -2357,6 +2547,9 @@ fn capture_window(session: &str, name: &str, lines: usize) -> Result<String, Str
 }
 
 fn pipe_log(session: &str, window: &str, logs: &Path) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    use std::os::unix::fs::PermissionsExt;
+
     fs::create_dir_all(logs).map_err(io_error("create log directory"))?;
     let log = logs.join(format!("{window}.log"));
     OpenOptions::new()
@@ -2364,6 +2557,12 @@ fn pipe_log(session: &str, window: &str, logs: &Path) -> Result<(), String> {
         .append(true)
         .open(&log)
         .map_err(io_error("create pane log"))?;
+    #[cfg(target_os = "linux")]
+    if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") && unsafe { libc::geteuid() } == 0 {
+        chown_path(&log, ORCHESTRATOR_UID, ROLE_GID)?;
+        fs::set_permissions(&log, fs::Permissions::from_mode(0o660))
+            .map_err(io_error("set orchestrator pane log permissions"))?;
+    }
     tmux_checked(&[
         "pipe-pane",
         "-o",
@@ -2374,17 +2573,59 @@ fn pipe_log(session: &str, window: &str, logs: &Path) -> Result<(), String> {
 }
 
 fn tmux_success(args: &[&str]) -> bool {
-    Command::new("tmux")
+    tmux_command()
         .args(args)
-        .status()
-        .is_ok_and(|status| status.success())
+        .output()
+        .is_ok_and(|output| output.status.success())
 }
 
 fn tmux_output(args: &[&str]) -> Result<Output, String> {
-    Command::new("tmux")
+    tmux_command()
         .args(args)
         .output()
         .map_err(io_error("run tmux"))
+}
+
+fn tmux_command() -> Command {
+    let mut command = Command::new("tmux");
+    if let Some(socket) = env_path("MULTIAGENT_TMUX_SOCKET") {
+        command.arg("-S").arg(socket);
+    }
+    command
+}
+
+#[cfg(target_os = "linux")]
+fn tmux_checked_as_uid(args: &[&str], executable: &Path, uid: u32) -> Result<(), String> {
+    let mut command = Command::new(executable);
+    command
+        .arg("role-exec")
+        .arg("--uid")
+        .arg(uid.to_string())
+        .arg("--gid")
+        .arg(ROLE_GID.to_string())
+        .arg("--")
+        .arg("tmux");
+    if let Some(socket) = env_path("MULTIAGENT_TMUX_SOCKET") {
+        command.arg("-S").arg(socket);
+    }
+    let output = command
+        .args(args)
+        .output()
+        .map_err(io_error("run tmux as orchestrator"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "tmux {} as orchestrator failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn tmux_checked_as_uid(_args: &[&str], _executable: &Path, _uid: u32) -> Result<(), String> {
+    Err("MULTIAGENT_UID_SANDBOX is only supported on Linux".into())
 }
 
 fn tmux_checked(args: &[&str]) -> Result<(), String> {
@@ -2758,5 +2999,15 @@ mod tests {
         );
         assert_eq!(classify_capture("assignment complete"), "done");
         assert_eq!(classify_capture("working"), "busy");
+    }
+
+    #[test]
+    fn reviewer_pass_marker_is_accepted_evidence() {
+        let report = "authority-findings: blocked sets remain unchanged\n\
+review-record: type=decision-authority verdict=pass diff=-\n";
+        assert!(accepted_report(report));
+        assert!(accepted_report(
+            "3. `review-record: type=scope verdict=pass diff=abc`"
+        ));
     }
 }
