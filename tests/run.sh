@@ -180,6 +180,37 @@ esac
 TMUX
 chmod +x "$MOCK_BIN/tmux"
 
+cat >"$MOCK_BIN/qwen" <<'QWEN'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ " ${*:-} " == *" --version "* ]]; then
+  printf 'qwen-code test-1.0\n'
+  exit 0
+fi
+prompt="$(cat)"
+if [[ -n "${QWEN_PROMPT_CAPTURE:-}" ]]; then
+  printf '%s' "$prompt" >"$QWEN_PROMPT_CAPTURE"
+fi
+if [[ -n "${QWEN_TRY_WRITE:-}" ]]; then
+  printf 'unauthorized\n' >"$QWEN_TRY_WRITE"
+fi
+if [[ -n "${QWEN_DESCENDANT_PID_FILE:-}" ]]; then
+  sleep 30 &
+  descendant_pid=$!
+  printf '%s\n' "$descendant_pid" >"$QWEN_DESCENDANT_PID_FILE"
+fi
+if [[ -n "${QWEN_SLEEP_SECONDS:-}" ]]; then
+  sleep "$QWEN_SLEEP_SECONDS"
+fi
+printf '%s\n' '{"type":"system","session_id":"qwen-session-1"}'
+printf '%s\n' 'malformed provider line retained as raw text'
+printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"Qwen working"}]}}'
+printf '%s\n' '{"type":"result","result":"Qwen final result"}'
+printf 'qwen diagnostic\n' >&2
+exit "${QWEN_EXIT_CODE:-0}"
+QWEN
+chmod +x "$MOCK_BIN/qwen"
+
 export PATH="$MOCK_BIN:$PATH"
 export MOCK_TMUX_WINDOWS="$TMPDIR/windows"
 export MOCK_TMUX_CAPTURES="$TMPDIR/captures"
@@ -192,6 +223,7 @@ export MULTIAGENT_READY_ATTEMPTS=1
 export MULTIAGENT_READY_DELAY=0
 export CODEX_BIN="true"
 export CLAUDE_BIN="true"
+export QWEN_BIN="$MOCK_BIN/qwen"
 export ORCHESTRATOR_CLI="codex"
 export WORKER_CLI="claude"
 export SUBAGENT_CLI="claude"
@@ -212,6 +244,121 @@ assert_file_contains() {
     exit 1
   fi
 }
+
+AGENT_RUN_DIR="$TMPDIR/agent-run"
+mkdir -p "$AGENT_RUN_DIR/work"
+printf 'prompt payload with spaces and '\''quotes'\''\n' >"$AGENT_RUN_DIR/prompt.txt"
+QWEN_PROMPT_CAPTURE="$AGENT_RUN_DIR/prompt-captured.txt" \
+  "$MULTIAGENT" agent run \
+  --backend qwen \
+  --cwd "$AGENT_RUN_DIR/work" \
+  --prompt-file "$AGENT_RUN_DIR/prompt.txt" \
+  --final-output "$AGENT_RUN_DIR/final.txt" \
+  --trace-dir "$AGENT_RUN_DIR/trace" \
+  --access read-only >"$AGENT_RUN_DIR/forwarded.out" 2>"$AGENT_RUN_DIR/forwarded.err"
+AGENT_TRACE="$AGENT_RUN_DIR/trace/$(tr -d '\r\n' <"$AGENT_RUN_DIR/trace/latest")"
+assert_file_contains "$AGENT_RUN_DIR/prompt-captured.txt" "prompt payload with spaces and 'quotes'"
+assert_file_contains "$AGENT_RUN_DIR/final.txt" "Qwen final result"
+assert_file_contains "$AGENT_TRACE/raw-stdout.log" "malformed provider line retained as raw text"
+assert_file_contains "$AGENT_TRACE/raw-stderr.log" "qwen diagnostic"
+assert_file_contains "$AGENT_TRACE/events.jsonl" '"backend":"qwen"'
+assert_file_contains "$AGENT_TRACE/events.jsonl" '"raw_type":"result"'
+assert_file_contains "$AGENT_TRACE/session-id" "qwen-session-1"
+assert_file_contains "$AGENT_TRACE/metadata.json" '"version": "qwen-code test-1.0"'
+assert_file_contains "$AGENT_TRACE/exit.json" '"success": true'
+"$MULTIAGENT" agent run \
+  --backend qwen \
+  --cwd "$AGENT_RUN_DIR/work" \
+  --prompt-file "$AGENT_RUN_DIR/prompt.txt" \
+  --final-output "$AGENT_RUN_DIR/final-second.txt" \
+  --trace-dir "$AGENT_RUN_DIR/trace" \
+  --access read-only >/dev/null 2>/dev/null
+[[ "$(tr -d '\r\n' <"$AGENT_RUN_DIR/trace/latest")" == "attempt-0002" ]]
+assert_file_contains "$AGENT_RUN_DIR/trace/attempt-0001/raw-stdout.log" "Qwen final result"
+assert_file_contains "$AGENT_RUN_DIR/trace/attempt-0002/raw-stdout.log" "Qwen final result"
+assert_file_contains "$AGENT_RUN_DIR/final-second.txt" "Qwen final result"
+agent_backend_info="$("$MULTIAGENT" agent backend-info qwen)"
+[[ "$agent_backend_info" == *'"backend":"qwen"'* ]]
+[[ "$agent_backend_info" == *'"native_resume":true'* ]]
+[[ "$agent_backend_info" == *'"version":"qwen-code test-1.0"'* ]]
+if MULTIAGENT_AGENT_TIMEOUT_SECONDS=0 "$MULTIAGENT" agent run \
+  --backend qwen \
+  --cwd "$AGENT_RUN_DIR/work" \
+  --prompt-file "$AGENT_RUN_DIR/prompt.txt" \
+  --final-output "$AGENT_RUN_DIR/invalid-timeout-final.txt" \
+  --trace-dir "$AGENT_RUN_DIR/invalid-timeout-trace" \
+  --access read-only >"$AGENT_RUN_DIR/invalid-timeout.out" 2>&1; then
+  echo "expected zero coding-agent timeout to fail" >&2
+  exit 1
+fi
+assert_file_contains "$AGENT_RUN_DIR/invalid-timeout.out" "MULTIAGENT_AGENT_TIMEOUT_SECONDS must be a positive integer"
+[[ ! -e "$AGENT_RUN_DIR/invalid-timeout-trace/latest" ]]
+
+set +e
+QWEN_EXIT_CODE=7 "$MULTIAGENT" agent run \
+  --backend qwen \
+  --cwd "$AGENT_RUN_DIR/work" \
+  --prompt-file "$AGENT_RUN_DIR/prompt.txt" \
+  --final-output "$AGENT_RUN_DIR/nonzero-final.txt" \
+  --trace-dir "$AGENT_RUN_DIR/nonzero-trace" \
+  --access workspace-write >/dev/null 2>/dev/null
+agent_nonzero_rc=$?
+set -e
+[[ "$agent_nonzero_rc" -eq 7 ]]
+AGENT_NONZERO_TRACE="$AGENT_RUN_DIR/nonzero-trace/$(tr -d '\r\n' <"$AGENT_RUN_DIR/nonzero-trace/latest")"
+assert_file_contains "$AGENT_NONZERO_TRACE/exit.json" '"code": 7'
+
+set +e
+MULTIAGENT_AGENT_TIMEOUT_SECONDS=1 \
+  QWEN_SLEEP_SECONDS=30 \
+  QWEN_DESCENDANT_PID_FILE="$AGENT_RUN_DIR/descendant.pid" \
+  "$MULTIAGENT" agent run \
+  --backend qwen \
+  --cwd "$AGENT_RUN_DIR/work" \
+  --prompt-file "$AGENT_RUN_DIR/prompt.txt" \
+  --final-output "$AGENT_RUN_DIR/timeout-final.txt" \
+  --trace-dir "$AGENT_RUN_DIR/timeout-trace" \
+  --access workspace-write >/dev/null 2>/dev/null
+agent_timeout_rc=$?
+set -e
+[[ "$agent_timeout_rc" -eq 124 ]]
+AGENT_TIMEOUT_TRACE="$AGENT_RUN_DIR/timeout-trace/$(tr -d '\r\n' <"$AGENT_RUN_DIR/timeout-trace/latest")"
+assert_file_contains "$AGENT_TIMEOUT_TRACE/exit.json" '"timed_out": true'
+assert_file_contains "$AGENT_TIMEOUT_TRACE/exit.json" '"reason": "timeout"'
+if [[ -f "$AGENT_RUN_DIR/descendant.pid" ]]; then
+  descendant_pid="$(tr -d '\r\n' <"$AGENT_RUN_DIR/descendant.pid")"
+  for _ in $(seq 1 40); do
+    if ! kill -0 "$descendant_pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.05
+  done
+  if kill -0 "$descendant_pid" 2>/dev/null; then
+    echo "timed-out coding-agent descendant is still alive: $descendant_pid" >&2
+    exit 1
+  fi
+fi
+
+if [[ "$HOST_KERNEL" == Linux ]]; then
+  mkdir -p "$AGENT_RUN_DIR/landlock-output"
+  set +e
+  QWEN_TRY_WRITE="$AGENT_RUN_DIR/work/forbidden.txt" \
+    "$MULTIAGENT" role-exec \
+    --allow-write "$AGENT_RUN_DIR/landlock-output" \
+    -- "$MULTIAGENT" agent run \
+    --backend qwen \
+    --cwd "$AGENT_RUN_DIR/work" \
+    --prompt-file "$AGENT_RUN_DIR/prompt.txt" \
+    --final-output "$AGENT_RUN_DIR/landlock-output/final.txt" \
+    --trace-dir "$AGENT_RUN_DIR/landlock-output/trace" \
+    --access read-only >/dev/null 2>/dev/null
+  agent_readonly_rc=$?
+  set -e
+  [[ "$agent_readonly_rc" -ne 0 ]]
+  [[ ! -e "$AGENT_RUN_DIR/work/forbidden.txt" ]]
+  AGENT_READONLY_TRACE="$AGENT_RUN_DIR/landlock-output/trace/$(tr -d '\r\n' <"$AGENT_RUN_DIR/landlock-output/trace/latest")"
+  assert_file_contains "$AGENT_READONLY_TRACE/exit.json" '"success": false'
+fi
 
 assert_file_not_contains() {
   local file="$1"
@@ -332,6 +479,34 @@ MOCK_TMUX_HAS_SESSION=0 \
 assert_file_contains "$TMPDIR/launch-explicit-state/orchestrator-bootstrap.sh" "$(printf '%q' "$TMPDIR/launch-explicit-state/runtime_state/orchestrator-prompt-bundle.md")"
 assert_file_contains "$TMPDIR/launch-explicit-state/runtime_state/orchestrator-prompt-bundle.md" "custom prompt"
 assert_file_contains "$TMPDIR/launch-explicit-state/runtime_state/orchestrator-prompt-bundle.md" "BEGIN MANDATORY IMPLEMENTATION LIFECYCLE"
+
+rm -f "$MOCK_TMUX_LOG"
+MOCK_TMUX_HAS_SESSION=0 \
+  MULTIAGENT_SESSION="launch-qwen" \
+  MULTIAGENT_PROMPT= \
+  MULTIAGENT_STATE_DIR="$TMPDIR/launch-qwen-state" \
+  MULTIAGENT_WRITE_POLICY="$TMPDIR/launch-qwen-policy/write-policy.paths" \
+  ORCHESTRATOR_CLI=qwen WORKER_CLI=qwen SUBAGENT_CLI=qwen VERIFIER_CLI=qwen \
+  "$ROOT/launch.sh" --session launch-qwen --root "$LAUNCH_TARGET" --no-attach >"$TMPDIR/launch-qwen.out"
+QWEN_BOOTSTRAP="$TMPDIR/launch-qwen-state/orchestrator-bootstrap.sh"
+assert_file_contains "$TMPDIR/launch-qwen.out" "Worker CLI: qwen"
+assert_file_contains "$QWEN_BOOTSTRAP" "$MULTIAGENT agent run --backend qwen"
+assert_file_contains "$QWEN_BOOTSTRAP" "--trace-dir $TMPDIR/launch-qwen-state/logs/agents/orchestrator"
+assert_file_contains "$TMPDIR/launch-qwen-state/runtime_state/agent-backends.tsv" $'qwen\t'
+assert_file_contains "$TMPDIR/launch-qwen-state/runtime_state/agent-backends.tsv" "qwen-code test-1.0"
+
+if MOCK_TMUX_HAS_SESSION=0 \
+  MULTIAGENT_SESSION="launch-missing-qwen" \
+  MULTIAGENT_PROMPT= \
+  MULTIAGENT_STATE_DIR="$TMPDIR/launch-missing-qwen-state" \
+  MULTIAGENT_WRITE_POLICY="$TMPDIR/launch-missing-qwen-policy/write-policy.paths" \
+  ORCHESTRATOR_CLI=qwen WORKER_CLI=qwen SUBAGENT_CLI=qwen VERIFIER_CLI=qwen \
+  QWEN_BIN="$TMPDIR/does-not-exist/qwen" \
+  "$ROOT/launch.sh" --session launch-missing-qwen --root "$LAUNCH_TARGET" --no-attach >"$TMPDIR/launch-missing-qwen.out" 2>&1; then
+  echo "expected missing Qwen Code executable to fail launch preflight" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/launch-missing-qwen.out" "run qwen coding-agent preflight"
 
 REPAIR_STATE="$TMPDIR/repair-state"
 mkdir -p "$REPAIR_STATE"
@@ -790,8 +965,8 @@ assert_file_contains "$ROOT/README.md" "MULTIAGENT_VERIFIER_MAX_ITERATIONS=3"
 assert_file_contains "$ROOT/README.md" "compact contract ledger"
 assert_file_contains "$ROOT/README.md" "hidden-contract edge cases"
 assert_file_contains "$ROOT/README.md" "hidden-contract-ledger"
-assert_file_contains "$ROOT/README.md" 'WORKER_CLI`: worker CLI for manual worker windows, default `claude`'
-assert_file_contains "$ROOT/README.md" 'VERIFIER_CLI`: verifier CLI, default `codex`'
+assert_file_contains "$ROOT/README.md" 'WORKER_CLI`: worker coding-agent backend for manual worker windows'
+assert_file_contains "$ROOT/README.md" 'VERIFIER_CLI`: verifier backend, default `codex`'
 assert_file_contains "$ROOT/README.md" "Evaluation Framework"
 assert_file_contains "$ROOT/README.md" "Parallel DAG Discipline"
 assert_file_contains "$ROOT/README.md" "Structured Repair Loop"
@@ -1449,15 +1624,14 @@ assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/codex-exec-protocol/instru
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/codex-exec-protocol/instruction.txt" '{"cmd":"cd /app && sed -n'
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/codex-exec-protocol/instruction.txt" "Inspect /app"
 codex_exec_spawn_line="$(grep -F "new-window -d test-session codex-exec-protocol " "$MOCK_TMUX_LOG")"
-[[ "$codex_exec_spawn_line" == *"exec --cd $ROOT"* ]]
+[[ "$codex_exec_spawn_line" == *"$MULTIAGENT agent run --backend codex --cwd $ROOT"* ]]
 if [[ "$HOST_KERNEL" == Linux ]]; then
   [[ "$codex_exec_spawn_line" == *"$MULTIAGENT role-exec"* ]]
-  [[ "$codex_exec_spawn_line" == *"--dangerously-bypass-approvals-and-sandbox"* ]]
   [[ "$codex_exec_spawn_line" == *"--allow-write $ROOT"* ]]
-else
-  [[ "$codex_exec_spawn_line" == *"--sandbox workspace-write -c approval_policy=never"* ]]
 fi
-[[ "$codex_exec_spawn_line" == *"--output-last-message"* ]]
+[[ "$codex_exec_spawn_line" == *"--final-output $MULTIAGENT_STATE_DIR/subagents/codex-exec-protocol/last-message.txt"* ]]
+[[ "$codex_exec_spawn_line" == *"--trace-dir $MULTIAGENT_STATE_DIR/logs/agents/codex-exec-protocol"* ]]
+[[ "$codex_exec_spawn_line" == *"--access workspace-write"* ]]
 
 printf 'final status: codex exec exited rc=0\n' >"$MOCK_TMUX_CAPTURES/codex-exec-protocol.txt"
 codex_wait_output="$(MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$MULTIAGENT" subagent wait codex-exec-protocol --timeout 1 --poll-interval 0)"
@@ -1467,14 +1641,12 @@ printf 'Codex exec prompt ready\n' >"$MOCK_TMUX_CAPTURES/decision-authority-read
 MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$MULTIAGENT" subagent spawn decision-authority-read-only \
   --role reviewer --instruction "Review the proposed authority"
 authority_spawn_line="$(grep -F "new-window -d test-session decision-authority-read-only " "$MOCK_TMUX_LOG")"
-[[ "$authority_spawn_line" == *"exec --cd $ROOT"* ]]
+[[ "$authority_spawn_line" == *"$MULTIAGENT agent run --backend codex --cwd $ROOT"* ]]
 if [[ "$HOST_KERNEL" == Linux ]]; then
   [[ "$authority_spawn_line" == *"$MULTIAGENT role-exec"* ]]
-  [[ "$authority_spawn_line" == *"--dangerously-bypass-approvals-and-sandbox"* ]]
   [[ "$authority_spawn_line" != *"--allow-write $ROOT"* ]]
-else
-  [[ "$authority_spawn_line" == *"--sandbox read-only -c approval_policy=never"* ]]
 fi
+[[ "$authority_spawn_line" == *"--access read-only"* ]]
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/decision-authority-read-only/meta.env" "role=reviewer"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/decision-authority-read-only/meta.env" "codex_access=read-only"
 
@@ -1536,6 +1708,25 @@ if [[ "$claude_spawn_line" == *"--cd"* || "$claude_spawn_line" == *"--no-alt-scr
 fi
 printf 'Final status: completed\n' >"$MOCK_TMUX_CAPTURES/subagent-claude.txt"
 "$MULTIAGENT" subagent finalize subagent-claude >/dev/null
+
+SUBAGENT_CLI=qwen "$MULTIAGENT" subagent spawn subagent-qwen --role reviewer --instruction "Review with Qwen Code"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-qwen/meta.env" "cli=qwen"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-qwen/meta.env" "cli_bin=$QWEN_BIN"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-qwen/meta.env" "access=read-only"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-qwen/meta.env" "trace_dir=$MULTIAGENT_STATE_DIR/logs/agents/subagent-qwen"
+qwen_spawn_line="$(grep -F "new-window -d test-session subagent-qwen " "$MOCK_TMUX_LOG")"
+[[ "$qwen_spawn_line" == *"$MULTIAGENT agent run --backend qwen --cwd $ROOT"* ]]
+[[ "$qwen_spawn_line" == *"--prompt-file $MULTIAGENT_STATE_DIR/subagents/subagent-qwen/instruction.txt"* ]]
+[[ "$qwen_spawn_line" == *"--access read-only"* ]]
+if grep -Fq "send-key test-session:subagent-qwen" "$MOCK_TMUX_LOG"; then
+  echo "headless Qwen Code must receive its prompt through stdin, not tmux send-keys" >&2
+  exit 1
+fi
+printf 'final status: coding agent exited rc=0\n' >"$MOCK_TMUX_CAPTURES/subagent-qwen.txt"
+qwen_poll="$(SUBAGENT_CLI=qwen "$MULTIAGENT" subagent poll subagent-qwen)"
+[[ "$qwen_poll" == $'subagent-qwen\tdone' ]]
+SUBAGENT_CLI=qwen "$MULTIAGENT" subagent kill subagent-qwen >/dev/null
+assert_file_contains "$MULTIAGENT_STATE_DIR/logs/agents/subagent-qwen/supervisor-termination.json" '"reason": "canceled"'
 
 printf 'Progress update: still running\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"
 poll_output="$("$MULTIAGENT" subagent poll subagent-watch)"

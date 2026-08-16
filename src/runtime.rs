@@ -1,4 +1,7 @@
-use crate::{config, policy, role_sandbox};
+use crate::{
+    agent::{self, AgentRequest, BackendId, BackendPaths, InvocationMode, RoleAccess},
+    config, policy, role_sandbox,
+};
 use chrono::{Local, SecondsFormat, Utc};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -26,28 +29,17 @@ struct RuntimeConfig {
     verifier_cli: String,
     codex_bin: String,
     claude_bin: String,
+    qwen_bin: String,
     code_exec: bool,
+    agent_headless: bool,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CodexAccess {
-    ReadOnly,
-    WorkspaceWrite,
-}
+type CodexAccess = RoleAccess;
 
 const ORCHESTRATOR_UID: u32 = config::ORCHESTRATOR_UID;
 const WRITER_UID: u32 = 10002;
 const READER_UID: u32 = 10003;
 const ROLE_GID: u32 = 10001;
-
-impl CodexAccess {
-    fn sandbox(self) -> &'static str {
-        match self {
-            Self::ReadOnly => "read-only",
-            Self::WorkspaceWrite => "workspace-write",
-        }
-    }
-}
 
 impl RuntimeConfig {
     fn load() -> Result<Self, String> {
@@ -75,7 +67,9 @@ impl RuntimeConfig {
             verifier_cli,
             codex_bin: env_nonempty("CODEX_BIN").unwrap_or_else(|| "codex".into()),
             claude_bin: env_nonempty("CLAUDE_BIN").unwrap_or_else(|| "claude".into()),
+            qwen_bin: env_nonempty("QWEN_BIN").unwrap_or_else(|| "qwen".into()),
             code_exec: env::var("MULTIAGENT_CODEX_EXEC").as_deref() == Ok("1"),
+            agent_headless: env::var("MULTIAGENT_AGENT_HEADLESS").as_deref() == Ok("1"),
         })
     }
 
@@ -83,10 +77,15 @@ impl RuntimeConfig {
         match cli {
             "codex" => Ok(&self.codex_bin),
             "claude" => Ok(&self.claude_bin),
+            "qwen" => Ok(&self.qwen_bin),
             _ => Err(format!(
-                "unsupported CLI '{cli}' (expected codex or claude)"
+                "unsupported coding-agent backend '{cli}' (expected codex, claude, or qwen)"
             )),
         }
+    }
+
+    fn headless(&self, cli: &str) -> bool {
+        cli == "qwen" || self.agent_headless || cli == "codex" && self.code_exec
     }
 }
 
@@ -106,23 +105,42 @@ pub fn role_agent_exec(args: &[String]) -> Result<ExitCode, String> {
     }
 
     let cfg = RuntimeConfig::load()?;
-    if !cfg.code_exec {
-        return Err("role-agent-exec requires MULTIAGENT_CODEX_EXEC=1".into());
-    }
     let dir = cfg.state.join("subagents").join(name);
     let metadata = read_env(&dir.join("meta.env"))?;
-    if metadata.get("name").map(String::as_str) != Some(name)
-        || metadata.get("cli").map(String::as_str) != Some("codex")
-        || metadata.get("cli_bin").map(String::as_str) != Some(cfg.codex_bin.as_str())
-    {
-        return Err("role-agent-exec metadata does not match the requested Codex agent".into());
+    let cli = metadata
+        .get("cli")
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "role-agent-exec metadata is missing the backend".to_string())?;
+    validate_cli(cli)?;
+    if !cfg.headless(cli) {
+        return Err("role-agent-exec requires a headless coding-agent backend".into());
     }
-    let access = match metadata.get("codex_access").map(String::as_str) {
+    let configured_binary = cfg.cli_bin(cli)?;
+    if metadata.get("name").map(String::as_str) != Some(name)
+        || metadata.get("cli_bin").map(String::as_str) != Some(configured_binary)
+    {
+        return Err("role-agent-exec metadata does not match the requested coding agent".into());
+    }
+    let access = match metadata
+        .get("access")
+        .or_else(|| metadata.get("codex_access"))
+        .map(String::as_str)
+    {
         Some("read-only") => CodexAccess::ReadOnly,
         Some("workspace-write") => CodexAccess::WorkspaceWrite,
-        _ => return Err("role-agent-exec metadata has invalid codex_access".into()),
+        _ => return Err("role-agent-exec metadata has invalid role access".into()),
     };
-    validate_privileged_codex_bridge(Path::new(&cfg.codex_bin))?;
+    let trusted_binary = resolve_command_path(configured_binary)?;
+    validate_privileged_agent_binary(&trusted_binary)?;
+    env::set_var(
+        match cli.as_str() {
+            "codex" => "CODEX_BIN",
+            "claude" => "CLAUDE_BIN",
+            "qwen" => "QWEN_BIN",
+            _ => unreachable!("validated backend"),
+        },
+        &trusted_binary,
+    );
     let prompt = dir.join(if restored {
         "restore-instruction.txt"
     } else {
@@ -142,16 +160,20 @@ pub fn role_agent_exec(args: &[String]) -> Result<ExitCode, String> {
         validate_implementation_context(&cfg, name, Some(&prompt), &instruction)?;
     }
     let output = dir.join("last-message.txt");
-    let command = build_cli_command(
-        "codex",
+    let trace_dir = cfg.logs.join("agents").join(name);
+    let resume_session = restored
+        .then(|| native_resume_session(&trace_dir))
+        .flatten();
+    let executable = env::current_exe().map_err(io_error("resolve multiagent executable"))?;
+    let runner_args = build_agent_runner_args(
+        cli,
         &cfg.root,
-        Some(&prompt),
-        Some(&output),
-        &cfg.codex_bin,
-        &cfg.claude_bin,
-        true,
+        &prompt,
+        &output,
+        &trace_dir,
         access,
-    )?;
+        resume_session.as_deref(),
+    );
     let supervisor_pid = dir.join("supervisor.pid");
     atomic_write(
         &supervisor_pid,
@@ -165,29 +187,51 @@ pub fn role_agent_exec(args: &[String]) -> Result<ExitCode, String> {
             READER_UID
         },
         ROLE_GID,
-        "/bin/sh",
-        &["-c".into(), command],
+        &executable.display().to_string(),
+        &runner_args,
     );
     let _ = fs::remove_file(supervisor_pid);
     result
 }
 
 #[cfg(unix)]
-fn validate_privileged_codex_bridge(path: &Path) -> Result<(), String> {
+fn validate_privileged_agent_binary(path: &Path) -> Result<(), String> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
-    let metadata = fs::metadata(path).map_err(io_error("inspect privileged Codex bridge"))?;
+    let canonical =
+        fs::canonicalize(path).map_err(io_error("resolve privileged coding-agent binary"))?;
+    let metadata =
+        fs::metadata(&canonical).map_err(io_error("inspect privileged coding-agent binary"))?;
     if !metadata.is_file() || metadata.uid() != 0 || metadata.permissions().mode() & 0o022 != 0 {
         return Err(format!(
-            "privileged Codex bridge must be a root-owned, non-group-writable executable: {}",
-            path.display()
+            "privileged coding-agent binary must be a root-owned, non-group-writable executable: {}",
+            canonical.display()
         ));
+    }
+    let mut parent = canonical.parent();
+    while let Some(path) = parent {
+        let metadata =
+            fs::metadata(path).map_err(io_error("inspect coding-agent binary parent"))?;
+        if !metadata.is_dir()
+            || !privileged_agent_parent_mode_is_safe(metadata.uid(), metadata.permissions().mode())
+        {
+            return Err(format!(
+                "privileged coding-agent binary parent must be root-owned and either non-writable or sticky: {}",
+                path.display()
+            ));
+        }
+        parent = path.parent();
     }
     Ok(())
 }
 
+#[cfg(unix)]
+fn privileged_agent_parent_mode_is_safe(uid: u32, mode: u32) -> bool {
+    uid == 0 && (mode & 0o022 == 0 || mode & 0o1000 != 0)
+}
+
 #[cfg(not(unix))]
-fn validate_privileged_codex_bridge(_path: &Path) -> Result<(), String> {
+fn validate_privileged_agent_binary(_path: &Path) -> Result<(), String> {
     Err("role-agent-exec requires Unix".into())
 }
 
@@ -254,6 +298,11 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
     }
     let codex_bin = env_nonempty("CODEX_BIN").unwrap_or_else(|| "codex".into());
     let claude_bin = env_nonempty("CLAUDE_BIN").unwrap_or_else(|| "claude".into());
+    let qwen_bin = env_nonempty("QWEN_BIN").unwrap_or_else(|| "qwen".into());
+    let agent_headless = env_nonempty("MULTIAGENT_AGENT_HEADLESS").unwrap_or_else(|| "0".into());
+    if !matches!(agent_headless.as_str(), "0" | "1") {
+        return Err("MULTIAGENT_AGENT_HEADLESS must be 0 or 1".into());
+    }
     let verifier_max =
         env_nonempty("MULTIAGENT_VERIFIER_MAX_ITERATIONS").unwrap_or_else(|| "3".into());
     if verifier_max
@@ -281,12 +330,19 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
             state_dir.join("runtime_state/tmux.sock"),
         );
     }
-    let orchestrator_bin = if orchestrator_cli == "codex" {
-        &codex_bin
-    } else {
-        &claude_bin
+    let backend_paths = BackendPaths {
+        codex: codex_bin.clone(),
+        claude: claude_bin.clone(),
+        qwen: qwen_bin.clone(),
     };
-    require_command(orchestrator_bin)?;
+    let mut backend_versions = Vec::new();
+    let mut selected_backends = BTreeSet::new();
+    for name in [&orchestrator_cli, &worker_cli, &subagent_cli, &verifier_cli] {
+        if selected_backends.insert(name.clone()) {
+            let id = BackendId::parse(name)?;
+            backend_versions.push(agent::backend(id, &backend_paths).preflight()?);
+        }
+    }
     if !prompt.is_file() {
         return Err(format!("missing orchestrator prompt: {}", prompt.display()));
     }
@@ -353,6 +409,8 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
         &verifier_cli,
         &codex_bin,
         &claude_bin,
+        &qwen_bin,
+        &agent_headless,
         &executable,
     );
     for (key, value) in &shared_env {
@@ -386,6 +444,20 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
         &format!("{workflow_id}\n"),
         "active workflow",
     )?;
+    let mut backend_manifest = String::from("backend\texecutable\tversion\n");
+    for version in &backend_versions {
+        backend_manifest.push_str(&format!(
+            "{}\t{}\t{}\n",
+            version.backend.as_str(),
+            version.executable.replace(['\t', '\n'], " "),
+            version.version.replace(['\t', '\n'], " ")
+        ));
+    }
+    atomic_write(
+        &state_dir.join("runtime_state/agent-backends.tsv"),
+        &backend_manifest,
+        "coding-agent backend manifest",
+    )?;
 
     let bootstrap = state_dir.join("orchestrator-bootstrap.sh");
     let mut bootstrap_env = shared_env.clone();
@@ -400,12 +472,16 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
         &orchestrator_cli,
         &codex_bin,
         &claude_bin,
+        &qwen_bin,
         &prompt_bundle,
         &state_dir.join("orchestrator-last-message.txt"),
         resume,
     )?;
     if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
         prepare_uid_state_permissions(&state_dir)?;
+        if !log_dir.starts_with(&state_dir) {
+            prepare_uid_state_permissions(&log_dir)?;
+        }
     }
     let bootstrap_command = format!("bash {}", shell_escape(&bootstrap.display().to_string()));
     let new_session = [
@@ -450,6 +526,7 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
     println!("Worker CLI: {worker_cli}");
     println!("Subagent CLI: {subagent_cli}");
     println!("Verifier CLI: {verifier_cli}");
+    println!("Agent headless mode: {agent_headless}");
     println!("Write policy:");
     policy::run(&["show".into()])?;
     if attach {
@@ -485,6 +562,8 @@ fn launch_environment(
     verifier_cli: &str,
     codex_bin: &str,
     claude_bin: &str,
+    qwen_bin: &str,
+    agent_headless: &str,
     executable: &Path,
 ) -> BTreeMap<String, String> {
     let mut values = BTreeMap::new();
@@ -524,6 +603,28 @@ fn launch_environment(
         ("VERIFIER_CLI", verifier_cli.to_string()),
         ("CODEX_BIN", codex_bin.to_string()),
         ("CLAUDE_BIN", claude_bin.to_string()),
+        ("QWEN_BIN", qwen_bin.to_string()),
+        ("MULTIAGENT_AGENT_HEADLESS", agent_headless.to_string()),
+        (
+            "MULTIAGENT_NATIVE_RESUME",
+            env_nonempty("MULTIAGENT_NATIVE_RESUME").unwrap_or_else(|| "0".into()),
+        ),
+        (
+            "MULTIAGENT_AGENT_MAX_TURNS",
+            env_nonempty("MULTIAGENT_AGENT_MAX_TURNS").unwrap_or_default(),
+        ),
+        (
+            "MULTIAGENT_AGENT_MAX_WALL_TIME",
+            env_nonempty("MULTIAGENT_AGENT_MAX_WALL_TIME").unwrap_or_default(),
+        ),
+        (
+            "MULTIAGENT_AGENT_MAX_TOOL_CALLS",
+            env_nonempty("MULTIAGENT_AGENT_MAX_TOOL_CALLS").unwrap_or_default(),
+        ),
+        (
+            "MULTIAGENT_AGENT_TIMEOUT_SECONDS",
+            env_nonempty("MULTIAGENT_AGENT_TIMEOUT_SECONDS").unwrap_or_default(),
+        ),
         (
             "MULTIAGENT_CODEX_EXEC",
             env_nonempty("MULTIAGENT_CODEX_EXEC").unwrap_or_else(|| "0".into()),
@@ -568,6 +669,7 @@ fn write_bootstrap(
     cli: &str,
     codex_bin: &str,
     claude_bin: &str,
+    qwen_bin: &str,
     prompt: &Path,
     last_message: &Path,
     resume: bool,
@@ -600,19 +702,52 @@ fn write_bootstrap(
         u8::from(resume),
         if resume { "resume" } else { "clean" }
     ));
-    let command = build_cli_command(
-        cli,
-        environment
-            .get("MULTIAGENT_STATE_DIR")
-            .map(Path::new)
-            .unwrap_or(root),
-        Some(prompt),
-        Some(last_message),
-        codex_bin,
-        claude_bin,
-        env::var("MULTIAGENT_CODEX_EXEC").as_deref() == Ok("1"),
-        CodexAccess::WorkspaceWrite,
-    )?;
+    let cwd = environment
+        .get("MULTIAGENT_STATE_DIR")
+        .map(Path::new)
+        .unwrap_or(root);
+    let codex_exec = environment.get("MULTIAGENT_CODEX_EXEC").map(String::as_str) == Some("1");
+    let agent_headless = environment
+        .get("MULTIAGENT_AGENT_HEADLESS")
+        .map(String::as_str)
+        == Some("1");
+    let headless = cli == "qwen" || agent_headless || cli == "codex" && codex_exec;
+    let command = if headless {
+        let executable = Path::new(
+            environment
+                .get("MULTIAGENT_BIN")
+                .ok_or_else(|| "missing MULTIAGENT_BIN in launch environment".to_string())?,
+        );
+        let trace_dir = Path::new(
+            environment
+                .get("MULTIAGENT_LOG_DIR")
+                .ok_or_else(|| "missing MULTIAGENT_LOG_DIR in launch environment".to_string())?,
+        )
+        .join("agents/orchestrator");
+        build_agent_runner_command(
+            executable,
+            cli,
+            cwd,
+            prompt,
+            last_message,
+            &trace_dir,
+            CodexAccess::WorkspaceWrite,
+            None,
+        )
+    } else {
+        build_cli_command(
+            cli,
+            cwd,
+            Some(prompt),
+            Some(last_message),
+            codex_bin,
+            claude_bin,
+            qwen_bin,
+            codex_exec,
+            agent_headless,
+            CodexAccess::WorkspaceWrite,
+        )?
+    };
     let command = if environment
         .get("MULTIAGENT_UID_SANDBOX")
         .map(String::as_str)
@@ -1093,9 +1228,14 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         }
         instruction = fs::read_to_string(path).map_err(io_error("read instruction file"))?;
     }
-    if cfg.code_exec && cfg.subagent_cli == "codex" && instruction.is_empty() {
+    if cfg.headless(&cfg.subagent_cli) && instruction.is_empty() {
+        let label = if cfg.subagent_cli == "codex" && cfg.code_exec {
+            "codex exec"
+        } else {
+            "headless coding-agent"
+        };
         return Err(format!(
-            "codex exec subagent spawn requires --instruction or --instruction-file: {name}"
+            "{label} subagent spawn requires --instruction or --instruction-file: {name}"
         ));
     }
     instruction = compose_role_instruction(cfg, name, &role, &instruction)?;
@@ -1155,18 +1295,21 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
     validate_implementation_context(cfg, name, instruction_file.as_deref(), &instruction)?;
 
     let dir = cfg.state.join("subagents").join(name);
+    let trace_dir = cfg.logs.join("agents").join(name);
     fs::create_dir_all(&dir).map_err(io_error("create subagent state"))?;
     fs::create_dir_all(&cfg.logs).map_err(io_error("create subagent log directory"))?;
     let executable = env::current_exe().map_err(io_error("resolve multiagent executable"))?;
     let metadata = format!(
-        "name={name}\nsession={}\nroot={}\nrole={}\ncodex_access={}\nworkflow_id={}\nwrite_policy={}\nlog_file={}\ncli={cli}\ncli_bin={binary}\nhelper={}\ncreated_at={}\n",
+        "name={name}\nsession={}\nroot={}\nrole={}\naccess={}\ncodex_access={}\nworkflow_id={}\nwrite_policy={}\nlog_file={}\ntrace_dir={}\ncli={cli}\ncli_bin={binary}\nhelper={}\ncreated_at={}\n",
         cfg.session,
         cfg.root.display(),
         if role.is_empty() { assignment_role } else { &role },
-        access.sandbox(),
+        access.as_str(),
+        access.as_str(),
         env_nonempty("MULTIAGENT_WORKFLOW_ID").unwrap_or_default(),
         cfg.policy.display(),
         cfg.logs.join(format!("{name}.log")).display(),
+        trace_dir.display(),
         executable.display(),
         timestamp()
     );
@@ -1175,9 +1318,13 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
 
     let mut prompt_file = None;
     let output_file = dir.join("last-message.txt");
-    if cfg.code_exec && cli == "codex" && !instruction.is_empty() {
+    if cfg.headless(cli) && !instruction.is_empty() {
         let path = dir.join("instruction.txt");
-        let prompt = format!("{}{}\n", codex_exec_protocol_prelude(), instruction);
+        let prompt = if cli == "codex" {
+            format!("{}{}\n", codex_exec_protocol_prelude(), instruction)
+        } else {
+            format!("{instruction}\n")
+        };
         atomic_write(&path, &prompt, "subagent instruction")?;
         append_file(
             &dir.join("transcript.log"),
@@ -1186,8 +1333,8 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         prompt_file = Some(path);
     }
     let cli_command = if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
-        if cli != "codex" || !cfg.code_exec {
-            return Err("UID role isolation requires codex exec subagents".into());
+        if !cfg.headless(cli) {
+            return Err("UID role isolation requires a headless coding-agent backend".into());
         }
         format!(
             "{} role-agent-exec {}",
@@ -1195,16 +1342,33 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
             shell_escape(name)
         )
     } else {
-        let command = build_cli_command(
-            cli,
-            &cfg.root,
-            prompt_file.as_deref(),
-            Some(&output_file),
-            &cfg.codex_bin,
-            &cfg.claude_bin,
-            cfg.code_exec,
-            access,
-        )?;
+        let command = if cfg.headless(cli) {
+            build_agent_runner_command(
+                &executable,
+                cli,
+                &cfg.root,
+                prompt_file
+                    .as_deref()
+                    .ok_or_else(|| format!("headless coding-agent prompt is missing: {name}"))?,
+                &output_file,
+                &trace_dir,
+                access,
+                None,
+            )
+        } else {
+            build_cli_command(
+                cli,
+                &cfg.root,
+                prompt_file.as_deref(),
+                Some(&output_file),
+                &cfg.codex_bin,
+                &cfg.claude_bin,
+                &cfg.qwen_bin,
+                cfg.code_exec,
+                cfg.agent_headless,
+                access,
+            )?
+        };
         wrap_linux_role_sandbox(
             &command,
             &executable,
@@ -1230,7 +1394,7 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         run_self_quiet(&["subagent", "assignment-status", name, "running"])?;
     }
     let _ = capture_subagent(cfg, name);
-    if !(instruction.is_empty() || cfg.code_exec && cli == "codex") {
+    if !(instruction.is_empty() || cfg.headless(cli)) {
         deliver_instruction(cfg, name, &instruction)?;
     }
     println!("spawned {name}");
@@ -1499,7 +1663,11 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         .cloned()
         .unwrap_or_else(|| cfg.subagent_cli.clone());
     validate_cli(&cli)?;
-    let access = match metadata.get("codex_access").map(String::as_str) {
+    let access = match metadata
+        .get("access")
+        .or_else(|| metadata.get("codex_access"))
+        .map(String::as_str)
+    {
         Some("read-only") => CodexAccess::ReadOnly,
         _ => CodexAccess::WorkspaceWrite,
     };
@@ -1555,17 +1723,18 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
     set_subagent_status(cfg, name, "restoring")?;
     fs::create_dir_all(&cfg.logs).map_err(io_error("create log directory"))?;
     let output_file = dir.join("last-message.txt");
-    let prompt_file = if cfg.code_exec && cli == "codex" {
+    let prompt_file = if cfg.headless(&cli) {
         let path = dir.join("restore-instruction.txt");
         atomic_write(&path, &instruction, "restore instruction")?;
         Some(path)
     } else {
         None
     };
+    let trace_dir = cfg.logs.join("agents").join(name);
     let executable = env::current_exe().map_err(io_error("resolve multiagent executable"))?;
     let cli_command = if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
-        if cli != "codex" || !cfg.code_exec {
-            return Err("UID role isolation requires codex exec subagents".into());
+        if !cfg.headless(&cli) {
+            return Err("UID role isolation requires a headless coding-agent backend".into());
         }
         format!(
             "{} role-agent-exec {} --restore",
@@ -1573,16 +1742,34 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
             shell_escape(name)
         )
     } else {
-        let command = build_cli_command(
-            &cli,
-            &cfg.root,
-            prompt_file.as_deref(),
-            Some(&output_file),
-            &cfg.codex_bin,
-            &cfg.claude_bin,
-            cfg.code_exec,
-            access,
-        )?;
+        let resume_session = native_resume_session(&trace_dir);
+        let command = if cfg.headless(&cli) {
+            build_agent_runner_command(
+                &executable,
+                &cli,
+                &cfg.root,
+                prompt_file.as_deref().ok_or_else(|| {
+                    format!("headless coding-agent restore prompt is missing: {name}")
+                })?,
+                &output_file,
+                &trace_dir,
+                access,
+                resume_session.as_deref(),
+            )
+        } else {
+            build_cli_command(
+                &cli,
+                &cfg.root,
+                prompt_file.as_deref(),
+                Some(&output_file),
+                &cfg.codex_bin,
+                &cfg.claude_bin,
+                &cfg.qwen_bin,
+                cfg.code_exec,
+                cfg.agent_headless,
+                access,
+            )?
+        };
         wrap_linux_role_sandbox(
             &command,
             &executable,
@@ -1598,7 +1785,7 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
     tmux_checked(&["new-window", "-d", "-t", &cfg.session, "-n", name, &command])?;
     pipe_log(&cfg.session, name, &cfg.logs)?;
     set_subagent_status(cfg, name, "running")?;
-    if !(cfg.code_exec && cli == "codex") {
+    if !cfg.headless(&cli) {
         deliver_instruction(cfg, name, &instruction)?;
     }
     println!("restored {name}");
@@ -1673,6 +1860,7 @@ fn kill(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
     if let Some(pid) = supervisor_pid {
         wait_for_process_exit(pid, name)?;
     }
+    record_supervisor_termination(cfg, name, "canceled")?;
     set_subagent_status(cfg, name, "killed")?;
     if cfg
         .state
@@ -1684,6 +1872,38 @@ fn kill(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         run_self_quiet(&["subagent", "assignment-status", name, "failed"])?;
     }
     println!("killed {name}");
+    Ok(())
+}
+
+fn record_supervisor_termination(
+    cfg: &RuntimeConfig,
+    name: &str,
+    reason: &str,
+) -> Result<(), String> {
+    let dir = cfg.state.join("subagents").join(name);
+    let metadata = read_env(&dir.join("meta.env")).unwrap_or_default();
+    let trace_dir = metadata
+        .get("trace_dir")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| cfg.logs.join("agents").join(name));
+    let body = serde_json::to_string_pretty(&serde_json::json!({
+        "reason": reason,
+        "recorded_at": timestamp(),
+        "source": "rust-supervisor",
+    }))
+    .map_err(|error| format!("serialize supervisor termination: {error}"))?;
+    fs::create_dir_all(&trace_dir).map_err(io_error("create supervisor trace directory"))?;
+    let output = trace_dir.join("supervisor-termination.json");
+    atomic_write(&output, &body, "supervisor termination")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&trace_dir, fs::Permissions::from_mode(0o2770))
+            .map_err(io_error("set supervisor trace directory permissions"))?;
+        fs::set_permissions(&output, fs::Permissions::from_mode(0o660))
+            .map_err(io_error("set supervisor trace file permissions"))?;
+    }
     Ok(())
 }
 
@@ -1967,81 +2187,97 @@ fn build_cli_command(
     output: Option<&Path>,
     codex_bin: &str,
     claude_bin: &str,
+    qwen_bin: &str,
     codex_exec: bool,
+    agent_headless: bool,
     access: CodexAccess,
 ) -> Result<String, String> {
-    match cli {
-        "codex" if codex_exec => {
-            let mut command = format!(
-                "{} exec --cd {} --skip-git-repo-check {}",
-                shell_escape(codex_bin),
-                shell_escape(&cwd.display().to_string()),
-                codex_safety_args(access, true),
-            );
-            if let Some(path) = output {
-                command.push_str(&format!(
-                    " --output-last-message {}",
-                    shell_escape(&path.display().to_string())
-                ));
-            }
-            if let Some(path) = prompt {
-                command.push_str(&format!(
-                    " - < {}",
-                    shell_escape(&path.display().to_string())
-                ));
-            }
-            Ok(command)
-        }
-        "codex" => {
-            let mut command = format!(
-                "{} --cd {} {} --no-alt-screen",
-                shell_escape(codex_bin),
-                shell_escape(&cwd.display().to_string()),
-                codex_safety_args(access, false),
-            );
-            if let Some(path) = prompt {
-                command.push_str(&format!(
-                    " \"$(cat {})\"",
-                    shell_escape(&path.display().to_string())
-                ));
-            }
-            Ok(command)
-        }
-        "claude" => {
-            let mut command = format!(
-                "{} --dangerously-skip-permissions",
-                shell_escape(claude_bin)
-            );
-            if let Some(path) = prompt {
-                command.push_str(&format!(
-                    " \"$(cat {})\"",
-                    shell_escape(&path.display().to_string())
-                ));
-            }
-            Ok(command)
-        }
-        _ => Err(format!(
-            "unsupported CLI '{cli}' (expected codex or claude)"
-        )),
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn codex_safety_args(_access: CodexAccess, _exec: bool) -> String {
-    // Docker's default seccomp profile blocks the user namespaces required by
-    // Codex/bubblewrap. The enclosing role-exec Landlock boundary is inherited
-    // by Codex and every model-generated child process, so Codex itself must not
-    // attempt a second sandbox.
-    "--dangerously-bypass-approvals-and-sandbox".into()
-}
-
-#[cfg(not(target_os = "linux"))]
-fn codex_safety_args(access: CodexAccess, exec: bool) -> String {
-    if exec {
-        format!("--sandbox {} -c approval_policy=never", access.sandbox())
+    let id = BackendId::parse(cli)?;
+    let paths = BackendPaths {
+        codex: codex_bin.into(),
+        claude: claude_bin.into(),
+        qwen: qwen_bin.into(),
+    };
+    let selected = agent::backend(id, &paths);
+    let mode = if cli == "qwen" || agent_headless || cli == "codex" && codex_exec {
+        InvocationMode::Headless
     } else {
-        format!("--sandbox {} --ask-for-approval never", access.sandbox())
+        InvocationMode::Interactive
+    };
+    selected
+        .command(&AgentRequest {
+            cwd: cwd.to_path_buf(),
+            prompt_file: prompt.map(Path::to_path_buf),
+            final_output: output.map(Path::to_path_buf),
+            access,
+            mode,
+            resume_session: None,
+        })
+        .map(|command| command.render_shell())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_agent_runner_args(
+    cli: &str,
+    cwd: &Path,
+    prompt: &Path,
+    output: &Path,
+    trace_dir: &Path,
+    access: CodexAccess,
+    resume_session: Option<&str>,
+) -> Vec<String> {
+    let mut args = vec![
+        "agent".into(),
+        "run".into(),
+        "--backend".into(),
+        cli.into(),
+        "--cwd".into(),
+        cwd.display().to_string(),
+        "--prompt-file".into(),
+        prompt.display().to_string(),
+        "--final-output".into(),
+        output.display().to_string(),
+        "--trace-dir".into(),
+        trace_dir.display().to_string(),
+        "--access".into(),
+        access.as_str().into(),
+    ];
+    if let Some(session) = resume_session {
+        args.push("--resume-session".into());
+        args.push(session.into());
     }
+    args
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_agent_runner_command(
+    executable: &Path,
+    cli: &str,
+    cwd: &Path,
+    prompt: &Path,
+    output: &Path,
+    trace_dir: &Path,
+    access: CodexAccess,
+    resume_session: Option<&str>,
+) -> String {
+    let mut command = shell_escape(&executable.display().to_string());
+    for arg in build_agent_runner_args(cli, cwd, prompt, output, trace_dir, access, resume_session)
+    {
+        command.push(' ');
+        command.push_str(&shell_escape(&arg));
+    }
+    command
+}
+
+fn native_resume_session(trace_dir: &Path) -> Option<String> {
+    if env::var("MULTIAGENT_NATIVE_RESUME").as_deref() != Ok("1") {
+        return None;
+    }
+    let latest = read_trimmed(&trace_dir.join("latest"))
+        .filter(|value| !value.is_empty())
+        .map(|value| trace_dir.join(value))
+        .unwrap_or_else(|| trace_dir.to_path_buf());
+    read_trimmed(&latest.join("session-id")).filter(|value| !value.is_empty())
 }
 
 fn role_write_roots(root: &Path, state: &Path, include_source: bool) -> Vec<PathBuf> {
@@ -2053,6 +2289,7 @@ fn role_write_roots(root: &Path, state: &Path, include_source: bool) -> Vec<Path
         "CODEX_HOME",
         "GOCACHE",
         "GOMODCACHE",
+        "MULTIAGENT_LOG_DIR",
         "MULTIAGENT_ROLE_SHARED_WRITE_DIR",
     ] {
         if let Some(path) = env_path(key) {
@@ -2179,6 +2416,31 @@ fn subagent_shell_command(
         ("VERIFIER_CLI", cfg.verifier_cli.clone()),
         ("CODEX_BIN", cfg.codex_bin.clone()),
         ("CLAUDE_BIN", cfg.claude_bin.clone()),
+        ("QWEN_BIN", cfg.qwen_bin.clone()),
+        (
+            "MULTIAGENT_AGENT_HEADLESS",
+            u8::from(cfg.agent_headless).to_string(),
+        ),
+        (
+            "MULTIAGENT_NATIVE_RESUME",
+            env_nonempty("MULTIAGENT_NATIVE_RESUME").unwrap_or_else(|| "0".into()),
+        ),
+        (
+            "MULTIAGENT_AGENT_MAX_TURNS",
+            env_nonempty("MULTIAGENT_AGENT_MAX_TURNS").unwrap_or_default(),
+        ),
+        (
+            "MULTIAGENT_AGENT_MAX_WALL_TIME",
+            env_nonempty("MULTIAGENT_AGENT_MAX_WALL_TIME").unwrap_or_default(),
+        ),
+        (
+            "MULTIAGENT_AGENT_MAX_TOOL_CALLS",
+            env_nonempty("MULTIAGENT_AGENT_MAX_TOOL_CALLS").unwrap_or_default(),
+        ),
+        (
+            "MULTIAGENT_AGENT_TIMEOUT_SECONDS",
+            env_nonempty("MULTIAGENT_AGENT_TIMEOUT_SECONDS").unwrap_or_default(),
+        ),
         ("MULTIAGENT_CODEX_EXEC", u8::from(cfg.code_exec).to_string()),
         ("PATH", path),
     ];
@@ -2202,8 +2464,13 @@ fn subagent_shell_command(
         .map(|(key, value)| format!("{key}={}", shell_escape(&value)))
         .collect::<Vec<_>>()
         .join(" ");
+    let final_marker = if cli == "codex" {
+        "final status: codex exec exited rc=%s"
+    } else {
+        "final status: coding agent exited rc=%s"
+    };
     format!(
-        "cd {} && umask 0007 && export {exports} && {cli_command}; rc=$?; printf '\\nfinal status: codex exec exited rc=%s\\n' $rc; sleep infinity",
+        "cd {} && umask 0007 && export {exports} && {cli_command}; rc=$?; printf '\\n{final_marker}\\n' $rc; sleep infinity",
         shell_escape(&cfg.root.display().to_string())
     )
 }
@@ -2476,14 +2743,19 @@ fn looks_done_report(text: &str) -> bool {
 }
 
 fn nonzero_exec_status(text: &str) -> bool {
-    let marker = "final status: codex exec exited rc=";
+    let markers = [
+        "final status: codex exec exited rc=",
+        "final status: coding agent exited rc=",
+    ];
     text.lines().any(|line| {
-        line.find(marker).is_some_and(|index| {
-            line[index + marker.len()..]
-                .split_whitespace()
-                .next()
-                .and_then(|value| value.parse::<u32>().ok())
-                .is_some_and(|value| value > 0)
+        markers.iter().any(|marker| {
+            line.find(marker).is_some_and(|index| {
+                line[index + marker.len()..]
+                    .split_whitespace()
+                    .next()
+                    .and_then(|value| value.parse::<u32>().ok())
+                    .is_some_and(|value| value > 0)
+            })
         })
     })
 }
@@ -2659,25 +2931,27 @@ fn run_self_quiet(args: &[&str]) -> Result<(), String> {
 }
 
 fn validate_cli(value: &str) -> Result<(), String> {
-    if matches!(value, "codex" | "claude") {
-        Ok(())
-    } else {
-        Err(format!(
-            "unsupported CLI '{value}' (expected codex or claude)"
-        ))
-    }
+    BackendId::parse(value).map(|_| ())
 }
 
 fn require_command(command: &str) -> Result<(), String> {
+    resolve_command_path(command).map(|_| ())
+}
+
+fn resolve_command_path(command: &str) -> Result<PathBuf, String> {
     let path = Path::new(command);
     if command.contains('/') {
         if is_executable(path) {
-            return Ok(());
+            return fs::canonicalize(path)
+                .map_err(|error| format!("resolve required command {command}: {error}"));
         }
     } else if let Some(paths) = env::var_os("PATH") {
         for directory in env::split_paths(&paths) {
-            if is_executable(&directory.join(command)) {
-                return Ok(());
+            let candidate = directory.join(command);
+            if is_executable(&candidate) {
+                return fs::canonicalize(&candidate).map_err(|error| {
+                    format!("resolve required command {}: {error}", candidate.display())
+                });
             }
         }
     }
@@ -2989,6 +3263,16 @@ mod tests {
         assert_eq!(shell_escape("plain/path"), "plain/path");
         assert_eq!(shell_escape("two words"), "'two words'");
         assert_eq!(shell_escape("it's"), "'it'\\''s'");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn privileged_agent_parent_accepts_only_root_owned_safe_modes() {
+        assert!(privileged_agent_parent_mode_is_safe(0, 0o040755));
+        assert!(privileged_agent_parent_mode_is_safe(0, 0o041777));
+        assert!(!privileged_agent_parent_mode_is_safe(0, 0o040777));
+        assert!(!privileged_agent_parent_mode_is_safe(1000, 0o040755));
+        assert!(!privileged_agent_parent_mode_is_safe(1000, 0o041777));
     }
 
     #[test]

@@ -4,6 +4,10 @@ Multiagent is an orchestration and evidence layer around existing coding-agent
 CLIs. It is not a replacement model or a claim that every task benefits from
 parallelism.
 
+The proposed provider-neutral coding-agent boundary is described in the
+[backend PRD](coding-agent-backends-prd.md) and
+[refactoring design](coding-agent-backends-design.md).
+
 ```mermaid
 flowchart LR
     U["Real issue + immutable base commit"] --> P["Pilot manifest"]

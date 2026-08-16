@@ -22,7 +22,7 @@ This project launches a tmux session with one `orchestrator` window. The orchest
 - `tmux`
 - Rust 1.75 or newer and Cargo when running from a source checkout
 - Python 3.8 or newer only for evaluation and evidence-analysis commands; no `pip install` or virtual environment is required
-- Codex CLI or Claude CLI, according to the configured orchestrator and agent roles
+- Codex CLI, Claude Code, or Qwen Code, according to the configured role backends
 
 `launch.sh` locates or builds the Rust binary and execs `multiagent launch`,
 which checks runtime prerequisites before creating the tmux session. Durable
@@ -57,12 +57,17 @@ Environment:
 - `MULTIAGENT_WRITE_POLICY`: repo write policy, default `$MULTIAGENT_ROOT/docs/write-policy.paths`
 - `MULTIAGENT_VERIFIER_MAX_ITERATIONS`: worker/verifier follow-up loop cap, default `3`
 - `MULTIAGENT_PROMPT`: orchestrator prompt, default `<launcher directory>/orchestrator_prompt.md`
-- `ORCHESTRATOR_CLI`: orchestrator CLI, default `codex`
-- `WORKER_CLI`: worker CLI for manual worker windows, default `claude`
-- `SUBAGENT_CLI`: named subagent CLI, default `$WORKER_CLI`
-- `VERIFIER_CLI`: verifier CLI, default `codex`
+- `ORCHESTRATOR_CLI`: orchestrator backend (`codex`, `claude`, or `qwen`), default `codex`
+- `WORKER_CLI`: worker backend, default `claude`
+- `SUBAGENT_CLI`: named subagent backend, default `$WORKER_CLI`
+- `VERIFIER_CLI`: verifier backend, default `codex`
 - `CODEX_BIN`: Codex CLI command, default `codex`
 - `CLAUDE_BIN`: Claude CLI command, default `claude`
+- `QWEN_BIN`: Qwen Code command, default `qwen`
+- `MULTIAGENT_AGENT_HEADLESS`: use the normalized headless runner for Codex and Claude (`0` or `1`); Qwen is always headless in v1
+- `MULTIAGENT_NATIVE_RESUME`: resume a provider session when supported and a persisted session ID exists
+- `MULTIAGENT_AGENT_TIMEOUT_SECONDS`: outer wall-clock timeout for every headless backend
+- `MULTIAGENT_AGENT_MAX_TURNS`, `MULTIAGENT_AGENT_MAX_WALL_TIME`, `MULTIAGENT_AGENT_MAX_TOOL_CALLS`: optional Qwen Code budgets
 
 The default setup keeps the orchestrator on Codex, uses Claude for workers and
 generic named subagents, and uses Codex for verifier agents. To use Codex for
@@ -72,6 +77,22 @@ workers and generic named subagents too:
 ORCHESTRATOR_CLI=codex WORKER_CLI=codex SUBAGENT_CLI=codex ./launch.sh
 ```
 
+To use the open-source Qwen Code agent for all roles:
+
+```bash
+ORCHESTRATOR_CLI=qwen WORKER_CLI=qwen SUBAGENT_CLI=qwen VERIFIER_CLI=qwen ./launch.sh
+```
+
+Qwen Code remains responsible for its agent loop, tools, context, and model
+provider. Multiagent passes it a task and normalizes process evidence; it does
+not replace Qwen Code with a Qwen model API.
+
+After installing and authenticating Qwen Code, run the opt-in live backend
+check with `bash tests/live-qwen-smoke.sh`. It performs one read-only task and
+one workspace-write task and checks both the response and filesystem result.
+The regular test suite uses a fake Qwen executable and never requires network
+access or credentials.
+
 The Rust supervisor assigns Codex access from trusted process roles. On hosts
 where Codex's native sandbox is available, the orchestrator starts in the
 durable state directory with `workspace-write`, workers start in the target
@@ -80,14 +101,16 @@ repository with `workspace-write`, and scouts/authority reviewers use
 Unix identities instead because nested bubblewrap is unavailable under Docker's
 default seccomp profile. Its tmux server runs as the non-writing orchestrator
 identity. A narrowly gated, setuid Rust entrypoint may only start the fixed
-Codex subagent command recorded for a named role; all other invocations
+coding-agent binary recorded for a named headless role; all other invocations
 permanently drop back to the caller UID. Each role also receives a private
 Codex runtime home so one role's private lock/config files cannot stall another.
 The isolated orchestrator's real UID makes lifecycle enforcement mandatory, so
 shell-level environment overrides cannot authorize a writer after completion.
 In both environments the orchestrator can read the target but cannot write it,
 while workers can. Claude remains a compatibility path and does not provide
-Codex's native role boundary outside the production adapter.
+Codex's native role boundary outside the production adapter. Qwen uses `plan`
+approval for read-only roles and its sandbox on non-Linux hosts, but the
+production security claim remains the outer Linux role boundary.
 
 `--root` selects the target project repo for `MULTIAGENT_ROOT`, state, and write
 policy. The orchestrator CLI works from the durable state directory and reads
@@ -464,19 +487,19 @@ orchestrator/user decision:
 multiagent policy approve /tmp --actor orchestrator --assignment-id build-logs --reason "user approved shared temp output" --force
 ```
 
-For Codex roles, the OS boundary mechanically prevents the orchestrator,
+For isolated coding-agent roles, the OS boundary mechanically prevents the orchestrator,
 authority reviewers, and scouts from writing the target repository. On native
 hosts that boundary is Codex's sandbox; in the production Linux container it is
 Unix ownership plus a permanent role UID drop. The tmux server itself has the
 orchestrator UID, so bypassing the Rust CLI to open a raw pane still produces a
 non-writing process. The only privileged transition is the fixed
-`role-agent-exec` path, which validates persisted role metadata and a
-root-owned, non-group-writable Codex bridge before dropping to the writer or
-reader UID. Generic `role-exec` calls from the orchestrator lose setuid
+`role-agent-exec` path, which validates persisted role metadata and the
+root-owned, non-group-writable configured agent binary before dropping to the
+writer or reader UID. Generic `role-exec` calls from the orchestrator lose setuid
 privilege before dispatch. The write-policy helper remains responsible for
-explicit writes outside the normal role root. Claude
-compatibility processes do not receive this mechanical boundary on native
-hosts.
+explicit writes outside the normal role root. Compatibility processes do not
+receive this mechanical boundary on native hosts unless their own sandbox is
+enabled.
 
 ## Assignment Metadata and Acceptance
 

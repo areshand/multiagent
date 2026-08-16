@@ -58,7 +58,14 @@ def skip_repo_bake_path(path: Path) -> bool:
     """Return whether a repository path is excluded from task-image source."""
 
     parts = set(path.parts)
-    if parts & {".git", ".multiagent", "__pycache__", ".pytest_cache", "node_modules"}:
+    if parts & {
+        ".git",
+        ".multiagent",
+        "__pycache__",
+        ".pytest_cache",
+        "node_modules",
+        "target",
+    }:
         return True
     if path.parts and path.parts[0] in {"tests", "docs"}:
         return True

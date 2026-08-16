@@ -1,9 +1,10 @@
 # Multiagent
 
 Multiagent is the reference implementation of an orchestration layer for
-coding agents. It is not another coding agent: it composes existing Codex and
-Claude CLIs into parallel roles, records their work, independently verifies the
-result, and gates acceptance on evidence bound to the exact Git diff.
+coding agents. It is not another coding agent: it composes existing Codex,
+Claude Code, and Qwen Code agents into parallel roles, records their work,
+independently verifies the result, and gates acceptance on evidence bound to the
+exact Git diff.
 
 The project prioritizes orchestration, evaluation, and runtime rigor over a
 custom UI or model implementation.
@@ -13,8 +14,8 @@ custom UI or model implementation.
 Building from source requires Rust 1.75 or newer, Cargo, Bash, and Git. Rust owns
 the production control plane. Python 3.8 or newer is required only for evaluation
 and evidence-analysis commands; those modules have no third-party Python package
-dependency. Live agent sessions also require `tmux` plus the configured Codex or
-Claude CLI.
+dependency. Live agent sessions also require `tmux` plus the configured coding-agent
+executables.
 
 ## Try It Locally
 
@@ -75,8 +76,8 @@ official scorer; it does not implement a second solver or acceptance gate. See
 
 ## Run With Agents
 
-Live orchestration additionally requires `tmux` and at least one configured
-Codex or Claude CLI:
+Live orchestration additionally requires `tmux` and the coding-agent executables
+selected for its roles:
 
 ```bash
 ./launch.sh --session multiagent --root /absolute/path/to/target-repo
@@ -126,8 +127,9 @@ technical findings and repair TODOs remain authoritative. Running
 `multiagent subagent gate-check`.
 
 The default roles use Codex for orchestration and verification and Claude for
-workers. `WORKER_CLI`: worker CLI for manual worker windows, default `claude`.
-`VERIFIER_CLI`: verifier CLI, default `codex`. CLI choices, recovery, ownership
+workers. `WORKER_CLI`: worker coding-agent backend for manual worker windows,
+default `claude`; supported values are `codex`, `claude`, and `qwen`.
+`VERIFIER_CLI`: verifier backend, default `codex`. Backend choices, recovery, ownership
 policy, role prompts, DAG workflows, and all control-plane commands are in the
 [getting-started and operations guide](docs/getting-started.md).
 
