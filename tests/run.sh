@@ -2,7 +2,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MULTIAGENT="$ROOT/target/debug/multiagent"
+TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}"
+MULTIAGENT="$TARGET_DIR/debug/multiagent"
+HOST_KERNEL="$(uname -s)"
 cargo build --offline --locked --manifest-path "$ROOT/Cargo.toml" >/dev/null
 TMPDIR="$(mktemp -d)"
 TMPDIR="$(cd "$TMPDIR" && pwd -P)"
@@ -255,8 +257,15 @@ LAUNCH_BOOTSTRAP="$LAUNCH_STATE/orchestrator-bootstrap.sh"
 assert_file_contains "$MOCK_TMUX_LOG" "$(printf '%q' "$LAUNCH_BOOTSTRAP")"
 assert_file_contains "$MOCK_TMUX_LOG" "pipe-pane launch-cross-repo:orchestrator cat >> $LAUNCH_STATE/logs/orchestrator.log"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "--cd $LAUNCH_STATE"
-assert_file_contains "$LAUNCH_BOOTSTRAP" "--sandbox workspace-write"
-assert_file_not_contains "$LAUNCH_BOOTSTRAP" "--dangerously-bypass-approvals-and-sandbox"
+if [[ "$HOST_KERNEL" == Linux ]]; then
+  assert_file_contains "$LAUNCH_BOOTSTRAP" "$MULTIAGENT role-exec"
+  assert_file_contains "$LAUNCH_BOOTSTRAP" "--allow-write $LAUNCH_STATE"
+  assert_file_not_contains "$LAUNCH_BOOTSTRAP" "--allow-write $LAUNCH_TARGET"
+  assert_file_contains "$LAUNCH_BOOTSTRAP" "--dangerously-bypass-approvals-and-sandbox"
+else
+  assert_file_contains "$LAUNCH_BOOTSTRAP" "--sandbox workspace-write"
+  assert_file_not_contains "$LAUNCH_BOOTSTRAP" "--dangerously-bypass-approvals-and-sandbox"
+fi
 assert_file_contains "$LAUNCH_BOOTSTRAP" "export MULTIAGENT_RESUME=0"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "export MULTIAGENT_LOG_DIR=$LAUNCH_STATE/logs"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "export MULTIAGENT_VERIFIER_MAX_ITERATIONS=3"
@@ -1389,8 +1398,14 @@ assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/verifier-01-docs/instructi
 assert_file_contains "$MOCK_TMUX_LOG" "send-key test-session:verifier-01-docs Read and follow the assignment in"
 verifier_spawn_line="$(grep -F "new-window -d test-session verifier-01-docs " "$MOCK_TMUX_LOG")"
 [[ "$verifier_spawn_line" == *"--cd $ROOT"* ]]
-[[ "$verifier_spawn_line" == *"--sandbox workspace-write --ask-for-approval never --no-alt-screen"* ]]
-[[ "$verifier_spawn_line" != *"--dangerously-bypass-approvals-and-sandbox"* ]]
+if [[ "$HOST_KERNEL" == Linux ]]; then
+  [[ "$verifier_spawn_line" == *"$MULTIAGENT role-exec"* ]]
+  [[ "$verifier_spawn_line" == *"--dangerously-bypass-approvals-and-sandbox"* ]]
+  [[ "$verifier_spawn_line" != *"--allow-write $ROOT"* ]]
+else
+  [[ "$verifier_spawn_line" == *"--sandbox workspace-write --ask-for-approval never --no-alt-screen"* ]]
+  [[ "$verifier_spawn_line" != *"--dangerously-bypass-approvals-and-sandbox"* ]]
+fi
 
 printf 'Codex prompt ready\n' >"$MOCK_TMUX_CAPTURES/verifier-owned-01.txt"
 SUBAGENT_CLI="$VERIFIER_CLI" "$MULTIAGENT" subagent spawn verifier-owned-01 \
@@ -1435,7 +1450,12 @@ assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/codex-exec-protocol/instru
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/codex-exec-protocol/instruction.txt" "Inspect /app"
 codex_exec_spawn_line="$(grep -F "new-window -d test-session codex-exec-protocol " "$MOCK_TMUX_LOG")"
 [[ "$codex_exec_spawn_line" == *"exec --cd $ROOT"* ]]
-[[ "$codex_exec_spawn_line" == *"--sandbox workspace-write -c approval_policy=never"* ]]
+if [[ "$HOST_KERNEL" == Linux ]]; then
+  [[ "$codex_exec_spawn_line" == *"$MULTIAGENT role-exec"* ]]
+  [[ "$codex_exec_spawn_line" == *"--dangerously-bypass-approvals-and-sandbox"* ]]
+else
+  [[ "$codex_exec_spawn_line" == *"--sandbox workspace-write -c approval_policy=never"* ]]
+fi
 [[ "$codex_exec_spawn_line" == *"--output-last-message"* ]]
 
 printf 'final status: codex exec exited rc=0\n' >"$MOCK_TMUX_CAPTURES/codex-exec-protocol.txt"
@@ -1447,7 +1467,13 @@ MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$MULTIAGENT" subagent spawn decision
   --role reviewer --instruction "Review the proposed authority"
 authority_spawn_line="$(grep -F "new-window -d test-session decision-authority-read-only " "$MOCK_TMUX_LOG")"
 [[ "$authority_spawn_line" == *"exec --cd $ROOT"* ]]
-[[ "$authority_spawn_line" == *"--sandbox read-only -c approval_policy=never"* ]]
+if [[ "$HOST_KERNEL" == Linux ]]; then
+  [[ "$authority_spawn_line" == *"$MULTIAGENT role-exec"* ]]
+  [[ "$authority_spawn_line" == *"--dangerously-bypass-approvals-and-sandbox"* ]]
+  [[ "$authority_spawn_line" != *"--allow-write $ROOT"* ]]
+else
+  [[ "$authority_spawn_line" == *"--sandbox read-only -c approval_policy=never"* ]]
+fi
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/decision-authority-read-only/meta.env" "role=reviewer"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/decision-authority-read-only/meta.env" "codex_access=read-only"
 

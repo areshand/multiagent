@@ -2,7 +2,7 @@
 set -euo pipefail
 
 FRAMEWORK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-MULTIAGENT="$FRAMEWORK_ROOT/target/debug/multiagent"
+MULTIAGENT="${MULTIAGENT_BIN:-$FRAMEWORK_ROOT/target/debug/multiagent}"
 TEST_TMP="$(mktemp -d)"
 trap 'rm -rf "$TEST_TMP"' EXIT
 
