@@ -159,6 +159,12 @@ implicated source paths, and the next bounded repair assignment. Source review,
 compile-only checks, or a weaker synthetic probe cannot clear a still-failing
 nearby visible command.
 
+If a direct visible test is blocked by a missing service or other environment
+dependency, read the test and replay its exact setup, boundary values, and
+assertion with the narrowest runnable stubbed probe. Do not substitute easier
+values. Report `visible-test-replay-passed:` only when that exact assertion
+passes; otherwise return `validation-repair-needed:`.
+
 For any code diff, final validation must include hash-bound build evidence for
 the final patch:
 `build-verification-passed: final-diff-sha256=... changed-files=N

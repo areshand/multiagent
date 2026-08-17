@@ -369,6 +369,28 @@ class NativeOutcomeTest(unittest.TestCase):
         self.assertEqual(exposed, ["new_source.py"])
         self.assertNotIn("appendonly.aof", diff)
 
+    def test_workspace_handoff_excludes_framework_control_plane_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            internal = repo / ".multiagent" / "subagents" / "reviewer"
+            internal.mkdir(parents=True)
+            (internal / "status").write_text("missing\n", encoding="utf-8")
+            (repo / "feature.py").write_text("fixed = True\n", encoding="utf-8")
+
+            exposed = swe_prod_repository.mark_untracked_intent_to_add(repo)
+            diff = subprocess.run(
+                ["git", "diff", "--binary"],
+                cwd=repo,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+            ).stdout
+
+        self.assertEqual(exposed, ["feature.py"])
+        self.assertIn("feature.py", diff)
+        self.assertNotIn(".multiagent", diff)
+
     def test_summary_counts_submitted_patch_even_when_official_score_is_zero(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

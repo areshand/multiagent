@@ -455,6 +455,33 @@ class MigrationCliContractTest(unittest.TestCase):
         self.assertEqual(payload["changed_paths"], ["src/new.rs"])
         self.assertEqual(payload["changed_code_paths"], ["src/new.rs"])
 
+    def test_snapshot_excludes_framework_control_plane_files(self):
+        internal = self.repo / ".multiagent" / "subagents" / "reviewer"
+        internal.mkdir(parents=True)
+        (internal / "status").write_text("missing\n", encoding="utf-8")
+        (self.repo / "src" / "new.rs").write_text("pub fn added() {}\n", encoding="utf-8")
+
+        result = subprocess.run(
+            [
+                str(MULTIAGENT),
+                "snapshot",
+                "--root",
+                str(self.repo),
+                "--format",
+                "json",
+            ],
+            cwd=self.repo,
+            env=self.env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["changed_paths"], ["src/new.rs"])
+        self.assertNotIn(".multiagent", json.dumps(payload))
+
     def test_dag_concurrent_node_updates_do_not_lose_rows(self):
         self.run_cli("dag", "init", "WF-DAG-CONCURRENT", "--title", "Concurrent DAG")
         processes = []

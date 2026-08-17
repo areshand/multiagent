@@ -131,6 +131,7 @@ fn untracked_paths(root: &Path) -> Result<Vec<PathBuf>, String> {
         .filter(|bytes| !bytes.is_empty())
         .map(path_from_git_bytes)
         .filter(|path| !baseline.contains(&path.to_string_lossy().into_owned()))
+        .filter(|path| !is_framework_internal_path(path))
         .filter(|path| {
             fs::symlink_metadata(root.join(path))
                 .map(|metadata| metadata.is_file() || metadata.file_type().is_symlink())
@@ -139,6 +140,14 @@ fn untracked_paths(root: &Path) -> Result<Vec<PathBuf>, String> {
         .collect::<Vec<_>>();
     paths.sort();
     Ok(paths)
+}
+
+fn is_framework_internal_path(path: &Path) -> bool {
+    let mut components = path.components();
+    matches!(
+        components.next(),
+        Some(std::path::Component::Normal(component)) if component == ".multiagent"
+    )
 }
 
 fn baseline_untracked() -> Result<BTreeSet<String>, String> {
@@ -273,5 +282,14 @@ mod tests {
         assert!(is_source("src/lib.rs"));
         assert!(is_test_path("tests/lib.rs"));
         assert!(is_ignored("vendor/lib.rs"));
+    }
+
+    #[test]
+    fn recognizes_framework_internal_paths() {
+        assert!(is_framework_internal_path(Path::new(
+            ".multiagent/subagents/reviewer/status"
+        )));
+        assert!(!is_framework_internal_path(Path::new("src/.multiagent.rs")));
+        assert!(!is_framework_internal_path(Path::new("feature.py")));
     }
 }
