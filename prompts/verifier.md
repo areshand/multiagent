@@ -501,3 +501,7 @@ start/build the real router and make a request-level probe. Loading the edited
 module, checking syntax, or invoking a handler through a hand-written stub does
 not prove that production registration order, mount point, middleware, or URL
 reachability works. Treat stub-only validation as a blocking validation gap.
+For a route/router diff, acceptance must include
+`route-integration-probe-passed: final-diff-sha256=HASH command=... returncode=0`
+for the exact live diff. The supervisor rejects route changes without this
+marker; never emit it for a stub-only handler or isolated registration probe.

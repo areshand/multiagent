@@ -905,6 +905,35 @@ fn current_final_diff_sha256() -> Result<String, String> {
     Ok(format!("{:x}", digest.finalize()))
 }
 
+fn current_diff_requires_route_probe() -> Result<bool, String> {
+    if env::var("MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER").as_deref() != Ok("1") {
+        return Ok(false);
+    }
+    let root = config::root()?;
+    if !root.is_dir() {
+        return Ok(false);
+    }
+    let base = env::var("MULTIAGENT_START_HEAD")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "HEAD".into());
+    let diff = crate::snapshot::canonical_diff(&root, &base)?;
+    let text = String::from_utf8_lossy(&diff);
+    Ok(text.lines().any(|line| {
+        let Some(path) = line
+            .strip_prefix("diff --git a/")
+            .and_then(|line| line.split_once(" b/").map(|(_, path)| path))
+        else {
+            return false;
+        };
+        path.split('/').any(|component| {
+            let component = component.to_ascii_lowercase();
+            let stem = component.split('.').next().unwrap_or(&component);
+            matches!(stem, "route" | "routes" | "router" | "routers" | "routing")
+        })
+    }))
+}
+
 fn gate_check(args: &[String]) -> Result<(), String> {
     if !args.is_empty() {
         return Err("gate-check takes no arguments".into());
@@ -912,6 +941,7 @@ fn gate_check(args: &[String]) -> Result<(), String> {
     let state = config::state_dir()?;
     reconcile_terminal_verifiers(&state)?;
     let final_hash = current_final_diff_sha256()?;
+    let route_probe_required = current_diff_requires_route_probe()?;
     let mut failed = false;
 
     for (name, status) in active_verifiers(&state)? {
@@ -938,6 +968,14 @@ fn gate_check(args: &[String]) -> Result<(), String> {
                 let evidence = fs::read_to_string(&evidence_path).unwrap_or_default();
                 if !evidence_matches_hash(&evidence, &final_hash) {
                     println!("reject\tlatest-verifier-final-diff-hash-mismatch\tverifier={name}\texpected={final_hash}\tevidence={}", evidence_path.display());
+                    failed = true;
+                }
+                if route_probe_required
+                    && !evidence.contains(&format!(
+                        "route-integration-probe-passed: final-diff-sha256={final_hash}"
+                    ))
+                {
+                    println!("reject\tmissing-route-integration-probe\tverifier={name}\texpected={final_hash}\tevidence={}", evidence_path.display());
                     failed = true;
                 }
             }

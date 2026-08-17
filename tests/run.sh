@@ -703,6 +703,25 @@ printf 'ACCEPTED\nbuild-verification-passed: final-diff-sha256=%s compile_clean=
 MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
   "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-verifier-bound-hash.out"
 assert_file_contains "$TMPDIR/gate-verifier-bound-hash.out" "accepted"
+mkdir -p "$HASH_GATE_ROOT/src/routes"
+printf 'before route\n' >"$HASH_GATE_ROOT/src/routes/index.js"
+git -C "$HASH_GATE_ROOT" add src/routes/index.js
+git -C "$HASH_GATE_ROOT" commit -qm route-baseline
+printf 'after route\n' >"$HASH_GATE_ROOT/src/routes/index.js"
+HASH_GATE_ROUTE_SHA="$("$MULTIAGENT" snapshot --root "$HASH_GATE_ROOT" --format shell | awk '{print $1}')"
+printf 'ACCEPTED\nbuild-verification-passed: final-diff-sha256=%s compile_clean=true returncode=0\n' "$HASH_GATE_ROUTE_SHA" >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
+if MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
+  "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-route-missing-probe.out" 2>&1; then
+  echo "expected a route diff without an integration probe marker to fail gate-check" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/gate-route-missing-probe.out" $'reject\tmissing-route-integration-probe'
+printf 'ACCEPTED\nbuild-verification-passed: final-diff-sha256=%s compile_clean=true returncode=0\nroute-integration-probe-passed: final-diff-sha256=%s command=request-test returncode=0\n' \
+  "$HASH_GATE_ROUTE_SHA" "$HASH_GATE_ROUTE_SHA" >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
+MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
+  "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-route-probe-passed.out"
+assert_file_contains "$TMPDIR/gate-route-probe-passed.out" "accepted"
+git -C "$HASH_GATE_ROOT" restore src/routes/index.js
 printf 'malicious post-review source\n' >"$HASH_GATE_ROOT/untracked-source.txt"
 if MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
   "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-verifier-untracked-bypass.out" 2>&1; then
@@ -1017,6 +1036,7 @@ assert_file_contains "$ROOT/prompts/verifier.md" "state-space partition audit"
 assert_file_contains "$ROOT/prompts/verifier.md" "mixed-category, unknown/forward-compatible variant"
 assert_file_contains "$ROOT/prompts/verifier.md" "state-space-partition-audit:"
 assert_file_contains "$ROOT/prompts/verifier.md" "behavior-verification-passed:"
+assert_file_contains "$ROOT/prompts/verifier.md" "route-integration-probe-passed:"
 assert_file_contains "$ROOT/prompts/verifier.md" "narrowest visible test file"
 assert_file_contains "$ROOT/prompts/verifier.md" "visible-test-replay-passed:"
 assert_file_contains "$ROOT/prompts/verifier.md" "exact boundary values"
@@ -1066,6 +1086,7 @@ assert_file_contains "$ROOT/prompts/worker.md" "no-test compile check"
 assert_file_contains "$ROOT/prompts/worker.md" "declared static type"
 assert_file_contains "$ROOT/prompts/worker.md" "validation-repair-needed:"
 assert_file_contains "$ROOT/prompts/worker.md" "multi-value-probe-passed:"
+assert_file_contains "$ROOT/prompts/worker.md" "route-integration-probe-passed:"
 assert_file_contains "$ROOT/prompts/worker.md" "actual-output-count=N"
 assert_file_contains "$ROOT/prompts/worker.md" "multi-value-probe.txt"
 assert_file_contains "$ROOT/prompts/worker.md" "source-symbol-map-passed:"

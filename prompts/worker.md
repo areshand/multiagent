@@ -345,6 +345,9 @@ start/build the real router and issue a request-level probe. Syntax checks,
 module loading, and hand-written handler stubs are useful diagnostics but are
 not completion evidence because they do not prove registration order, mount
 point, middleware, or URL reachability.
+For a route/router diff, report successful production-entrypoint validation as
+`route-integration-probe-passed: final-diff-sha256=HASH command=... returncode=0`.
+Do not emit this marker for a stub-only handler or isolated registration probe.
 For option/argument propagation across wrappers, validation must observe the
 next layer receiving the value for both the declared default and one override.
 An implementation that omits the default keyword/field and relies on the next
