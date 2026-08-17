@@ -2193,13 +2193,12 @@ fn append_verifier_diff_binding(
     if !matches!(file, "verifier.md" | "build-verifier.md") {
         return Ok(instruction.into());
     }
-    let diff = git_bytes(
-        &cfg.root,
-        &["diff", "--binary", "--ignore-submodules=all", "HEAD"],
-    )?;
-    let changed = git_text(&cfg.root, &["diff", "--name-only", "HEAD"])?
+    // Bind reviewers to the exact supervisor candidate. Raw `git diff` omits
+    // untracked source files and would give the reviewer a second, weaker hash.
+    let diff = crate::snapshot::canonical_diff(&cfg.root, "HEAD")?;
+    let changed = String::from_utf8_lossy(&diff)
         .lines()
-        .filter(|line| !line.is_empty())
+        .filter(|line| line.starts_with("diff --git a/"))
         .count();
     if changed == 0 {
         return Ok(instruction.into());

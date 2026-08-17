@@ -1104,6 +1104,7 @@ assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "prompts
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "build-verification-passed:"
 assert_file_contains "$ROOT/prompts/playbooks/finding-todo-loop.md" "Do not create or reopen a todo from command evidence bound"
 assert_file_contains "$MULTIAGENT" subagent '--own|--owned-path)'
+assert_file_contains "$ROOT/src/runtime.rs" 'crate::snapshot::canonical_diff(&cfg.root, "HEAD")'
 assert_file_contains "$MULTIAGENT" subagent '--source-finding-id|--finding)'
 assert_file_contains "$MULTIAGENT" subagent '--role)'
 assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "declared-type ownership risk"
