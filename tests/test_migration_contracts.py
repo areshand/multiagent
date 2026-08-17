@@ -395,6 +395,7 @@ class MigrationCliContractTest(unittest.TestCase):
     def test_snapshot_cli_json_contract(self):
         (self.repo / "README.md").write_text("changed\n", encoding="utf-8")
         (self.repo / "src" / "lib.rs").write_text("pub fn value() -> u8 { 2 }\n", encoding="utf-8")
+        (self.repo / "src" / "new.rs").write_text("pub fn added() {}\n", encoding="utf-8")
         result = subprocess.run(
             [
                 str(MULTIAGENT),
@@ -417,10 +418,42 @@ class MigrationCliContractTest(unittest.TestCase):
             set(payload),
             {"final_diff_sha256", "changed_files", "changed_paths", "changed_code_paths"},
         )
-        self.assertEqual(payload["changed_files"], 2)
-        self.assertEqual(payload["changed_paths"], ["README.md", "src/lib.rs"])
-        self.assertEqual(payload["changed_code_paths"], ["src/lib.rs"])
+        self.assertEqual(payload["changed_files"], 3)
+        self.assertEqual(
+            payload["changed_paths"], ["README.md", "src/lib.rs", "src/new.rs"]
+        )
+        self.assertEqual(payload["changed_code_paths"], ["src/lib.rs", "src/new.rs"])
         self.assertRegex(payload["final_diff_sha256"], r"^[0-9a-f]{64}$")
+
+    def test_snapshot_excludes_only_baseline_untracked_files(self):
+        residue = self.repo / "runtime-residue.txt"
+        residue.write_text("created before the solver starts\n", encoding="utf-8")
+        baseline = self.root / "baseline-untracked.txt"
+        baseline.write_text("runtime-residue.txt\n", encoding="utf-8")
+        (self.repo / "src" / "new.rs").write_text("pub fn added() {}\n", encoding="utf-8")
+        env = dict(self.env)
+        env["MULTIAGENT_BASELINE_UNTRACKED_FILE"] = str(baseline)
+
+        result = subprocess.run(
+            [
+                str(MULTIAGENT),
+                "snapshot",
+                "--root",
+                str(self.repo),
+                "--format",
+                "json",
+            ],
+            cwd=self.repo,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["changed_paths"], ["src/new.rs"])
+        self.assertEqual(payload["changed_code_paths"], ["src/new.rs"])
 
     def test_dag_concurrent_node_updates_do_not_lose_rows(self):
         self.run_cli("dag", "init", "WF-DAG-CONCURRENT", "--title", "Concurrent DAG")
@@ -646,6 +679,11 @@ class MigrationCliContractTest(unittest.TestCase):
                 "workflow_id",
                 "phase",
                 "iteration",
+                "original_task",
+                "original_task_sha256",
+                "contract_scout",
+                "contract_artifact",
+                "contract_artifact_sha256",
                 "preimplementation_gate",
                 "decision_id",
                 "plan_id",

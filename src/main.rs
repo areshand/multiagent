@@ -1,3 +1,4 @@
+mod agent;
 mod config;
 mod dag;
 mod decision;
@@ -7,6 +8,7 @@ mod role_sandbox;
 mod runtime;
 mod snapshot;
 mod subagent;
+mod supervisor;
 mod workflow;
 
 use std::env;
@@ -14,6 +16,7 @@ use std::process::ExitCode;
 
 const USAGE: &str = r#"Usage:
   multiagent dag COMMAND [ARGS...]
+  multiagent agent COMMAND [ARGS...]
   multiagent decision COMMAND [ARGS...]
   multiagent policy COMMAND [ARGS...]
   multiagent prompt-bundle [ARGS...]
@@ -37,7 +40,17 @@ fn main() -> ExitCode {
         eprintln!("multiagent: {message}");
         return ExitCode::from(1);
     }
+    if let Some(result) = supervisor::proxy_if_required(&command, &args) {
+        return match result {
+            Ok(code) => code,
+            Err(message) => {
+                eprintln!("supervisor: {message}");
+                ExitCode::from(1)
+            }
+        };
+    }
     let result: Result<ExitCode, (&str, String)> = match command.as_str() {
+        "agent" => agent::run(&args).map_err(|message| ("agent", message)),
         "launch" => runtime::launch(&args).map_err(|message| ("launch", message)),
         "orchestrator" => runtime::orchestrator(&args).map_err(|message| ("orchestrator", message)),
         "status" => runtime::status(&args).map_err(|message| ("status", message)),
@@ -62,6 +75,7 @@ fn main() -> ExitCode {
             .map(|_| ExitCode::SUCCESS)
             .map_err(|message| ("snapshot", message)),
         "subagent" => subagent::run(&args).map_err(|message| ("subagent", message)),
+        "supervisor" => supervisor::run(&args).map_err(|message| ("supervisor", message)),
         "workflow" => workflow::run(&args)
             .map(|_| ExitCode::SUCCESS)
             .map_err(|message| ("workflow", message)),

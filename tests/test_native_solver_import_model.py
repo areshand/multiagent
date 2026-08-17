@@ -94,6 +94,7 @@ class NativeSolverImportModelTest(unittest.TestCase):
             self.assertTrue((baked_root / "evaluation" / "support" / "state.py").is_file())
             self.assertEqual(list((baked_root / "evaluation" / "support" / "coding").glob("*.py")), [])
             self.assertFalse((baked_root / "multiagent_framework").exists())
+            self.assertFalse((baked_root / "target").exists())
             self.assertEqual(package_hint, f"python3 -m {MODULE_ENTRYPOINT}")
             self.assertEqual(
                 copy_lines[-1],

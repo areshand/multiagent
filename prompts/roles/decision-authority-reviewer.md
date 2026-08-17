@@ -17,6 +17,13 @@ Determine:
 - whether the proposed worker assignment embeds an unrecorded choice; and
 - whether the implementation context faithfully preserves the approved contract.
 
+When the supervisor-owned semantic envelope contains a registered contract
+artifact, compare every `polarity=must` and `polarity=must-not` rule against the
+proposed plan and implementation context. A compatibility alias, fallback,
+embedded legacy field, or retained old path is not automatically safer: if it
+contradicts a negative rule, return findings and block implementation. Do not
+allow the orchestrator to substitute a paraphrased checklist for the artifact.
+
 User-owned triggers include public behavior or contracts, roles or
 responsibilities, persisted state or migration, security or trust boundaries,
 destructive or difficult-to-reverse behavior, material scope or cost, and
@@ -52,6 +59,9 @@ Return only:
 6. `review-record: type=decision-authority verdict=pass diff=-` when the verdict
    is `orchestrator-may-decide`; otherwise
    `review-record: type=decision-authority verdict=findings diff=-`.
+7. When a registered contract is present and the verdict passes, the exact
+   `contract-review: artifact-sha256=HASH verdict=pass` marker supplied in the
+   supervisor-owned semantic envelope.
 
 Do not use agent agreement or majority preference as authority. A passing
 review means the orchestrator may proceed under the recorded authority; it is

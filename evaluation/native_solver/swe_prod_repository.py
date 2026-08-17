@@ -7,6 +7,7 @@ from pathlib import Path
 from .swe_prod_bootstrap import require_path
 from .swe_prod_contracts import (
     AUTONOMOUS_APPENDIX,
+    ORIGINAL_TASK_PATH,
     RUNTIME_ROOT,
     issue_with_public_problem_text,
     log,
@@ -22,6 +23,7 @@ def make_prompt(repo_root: Path, workdir: Path, issue: str, metadata: dict[str, 
     base_prompt = repo_root / "orchestrator_prompt.md"
     require_path(base_prompt, "production orchestrator prompt")
     public_task = issue_with_public_problem_text(issue, public_solver_metadata(metadata or {}))
+    ORIGINAL_TASK_PATH.write_text(public_task, encoding="utf-8")
     prompt = (
         base_prompt.read_text(encoding="utf-8")
         + AUTONOMOUS_APPENDIX
@@ -51,12 +53,19 @@ def materialize_committed_changes(cwd: Path, start_head: str) -> None:
         raise RuntimeError(f"failed to materialize committed changes with git reset --mixed: {tail}")
 
 
-def mark_untracked_intent_to_add(cwd: Path) -> list[str]:
-    """Make every solver-created file visible to EvalScope's Git diff."""
-
+def list_untracked_files(cwd: Path) -> list[str]:
+    """Return non-ignored untracked files in stable Git order."""
     others = run(["git", "ls-files", "--others", "--exclude-standard"], cwd=cwd, timeout=30)
-    untracked = [line.strip() for line in others.stdout.splitlines() if line.strip()]
+    return [line.strip() for line in others.stdout.splitlines() if line.strip()]
+
+
+def mark_untracked_intent_to_add(cwd: Path, *, baseline_untracked: set[str] | None = None) -> list[str]:
+    """Expose newly created solver files without submitting image residue."""
+
+    baseline = baseline_untracked or set()
+    untracked = list_untracked_files(cwd)
     intent_to_add = [path for path in untracked if (cwd / path).is_file()]
+    intent_to_add = [path for path in intent_to_add if path not in baseline]
     if intent_to_add:
         result = run(["git", "add", "-N", "--", *intent_to_add], cwd=cwd, timeout=120)
         if result.returncode != 0:

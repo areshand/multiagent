@@ -48,3 +48,6 @@ jobs:
         run: cargo test --locked
       - name: Run shell CLI and lifecycle contracts
         run: tests/run.sh
+      - name: Run malicious orchestrator boundary contracts
+        if: runner.os == 'Linux'
+        run: sudo -E tests/malicious-orchestrator.sh

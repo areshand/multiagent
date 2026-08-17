@@ -28,6 +28,12 @@ from evaluation.swe_bench_pro_image_preload import (
 SOLVER_SOURCE_LABEL = "org.multiagent.solver-source-sha256"
 
 
+def docker_inspect_reports_missing(error: str) -> bool:
+    """Return whether Docker conclusively reported an absent local image."""
+
+    return bool(re.search(r"\b(?:no such image|no such object|not found)\b", error, re.IGNORECASE))
+
+
 def inspect_image_identity(image: str) -> dict[str, Any]:
     """Return content-addressed local identity for a runnable Docker image."""
 
@@ -58,7 +64,14 @@ def skip_repo_bake_path(path: Path) -> bool:
     """Return whether a repository path is excluded from task-image source."""
 
     parts = set(path.parts)
-    if parts & {".git", ".multiagent", "__pycache__", ".pytest_cache", "node_modules"}:
+    if parts & {
+        ".git",
+        ".multiagent",
+        "__pycache__",
+        ".pytest_cache",
+        "node_modules",
+        "target",
+    }:
         return True
     if path.parts and path.parts[0] in {"tests", "docs"}:
         return True
@@ -171,6 +184,10 @@ class OnDemandImageManager:
             self.records.append({"instance_id": instance_id, "image": image, "status": "already_present"})
             self._write("running")
             return self._ensure_baked_image(image, instance_id)
+        if inspect_error and not docker_inspect_reports_missing(inspect_error):
+            raise RuntimeError(
+                f"cannot determine whether Docker image {image} exists: {inspect_error}"
+            )
 
         if self.min_free_gb > 0:
             free_gib = free_disk_gib(self.archive_dir)

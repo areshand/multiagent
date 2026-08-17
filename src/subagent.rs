@@ -259,9 +259,17 @@ fn checkpoint_update(args: &[String]) -> Result<(), String> {
     let _lock = lock_file(&assignments.join(".lock"), "assignments")?;
     atomic_write(&dir.join("checkpoint.env"), &text)?;
     atomic_write(&dir.join("status"), &format!("{status}\n"))?;
-    let subagent = config::state_dir()?.join("subagents").join(name);
-    fs::create_dir_all(&subagent).map_err(io_error("create subagent state"))?;
-    atomic_write(&subagent.join("status"), &format!("{status}\n"))?;
+    // Under UID isolation, the authority server owns assignments but must not
+    // create files in the orchestrator-owned runtime projection. Doing so
+    // would make the later role prompt/status directory unwritable by the
+    // orchestrator. Runtime spawn/poll remains the sole owner of that mirror.
+    if !(env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1")
+        && env::var("MULTIAGENT_AUTHORITY_SERVER_CHILD").as_deref() == Ok("1"))
+    {
+        let subagent = config::state_dir()?.join("subagents").join(name);
+        fs::create_dir_all(&subagent).map_err(io_error("create subagent state"))?;
+        atomic_write(&subagent.join("status"), &format!("{status}\n"))?;
+    }
     println!("checkpoint updated\t{name}\t{status}");
     Ok(())
 }
@@ -736,22 +744,7 @@ fn finding_dismiss(args: &[String]) -> Result<(), String> {
             ));
         }
     }
-    let evidence_path = state
-        .join("subagents")
-        .join(verified)
-        .join("last-message.txt");
-    if !evidence_path.is_file() {
-        return Err(format!(
-            "finding-dismiss requires verifier evidence: {verified}"
-        ));
-    }
-    let evidence =
-        fs::read_to_string(&evidence_path).map_err(io_error("read verifier evidence"))?;
-    if !accepted_verdict(&evidence) {
-        return Err(format!(
-            "finding dismissal verifier {verified} did not ACCEPT"
-        ));
-    }
+    let (evidence_path, evidence) = verifier_evidence(&state, verified, "finding-dismiss")?;
     let recheck: Value = serde_json::from_str(recheck_raw)
         .map_err(|error| format!("invalid finding dismissal recheck: {error}"))?;
     let object = recheck
@@ -832,6 +825,61 @@ fn accepted_verdict(text: &str) -> bool {
             .strip_prefix("verdict=")
             .is_some_and(|value| value.trim().starts_with("accepted"))
 }
+
+fn uid_authority_child() -> bool {
+    env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1")
+        && env::var("MULTIAGENT_AUTHORITY_SERVER_CHILD").as_deref() == Ok("1")
+}
+
+fn verifier_evidence(
+    state: &Path,
+    verified: &str,
+    operation: &str,
+) -> Result<(PathBuf, String), String> {
+    let evidence_path = if uid_authority_child() {
+        let directory = state.join("reviewer-evidence").join(verified);
+        let metadata = read_env(&directory.join("evidence.env"))?;
+        if env_value(&metadata, "role") != "reviewer"
+            || env_value(&metadata, "access") != "read-only"
+            || env_value(&metadata, "state") != "completed"
+        {
+            return Err(format!(
+                "{operation} requires completed supervisor-sealed reviewer evidence: {verified}"
+            ));
+        }
+        let workflow = env::var("MULTIAGENT_WORKFLOW_ID").unwrap_or_default();
+        if !workflow.is_empty() && env_value(&metadata, "workflow_id") != workflow {
+            return Err(format!(
+                "{operation} reviewer evidence {verified} belongs to a different workflow"
+            ));
+        }
+        let path = directory.join("last-message.txt");
+        let expected = env_value(&metadata, "output_sha256");
+        if expected.is_empty() || !file_sha256(&path)?.eq_ignore_ascii_case(expected) {
+            return Err(format!(
+                "{operation} reviewer evidence {verified} failed its supervisor seal"
+            ));
+        }
+        path
+    } else {
+        state
+            .join("subagents")
+            .join(verified)
+            .join("last-message.txt")
+    };
+    if !evidence_path.is_file() {
+        return Err(format!(
+            "{operation} requires verifier evidence: {verified}"
+        ));
+    }
+    let evidence =
+        fs::read_to_string(&evidence_path).map_err(io_error("read verifier evidence"))?;
+    if !accepted_verdict(&evidence) {
+        return Err(format!("{operation} verifier {verified} did not ACCEPT"));
+    }
+    Ok((evidence_path, evidence))
+}
+
 fn current_final_diff_sha256() -> Result<String, String> {
     if env::var("MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER").as_deref() != Ok("1") {
         return Ok(String::new());
@@ -840,23 +888,17 @@ fn current_final_diff_sha256() -> Result<String, String> {
     if !root.is_dir() {
         return Ok(String::new());
     }
-    let mut command = Command::new("git");
-    command
-        .arg("-C")
-        .arg(root)
-        .args(["diff", "--binary", "--ignore-submodules=all"]);
-    if let Ok(start) = env::var("MULTIAGENT_START_HEAD") {
-        if !start.is_empty() {
-            command.arg(start);
-        }
-    }
-    let output = command.output().map_err(io_error("capture final diff"))?;
-    if !output.status.success() || output.stdout.iter().all(u8::is_ascii_whitespace) {
+    let base = env::var("MULTIAGENT_START_HEAD")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "HEAD".into());
+    let diff = crate::snapshot::canonical_diff(&root, &base)?;
+    if diff.iter().all(u8::is_ascii_whitespace) {
         return Ok(String::new());
     }
     use sha2::{Digest, Sha256};
     let mut digest = Sha256::new();
-    digest.update(&output.stdout);
+    digest.update(&diff);
     Ok(format!("{:x}", digest.finalize()))
 }
 
@@ -967,6 +1009,10 @@ fn gate_check(args: &[String]) -> Result<(), String> {
         println!("accepted\tfinal-gate");
         Ok(())
     }
+}
+
+pub fn completion_gate_check() -> Result<(), String> {
+    gate_check(&[])
 }
 
 fn verifier_dirs(state: &Path) -> Result<Vec<PathBuf>, String> {
@@ -1615,7 +1661,8 @@ fn todo_close(args: &[String]) -> Result<(), String> {
     )?;
     let notes = option_first(&values, "--notes");
     reject_newline("--notes", notes)?;
-    let base = config::state_dir()?.join("todos");
+    let state = config::state_dir()?;
+    let base = state.join("todos");
     let dir = base.join(todo_id);
     if !dir.join("todo.env").is_file() {
         return Err(format!("no todo: {todo_id}"));
@@ -1631,6 +1678,35 @@ fn todo_close(args: &[String]) -> Result<(), String> {
         .map_err(|error| format!("invalid recheck JSON: {error}"))?;
     validate_closure(&recheck)?;
     validate_required_commands(&dir, "verifier recheck", &recheck)?;
+    let require_verifier_evidence = uid_authority_child()
+        || env::var("MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER").as_deref() == Ok("1");
+    let (evidence_path, evidence) = if require_verifier_evidence {
+        verifier_evidence(&state, verified, "todo-close")?
+    } else {
+        (
+            state
+                .join("subagents")
+                .join(verified)
+                .join("last-message.txt"),
+            String::new(),
+        )
+    };
+    let final_hash = current_final_diff_sha256()?;
+    if !final_hash.is_empty() {
+        let reported = recheck
+            .get("final_diff_sha256")
+            .or_else(|| recheck.get("final_diff_hash"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if !reported.eq_ignore_ascii_case(&final_hash) {
+            return Err(format!("todo-close must bind to final diff {final_hash}"));
+        }
+        if !evidence_matches_hash(&evidence, &final_hash) {
+            return Err(format!(
+                "todo-close verifier {verified} is not bound to final diff {final_hash}"
+            ));
+        }
+    }
     let metadata = read_env(&dir.join("todo.env"))?;
     let source = env_value(&metadata, "source_finding_id");
     let source_hash = env_value(&metadata, "source_finding_hash");
@@ -1646,7 +1722,7 @@ fn todo_close(args: &[String]) -> Result<(), String> {
         &dir.join("recheck.json"),
         &format!("{}\n", serde_json::to_string(&recheck).map_err(json_error)?),
     )?;
-    let closure = json!({"todo_id":todo_id,"source_finding_id":source,"source_finding_hash":if source_hash.is_empty(){Value::Null}else{Value::String(source_hash.into())},"verified_by":verified,"recheck":recheck,"notes":notes,"created_at":created});
+    let closure = json!({"todo_id":todo_id,"source_finding_id":source,"source_finding_hash":if source_hash.is_empty(){Value::Null}else{Value::String(source_hash.into())},"verified_by":verified,"verifier_evidence":evidence_path.display().to_string(),"recheck":recheck,"notes":notes,"created_at":created});
     write_json(&dir.join("closure.json"), &closure)?;
     update_todo_state_locked(&dir, None, "closed")?;
     println!("todo closed\t{todo_id}\t{verified}");

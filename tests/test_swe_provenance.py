@@ -14,7 +14,9 @@ from unittest import mock
 
 from evaluation.swe_bench_pro import native_runner_summary_from_text
 from evaluation.swe_bench_pro_on_demand import (
+    OnDemandImageManager,
     SOLVER_SOURCE_LABEL,
+    docker_inspect_reports_missing,
     inspect_image_identity,
     native_solver_source_digest,
 )
@@ -186,6 +188,39 @@ class SweProvenanceTest(unittest.TestCase):
 
 
 class ImageIdentityTest(unittest.TestCase):
+    def test_docker_inspect_distinguishes_missing_image_from_infrastructure_failure(self):
+        self.assertTrue(docker_inspect_reports_missing("Error response from daemon: No such image: local:test"))
+        self.assertFalse(
+            docker_inspect_reports_missing(
+                "permission denied while trying to connect to the docker API"
+            )
+        )
+
+    def test_on_demand_image_manager_fails_fast_when_docker_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manager = OnDemandImageManager(
+                archive_dir=root,
+                status_path=root / "status.json",
+                platform="linux/amd64",
+                image_timeout=60,
+                retries=3,
+                backoff_s=180,
+                min_free_gb=0,
+                prune_after_sample=False,
+                native_solver_source=root,
+            )
+            with mock.patch(
+                "evaluation.swe_bench_pro_on_demand.docker_image_present",
+                return_value=(False, "permission denied while trying to connect to the docker API"),
+            ):
+                with mock.patch(
+                    "evaluation.swe_bench_pro_on_demand.preload_image_with_retries"
+                ) as preload:
+                    with self.assertRaisesRegex(RuntimeError, "cannot determine whether Docker image"):
+                        manager.ensure_image("local:test", "row")
+                    preload.assert_not_called()
+
     def test_adapter_is_python38_and_within_line_budget(self):
         source = (Path(__file__).resolve().parents[1] / "evaluation/swe_bench_pro_provenance.py").read_text(
             encoding="utf-8"
@@ -220,11 +255,15 @@ class ImageIdentityTest(unittest.TestCase):
             (root / "launch.sh").write_text("one\n", encoding="utf-8")
             (root / "docs").mkdir()
             (root / "docs/ignored.md").write_text("ignored one\n", encoding="utf-8")
+            (root / "target/debug").mkdir(parents=True)
+            (root / "target/debug/multiagent").write_bytes(b"build artifact one")
             first = native_solver_source_digest(root)
             (root / "launch.sh").chmod(0o755)
             self.assertNotEqual(native_solver_source_digest(root), first)
             first = native_solver_source_digest(root)
             (root / "docs/ignored.md").write_text("ignored two\n", encoding="utf-8")
+            self.assertEqual(native_solver_source_digest(root), first)
+            (root / "target/debug/multiagent").write_bytes(b"build artifact two")
             self.assertEqual(native_solver_source_digest(root), first)
             (root / "launch.sh").write_text("two\n", encoding="utf-8")
             self.assertNotEqual(native_solver_source_digest(root), first)

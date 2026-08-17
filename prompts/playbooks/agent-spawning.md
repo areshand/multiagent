@@ -18,37 +18,42 @@ with a narrower locked hypothesis. Worker ownership and done criteria must
 cover every listed mutated output or explicitly preserve an open blocking todo
 for outputs assigned elsewhere.
 
+Before creating assignment metadata, compare the worker's owned paths and hard
+constraints with the approved implementation context. The assignment may split
+the approved plan across coordinated TODOs, but it must not silently narrow or
+contradict that plan. In particular, if the approved plan or contract ledger
+requires updating visible tests, fixtures, callers, generated files, or other
+outputs, either include those paths in this worker's ownership or assign them
+to another active TODO. Never forbid a required path and then accept the
+resulting partial diff or failed validation as completion.
+
 ## Worker Spawn Skill
 
-Before spawning a worker, create durable assignment metadata:
+Create durable assignment metadata and launch the worker with one atomic Rust
+CLI operation. Do not issue a separate `assignment-create` concurrently with
+`spawn`; doing so creates an avoidable race between authority registration and
+worker launch:
 
 ```bash
-multiagent subagent assignment-create worker-01-task \
+SUBAGENT_CLI="$WORKER_CLI" multiagent subagent spawn worker-01-task \
+  --role worker \
+  --own PATH[,PATH...] \
   --assignment-id ASSIGNMENT_ID \
-  --role exploitation \
   --workflow-id "$MULTIAGENT_WORKFLOW_ID" \
   --decision-id DECISION_ID \
   --plan-id PLAN_ID \
   --branch BRANCH \
-  --owned PATH[,PATH...]
-multiagent subagent checkpoint-update worker-01-task --step "assignment created" --status assigned
-```
-
-For the normal single-writer path, spawn through the Rust supervisor in the
-shared target workspace. The trusted worker role receives workspace-write
-access while the orchestrator remains unable to edit that workspace:
-
-```bash
-SUBAGENT_CLI="$WORKER_CLI" multiagent subagent spawn worker-01-task \
-  --role worker --instruction-file WORKER_INSTRUCTION
+  --instruction-file WORKER_INSTRUCTION
 multiagent subagent wait worker-01-task --timeout 1800
 ```
 
-The supervisor handles readiness and capture. Inspect a terminal `blocked` or
-`failed` result instead of treating it as completion. Separate git worktrees
-remain available for intentionally parallel, disjoint assignments, but require
-an explicit integration step before completion; do not use them for the normal
-SWE single-writer path.
+The supervisor creates the assignment under its lock, completes authority
+registration, and only then launches the trusted workspace-write worker. The
+orchestrator remains unable to edit the target workspace. Inspect a terminal
+`blocked` or `failed` result instead of treating it as completion. Separate git
+worktrees remain available for intentionally parallel, disjoint assignments,
+but require an explicit integration step before completion; do not use them for
+the normal SWE single-writer path.
 
 ## Long-Running Subagent Skill
 
@@ -85,6 +90,31 @@ ledger/findings, then finalize or kill the scout if it is still running. Do not
 let an active generic scout block `multiagent subagent spawn` for the implementation
 worker. Use `MULTIAGENT_ALLOW_PARALLEL_WORKERS=1` only when you intentionally
 want parallel disjoint workers and have recorded non-overlapping ownership.
+
+For a contract scout, finalize it and register its sealed output before any
+worker or reviewer starts:
+
+```bash
+multiagent subagent finalize CONTRACT_SCOUT_NAME
+multiagent workflow contract-register "$MULTIAGENT_WORKFLOW_ID" \
+  --scout CONTRACT_SCOUT_NAME
+```
+
+Copy the registered artifact verbatim into the approved implementation context,
+including its `contract-artifact-sha256=...` binding. Do not paraphrase or
+replace individual `must` or `must-not` rules. The launcher automatically
+injects the supervisor-owned original task and registered contract into every
+later worker and reviewer instruction.
+
+Give a live contract scout one bounded wait of at least 300 seconds before
+classifying it as stalled. Do not kill or finalize a running scout merely
+because one short poll has no final message. If it exits with an empty sealed
+artifact, allow at most one replacement with a narrower source list and an
+explicit "return the structured artifact before any ninth tool call" reminder.
+If that replacement also has no artifact, stop with a recorded infrastructure
+blocker. The orchestrator must never author, patch, copy, reconstruct, or force
+an environment bypass for scout output; only supervisor-sealed scout bytes may
+be registered.
 
 ## Verifier Agent Workflow
 
@@ -141,6 +171,13 @@ write blocked status with the no-diff worker names, owned paths, and concrete
 source discovery gap. Do not spawn worker-03/worker-04 over the same owned path
 set without a new verifier finding, failed validation command, or exact
 source-derived ownership blocker.
+
+The same semantic-preservation rule applies when replacing stalled reviewers.
+You may narrow commands, timeout, or runtime/file inspection for an operational
+reason, but may not narrow the original task, registered contract rules, issue
+clauses, or acceptance meaning. Every replacement receives the same
+supervisor-owned semantic envelope automatically and must cover it rather than
+a plan-confirming checklist.
 
 If a live worker remains no-diff after a planning checkpoint, inspect it once and
 force an edit-or-exact-blocker handoff. Do not let read-only source mapping

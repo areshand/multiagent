@@ -97,6 +97,8 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
 pub fn run_supervised(
     uid: u32,
     gid: u32,
+    write_roots: &[PathBuf],
+    filesystem_write_boundary: bool,
     command: &str,
     args: &[String],
 ) -> Result<ExitCode, String> {
@@ -122,11 +124,19 @@ pub fn run_supervised(
                 unsafe { libc::_exit(126) };
             }
         }
-        if drop_identity(uid, gid).is_err() {
+        if let Err(error) = drop_identity(uid, gid) {
+            eprintln!("role supervisor could not drop identity: {error}");
             unsafe { libc::_exit(126) };
         }
+        if let Err(error) = restrict_writes(write_roots) {
+            if !filesystem_write_boundary || !landlock_unavailable(&error) {
+                eprintln!("role supervisor could not apply write boundary: {error}");
+                unsafe { libc::_exit(126) };
+            }
+        }
         use std::os::unix::process::CommandExt;
-        let _ = Command::new(command).args(args).exec();
+        let error = Command::new(command).args(args).exec();
+        eprintln!("role supervisor could not execute {command}: {error}");
         unsafe { libc::_exit(127) };
     }
 
@@ -167,10 +177,19 @@ pub fn run_supervised(
 pub fn run_supervised(
     _uid: u32,
     _gid: u32,
+    _write_roots: &[PathBuf],
+    _filesystem_write_boundary: bool,
     _command: &str,
     _args: &[String],
 ) -> Result<ExitCode, String> {
     Err("supervised role execution requires Unix".into())
+}
+
+fn landlock_unavailable(error: &str) -> bool {
+    error.contains("Landlock is unavailable")
+        && (error.contains("Function not implemented")
+            || error.contains("Operation not supported")
+            || error.contains("Protocol not supported"))
 }
 
 #[cfg(unix)]

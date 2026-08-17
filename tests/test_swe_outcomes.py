@@ -67,6 +67,22 @@ class NativeOutcomeTest(unittest.TestCase):
         self.assertIn("explicit task contract is already approved", lifecycle)
         self.assertIn("This run has no interactive user", autonomous)
         self.assertIn("narrowest backward-compatible interpretation", autonomous)
+        self.assertIn("new contract outranks pre-change exact-call mocks", autonomous)
+        self.assertIn("verify the declared default and an override", autonomous)
+        self.assertIn("test-only dependency is not by itself a true contradiction", autonomous)
+        self.assertIn("Do not create a cleanup worker or revert", autonomous)
+        self.assertIn("Preserve the best task-directed candidate", autonomous)
+        self.assertIn("autonomous run-to-terminal workflow", autonomous)
+        self.assertIn("turn by offering to continue", autonomous)
+        self.assertIn("assignment omitted a path required by the approved plan", autonomous)
+        verifier = (root / "prompts/verifier.md").read_text(encoding="utf-8")
+        routing = (root / "prompts/playbooks/orchestration-routing.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("narrowest visible test file", verifier)
+        self.assertIn("Syntax checks, compile-only commands", verifier)
+        self.assertIn("command=... returncode=0", verifier)
+        self.assertIn("validation lease for the narrowest visible behavior test", routing)
 
     def test_runner_has_no_submission_rejection_path(self):
         self.assertFalse(hasattr(evalscope_multiagent_native_runner, "is_submission_gate_rejection"))
@@ -104,7 +120,7 @@ class NativeOutcomeTest(unittest.TestCase):
                     ) as chmod:
                         swe_prod_lifecycle.prepare_role_filesystem(workdir, launcher)
 
-            for role in ("orchestrator", "writer", "reader"):
+            for role in ("orchestrator", "writer", "reader", "supervisor"):
                 home = role_homes / role
                 self.assertEqual((home / "auth.json").read_text(encoding="utf-8"), '{"token":"test"}')
                 self.assertTrue((home / "config.toml").is_file())
@@ -124,6 +140,83 @@ class NativeOutcomeTest(unittest.TestCase):
 
         for call in run.call_args_list:
             self.assertEqual(call.args[0][:3], ["tmux", "-S", str(swe_prod_lifecycle.TMUX_SOCKET)])
+
+    def test_active_workflow_phase_reads_persisted_lifecycle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = Path(directory)
+            state = runtime / "state"
+            (state / "runtime_state").mkdir(parents=True)
+            (state / "runtime_state" / "active-workflow-id").write_text(
+                "workflow-1\n", encoding="utf-8"
+            )
+            lifecycle = state / "workflows" / "workflow-1" / "lifecycle"
+            lifecycle.mkdir(parents=True)
+            (lifecycle / "lifecycle.env").write_text(
+                "workflow_id=workflow-1\nphase=implementation\n", encoding="utf-8"
+            )
+
+            with mock.patch.object(swe_prod_lifecycle, "RUNTIME_ROOT", runtime):
+                self.assertEqual(swe_prod_lifecycle.active_workflow_phase(), "implementation")
+
+    def test_incomplete_workflow_is_resumed_before_workspace_handoff(self):
+        completed = SimpleNamespace(returncode=0, stdout="codex-cli 1.0\n", stderr="")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prompt = root / "prompt.md"
+            prompt.write_text("prompt", encoding="utf-8")
+            lifecycle_patches = {
+                "require_path": mock.DEFAULT,
+                "multiagent_command": mock.Mock(return_value=["multiagent"]),
+                "find_codex_cli": mock.Mock(return_value="/usr/bin/codex"),
+                "git_head": mock.Mock(return_value="a" * 40),
+                "list_untracked_files": mock.Mock(return_value=[]),
+                "run": mock.Mock(return_value=completed),
+                "write_codex_bridge": mock.DEFAULT,
+                "write_apply_patch_helper": mock.DEFAULT,
+                "write_rg_fallback": mock.DEFAULT,
+                "read_prompt": mock.Mock(return_value="public task"),
+                "read_task_metadata": mock.Mock(return_value={}),
+                "make_prompt": mock.Mock(return_value=prompt),
+                "toolchain_path_prefixes": mock.Mock(return_value=[]),
+                "ensure_cache_dir": mock.Mock(return_value=str(root)),
+                "prepare_role_filesystem": mock.DEFAULT,
+                "restore_workspace_owner": mock.DEFAULT,
+                "tmux_has_session": mock.Mock(return_value=True),
+                "tmux_has_orchestrator": mock.Mock(return_value=False),
+                "active_workflow_phase": mock.Mock(side_effect=["implementation", "complete"]),
+                "materialize_committed_changes": mock.DEFAULT,
+                "mark_untracked_intent_to_add": mock.DEFAULT,
+            }
+            with mock.patch.multiple(swe_prod_lifecycle, **lifecycle_patches):
+                with mock.patch.object(
+                    swe_prod_lifecycle.shutil,
+                    "which",
+                    side_effect=lambda name: "/usr/bin/tmux" if name == "tmux" else None,
+                ):
+                    with mock.patch.dict(
+                        swe_prod_lifecycle.os.environ,
+                        {
+                            "EVAL_CODEX_AUTH_MODE": "bridge",
+                            "OPENAI_BASE_URL": "http://127.0.0.1:1/v1",
+                            "OPENAI_API_KEY": "test-key",
+                        },
+                    ):
+                        self.assertEqual(swe_prod_lifecycle.run_prod_solver(None, root, root, 60), 0)
+
+                launch_calls = [
+                    call
+                    for call in swe_prod_lifecycle.run.call_args_list
+                    if call.kwargs.get("env") is not None
+                    and call.args
+                    and isinstance(call.args[0], list)
+                    and call.args[0]
+                    and str(call.args[0][0]).endswith("launch.sh")
+                ]
+
+        self.assertEqual(len(launch_calls), 2)
+        self.assertNotIn("--resume", launch_calls[0].args[0])
+        self.assertIn("--resume", launch_calls[1].args[0])
 
     def test_shard_problem_statement_uses_relative_sample_id(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -160,6 +253,7 @@ class NativeOutcomeTest(unittest.TestCase):
                 "multiagent_command": mock.Mock(return_value=["multiagent"]),
                 "find_codex_cli": mock.Mock(return_value="/usr/bin/codex"),
                 "git_head": mock.Mock(return_value="a" * 40),
+                "list_untracked_files": mock.Mock(return_value=["appendonlydir/runtime.aof"]),
                 "run": mock.Mock(return_value=completed),
                 "write_codex_bridge": mock.DEFAULT,
                 "write_apply_patch_helper": mock.DEFAULT,
@@ -208,7 +302,10 @@ class NativeOutcomeTest(unittest.TestCase):
 
         self.assertEqual(result, 0)
         materialize.assert_called_once_with(root, "a" * 40)
-        expose_untracked.assert_called_once_with(root)
+        expose_untracked.assert_called_once_with(
+            root,
+            baseline_untracked={"appendonlydir/runtime.aof"},
+        )
         prepare_roles.assert_called_once_with(root, Path("multiagent"))
         restore_owner.assert_called_once_with(root)
         self.assertEqual(launch_env["MULTIAGENT_UID_SANDBOX"], "1")
@@ -246,6 +343,31 @@ class NativeOutcomeTest(unittest.TestCase):
         self.assertEqual(exposed, ["feature.py", "tests/test_feature.py"])
         self.assertIn("feature.py", diff)
         self.assertIn("tests/test_feature.py", diff)
+
+    def test_workspace_handoff_excludes_preexisting_image_residue(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            (repo / "appendonlydir").mkdir()
+            residue = repo / "appendonlydir" / "appendonly.aof"
+            residue.write_text("runtime\n", encoding="utf-8")
+            baseline = set(swe_prod_repository.list_untracked_files(repo))
+            (repo / "new_source.py").write_text("fixed = True\n", encoding="utf-8")
+
+            exposed = swe_prod_repository.mark_untracked_intent_to_add(
+                repo,
+                baseline_untracked=baseline,
+            )
+            diff = subprocess.run(
+                ["git", "diff", "--binary"],
+                cwd=repo,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+            ).stdout
+
+        self.assertEqual(exposed, ["new_source.py"])
+        self.assertNotIn("appendonly.aof", diff)
 
     def test_summary_counts_submitted_patch_even_when_official_score_is_zero(self):
         with tempfile.TemporaryDirectory() as directory:

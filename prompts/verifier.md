@@ -84,6 +84,24 @@ Start by reconstructing the task contract independently from the user request,
 issue text, source, nearby tests, docs, and worker diff. Do not rely on the
 worker's summary as the source of truth.
 
+Treat the supervisor-owned original task and registered contract scout artifact
+as immutable semantic input. Check every structured `must` and `must-not` rule
+against the live diff. An orchestrator checklist may narrow runtime execution,
+but it cannot narrow the clauses or acceptance meaning. This applies equally to
+a replacement for a stalled reviewer. If the diff violates a negative
+structural rule, emit a blocking finding even when visible legacy tests pass.
+
+For every code diff, identify the narrowest visible test file or documented
+behavior command that directly exercises the changed behavior. If it is
+runnable in the repository, acquire or receive its validation lease and run it
+after the final diff. Syntax checks, compile-only commands, source review, and
+another agent's narrative are not behavioral validation. If no direct visible
+test exists, run a source-derived behavior probe through the affected public or
+production entrypoint. If the direct test cannot run because of a concrete
+environment dependency, report that exact command and dependency as unresolved
+risk; do not silently replace it with `node --check`, `git diff --check`, or an
+equally weak proxy.
+
 Report a compact verifier contract ledger:
 
 - intended outcome
@@ -226,6 +244,15 @@ solving, do not use benchmark scores or hidden-test failures as verifier input,
 follow-up instructions, or acceptance evidence. Acceptance must be based on user
 intent, issue text, visible tests, docs, source compatibility behavior, public
 APIs, data schemas, and runtime behavior.
+
+When the explicit task adds an option, default, or argument across wrapper
+layers, distinguish new-contract evidence from pre-change exact-call mocks. The
+task's requested API/propagation change outranks a stale mock that merely
+asserts the old keyword or argv shape. Require a call-level probe showing the
+declared default and one override reach the next layer. Reject conditional
+default omission that only keeps the old mock green by relying on the callee to
+recreate the value; it does not prove the requested propagation. This rule does
+not authorize weakening unrelated compatibility assertions.
 
 If visible task evidence includes a concrete expected value, reproduce that
 exact assertion with a temporary probe or source-level comparison before
@@ -431,7 +458,7 @@ accept, accept with follow-up, or reject pending follow-up.
 
 The first non-empty line of the final verifier message must be exactly
 `ACCEPTED` or `BLOCKING`. For a code diff, behavior `ACCEPTED` must include
-`behavior-verification-passed: final-diff-sha256=... behavior_clean=true public-clauses-covered=true`
+`behavior-verification-passed: final-diff-sha256=... behavior_clean=true public-clauses-covered=true command=... returncode=0`
 for the exact live final diff. Build acceptance remains a separate build
 verifier artifact. A missing verdict, stale hash, or unbound acceptance is
 blocking at the framework gate.
@@ -459,3 +486,10 @@ If a later failure shows the verifier missed something, categorize it as one of:
 - task-intent mismatch
 
 Feed that category into the next verifier instruction for similar work.
+For route, router, middleware, handler-registration, plugin-registration, or
+dependency-injection changes, validation must exercise the assembled production
+entrypoint. Run the existing focused integration test/module when available, or
+start/build the real router and make a request-level probe. Loading the edited
+module, checking syntax, or invoking a handler through a hand-written stub does
+not prove that production registration order, mount point, middleware, or URL
+reachability works. Treat stub-only validation as a blocking validation gap.

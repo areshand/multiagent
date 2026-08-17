@@ -13,7 +13,10 @@ correctness is proven.
 
 1. Run `git diff --name-only` and identify changed code files.
 2. Infer affected language packages/modules from the changed files.
-3. Compute or request the final diff hash from the orchestrator.
+3. Compute or request the canonical final diff hash from the orchestrator with
+   `multiagent snapshot --root "$MULTIAGENT_ROOT" --base "${MULTIAGENT_START_HEAD:-HEAD}" --format json`.
+   Do not substitute `git diff | sha256sum`: raw `git diff` omits untracked new
+   files and therefore does not bind the complete candidate.
 4. Run compile/test commands after the final diff, not before follow-up edits.
 5. Require return code 0 for every selected command.
 6. Treat any `undefined:`, `undefined method`, `undefined field`,

@@ -27,6 +27,11 @@ const ENV_ORDER: &[&str] = &[
     "workflow_id",
     "phase",
     "iteration",
+    "original_task",
+    "original_task_sha256",
+    "contract_scout",
+    "contract_artifact",
+    "contract_artifact_sha256",
     "preimplementation_gate",
     "decision_id",
     "plan_id",
@@ -48,6 +53,7 @@ const USAGE: &str = r#"Usage:
   multiagent workflow init WORKFLOW_ID
   multiagent workflow init-or-resume WORKFLOW_ID --resume 0|1
   multiagent workflow status WORKFLOW_ID
+  multiagent workflow contract-register WORKFLOW_ID --scout NAME
   multiagent workflow prepare-implementation WORKFLOW_ID --decision-id ID --plan-id ID --decision-revision REV --implementation-context PATH --authority-review ID
   multiagent workflow transition WORKFLOW_ID PHASE [--diff-hash HASH]
   multiagent workflow add-todo WORKFLOW_ID TODO_ID --kind KIND --summary TEXT [--origin TEXT]
@@ -71,6 +77,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         "init" => initialize(&args[1..], false),
         "init-or-resume" => init_or_resume(&args[1..]),
         "status" => status(&args[1..]),
+        "contract-register" => register_contract(&args[1..]),
         "prepare-implementation" => prepare(&args[1..]),
         "transition" => transition(&args[1..]),
         "add-todo" => add_todo(&args[1..]),
@@ -90,6 +97,14 @@ pub struct AssignmentContext {
     pub implementation_context_sha256: String,
 }
 
+pub struct SemanticEnvelope {
+    pub original_task: String,
+    pub original_task_sha256: String,
+    pub contract_artifact: String,
+    pub contract_artifact_sha256: String,
+    pub candidate_diff_hash: String,
+}
+
 pub fn assignment_context(
     workflow_id: &str,
     decision_id: &str,
@@ -102,6 +117,21 @@ pub fn assignment_context(
         implementation_context: state_value(&state, "implementation_context").to_string(),
         implementation_context_sha256: state_value(&state, "implementation_context_sha256")
             .to_string(),
+    })
+}
+
+pub fn semantic_envelope(workflow_id: &str) -> Result<SemanticEnvelope, String> {
+    let store = Store::configured()?;
+    let p = store.paths(workflow_id)?;
+    let state = read_env(&p.state, workflow_id)?;
+    validate_original_task(&state)?;
+    validate_contract(&state)?;
+    Ok(SemanticEnvelope {
+        original_task: read_optional_artifact(state_value(&state, "original_task"))?,
+        original_task_sha256: state_value(&state, "original_task_sha256").to_string(),
+        contract_artifact: read_optional_artifact(state_value(&state, "contract_artifact"))?,
+        contract_artifact_sha256: state_value(&state, "contract_artifact_sha256").to_string(),
+        candidate_diff_hash: state_value(&state, "candidate_diff_hash").to_string(),
     })
 }
 
@@ -235,11 +265,37 @@ fn initialize_id(id: &str, resume: bool) -> Result<(), String> {
         return Ok(());
     }
     let stamp = timestamp();
+    let original_task_source = std::env::var("MULTIAGENT_ORIGINAL_TASK_FILE")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    let (original_task, original_task_sha256) = if let Some(source) = original_task_source {
+        if !source.is_file() {
+            return Err(format!(
+                "original task artifact not found: {}",
+                source.display()
+            ));
+        }
+        let destination = p.base.join("original-task.md");
+        let bytes = fs::read(&source).map_err(io_error("read original task artifact"))?;
+        atomic_write_bytes(&destination, &bytes)?;
+        (
+            destination.display().to_string(),
+            format!("{:x}", Sha256::digest(&bytes)),
+        )
+    } else {
+        (String::new(), String::new())
+    };
     let mut state = BTreeMap::new();
     for (key, value) in [
         ("workflow_id", id),
         ("phase", "pre-implementation"),
         ("iteration", "1"),
+        ("original_task", original_task.as_str()),
+        ("original_task_sha256", original_task_sha256.as_str()),
+        ("contract_scout", ""),
+        ("contract_artifact", ""),
+        ("contract_artifact_sha256", ""),
         ("preimplementation_gate", "pending"),
         ("decision_id", ""),
         ("plan_id", ""),
@@ -264,6 +320,79 @@ fn initialize_id(id: &str, resume: bool) -> Result<(), String> {
         &format!("resume_requested={}", usize::from(resume)),
     )?;
     println!("workflow initialized\t{id}\tpre-implementation");
+    Ok(())
+}
+
+fn register_contract(args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        return Err("contract-register requires WORKFLOW_ID".into());
+    }
+    let id = &args[0];
+    let options = options(&args[1..])?;
+    let scout = required(&options, "--scout")?;
+    valid_id("scout name", scout)?;
+    let store = Store::configured()?;
+    let p = store.paths(id)?;
+    let _lock = store.lock(&p)?;
+    let mut state = read_env(&p.state, id)?;
+    if state_value(&state, "phase") != "pre-implementation" {
+        return Err("contract-register requires phase=pre-implementation".into());
+    }
+    let secure = secure_reviewer_evidence();
+    let directory = store
+        .state_dir
+        .join(if secure {
+            "contract-evidence"
+        } else {
+            "subagents"
+        })
+        .join(scout);
+    let metadata =
+        read_simple_env(&directory.join(if secure { "evidence.env" } else { "meta.env" }))?;
+    if state_value(&metadata, "role") != "scout"
+        || state_value(&metadata, if secure { "access" } else { "codex_access" }) != "read-only"
+    {
+        return Err(format!(
+            "contract artifact must come from a read-only scout role: {scout}"
+        ));
+    }
+    if secure {
+        if state_value(&metadata, "state") != "completed"
+            || state_value(&metadata, "workflow_id") != id
+        {
+            return Err(format!(
+                "contract scout evidence is not sealed for workflow {id}: {scout}"
+            ));
+        }
+    } else {
+        let status = fs::read_to_string(directory.join("status")).unwrap_or_default();
+        if status.trim() != "finalized" || !directory.join("finalized_at").is_file() {
+            return Err(format!("contract scout is not finalized: {scout}"));
+        }
+    }
+    let artifact = directory.join("last-message.txt");
+    let bytes = fs::read(&artifact)
+        .map_err(|_| format!("contract scout final message is missing: {scout}"))?;
+    let text = String::from_utf8(bytes.clone())
+        .map_err(|_| format!("contract scout artifact is not UTF-8: {scout}"))?;
+    let original_task = read_optional_artifact(state_value(&state, "original_task"))?;
+    validate_contract_schema(&text, &original_task)?;
+    let digest = format!("{:x}", Sha256::digest(&bytes));
+    for (key, value) in [
+        ("contract_scout", scout.to_string()),
+        ("contract_artifact", artifact.display().to_string()),
+        ("contract_artifact_sha256", digest.clone()),
+        ("updated_at", timestamp()),
+    ] {
+        state.insert(key.into(), value);
+    }
+    write_env(&p.state, &state)?;
+    event(
+        &p.events,
+        "contract_registered",
+        &format!("scout={scout}\tartifact_sha256={digest}"),
+    )?;
+    println!("contract registered\t{id}\t{scout}\t{digest}");
     Ok(())
 }
 
@@ -338,6 +467,30 @@ fn prepare(args: &[String]) -> Result<(), String> {
             context.display()
         ));
     }
+    validate_original_task(&state)?;
+    validate_contract(&state)?;
+    let contract_path = state_value(&state, "contract_artifact");
+    if !contract_path.is_empty() {
+        let contract = fs::read_to_string(contract_path)
+            .map_err(io_error("read registered contract artifact"))?;
+        let approved = fs::read_to_string(&context)
+            .map_err(io_error("read approved implementation context"))?;
+        if !approved.contains(&contract) {
+            return Err(
+                "approved implementation context must contain the registered contract artifact verbatim"
+                    .into(),
+            );
+        }
+        let binding = format!(
+            "contract-artifact-sha256={}",
+            state_value(&state, "contract_artifact_sha256")
+        );
+        if !approved.lines().any(|line| line.trim() == binding) {
+            return Err(format!(
+                "approved implementation context is missing contract binding: {binding}"
+            ));
+        }
+    }
     for (key, value) in [
         ("preimplementation_gate", "passed".to_string()),
         ("decision_id", decision.to_string()),
@@ -369,6 +522,12 @@ fn transition(args: &[String]) -> Result<(), String> {
     if !PHASES.contains(&target.as_str()) {
         return Err(format!("invalid phase: {target}"));
     }
+    if target == "complete" {
+        return Err(
+            "complete is supervisor-owned; request it with `multiagent orchestrator complete`"
+                .into(),
+        );
+    }
     let o = options(&args[2..])?;
     let diff = o.get("--diff-hash").map(String::as_str).unwrap_or("");
     let store = Store::configured()?;
@@ -381,7 +540,6 @@ fn transition(args: &[String]) -> Result<(), String> {
         ("pre-implementation", "implementation")
             | ("implementation", "post-implementation")
             | ("post-implementation", "pre-implementation")
-            | ("post-implementation", "complete")
     );
     if !allowed {
         return Err(format!(
@@ -416,13 +574,6 @@ fn transition(args: &[String]) -> Result<(), String> {
         state.insert("phase".into(), "pre-implementation".into());
         state.insert("iteration".into(), iteration.to_string());
         state.insert("preimplementation_gate".into(), "pending".into());
-    } else {
-        completion_state(&store, id)?;
-        state.insert("phase".into(), "complete".into());
-        state.insert(
-            "reviewed_diff_hash".into(),
-            state_value(&state, "candidate_diff_hash").to_string(),
-        );
     }
     state.insert("updated_at".into(), timestamp());
     write_env(&p.state, &state)?;
@@ -640,7 +791,7 @@ fn record_review(args: &[String]) -> Result<(), String> {
         if reviewer.is_empty() {
             return Err("reviewer-backed lifecycle requires --reviewer NAME".into());
         }
-        validate_reviewer_evidence(&store, reviewer, kind, verdict, diff)?;
+        validate_reviewer_evidence(&store, id, reviewer, kind, verdict, diff)?;
     }
     let mut rows = read_reviews(&p.reviews)?;
     if rows.iter().any(|r| r.get(0) == review_id) {
@@ -711,6 +862,47 @@ fn completion_ready(args: &[String]) -> Result<(), String> {
     );
     Ok(())
 }
+
+/// The only operation allowed to seal a lifecycle. In UID-isolated runs this
+/// executes inside the single-threaded supervisor process, while the lifecycle
+/// lock prevents a concurrent phase mutation. All deterministic gates run
+/// before the phase write, so a rejection leaves the workflow repairable.
+pub fn supervisor_complete(id: &str) -> Result<String, String> {
+    if config::lifecycle_enforced()
+        && std::env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1")
+        && std::env::var("MULTIAGENT_AUTHORITY_SERVER_CHILD").as_deref() != Ok("1")
+    {
+        return Err("lifecycle completion must execute inside the authority supervisor".into());
+    }
+    let store = Store::configured()?;
+    let p = store.paths(id)?;
+    let _lock = store.lock(&p)?;
+    let before = read_env(&p.state, id)?;
+    if state_value(&before, "phase") != "post-implementation" {
+        return Err(format!(
+            "supervisor completion requires phase=post-implementation, got {}",
+            state_value(&before, "phase")
+        ));
+    }
+    let state = completion_state(&store, id)?;
+    crate::subagent::completion_gate_check()?;
+    let mut state = state;
+    let diff = state_value(&state, "candidate_diff_hash").to_string();
+    state.insert("phase".into(), "complete".into());
+    state.insert("reviewed_diff_hash".into(), diff.clone());
+    state.insert("updated_at".into(), timestamp());
+    write_env(&p.state, &state)?;
+    event(
+        &p.events,
+        "phase_transitioned",
+        &format!(
+            "from=post-implementation\tto=complete\titeration={}\tauthority=supervisor",
+            state_value(&state, "iteration")
+        ),
+    )?;
+    Ok(diff)
+}
+
 fn value(args: &[String]) -> Result<(), String> {
     if args.len() != 2 {
         return Err("value requires WORKFLOW_ID KEY".into());
@@ -852,7 +1044,7 @@ fn completion_state(store: &Store, id: &str) -> Result<BTreeMap<String, String>,
                     review.get(1)
                 ));
             }
-            validate_reviewer_evidence(store, reviewer, review.get(1), "pass", diff)?;
+            validate_reviewer_evidence(store, id, reviewer, review.get(1), "pass", diff)?;
         }
     }
     validate_context(&state)?;
@@ -865,7 +1057,12 @@ fn unrecorded_reviewer_findings(
     diff: &str,
     reviews: &[Review],
 ) -> Result<Vec<String>, String> {
-    let root = store.state_dir.join("subagents");
+    let secure = secure_reviewer_evidence();
+    let root = store.state_dir.join(if secure {
+        "reviewer-evidence"
+    } else {
+        "subagents"
+    });
     if !root.is_dir() {
         return Ok(Vec::new());
     }
@@ -875,9 +1072,10 @@ fn unrecorded_reviewer_findings(
         if !dir.is_dir() {
             continue;
         }
-        let metadata = read_simple_env(&dir.join("meta.env"))?;
+        let metadata =
+            read_simple_env(&dir.join(if secure { "evidence.env" } else { "meta.env" }))?;
         if state_value(&metadata, "role") != "reviewer"
-            || state_value(&metadata, "codex_access") != "read-only"
+            || state_value(&metadata, if secure { "access" } else { "codex_access" }) != "read-only"
         {
             continue;
         }
@@ -885,9 +1083,15 @@ fn unrecorded_reviewer_findings(
         if !reviewer_workflow.is_empty() && reviewer_workflow != workflow_id {
             continue;
         }
-        let status = fs::read_to_string(dir.join("status")).unwrap_or_default();
-        if status.trim() != "finalized" || !dir.join("finalized_at").is_file() {
-            continue;
+        if secure {
+            if state_value(&metadata, "state") != "completed" {
+                continue;
+            }
+        } else {
+            let status = fs::read_to_string(dir.join("status")).unwrap_or_default();
+            if status.trim() != "finalized" || !dir.join("finalized_at").is_file() {
+                continue;
+            }
         }
         let message = fs::read_to_string(dir.join("last-message.txt")).unwrap_or_default();
         let reviewer = dir
@@ -924,25 +1128,44 @@ fn reviewer_evidence_required() -> bool {
 
 fn validate_reviewer_evidence(
     store: &Store,
+    workflow_id: &str,
     reviewer: &str,
     kind: &str,
     verdict: &str,
     diff: &str,
 ) -> Result<(), String> {
     valid_id("reviewer name", reviewer)?;
-    let dir = store.state_dir.join("subagents").join(reviewer);
-    let metadata = read_simple_env(&dir.join("meta.env"))?;
+    let secure = secure_reviewer_evidence();
+    let dir = store
+        .state_dir
+        .join(if secure {
+            "reviewer-evidence"
+        } else {
+            "subagents"
+        })
+        .join(reviewer);
+    let metadata = read_simple_env(&dir.join(if secure { "evidence.env" } else { "meta.env" }))?;
     if state_value(&metadata, "role") != "reviewer"
-        || state_value(&metadata, "codex_access") != "read-only"
+        || state_value(&metadata, if secure { "access" } else { "codex_access" }) != "read-only"
     {
         return Err(format!(
             "reviewer evidence must come from a read-only reviewer role: {reviewer}"
         ));
     }
-    let status = fs::read_to_string(dir.join("status"))
-        .map_err(|_| format!("reviewer status is missing: {reviewer}"))?;
-    if status.trim() != "finalized" || !dir.join("finalized_at").is_file() {
-        return Err(format!("reviewer is not finalized: {reviewer}"));
+    if secure {
+        if state_value(&metadata, "state") != "completed"
+            || state_value(&metadata, "workflow_id") != workflow_id
+        {
+            return Err(format!(
+                "reviewer evidence is not sealed for workflow {workflow_id}: {reviewer}"
+            ));
+        }
+    } else {
+        let status = fs::read_to_string(dir.join("status"))
+            .map_err(|_| format!("reviewer status is missing: {reviewer}"))?;
+        if status.trim() != "finalized" || !dir.join("finalized_at").is_file() {
+            return Err(format!("reviewer is not finalized: {reviewer}"));
+        }
     }
     let message = fs::read_to_string(dir.join("last-message.txt"))
         .map_err(|_| format!("reviewer final message is missing: {reviewer}"))?;
@@ -955,7 +1178,32 @@ fn validate_reviewer_evidence(
             "reviewer {reviewer} final message is missing marker: {marker}"
         ));
     }
+    if matches!(kind, "decision-authority" | "technical") {
+        let p = store.paths(workflow_id)?;
+        let state = read_env(&p.state, workflow_id)?;
+        validate_original_task(&state)?;
+        validate_contract(&state)?;
+        let contract_hash = state_value(&state, "contract_artifact_sha256");
+        if !contract_hash.is_empty() {
+            let contract_marker =
+                format!("contract-review: artifact-sha256={contract_hash} verdict=pass");
+            if verdict == "pass"
+                && !message
+                    .lines()
+                    .any(|line| review_marker_matches(line, &contract_marker))
+            {
+                return Err(format!(
+                    "reviewer {reviewer} final message is missing marker: {contract_marker}"
+                ));
+            }
+        }
+    }
     Ok(())
+}
+
+fn secure_reviewer_evidence() -> bool {
+    std::env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1")
+        && std::env::var("MULTIAGENT_AUTHORITY_SERVER_CHILD").as_deref() == Ok("1")
 }
 
 fn review_marker_matches(line: &str, marker: &str) -> bool {
@@ -976,7 +1224,12 @@ fn review_marker_matches(line: &str, marker: &str) -> bool {
 }
 
 fn active_reviewers(store: &Store) -> Result<Vec<String>, String> {
-    let root = store.state_dir.join("subagents");
+    let secure = secure_reviewer_evidence();
+    let root = store.state_dir.join(if secure {
+        "launch-authorizations"
+    } else {
+        "subagents"
+    });
     if !root.is_dir() {
         return Ok(Vec::new());
     }
@@ -986,12 +1239,19 @@ fn active_reviewers(store: &Store) -> Result<Vec<String>, String> {
         if !dir.is_dir() {
             continue;
         }
-        let metadata = read_simple_env(&dir.join("meta.env"))?;
+        let metadata = read_simple_env(&dir.join(if secure { "launch.env" } else { "meta.env" }))?;
         if state_value(&metadata, "role") != "reviewer" {
             continue;
         }
-        let status = fs::read_to_string(dir.join("status")).unwrap_or_default();
-        if matches!(status.trim(), "starting" | "pending" | "running") {
+        let status = if secure {
+            state_value(&metadata, "state").to_string()
+        } else {
+            fs::read_to_string(dir.join("status")).unwrap_or_default()
+        };
+        if matches!(
+            status.trim(),
+            "starting" | "pending" | "registered" | "running"
+        ) {
             active.push(
                 dir.file_name()
                     .and_then(|value| value.to_str())
@@ -1005,6 +1265,8 @@ fn active_reviewers(store: &Store) -> Result<Vec<String>, String> {
 }
 
 fn validate_context(state: &BTreeMap<String, String>) -> Result<(), String> {
+    validate_original_task(state)?;
+    validate_contract(state)?;
     let text = state_value(state, "implementation_context");
     if text.is_empty() {
         return Err("implementation gate requires approved implementation context".into());
@@ -1022,6 +1284,104 @@ fn validate_context(state: &BTreeMap<String, String>) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+fn validate_original_task(state: &BTreeMap<String, String>) -> Result<(), String> {
+    validate_artifact_binding(
+        "original task",
+        state_value(state, "original_task"),
+        state_value(state, "original_task_sha256"),
+    )
+}
+
+fn validate_contract(state: &BTreeMap<String, String>) -> Result<(), String> {
+    validate_artifact_binding(
+        "contract",
+        state_value(state, "contract_artifact"),
+        state_value(state, "contract_artifact_sha256"),
+    )
+}
+
+fn validate_artifact_binding(label: &str, path: &str, expected: &str) -> Result<(), String> {
+    if path.is_empty() && expected.is_empty() {
+        return Ok(());
+    }
+    if path.is_empty() || expected.is_empty() {
+        return Err(format!("{label} artifact binding is incomplete"));
+    }
+    let path = Path::new(path);
+    if !path.is_file() {
+        return Err(format!("{label} artifact is missing: {}", path.display()));
+    }
+    if sha256(path)? != expected {
+        return Err(format!("{label} artifact changed after registration"));
+    }
+    Ok(())
+}
+
+fn read_optional_artifact(path: &str) -> Result<String, String> {
+    if path.is_empty() {
+        return Ok(String::new());
+    }
+    fs::read_to_string(path).map_err(io_error("read semantic artifact"))
+}
+
+fn validate_contract_schema(text: &str, original_task: &str) -> Result<(), String> {
+    let original = original_task.to_ascii_lowercase();
+    let requires_embedding_rule = original.contains("embedded unnecessarily")
+        || original.contains("must not embed")
+        || original.contains("should not embed")
+        || original.contains("without embedding");
+    let header = text
+        .lines()
+        .any(|line| line.trim() == "contract-artifact: version=1");
+    let rules = text
+        .lines()
+        .filter(|line| line.trim_start().starts_with("contract-rule:"))
+        .collect::<Vec<_>>();
+    if !header {
+        return Err("contract scout artifact is missing `contract-artifact: version=1`".into());
+    }
+    if rules.is_empty() {
+        if requires_embedding_rule {
+            return Err("contract scout artifact must contain structured `contract-rule:` lines, including a positive structural rule and a separate `polarity=must-not` rule covering the requested embedding prohibition".into());
+        }
+        return Err("contract scout artifact must contain at least one `contract-rule:`".into());
+    }
+    for rule in &rules {
+        if !rule.contains(" id=")
+            || !(rule.contains(" polarity=must ") || rule.contains(" polarity=must-not "))
+            || !rule.contains(" statement=")
+            || !rule.contains(" evidence=")
+        {
+            return Err(format!("invalid structured contract rule: {}", rule.trim()));
+        }
+    }
+    if requires_embedding_rule {
+        let positive = rules.iter().any(|rule| rule.contains(" polarity=must "));
+        let negative = rules.iter().any(|rule| {
+            let statement = contract_rule_statement(rule).to_ascii_lowercase();
+            rule.contains(" polarity=must-not ") && statement.contains("embed")
+        });
+        if !positive {
+            return Err("contract scout artifact requires a positive structural rule".into());
+        }
+        if !negative {
+            return Err("contract scout artifact requires a separate `polarity=must-not` rule covering the requested embedding prohibition".into());
+        }
+    }
+    Ok(())
+}
+
+fn contract_rule_statement(rule: &str) -> &str {
+    rule.split_once(" statement=")
+        .map(|(_, value)| value)
+        .and_then(|value| {
+            value
+                .split_once(" evidence=")
+                .map(|(statement, _)| statement)
+        })
+        .unwrap_or("")
 }
 fn validate_committed_decision(decision: &str, plan: &str) -> Result<(), String> {
     let dir = config::state_dir()?.join("decisions").join(decision);
@@ -1121,6 +1481,10 @@ fn event(path: &Path, name: &str, detail: &str) -> Result<(), String> {
         .map_err(io_error("append lifecycle event"))
 }
 fn atomic_write(path: &Path, text: &str) -> Result<(), String> {
+    atomic_write_bytes(path, text.as_bytes())
+}
+
+fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(io_error("create state directory"))?;
     }
@@ -1130,7 +1494,7 @@ fn atomic_write(path: &Path, text: &str) -> Result<(), String> {
         std::process::id()
     ));
     let mut file = File::create(&temp).map_err(io_error("create temporary state"))?;
-    file.write_all(text.as_bytes())
+    file.write_all(bytes)
         .map_err(io_error("write temporary state"))?;
     file.sync_all().map_err(io_error("sync temporary state"))?;
     fs::rename(&temp, path).map_err(io_error("publish state"))
@@ -1253,5 +1617,26 @@ mod tests {
             &format!("evidence includes {marker}"),
             marker
         ));
+    }
+
+    #[test]
+    fn embedding_tasks_require_positive_and_negative_structural_rules() {
+        let task = "WidgetConfig fields were embedded unnecessarily.";
+        assert!(
+            validate_contract_schema("contract-artifact: version=1\n", task)
+                .unwrap_err()
+                .contains("embedding prohibition")
+        );
+        let incomplete = "contract-artifact: version=1\n\
+contract-rule: id=R1 polarity=must statement=WidgetConfig exposes named fields evidence=task\n\
+contract-rule: id=R2 polarity=must-not statement=Old WidgetConfig names must not remain evidence=task mentions unnecessary embedding\n";
+        assert!(validate_contract_schema(incomplete, task)
+            .unwrap_err()
+            .contains("embedding prohibition"));
+
+        let complete = format!(
+            "{incomplete}contract-rule: id=R3 polarity=must-not statement=WidgetConfig must not be anonymously embedded evidence=task\n"
+        );
+        assert!(validate_contract_schema(&complete, task).is_ok());
     }
 }

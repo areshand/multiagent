@@ -1,8 +1,13 @@
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::ffi::OsString;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+
+#[cfg(unix)]
+use std::os::unix::ffi::OsStringExt;
 
 #[derive(Debug, Serialize)]
 struct Snapshot {
@@ -58,21 +63,8 @@ fn required_value<'a>(args: &'a [String], index: usize, option: &str) -> Result<
 }
 
 fn capture(root: &Path, base: &str) -> Result<Snapshot, String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["diff", base, "--binary", "--ignore-submodules=all", "--"])
-        .output()
-        .map_err(|error| format!("run git diff: {error}"))?;
-    if !output.status.success() {
-        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(if message.is_empty() {
-            "git diff failed".into()
-        } else {
-            message
-        });
-    }
-    let diff = String::from_utf8_lossy(&output.stdout);
+    let bytes = canonical_diff(root, base)?;
+    let diff = String::from_utf8_lossy(&bytes);
     let changed_paths = changed_paths(&diff);
     let changed_code_paths = changed_paths
         .iter()
@@ -80,7 +72,7 @@ fn capture(root: &Path, base: &str) -> Result<Snapshot, String> {
         .cloned()
         .collect();
     Ok(Snapshot {
-        final_diff_sha256: format!("{:x}", Sha256::digest(&output.stdout)),
+        final_diff_sha256: format!("{:x}", Sha256::digest(&bytes)),
         changed_files: diff
             .lines()
             .filter(|line| line.starts_with("diff --git a/"))
@@ -88,6 +80,100 @@ fn capture(root: &Path, base: &str) -> Result<Snapshot, String> {
         changed_paths: changed_paths.into_iter().collect(),
         changed_code_paths,
     })
+}
+
+pub(crate) fn canonical_diff(root: &Path, base: &str) -> Result<Vec<u8>, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["diff", base, "--binary", "--ignore-submodules=all", "--"])
+        .output()
+        .map_err(|error| format!("run git diff: {error}"))?;
+    if !output.status.success() {
+        return Err(git_error("git diff failed", &output.stderr));
+    }
+
+    let mut diff = output.stdout;
+    for path in untracked_paths(root)? {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["diff", "--no-index", "--binary", "--"])
+            .arg("/dev/null")
+            .arg(&path)
+            .output()
+            .map_err(|error| format!("run git diff for {}: {error}", path.display()))?;
+        if !matches!(output.status.code(), Some(0 | 1)) {
+            return Err(git_error(
+                &format!("git diff failed for untracked path {}", path.display()),
+                &output.stderr,
+            ));
+        }
+        diff.extend_from_slice(&output.stdout);
+    }
+    Ok(diff)
+}
+
+fn untracked_paths(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["ls-files", "--others", "--exclude-standard", "-z"])
+        .output()
+        .map_err(|error| format!("list untracked files: {error}"))?;
+    if !output.status.success() {
+        return Err(git_error("git ls-files failed", &output.stderr));
+    }
+    let baseline = baseline_untracked()?;
+    let mut paths = output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|bytes| !bytes.is_empty())
+        .map(path_from_git_bytes)
+        .filter(|path| !baseline.contains(&path.to_string_lossy().into_owned()))
+        .filter(|path| {
+            fs::symlink_metadata(root.join(path))
+                .map(|metadata| metadata.is_file() || metadata.file_type().is_symlink())
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    paths.sort();
+    Ok(paths)
+}
+
+fn baseline_untracked() -> Result<BTreeSet<String>, String> {
+    let Ok(path) = std::env::var("MULTIAGENT_BASELINE_UNTRACKED_FILE") else {
+        return Ok(BTreeSet::new());
+    };
+    if path.is_empty() {
+        return Ok(BTreeSet::new());
+    }
+    let contents = fs::read_to_string(&path)
+        .map_err(|error| format!("read baseline untracked file {path}: {error}"))?;
+    Ok(contents
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
+#[cfg(unix)]
+fn path_from_git_bytes(bytes: &[u8]) -> PathBuf {
+    PathBuf::from(OsString::from_vec(bytes.to_vec()))
+}
+
+#[cfg(not(unix))]
+fn path_from_git_bytes(bytes: &[u8]) -> PathBuf {
+    PathBuf::from(String::from_utf8_lossy(bytes).into_owned())
+}
+
+fn git_error(fallback: &str, stderr: &[u8]) -> String {
+    let message = String::from_utf8_lossy(stderr).trim().to_string();
+    if message.is_empty() {
+        fallback.to_string()
+    } else {
+        message
+    }
 }
 
 fn changed_paths(diff: &str) -> BTreeSet<String> {

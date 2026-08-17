@@ -180,6 +180,37 @@ esac
 TMUX
 chmod +x "$MOCK_BIN/tmux"
 
+cat >"$MOCK_BIN/qwen" <<'QWEN'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ " ${*:-} " == *" --version "* ]]; then
+  printf 'qwen-code test-1.0\n'
+  exit 0
+fi
+prompt="$(cat)"
+if [[ -n "${QWEN_PROMPT_CAPTURE:-}" ]]; then
+  printf '%s' "$prompt" >"$QWEN_PROMPT_CAPTURE"
+fi
+if [[ -n "${QWEN_TRY_WRITE:-}" ]]; then
+  printf 'unauthorized\n' >"$QWEN_TRY_WRITE"
+fi
+if [[ -n "${QWEN_DESCENDANT_PID_FILE:-}" ]]; then
+  sleep 30 &
+  descendant_pid=$!
+  printf '%s\n' "$descendant_pid" >"$QWEN_DESCENDANT_PID_FILE"
+fi
+if [[ -n "${QWEN_SLEEP_SECONDS:-}" ]]; then
+  sleep "$QWEN_SLEEP_SECONDS"
+fi
+printf '%s\n' '{"type":"system","session_id":"qwen-session-1"}'
+printf '%s\n' 'malformed provider line retained as raw text'
+printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"Qwen working"}]}}'
+printf '%s\n' '{"type":"result","result":"Qwen final result"}'
+printf 'qwen diagnostic\n' >&2
+exit "${QWEN_EXIT_CODE:-0}"
+QWEN
+chmod +x "$MOCK_BIN/qwen"
+
 export PATH="$MOCK_BIN:$PATH"
 export MOCK_TMUX_WINDOWS="$TMPDIR/windows"
 export MOCK_TMUX_CAPTURES="$TMPDIR/captures"
@@ -192,6 +223,7 @@ export MULTIAGENT_READY_ATTEMPTS=1
 export MULTIAGENT_READY_DELAY=0
 export CODEX_BIN="true"
 export CLAUDE_BIN="true"
+export QWEN_BIN="$MOCK_BIN/qwen"
 export ORCHESTRATOR_CLI="codex"
 export WORKER_CLI="claude"
 export SUBAGENT_CLI="claude"
@@ -212,6 +244,121 @@ assert_file_contains() {
     exit 1
   fi
 }
+
+AGENT_RUN_DIR="$TMPDIR/agent-run"
+mkdir -p "$AGENT_RUN_DIR/work"
+printf 'prompt payload with spaces and '\''quotes'\''\n' >"$AGENT_RUN_DIR/prompt.txt"
+QWEN_PROMPT_CAPTURE="$AGENT_RUN_DIR/prompt-captured.txt" \
+  "$MULTIAGENT" agent run \
+  --backend qwen \
+  --cwd "$AGENT_RUN_DIR/work" \
+  --prompt-file "$AGENT_RUN_DIR/prompt.txt" \
+  --final-output "$AGENT_RUN_DIR/final.txt" \
+  --trace-dir "$AGENT_RUN_DIR/trace" \
+  --access read-only >"$AGENT_RUN_DIR/forwarded.out" 2>"$AGENT_RUN_DIR/forwarded.err"
+AGENT_TRACE="$AGENT_RUN_DIR/trace/$(tr -d '\r\n' <"$AGENT_RUN_DIR/trace/latest")"
+assert_file_contains "$AGENT_RUN_DIR/prompt-captured.txt" "prompt payload with spaces and 'quotes'"
+assert_file_contains "$AGENT_RUN_DIR/final.txt" "Qwen final result"
+assert_file_contains "$AGENT_TRACE/raw-stdout.log" "malformed provider line retained as raw text"
+assert_file_contains "$AGENT_TRACE/raw-stderr.log" "qwen diagnostic"
+assert_file_contains "$AGENT_TRACE/events.jsonl" '"backend":"qwen"'
+assert_file_contains "$AGENT_TRACE/events.jsonl" '"raw_type":"result"'
+assert_file_contains "$AGENT_TRACE/session-id" "qwen-session-1"
+assert_file_contains "$AGENT_TRACE/metadata.json" '"version": "qwen-code test-1.0"'
+assert_file_contains "$AGENT_TRACE/exit.json" '"success": true'
+"$MULTIAGENT" agent run \
+  --backend qwen \
+  --cwd "$AGENT_RUN_DIR/work" \
+  --prompt-file "$AGENT_RUN_DIR/prompt.txt" \
+  --final-output "$AGENT_RUN_DIR/final-second.txt" \
+  --trace-dir "$AGENT_RUN_DIR/trace" \
+  --access read-only >/dev/null 2>/dev/null
+[[ "$(tr -d '\r\n' <"$AGENT_RUN_DIR/trace/latest")" == "attempt-0002" ]]
+assert_file_contains "$AGENT_RUN_DIR/trace/attempt-0001/raw-stdout.log" "Qwen final result"
+assert_file_contains "$AGENT_RUN_DIR/trace/attempt-0002/raw-stdout.log" "Qwen final result"
+assert_file_contains "$AGENT_RUN_DIR/final-second.txt" "Qwen final result"
+agent_backend_info="$("$MULTIAGENT" agent backend-info qwen)"
+[[ "$agent_backend_info" == *'"backend":"qwen"'* ]]
+[[ "$agent_backend_info" == *'"native_resume":true'* ]]
+[[ "$agent_backend_info" == *'"version":"qwen-code test-1.0"'* ]]
+if MULTIAGENT_AGENT_TIMEOUT_SECONDS=0 "$MULTIAGENT" agent run \
+  --backend qwen \
+  --cwd "$AGENT_RUN_DIR/work" \
+  --prompt-file "$AGENT_RUN_DIR/prompt.txt" \
+  --final-output "$AGENT_RUN_DIR/invalid-timeout-final.txt" \
+  --trace-dir "$AGENT_RUN_DIR/invalid-timeout-trace" \
+  --access read-only >"$AGENT_RUN_DIR/invalid-timeout.out" 2>&1; then
+  echo "expected zero coding-agent timeout to fail" >&2
+  exit 1
+fi
+assert_file_contains "$AGENT_RUN_DIR/invalid-timeout.out" "MULTIAGENT_AGENT_TIMEOUT_SECONDS must be a positive integer"
+[[ ! -e "$AGENT_RUN_DIR/invalid-timeout-trace/latest" ]]
+
+set +e
+QWEN_EXIT_CODE=7 "$MULTIAGENT" agent run \
+  --backend qwen \
+  --cwd "$AGENT_RUN_DIR/work" \
+  --prompt-file "$AGENT_RUN_DIR/prompt.txt" \
+  --final-output "$AGENT_RUN_DIR/nonzero-final.txt" \
+  --trace-dir "$AGENT_RUN_DIR/nonzero-trace" \
+  --access workspace-write >/dev/null 2>/dev/null
+agent_nonzero_rc=$?
+set -e
+[[ "$agent_nonzero_rc" -eq 7 ]]
+AGENT_NONZERO_TRACE="$AGENT_RUN_DIR/nonzero-trace/$(tr -d '\r\n' <"$AGENT_RUN_DIR/nonzero-trace/latest")"
+assert_file_contains "$AGENT_NONZERO_TRACE/exit.json" '"code": 7'
+
+set +e
+MULTIAGENT_AGENT_TIMEOUT_SECONDS=1 \
+  QWEN_SLEEP_SECONDS=30 \
+  QWEN_DESCENDANT_PID_FILE="$AGENT_RUN_DIR/descendant.pid" \
+  "$MULTIAGENT" agent run \
+  --backend qwen \
+  --cwd "$AGENT_RUN_DIR/work" \
+  --prompt-file "$AGENT_RUN_DIR/prompt.txt" \
+  --final-output "$AGENT_RUN_DIR/timeout-final.txt" \
+  --trace-dir "$AGENT_RUN_DIR/timeout-trace" \
+  --access workspace-write >/dev/null 2>/dev/null
+agent_timeout_rc=$?
+set -e
+[[ "$agent_timeout_rc" -eq 124 ]]
+AGENT_TIMEOUT_TRACE="$AGENT_RUN_DIR/timeout-trace/$(tr -d '\r\n' <"$AGENT_RUN_DIR/timeout-trace/latest")"
+assert_file_contains "$AGENT_TIMEOUT_TRACE/exit.json" '"timed_out": true'
+assert_file_contains "$AGENT_TIMEOUT_TRACE/exit.json" '"reason": "timeout"'
+if [[ -f "$AGENT_RUN_DIR/descendant.pid" ]]; then
+  descendant_pid="$(tr -d '\r\n' <"$AGENT_RUN_DIR/descendant.pid")"
+  for _ in $(seq 1 40); do
+    if ! kill -0 "$descendant_pid" 2>/dev/null; then
+      break
+    fi
+    sleep 0.05
+  done
+  if kill -0 "$descendant_pid" 2>/dev/null; then
+    echo "timed-out coding-agent descendant is still alive: $descendant_pid" >&2
+    exit 1
+  fi
+fi
+
+if [[ "$HOST_KERNEL" == Linux ]]; then
+  mkdir -p "$AGENT_RUN_DIR/landlock-output"
+  set +e
+  QWEN_TRY_WRITE="$AGENT_RUN_DIR/work/forbidden.txt" \
+    "$MULTIAGENT" role-exec \
+    --allow-write "$AGENT_RUN_DIR/landlock-output" \
+    -- "$MULTIAGENT" agent run \
+    --backend qwen \
+    --cwd "$AGENT_RUN_DIR/work" \
+    --prompt-file "$AGENT_RUN_DIR/prompt.txt" \
+    --final-output "$AGENT_RUN_DIR/landlock-output/final.txt" \
+    --trace-dir "$AGENT_RUN_DIR/landlock-output/trace" \
+    --access read-only >/dev/null 2>/dev/null
+  agent_readonly_rc=$?
+  set -e
+  [[ "$agent_readonly_rc" -ne 0 ]]
+  [[ ! -e "$AGENT_RUN_DIR/work/forbidden.txt" ]]
+  AGENT_READONLY_TRACE="$AGENT_RUN_DIR/landlock-output/trace/$(tr -d '\r\n' <"$AGENT_RUN_DIR/landlock-output/trace/latest")"
+  assert_file_contains "$AGENT_READONLY_TRACE/exit.json" '"success": false'
+fi
 
 assert_file_not_contains() {
   local file="$1"
@@ -275,8 +422,15 @@ assert_file_contains "$LAUNCH_BOOTSTRAP" "export VERIFIER_CLI=codex"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "Multiagent launch mode:"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "$(printf '%q' "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md")"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "export MULTIAGENT_LIFECYCLE_ENFORCEMENT=1"
+assert_file_contains "$LAUNCH_BOOTSTRAP" 'if [[ ${BASH_SOURCE[0]} != "$0" ]]; then return 0; fi'
 assert_file_contains "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "BEGIN ORCHESTRATOR ROLE"
 assert_file_contains "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "BEGIN MANDATORY IMPLEMENTATION LIFECYCLE"
+SOURCE_BOOTSTRAP_OUTPUT="$(bash -c 'source "$1"; printf "source-complete\\n"' bash "$LAUNCH_BOOTSTRAP")"
+if [[ "$SOURCE_BOOTSTRAP_OUTPUT" != "source-complete" ]]; then
+  echo "sourcing orchestrator bootstrap unexpectedly executed the agent entrypoint" >&2
+  printf '%s\n' "$SOURCE_BOOTSTRAP_OUTPUT" >&2
+  exit 1
+fi
 LAUNCH_WORKFLOW_ID="$(tr -d '\r\n' <"$LAUNCH_STATE/runtime_state/active-workflow-id")"
 assert_file_contains "$LAUNCH_STATE/workflows/$LAUNCH_WORKFLOW_ID/lifecycle/lifecycle.env" "phase=pre-implementation"
 if grep -Fq "$LAUNCH_TARGET/orchestrator_prompt.md" "$MOCK_TMUX_LOG" "$TMPDIR/launch.out" "$LAUNCH_BOOTSTRAP"; then
@@ -306,6 +460,32 @@ assert_file_contains "$LAUNCH_RESUME_BOOTSTRAP" "export MULTIAGENT_RESUME=1"
 assert_file_contains "$LAUNCH_RESUME_BOOTSTRAP" "export MULTIAGENT_VERIFIER_MAX_ITERATIONS=5"
 assert_file_contains "$LAUNCH_RESUME_BOOTSTRAP" "resume"
 
+rm -f "$MOCK_TMUX_LOG"
+printf 'reviewer-still-running\n' >"$MOCK_TMUX_WINDOWS"
+MOCK_TMUX_HAS_SESSION=1 \
+  MULTIAGENT_SESSION="launch-resume" \
+  MULTIAGENT_ROOT= \
+  MULTIAGENT_PROMPT= \
+  MULTIAGENT_VERIFIER_MAX_ITERATIONS=5 \
+  MULTIAGENT_STATE_DIR="$TMPDIR/launch-resume-state" \
+  MULTIAGENT_WRITE_POLICY="$TMPDIR/launch-resume-policy/write-policy.paths" \
+  "$ROOT/launch.sh" --session launch-resume --root "$LAUNCH_TARGET" --resume --no-attach >"$TMPDIR/launch-resume-existing.out"
+assert_file_contains "$TMPDIR/launch-resume-existing.out" "Resume mode: 1"
+assert_file_contains "$MOCK_TMUX_LOG" "new-window -d launch-resume orchestrator"
+assert_file_not_contains "$MOCK_TMUX_LOG" "new-session launch-resume orchestrator"
+
+if MOCK_TMUX_HAS_SESSION=1 \
+  MULTIAGENT_SESSION="launch-existing-clean" \
+  MULTIAGENT_ROOT= \
+  MULTIAGENT_PROMPT= \
+  MULTIAGENT_STATE_DIR="$TMPDIR/launch-existing-clean-state" \
+  MULTIAGENT_WRITE_POLICY="$TMPDIR/launch-existing-clean-policy/write-policy.paths" \
+  "$ROOT/launch.sh" --session launch-existing-clean --root "$LAUNCH_TARGET" --no-attach >"$TMPDIR/launch-existing-clean.out" 2>&1; then
+  echo "expected clean launch against existing tmux session to fail" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/launch-existing-clean.out" "tmux session already exists"
+
 if MOCK_TMUX_HAS_SESSION=0 \
   MULTIAGENT_SESSION="launch-invalid-verifier-cap" \
   MULTIAGENT_ROOT= \
@@ -332,6 +512,34 @@ MOCK_TMUX_HAS_SESSION=0 \
 assert_file_contains "$TMPDIR/launch-explicit-state/orchestrator-bootstrap.sh" "$(printf '%q' "$TMPDIR/launch-explicit-state/runtime_state/orchestrator-prompt-bundle.md")"
 assert_file_contains "$TMPDIR/launch-explicit-state/runtime_state/orchestrator-prompt-bundle.md" "custom prompt"
 assert_file_contains "$TMPDIR/launch-explicit-state/runtime_state/orchestrator-prompt-bundle.md" "BEGIN MANDATORY IMPLEMENTATION LIFECYCLE"
+
+rm -f "$MOCK_TMUX_LOG"
+MOCK_TMUX_HAS_SESSION=0 \
+  MULTIAGENT_SESSION="launch-qwen" \
+  MULTIAGENT_PROMPT= \
+  MULTIAGENT_STATE_DIR="$TMPDIR/launch-qwen-state" \
+  MULTIAGENT_WRITE_POLICY="$TMPDIR/launch-qwen-policy/write-policy.paths" \
+  ORCHESTRATOR_CLI=qwen WORKER_CLI=qwen SUBAGENT_CLI=qwen VERIFIER_CLI=qwen \
+  "$ROOT/launch.sh" --session launch-qwen --root "$LAUNCH_TARGET" --no-attach >"$TMPDIR/launch-qwen.out"
+QWEN_BOOTSTRAP="$TMPDIR/launch-qwen-state/orchestrator-bootstrap.sh"
+assert_file_contains "$TMPDIR/launch-qwen.out" "Worker CLI: qwen"
+assert_file_contains "$QWEN_BOOTSTRAP" "$MULTIAGENT agent run --backend qwen"
+assert_file_contains "$QWEN_BOOTSTRAP" "--trace-dir $TMPDIR/launch-qwen-state/logs/agents/orchestrator"
+assert_file_contains "$TMPDIR/launch-qwen-state/runtime_state/agent-backends.tsv" $'qwen\t'
+assert_file_contains "$TMPDIR/launch-qwen-state/runtime_state/agent-backends.tsv" "qwen-code test-1.0"
+
+if MOCK_TMUX_HAS_SESSION=0 \
+  MULTIAGENT_SESSION="launch-missing-qwen" \
+  MULTIAGENT_PROMPT= \
+  MULTIAGENT_STATE_DIR="$TMPDIR/launch-missing-qwen-state" \
+  MULTIAGENT_WRITE_POLICY="$TMPDIR/launch-missing-qwen-policy/write-policy.paths" \
+  ORCHESTRATOR_CLI=qwen WORKER_CLI=qwen SUBAGENT_CLI=qwen VERIFIER_CLI=qwen \
+  QWEN_BIN="$TMPDIR/does-not-exist/qwen" \
+  "$ROOT/launch.sh" --session launch-missing-qwen --root "$LAUNCH_TARGET" --no-attach >"$TMPDIR/launch-missing-qwen.out" 2>&1; then
+  echo "expected missing Qwen Code executable to fail launch preflight" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/launch-missing-qwen.out" "run qwen coding-agent preflight"
 
 REPAIR_STATE="$TMPDIR/repair-state"
 mkdir -p "$REPAIR_STATE"
@@ -490,11 +698,26 @@ if MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MUL
   exit 1
 fi
 assert_file_contains "$TMPDIR/gate-verifier-unbound-hash.out" $'reject\tlatest-verifier-final-diff-hash-mismatch'
-HASH_GATE_DIFF_SHA="$(git -C "$HASH_GATE_ROOT" diff --binary --ignore-submodules=all | shasum -a 256 | awk '{print $1}')"
+HASH_GATE_DIFF_SHA="$("$MULTIAGENT" snapshot --root "$HASH_GATE_ROOT" --format shell | awk '{print $1}')"
 printf 'ACCEPTED\nbuild-verification-passed: final-diff-sha256=%s compile_clean=true returncode=0\n' "$HASH_GATE_DIFF_SHA" >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
 MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
   "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-verifier-bound-hash.out"
 assert_file_contains "$TMPDIR/gate-verifier-bound-hash.out" "accepted"
+printf 'malicious post-review source\n' >"$HASH_GATE_ROOT/untracked-source.txt"
+if MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
+  "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-verifier-untracked-bypass.out" 2>&1; then
+  echo "expected post-review untracked source to invalidate verifier evidence" >&2
+  cat "$TMPDIR/gate-verifier-untracked-bypass.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/gate-verifier-untracked-bypass.out" $'reject\tlatest-verifier-final-diff-hash-mismatch'
+HASH_GATE_UNTRACKED_SHA="$("$MULTIAGENT" snapshot --root "$HASH_GATE_ROOT" --format shell | awk '{print $1}')"
+printf 'ACCEPTED\nbuild-verification-passed: final-diff-sha256=%s compile_clean=true returncode=0\n' "$HASH_GATE_UNTRACKED_SHA" >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
+MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
+  "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-verifier-untracked-bound.out"
+assert_file_contains "$TMPDIR/gate-verifier-untracked-bound.out" "accepted"
+rm "$HASH_GATE_ROOT/untracked-source.txt"
+printf 'ACCEPTED\nbuild-verification-passed: final-diff-sha256=%s compile_clean=true returncode=0\n' "$HASH_GATE_DIFF_SHA" >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
 printf 'ACCEPTED\n{"verdict":"ACCEPTED","final_diff_sha256":"%s","build_verification_passed":{"final_diff_sha256":"%s","compile_clean":true,"commands":[{"cmd":"test -f source.txt","rc":0}]}}\n' \
   "$HASH_GATE_DIFF_SHA" "$HASH_GATE_DIFF_SHA" >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
 printf 'running\n' >"$HASH_GATE_STATE/subagents/verifier-01-hash/status"
@@ -651,7 +874,7 @@ assert_file_contains "$ROOT/orchestrator_prompt.md" "Do not inspect recovery sta
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'When `MULTIAGENT_RESUME=1`'
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'Only in that mode'
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'MULTIAGENT_VERIFIER_MAX_ITERATIONS'
-assert_file_contains "$ROOT/docs/control-plane-boundary.md" "preventing detached or late"
+assert_file_contains "$ROOT/docs/architecture.md" "preventing detached or late"
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn'
 assert_file_contains "$ROOT/orchestrator_prompt.md" "Core Disciplines"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "intent-contract.md"
@@ -677,6 +900,7 @@ assert_file_contains "$ROOT/prompts/worker.md" "legitimate product or visible-te
 assert_file_contains "$ROOT/prompts/worker.md" "validation-repair-needed:"
 assert_file_contains "$ROOT/prompts/worker.md" "structured worker"
 assert_file_contains "$ROOT/prompts/worker.md" "resolution-create"
+assert_file_contains "$ROOT/prompts/worker.md" "assembled production"
 assert_file_contains "$ROOT/prompts/verifier.md" "Verifier Role Prompt"
 assert_file_contains "$ROOT/prompts/verifier.md" "Hidden Contract Verification"
 assert_file_contains "$ROOT/prompts/verifier.md" "unresolved risk"
@@ -697,6 +921,7 @@ assert_file_contains "$ROOT/prompts/verifier.md" "--severity blocking"
 assert_file_contains "$ROOT/prompts/verifier.md" "--affected PATH[,PATH...]"
 assert_file_contains "$ROOT/prompts/verifier.md" "--evidence-json"
 assert_file_contains "$ROOT/prompts/verifier.md" "do not invent"
+assert_file_contains "$ROOT/prompts/verifier.md" "assembled production"
 assert_file_contains "$ROOT/prompts/worker.md" 'Every entry in a `resolved` report'
 assert_file_contains "$ROOT/prompts/worker.md" 'must have `rc: 0`'
 assert_file_contains "$ROOT/prompts/playbooks/finding-todo-loop.md" 'All `validation-json` entries in a resolved report'
@@ -770,39 +995,19 @@ assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "Build v
 assert_file_contains "$ROOT/prompts/playbooks/dag.md" "DAG Workflow Playbook"
 assert_file_contains "$ROOT/prompts/playbooks/recovery.md" "Recovery Playbook"
 assert_file_contains "$ROOT/prompts/playbooks/write-policy.md" "Write Policy Playbook"
-assert_file_contains "$ROOT/README.md" "Launches are clean by default"
 assert_file_contains "$ROOT/README.md" "## Requirements"
-assert_file_contains "$ROOT/README.md" "Python 3.8 or newer is required only for evaluation"
-assert_file_contains "$ROOT/README.md" "no third-party Python package"
+assert_file_contains "$ROOT/README.md" "## Quick Start"
 assert_file_contains "$ROOT/README.md" "./launch.sh --resume"
-assert_file_contains "$ROOT/README.md" "Prompt Modules"
-assert_file_contains "$ROOT/README.md" "validation lease table"
-assert_file_contains "$ROOT/README.md" "validation-run"
-assert_file_contains "$ROOT/README.md" "validation-lease-acquire"
-assert_file_contains "$ROOT/README.md" "Contract Scout Workflow"
-assert_file_contains "$ROOT/README.md" "acceptance-scout.md"
-assert_file_contains "$ROOT/README.md" "Scope Guard Workflow"
-assert_file_contains "$ROOT/README.md" "Validation Coordinator Workflow"
-assert_file_contains "$ROOT/README.md" "bounded repair worker"
-assert_file_contains "$ROOT/README.md" "proxy behavior"
-assert_file_contains "$ROOT/README.md" "Verifier Workflow"
-assert_file_contains "$ROOT/README.md" "MULTIAGENT_VERIFIER_MAX_ITERATIONS=3"
-assert_file_contains "$ROOT/README.md" "compact contract ledger"
-assert_file_contains "$ROOT/README.md" "hidden-contract edge cases"
-assert_file_contains "$ROOT/README.md" "hidden-contract-ledger"
-assert_file_contains "$ROOT/README.md" 'WORKER_CLI`: worker CLI for manual worker windows, default `claude`'
-assert_file_contains "$ROOT/README.md" 'VERIFIER_CLI`: verifier CLI, default `codex`'
-assert_file_contains "$ROOT/README.md" "Evaluation Framework"
-assert_file_contains "$ROOT/README.md" "Parallel DAG Discipline"
-assert_file_contains "$ROOT/README.md" "Structured Repair Loop"
-assert_file_contains "$ROOT/README.md" "finding-todo-loop.md"
-assert_file_contains "$ROOT/README.md" "todo-close"
-assert_file_contains "$ROOT/README.md" 'Python under `evaluation/`'
-assert_file_contains "$ROOT/README.md" "## System Flow"
-assert_file_contains "$ROOT/README.md" "flowchart TD"
-assert_file_contains "$ROOT/README.md" 'benchmark execution, status reading, and provenance'
-assert_file_contains "$ROOT/README.md" 'orchestration` adapter covers planning behavior'
-assert_file_contains "$ROOT/README.md" "evaluation/tasks"
+assert_file_contains "$ROOT/README.md" "docs/decisions.md"
+assert_file_contains "$ROOT/README.md" "docs/architecture.md"
+assert_file_contains "$ROOT/README.md" "docs/getting-started.md"
+assert_file_contains "$ROOT/docs/decisions.md" "One Rust Production Control Plane"
+assert_file_contains "$ROOT/docs/decisions.md" "Make Completion Supervisor-Owned and Atomic"
+assert_file_contains "$ROOT/docs/architecture.md" "Authority Supervisor"
+assert_file_contains "$ROOT/docs/architecture.md" "Evaluation Boundary"
+assert_file_contains "$ROOT/docs/getting-started.md" "Configure Agent Backends"
+assert_file_contains "$ROOT/docs/getting-started.md" "Normal Workflow"
+assert_file_contains "$ROOT/docs/getting-started.md" "Recovery"
 assert_file_contains "$ROOT/evaluation/README.md" "large-update-300"
 assert_file_contains "$ROOT/evaluation/README.md" "Low-signal orchestration cases"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "MULTIAGENT_PROMPT_MODULE_ROOT"
@@ -812,6 +1017,9 @@ assert_file_contains "$ROOT/prompts/verifier.md" "state-space partition audit"
 assert_file_contains "$ROOT/prompts/verifier.md" "mixed-category, unknown/forward-compatible variant"
 assert_file_contains "$ROOT/prompts/verifier.md" "state-space-partition-audit:"
 assert_file_contains "$ROOT/prompts/verifier.md" "behavior-verification-passed:"
+assert_file_contains "$ROOT/prompts/verifier.md" "narrowest visible test file"
+assert_file_contains "$ROOT/prompts/verifier.md" "Syntax checks, compile-only commands"
+assert_file_contains "$ROOT/prompts/verifier.md" "command=... returncode=0"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "partition contract"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "historical-contract-ledger:"
 assert_file_contains "$ROOT/prompts/worker.md" "historical-contract-ledger:"
@@ -904,6 +1112,7 @@ assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-owner-ledge
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "constructor-dependency contract"
 assert_file_contains "$ROOT/prompts/roles/build-verifier.md" "build-verification-passed:"
 assert_file_contains "$ROOT/prompts/roles/build-verifier.md" "final-diff-sha256="
+assert_file_contains "$ROOT/prompts/roles/build-verifier.md" "omits untracked new"
 assert_file_contains "$ROOT/prompts/roles/build-verifier.md" "go-package-validation-passed:"
 assert_file_contains "$ROOT/prompts/roles/build-verifier.md" "contract scout validation"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "source-owner-ledger:"
@@ -911,6 +1120,7 @@ assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "prompts
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "build-verification-passed:"
 assert_file_contains "$ROOT/prompts/playbooks/finding-todo-loop.md" "Do not create or reopen a todo from command evidence bound"
 assert_file_contains "$MULTIAGENT" subagent '--own|--owned-path)'
+assert_file_contains "$ROOT/src/runtime.rs" 'crate::snapshot::canonical_diff(&cfg.root, "HEAD")'
 assert_file_contains "$MULTIAGENT" subagent '--source-finding-id|--finding)'
 assert_file_contains "$MULTIAGENT" subagent '--role)'
 assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "declared-type ownership risk"
@@ -924,7 +1134,14 @@ assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_lifecycle.py" "wor
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_lifecycle.py" '"MULTIAGENT_PROMPT_MODULE_ROOT": str(repo_root)'
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_lifecycle.py" '"GOMODCACHE": ensure_cache_dir(RUNTIME_ROOT / "go-mod-cache")'
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "adapter only transports"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "autonomous run-to-terminal workflow"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "assignment omitted a path required by the approved plan"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "test-only dependency is not by itself a true contradiction"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Do not create a cleanup worker or revert"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Preserve the best task-directed candidate"
 assert_file_not_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "status.json"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "must not silently narrow or"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Never forbid a required path"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "does not inspect or score patches"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "_public_solver_metadata(dict(task.metadata or {}))"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" '"fail_to_pass"'
@@ -1365,6 +1582,23 @@ assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/owned-inline/owned-paths
 assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/owned-inline/status" "running"
 assert_file_contains "$MOCK_TMUX_LOG" "send-key test-session:owned-inline Repair the bounded path"
 
+printf 'Claude prompt ready\n' >"$MOCK_TMUX_CAPTURES/owned-atomic.txt"
+owned_atomic_output="$("$MULTIAGENT" subagent spawn owned-atomic \
+  --own docs/architecture.md \
+  --assignment-id atomic-001 \
+  --workflow-id WF-ATOMIC \
+  --decision-id DEC-ATOMIC \
+  --plan-id PLAN-ATOMIC \
+  --branch atomic/worker \
+  --instruction "Run one atomic assignment and launch")"
+[[ "$owned_atomic_output" == $'spawned owned-atomic' ]]
+assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/owned-atomic/assignment.env" "assignment_id=atomic-001"
+assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/owned-atomic/assignment.env" "workflow_id=WF-ATOMIC"
+assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/owned-atomic/assignment.env" "decision_id=DEC-ATOMIC"
+assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/owned-atomic/assignment.env" "plan_id=PLAN-ATOMIC"
+assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/owned-atomic/assignment.env" "branch=atomic/worker"
+assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/owned-atomic/status" "running"
+
 "$MULTIAGENT" subagent assignment-create owned-mismatch --assignment-id existing-owned --branch "$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)" --owned prompts/worker.md >/dev/null
 printf 'Claude prompt ready\n' >"$MOCK_TMUX_CAPTURES/owned-mismatch.txt"
 if "$MULTIAGENT" subagent spawn owned-mismatch --own src/subagent.rs --instruction "Do not widen ownership" >"$TMPDIR/owned-mismatch.out" 2>&1; then
@@ -1425,6 +1659,13 @@ printf 'Codex prompt ready\n' >"$MOCK_TMUX_CAPTURES/contract-scout-01-contract.t
 SUBAGENT_CLI="$VERIFIER_CLI" "$MULTIAGENT" subagent spawn contract-scout-01-contract --instruction "Extract source contracts"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/contract-scout-01-contract/instruction.txt" "Contract Scout Role Prompt"
 assert_file_not_contains "$MULTIAGENT_STATE_DIR/subagents/contract-scout-01-contract/instruction.txt" "Acceptance Scout Role Prompt"
+if "$MULTIAGENT" subagent finalize contract-scout-01-contract \
+  >"$TMPDIR/premature-scout-finalize.out" 2>&1; then
+  echo "expected finalize to preserve a running scout without a final artifact" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/premature-scout-finalize.out" \
+  "cannot finalize running scout without a final artifact"
 
 printf 'Blocker: this line is stale prompt context\nfinal status: codex exec exited rc=0\n' >"$MOCK_TMUX_CAPTURES/verifier-01-docs.txt"
 cat >"$MULTIAGENT_STATE_DIR/subagents/verifier-01-docs/last-message.txt" <<'EOF'
@@ -1449,15 +1690,14 @@ assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/codex-exec-protocol/instru
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/codex-exec-protocol/instruction.txt" '{"cmd":"cd /app && sed -n'
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/codex-exec-protocol/instruction.txt" "Inspect /app"
 codex_exec_spawn_line="$(grep -F "new-window -d test-session codex-exec-protocol " "$MOCK_TMUX_LOG")"
-[[ "$codex_exec_spawn_line" == *"exec --cd $ROOT"* ]]
+[[ "$codex_exec_spawn_line" == *"$MULTIAGENT agent run --backend codex --cwd $ROOT"* ]]
 if [[ "$HOST_KERNEL" == Linux ]]; then
   [[ "$codex_exec_spawn_line" == *"$MULTIAGENT role-exec"* ]]
-  [[ "$codex_exec_spawn_line" == *"--dangerously-bypass-approvals-and-sandbox"* ]]
   [[ "$codex_exec_spawn_line" == *"--allow-write $ROOT"* ]]
-else
-  [[ "$codex_exec_spawn_line" == *"--sandbox workspace-write -c approval_policy=never"* ]]
 fi
-[[ "$codex_exec_spawn_line" == *"--output-last-message"* ]]
+[[ "$codex_exec_spawn_line" == *"--final-output $MULTIAGENT_STATE_DIR/subagents/codex-exec-protocol/last-message.txt"* ]]
+[[ "$codex_exec_spawn_line" == *"--trace-dir $MULTIAGENT_STATE_DIR/logs/agents/codex-exec-protocol"* ]]
+[[ "$codex_exec_spawn_line" == *"--access workspace-write"* ]]
 
 printf 'final status: codex exec exited rc=0\n' >"$MOCK_TMUX_CAPTURES/codex-exec-protocol.txt"
 codex_wait_output="$(MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$MULTIAGENT" subagent wait codex-exec-protocol --timeout 1 --poll-interval 0)"
@@ -1467,14 +1707,12 @@ printf 'Codex exec prompt ready\n' >"$MOCK_TMUX_CAPTURES/decision-authority-read
 MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$MULTIAGENT" subagent spawn decision-authority-read-only \
   --role reviewer --instruction "Review the proposed authority"
 authority_spawn_line="$(grep -F "new-window -d test-session decision-authority-read-only " "$MOCK_TMUX_LOG")"
-[[ "$authority_spawn_line" == *"exec --cd $ROOT"* ]]
+[[ "$authority_spawn_line" == *"$MULTIAGENT agent run --backend codex --cwd $ROOT"* ]]
 if [[ "$HOST_KERNEL" == Linux ]]; then
   [[ "$authority_spawn_line" == *"$MULTIAGENT role-exec"* ]]
-  [[ "$authority_spawn_line" == *"--dangerously-bypass-approvals-and-sandbox"* ]]
   [[ "$authority_spawn_line" != *"--allow-write $ROOT"* ]]
-else
-  [[ "$authority_spawn_line" == *"--sandbox read-only -c approval_policy=never"* ]]
 fi
+[[ "$authority_spawn_line" == *"--access read-only"* ]]
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/decision-authority-read-only/meta.env" "role=reviewer"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/decision-authority-read-only/meta.env" "codex_access=read-only"
 
@@ -1536,6 +1774,25 @@ if [[ "$claude_spawn_line" == *"--cd"* || "$claude_spawn_line" == *"--no-alt-scr
 fi
 printf 'Final status: completed\n' >"$MOCK_TMUX_CAPTURES/subagent-claude.txt"
 "$MULTIAGENT" subagent finalize subagent-claude >/dev/null
+
+SUBAGENT_CLI=qwen "$MULTIAGENT" subagent spawn subagent-qwen --role reviewer --instruction "Review with Qwen Code"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-qwen/meta.env" "cli=qwen"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-qwen/meta.env" "cli_bin=$QWEN_BIN"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-qwen/meta.env" "access=read-only"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-qwen/meta.env" "trace_dir=$MULTIAGENT_STATE_DIR/logs/agents/subagent-qwen"
+qwen_spawn_line="$(grep -F "new-window -d test-session subagent-qwen " "$MOCK_TMUX_LOG")"
+[[ "$qwen_spawn_line" == *"$MULTIAGENT agent run --backend qwen --cwd $ROOT"* ]]
+[[ "$qwen_spawn_line" == *"--prompt-file $MULTIAGENT_STATE_DIR/subagents/subagent-qwen/instruction.txt"* ]]
+[[ "$qwen_spawn_line" == *"--access read-only"* ]]
+if grep -Fq "send-key test-session:subagent-qwen" "$MOCK_TMUX_LOG"; then
+  echo "headless Qwen Code must receive its prompt through stdin, not tmux send-keys" >&2
+  exit 1
+fi
+printf 'final status: coding agent exited rc=0\n' >"$MOCK_TMUX_CAPTURES/subagent-qwen.txt"
+qwen_poll="$(SUBAGENT_CLI=qwen "$MULTIAGENT" subagent poll subagent-qwen)"
+[[ "$qwen_poll" == $'subagent-qwen\tdone' ]]
+SUBAGENT_CLI=qwen "$MULTIAGENT" subagent kill subagent-qwen >/dev/null
+assert_file_contains "$MULTIAGENT_STATE_DIR/logs/agents/subagent-qwen/supervisor-termination.json" '"reason": "canceled"'
 
 printf 'Progress update: still running\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"
 poll_output="$("$MULTIAGENT" subagent poll subagent-watch)"

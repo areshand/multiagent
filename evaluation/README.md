@@ -148,8 +148,10 @@ image.
 `evaluation.native_solver.solve_swe_prod` is the packaged container entrypoint,
 launched with `python3 -m` from `/opt/multiagent`. The adapter only starts the
 workflow, waits for the Rust orchestrator process, exposes committed and
-untracked workspace changes, and returns control to EvalScope. It does not
-inspect status narratives, run validation gates, filter files, or score the
+newly created untracked workspace changes, and returns control to EvalScope.
+The adapter snapshots pre-existing untracked image residue before launch so it
+is not misrepresented as solver output. It does not inspect status narratives,
+run validation gates, decide which source changes are correct, or score the
 patch. EvalScope extracts the current `/app` diff and passes it to the official
 verifier.
 
