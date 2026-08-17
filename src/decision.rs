@@ -1,5 +1,4 @@
-use crate::config;
-use chrono::{SecondsFormat, Utc};
+use crate::{config, state::atomic_write, state::read_env, state::timestamp};
 use fs2::FileExt;
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
@@ -555,15 +554,6 @@ fn require_status(
     Ok(())
 }
 
-fn read_env(path: &Path) -> Result<BTreeMap<String, String>, String> {
-    let text = fs::read_to_string(path).map_err(io_error("read decision state"))?;
-    Ok(text
-        .lines()
-        .filter_map(|line| line.split_once('='))
-        .map(|(key, current)| (key.to_string(), current.to_string()))
-        .collect())
-}
-
 fn tsv_first_column_contains(path: &Path, expected: &str) -> Result<bool, String> {
     let text = fs::read_to_string(path).map_err(io_error("read decision table"))?;
     Ok(text
@@ -597,25 +587,6 @@ fn rewrite_status(path: &Path, appended: &[&str]) -> Result<(), String> {
     atomic_write(path, &output)
 }
 
-fn atomic_write(path: &Path, text: &str) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("path has no parent: {}", path.display()))?;
-    fs::create_dir_all(parent).map_err(io_error("create state directory"))?;
-    let temporary = parent.join(format!(
-        ".{}.{}.tmp",
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("state"),
-        std::process::id()
-    ));
-    let mut file = File::create(&temporary).map_err(io_error("create temporary state"))?;
-    file.write_all(text.as_bytes())
-        .map_err(io_error("write temporary state"))?;
-    file.sync_all().map_err(io_error("sync temporary state"))?;
-    fs::rename(&temporary, path).map_err(io_error("replace state"))
-}
-
 fn print_section(label: &str, path: &Path, header_only_empty: bool) -> Result<(), String> {
     println!("\n{label}:");
     let text = fs::read_to_string(path).unwrap_or_default();
@@ -626,10 +597,6 @@ fn print_section(label: &str, path: &Path, header_only_empty: bool) -> Result<()
         print!("{text}");
     }
     Ok(())
-}
-
-fn timestamp() -> String {
-    Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
 fn io_error(context: &'static str) -> impl FnOnce(std::io::Error) -> String {

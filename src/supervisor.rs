@@ -1,4 +1,4 @@
-use crate::config;
+use crate::{authority::AuthorityRequest, config, state::read_env as read_env_file};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -37,12 +37,6 @@ const CONTROL_DIRECTORIES: &[&str] = &[
 ];
 
 #[derive(Deserialize, Serialize)]
-struct Request {
-    command: String,
-    args: Vec<String>,
-}
-
-#[derive(Deserialize, Serialize)]
 struct Response {
     code: i32,
     stdout: String,
@@ -53,10 +47,7 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
     match args {
         [command] if command == "bootstrap-test" => bootstrap_test(),
         [command] if command == "serve" => serve(&authority_socket(&config::state_dir()?)),
-        [command] if command == "stop" => proxy_request(Request {
-            command: "supervisor".into(),
-            args: vec!["shutdown".into()],
-        }),
+        [command] if command == "stop" => proxy_request(AuthorityRequest::shutdown()),
         [command, rest @ ..] if command == "register-launch" && server_child() => {
             register_launch(rest, false)?;
             Ok(ExitCode::SUCCESS)
@@ -93,52 +84,10 @@ pub fn proxy_if_required(command: &str, args: &[String]) -> Option<Result<ExitCo
     if command == "supervisor" && args.first().map(String::as_str) == Some("stop") {
         return None;
     }
-    if !uid_sandbox() || !authority_client_uid() || server_child() || !proxy_command(command, args)
-    {
+    if !uid_sandbox() || !authority_client_uid() || server_child() {
         return None;
     }
-    Some(proxy_request(Request {
-        command: command.into(),
-        args: args.to_vec(),
-    }))
-}
-
-fn proxy_command(command: &str, args: &[String]) -> bool {
-    match command {
-        "orchestrator" => args == ["complete"],
-        "workflow" | "decision" | "dag" => true,
-        "supervisor" => args.first().is_some_and(|value| {
-            matches!(value.as_str(), "stop" | "register-launch" | "renew-launch")
-        }),
-        "subagent" => args.first().is_some_and(|value| {
-            matches!(
-                value.as_str(),
-                "assignment-create"
-                    | "assignment-show"
-                    | "assignment-status"
-                    | "assignment-check"
-                    | "checkpoint-update"
-                    | "checkpoint-show"
-                    | "finding-create"
-                    | "finding-show"
-                    | "finding-list"
-                    | "finding-dismiss"
-                    | "todo-create"
-                    | "todo-show"
-                    | "todo-list"
-                    | "todo-assign"
-                    | "todo-status"
-                    | "resolution-create"
-                    | "todo-close"
-                    | "validation-lease-acquire"
-                    | "validation-lease-status"
-                    | "validation-lease-show"
-                    | "validation-lease-list"
-                    | "gate-check"
-            )
-        }),
-        _ => false,
-    }
+    AuthorityRequest::from_cli(command, args).map(proxy_request)
 }
 
 #[derive(Clone, Debug)]
@@ -479,19 +428,6 @@ fn required_field<'a>(values: &'a BTreeMap<String, String>, name: &str) -> Resul
         .ok_or_else(|| format!("launch authorization is missing {name}"))
 }
 
-fn read_env_file(path: &Path) -> Result<BTreeMap<String, String>, String> {
-    let mut values = BTreeMap::new();
-    for line in fs::read_to_string(path)
-        .map_err(|error| format!("read launch authorization {}: {error}", path.display()))?
-        .lines()
-    {
-        if let Some((key, value)) = line.split_once('=') {
-            values.insert(key.into(), value.into());
-        }
-    }
-    Ok(values)
-}
-
 fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && !name.starts_with('-')
@@ -623,7 +559,7 @@ pub fn validate_runtime_state(_state: &Path) -> Result<(), String> {
 }
 
 #[cfg(unix)]
-fn proxy_request(request: Request) -> Result<ExitCode, String> {
+fn proxy_request(request: AuthorityRequest) -> Result<ExitCode, String> {
     let state = config::state_dir()?;
     let socket = authority_socket(&state);
     let mut stream = UnixStream::connect(&socket)
@@ -648,7 +584,7 @@ fn proxy_request(request: Request) -> Result<ExitCode, String> {
 }
 
 #[cfg(not(unix))]
-fn proxy_request(_request: Request) -> Result<ExitCode, String> {
+fn proxy_request(_request: AuthorityRequest) -> Result<ExitCode, String> {
     Err("authority supervisor requires Unix".into())
 }
 
@@ -718,7 +654,7 @@ fn serve_connection(stream: &mut UnixStream) -> Result<bool, String> {
         eprintln!("authority supervisor: read request: {error}");
         return Ok(false);
     }
-    let request: Request = match serde_json::from_slice(&bytes) {
+    let request: AuthorityRequest = match serde_json::from_slice(&bytes) {
         Ok(request) => request,
         Err(error) => {
             let _ = write_response(
@@ -732,7 +668,7 @@ fn serve_connection(stream: &mut UnixStream) -> Result<bool, String> {
             return Ok(false);
         }
     };
-    if request.command == "supervisor" && request.args == ["shutdown"] {
+    if request.is_shutdown() {
         let _ = write_response(
             stream,
             &Response {
@@ -743,18 +679,15 @@ fn serve_connection(stream: &mut UnixStream) -> Result<bool, String> {
         );
         return Ok(true);
     }
-    if !proxy_command(&request.command, &request.args)
-        || !caller_authorized(peer_uid, &request.command, &request.args)
-    {
+    if !request.authorized_for(peer_uid) {
         let _ = write_response(
             stream,
             &Response {
                 code: 1,
                 stdout: String::new(),
                 stderr: format!(
-                    "authority supervisor: caller uid {peer_uid} is not authorized for: {} {}\n",
-                    request.command,
-                    request.args.first().map(String::as_str).unwrap_or("")
+                    "authority supervisor: caller uid {peer_uid} is not authorized for: {}\n",
+                    request.display()
                 ),
             },
         );
@@ -768,12 +701,13 @@ fn serve_connection(stream: &mut UnixStream) -> Result<bool, String> {
 }
 
 #[cfg(target_os = "linux")]
-fn execute(request: Request) -> Result<Response, String> {
+fn execute(request: AuthorityRequest) -> Result<Response, String> {
     let executable =
         env::current_exe().map_err(|error| format!("resolve authority executable: {error}"))?;
+    let (command, args) = request.into_cli();
     let output = Command::new(executable)
-        .arg(&request.command)
-        .args(&request.args)
+        .arg(command)
+        .args(args)
         .env(SERVER_CHILD_ENV, "1")
         .stdin(Stdio::null())
         .output()
@@ -816,46 +750,6 @@ fn peer_uid(stream: &UnixStream) -> Result<u32, String> {
         ));
     }
     Ok(credentials.uid)
-}
-
-#[cfg(any(target_os = "linux", test))]
-fn caller_authorized(uid: u32, command: &str, args: &[String]) -> bool {
-    if uid == 0 {
-        return true;
-    }
-    let subcommand = args.first().map(String::as_str).unwrap_or("");
-    match command {
-        "workflow" | "decision" | "dag" | "orchestrator" | "supervisor" => {
-            uid == config::ORCHESTRATOR_UID
-        }
-        "subagent" => match subcommand {
-            "finding-create" => uid == config::READER_UID,
-            // The orchestrator may request a disposition, but subagent.rs
-            // authorizes it only from supervisor-sealed reviewer evidence.
-            "finding-dismiss" | "todo-close" => {
-                matches!(uid, config::ORCHESTRATOR_UID | config::READER_UID)
-            }
-            "resolution-create" => uid == config::WRITER_UID,
-            "checkpoint-update" | "checkpoint-show" => matches!(
-                uid,
-                config::ORCHESTRATOR_UID | config::WRITER_UID | config::READER_UID
-            ),
-            "finding-show"
-            | "finding-list"
-            | "todo-show"
-            | "todo-list"
-            | "validation-lease-show"
-            | "validation-lease-list" => matches!(
-                uid,
-                config::ORCHESTRATOR_UID | config::WRITER_UID | config::READER_UID
-            ),
-            "validation-lease-acquire" | "validation-lease-status" => {
-                matches!(uid, config::WRITER_UID | config::READER_UID)
-            }
-            _ => uid == config::ORCHESTRATOR_UID,
-        },
-        _ => false,
-    }
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -1050,50 +944,8 @@ pub fn start(_state: &Path, _executable: &Path) -> Result<u32, String> {
 mod tests {
     #[cfg(target_os = "linux")]
     use super::serve_connection;
-    use super::{caller_authorized, proxy_command};
-    use crate::config;
     #[cfg(target_os = "linux")]
     use std::os::unix::net::UnixStream;
-
-    #[test]
-    fn typed_api_excludes_runtime_and_arbitrary_execution() {
-        assert!(proxy_command("workflow", &["status".into()]));
-        assert!(proxy_command("subagent", &["assignment-create".into()]));
-        assert!(!proxy_command("agent", &["run".into()]));
-        assert!(!proxy_command("role-exec", &[]));
-        assert!(!proxy_command("subagent", &["spawn".into()]));
-        assert!(!proxy_command("subagent", &["worktree-create".into()]));
-        assert!(!proxy_command("subagent", &["validation-run".into()]));
-    }
-
-    #[test]
-    fn authority_mutations_are_role_typed() {
-        assert!(caller_authorized(
-            config::ORCHESTRATOR_UID,
-            "workflow",
-            &["transition".into()]
-        ));
-        assert!(!caller_authorized(
-            config::ORCHESTRATOR_UID,
-            "subagent",
-            &["finding-create".into()]
-        ));
-        assert!(caller_authorized(
-            config::READER_UID,
-            "subagent",
-            &["finding-create".into()]
-        ));
-        assert!(caller_authorized(
-            config::ORCHESTRATOR_UID,
-            "subagent",
-            &["todo-close".into()]
-        ));
-        assert!(!caller_authorized(
-            config::WRITER_UID,
-            "workflow",
-            &["transition".into()]
-        ));
-    }
 
     #[cfg(target_os = "linux")]
     #[test]

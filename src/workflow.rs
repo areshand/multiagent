@@ -1,5 +1,7 @@
-use crate::config;
-use chrono::{SecondsFormat, Utc};
+use crate::{
+    config,
+    state::{atomic_write, atomic_write_bytes, read_env_optional, timestamp},
+};
 use fs2::FileExt;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1411,19 +1413,7 @@ fn read_env(path: &Path, id: &str) -> Result<BTreeMap<String, String>, String> {
     read_simple_env(path)
 }
 fn read_simple_env(path: &Path) -> Result<BTreeMap<String, String>, String> {
-    let mut out = BTreeMap::new();
-    if !path.is_file() {
-        return Ok(out);
-    }
-    for line in fs::read_to_string(path)
-        .map_err(io_error("read state"))?
-        .lines()
-    {
-        if let Some((k, v)) = line.split_once('=') {
-            out.insert(k.into(), v.into());
-        }
-    }
-    Ok(out)
+    read_env_optional(path)
 }
 fn write_env(path: &Path, state: &BTreeMap<String, String>) -> Result<(), String> {
     let text = ENV_ORDER
@@ -1480,25 +1470,6 @@ fn event(path: &Path, name: &str, detail: &str) -> Result<(), String> {
     writeln!(file, "{}\t{}\t{}", timestamp(), name, detail)
         .map_err(io_error("append lifecycle event"))
 }
-fn atomic_write(path: &Path, text: &str) -> Result<(), String> {
-    atomic_write_bytes(path, text.as_bytes())
-}
-
-fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(io_error("create state directory"))?;
-    }
-    let temp = path.with_file_name(format!(
-        ".{}.{}.tmp",
-        path.file_name().and_then(|v| v.to_str()).unwrap_or("state"),
-        std::process::id()
-    ));
-    let mut file = File::create(&temp).map_err(io_error("create temporary state"))?;
-    file.write_all(bytes)
-        .map_err(io_error("write temporary state"))?;
-    file.sync_all().map_err(io_error("sync temporary state"))?;
-    fs::rename(&temp, path).map_err(io_error("publish state"))
-}
 fn sha256(path: &Path) -> Result<String, String> {
     let mut file = File::open(path).map_err(io_error("read implementation context"))?;
     let mut digest = Sha256::new();
@@ -1529,9 +1500,6 @@ fn active(status: &str) -> bool {
 }
 fn state_value<'a>(state: &'a BTreeMap<String, String>, key: &str) -> &'a str {
     state.get(key).map(String::as_str).unwrap_or("")
-}
-fn timestamp() -> String {
-    Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 fn valid_id(label: &str, value: &str) -> Result<(), String> {
     if value.is_empty()

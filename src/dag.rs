@@ -1,5 +1,4 @@
-use crate::config;
-use chrono::{SecondsFormat, Utc};
+use crate::{config, state::atomic_write, state::read_env, state::timestamp};
 use fs2::FileExt;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
@@ -568,15 +567,6 @@ fn write_edges(path: &Path, edges: &[Edge]) -> Result<(), String> {
     atomic_write(path, &text)
 }
 
-fn read_env(path: &Path) -> Result<BTreeMap<String, String>, String> {
-    let text = fs::read_to_string(path).map_err(io_error("read workflow metadata"))?;
-    Ok(text
-        .lines()
-        .filter_map(|line| line.split_once('='))
-        .map(|(key, current)| (key.to_string(), current.to_string()))
-        .collect())
-}
-
 fn has_cycle(edges: &[Edge]) -> bool {
     let mut adjacency: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     let mut nodes = BTreeSet::new();
@@ -623,30 +613,6 @@ fn print_section(label: &str, path: &Path, header_only_empty: bool) -> Result<()
         print!("{text}");
     }
     Ok(())
-}
-
-fn atomic_write(path: &Path, text: &str) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("path has no parent: {}", path.display()))?;
-    fs::create_dir_all(parent).map_err(io_error("create workflow state directory"))?;
-    let temporary = parent.join(format!(
-        ".{}.{}.tmp",
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("state"),
-        std::process::id()
-    ));
-    let mut file = File::create(&temporary).map_err(io_error("create workflow temporary state"))?;
-    file.write_all(text.as_bytes())
-        .map_err(io_error("write workflow temporary state"))?;
-    file.sync_all()
-        .map_err(io_error("sync workflow temporary state"))?;
-    fs::rename(&temporary, path).map_err(io_error("replace workflow state"))
-}
-
-fn timestamp() -> String {
-    Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
 fn io_error(context: &'static str) -> impl FnOnce(std::io::Error) -> String {

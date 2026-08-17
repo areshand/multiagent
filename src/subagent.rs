@@ -1,5 +1,8 @@
-use crate::{config, runtime, workflow};
-use chrono::{SecondsFormat, Utc};
+use crate::{
+    config, runtime,
+    state::{atomic_write, read_env, timestamp},
+    workflow,
+};
 use fs2::FileExt;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -2639,18 +2642,6 @@ fn resolve_commit(root: &Path, requested: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn read_env(path: &Path) -> Result<BTreeMap<String, String>, String> {
-    let mut values = BTreeMap::new();
-    for line in fs::read_to_string(path)
-        .map_err(io_error("read assignment"))?
-        .lines()
-    {
-        if let Some((key, value)) = line.split_once('=') {
-            values.insert(key.into(), value.into());
-        }
-    }
-    Ok(values)
-}
 fn repeated_options(
     args: &[String],
     repeatable: &[&str],
@@ -2833,21 +2824,6 @@ fn validate_name(name: &str) -> Result<(), String> {
         return Err(format!("reserved subagent name: {name}"));
     }
     Ok(())
-}
-fn atomic_write(path: &Path, text: &str) -> Result<(), String> {
-    let temporary = path.with_file_name(format!(
-        ".{}.{}.tmp",
-        path.file_name().and_then(|v| v.to_str()).unwrap_or("state"),
-        std::process::id()
-    ));
-    let mut file = File::create(&temporary).map_err(io_error("create assignment state"))?;
-    file.write_all(text.as_bytes())
-        .map_err(io_error("write assignment state"))?;
-    file.sync_all().map_err(io_error("sync assignment state"))?;
-    fs::rename(temporary, path).map_err(io_error("publish assignment state"))
-}
-fn timestamp() -> String {
-    Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 fn io_error(action: &'static str) -> impl Fn(std::io::Error) -> String {
     move |error| format!("{action}: {error}")
