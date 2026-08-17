@@ -67,6 +67,11 @@ class NativeOutcomeTest(unittest.TestCase):
         self.assertIn("explicit task contract is already approved", lifecycle)
         self.assertIn("This run has no interactive user", autonomous)
         self.assertIn("narrowest backward-compatible interpretation", autonomous)
+        self.assertIn("new contract outranks pre-change exact-call mocks", autonomous)
+        self.assertIn("verify the declared default and an override", autonomous)
+        self.assertIn("autonomous run-to-terminal workflow", autonomous)
+        self.assertIn("turn by offering to continue", autonomous)
+        self.assertIn("assignment omitted a path required by the approved plan", autonomous)
 
     def test_runner_has_no_submission_rejection_path(self):
         self.assertFalse(hasattr(evalscope_multiagent_native_runner, "is_submission_gate_rejection"))
@@ -104,7 +109,7 @@ class NativeOutcomeTest(unittest.TestCase):
                     ) as chmod:
                         swe_prod_lifecycle.prepare_role_filesystem(workdir, launcher)
 
-            for role in ("orchestrator", "writer", "reader"):
+            for role in ("orchestrator", "writer", "reader", "supervisor"):
                 home = role_homes / role
                 self.assertEqual((home / "auth.json").read_text(encoding="utf-8"), '{"token":"test"}')
                 self.assertTrue((home / "config.toml").is_file())
@@ -160,6 +165,7 @@ class NativeOutcomeTest(unittest.TestCase):
                 "multiagent_command": mock.Mock(return_value=["multiagent"]),
                 "find_codex_cli": mock.Mock(return_value="/usr/bin/codex"),
                 "git_head": mock.Mock(return_value="a" * 40),
+                "list_untracked_files": mock.Mock(return_value=["appendonlydir/runtime.aof"]),
                 "run": mock.Mock(return_value=completed),
                 "write_codex_bridge": mock.DEFAULT,
                 "write_apply_patch_helper": mock.DEFAULT,
@@ -208,7 +214,10 @@ class NativeOutcomeTest(unittest.TestCase):
 
         self.assertEqual(result, 0)
         materialize.assert_called_once_with(root, "a" * 40)
-        expose_untracked.assert_called_once_with(root)
+        expose_untracked.assert_called_once_with(
+            root,
+            baseline_untracked={"appendonlydir/runtime.aof"},
+        )
         prepare_roles.assert_called_once_with(root, Path("multiagent"))
         restore_owner.assert_called_once_with(root)
         self.assertEqual(launch_env["MULTIAGENT_UID_SANDBOX"], "1")
@@ -246,6 +255,31 @@ class NativeOutcomeTest(unittest.TestCase):
         self.assertEqual(exposed, ["feature.py", "tests/test_feature.py"])
         self.assertIn("feature.py", diff)
         self.assertIn("tests/test_feature.py", diff)
+
+    def test_workspace_handoff_excludes_preexisting_image_residue(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            (repo / "appendonlydir").mkdir()
+            residue = repo / "appendonlydir" / "appendonly.aof"
+            residue.write_text("runtime\n", encoding="utf-8")
+            baseline = set(swe_prod_repository.list_untracked_files(repo))
+            (repo / "new_source.py").write_text("fixed = True\n", encoding="utf-8")
+
+            exposed = swe_prod_repository.mark_untracked_intent_to_add(
+                repo,
+                baseline_untracked=baseline,
+            )
+            diff = subprocess.run(
+                ["git", "diff", "--binary"],
+                cwd=repo,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+            ).stdout
+
+        self.assertEqual(exposed, ["new_source.py"])
+        self.assertNotIn("appendonly.aof", diff)
 
     def test_summary_counts_submitted_patch_even_when_official_score_is_zero(self):
         with tempfile.TemporaryDirectory() as directory:

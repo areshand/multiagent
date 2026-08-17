@@ -8,6 +8,7 @@ mod role_sandbox;
 mod runtime;
 mod snapshot;
 mod subagent;
+mod supervisor;
 mod workflow;
 
 use std::env;
@@ -39,6 +40,15 @@ fn main() -> ExitCode {
         eprintln!("multiagent: {message}");
         return ExitCode::from(1);
     }
+    if let Some(result) = supervisor::proxy_if_required(&command, &args) {
+        return match result {
+            Ok(code) => code,
+            Err(message) => {
+                eprintln!("supervisor: {message}");
+                ExitCode::from(1)
+            }
+        };
+    }
     let result: Result<ExitCode, (&str, String)> = match command.as_str() {
         "agent" => agent::run(&args).map_err(|message| ("agent", message)),
         "launch" => runtime::launch(&args).map_err(|message| ("launch", message)),
@@ -65,6 +75,7 @@ fn main() -> ExitCode {
             .map(|_| ExitCode::SUCCESS)
             .map_err(|message| ("snapshot", message)),
         "subagent" => subagent::run(&args).map_err(|message| ("subagent", message)),
+        "supervisor" => supervisor::run(&args).map_err(|message| ("supervisor", message)),
         "workflow" => workflow::run(&args)
             .map(|_| ExitCode::SUCCESS)
             .map_err(|message| ("workflow", message)),

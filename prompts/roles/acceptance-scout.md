@@ -99,6 +99,12 @@ Report a compact ledger with:
 - extension surface: when the task promises registration, configuration,
   overrides, or adding behavior without core edits, name the concrete API,
   production integration path, preserved defaults, and override probe
+- wrapper propagation: when an explicit task adds an option/default through
+  multiple functions or adapters, list every named layer and require the next
+  layer to receive both the declared default and one override. Mark pre-change
+  exact-call mocks that assert the old argument shape as stale when they
+  directly conflict with that explicit new contract; do not turn them into a
+  requirement to omit the new default and rely on a downstream fallback.
 
 If a visible test, issue text, docs, source, or user message shows assignment
 targets, treat those targets as normative. For example, `id, name := helper(x)`

@@ -14,9 +14,10 @@ flowchart LR
     P --> R["Pilot runner"]
     R --> B["Baseline: one coding-agent CLI"]
     R --> O["Orchestrated: commander in tmux"]
-    O --> C["Contract / scope scouts"]
-    O --> W["Path-owned workers"]
-    O --> V["Read-only verifier"]
+    O --> A["UID-isolated authority supervisor"]
+    A --> C["Contract / scope scouts"]
+    A --> W["One path-owned writer"]
+    A --> V["Read-only verifier"]
     C --> S["Structured runtime state"]
     W --> S
     V --> S
@@ -39,9 +40,15 @@ persisted under `MULTIAGENT_STATE_DIR`. Python under `evaluation/` provides
 benchmark execution, status reading, and provenance; it does not implement a
 second control plane or participate in normal launches.
 
-Workers own disjoint writable paths. Scouts and verifiers are read-only. The
-orchestrator alone accepts follow-up work and decides whether the final gate can
-close. Hash-bound verifier evidence becomes stale when the final diff changes.
+On production Linux the orchestrator, writer, readers, and authority supervisor
+run as different Unix users. The orchestrator decomposes work and requests typed
+transitions over a Unix socket; it does not own protected state or repository
+writes. The supervisor issues one-time role launches, permits only one writer,
+temporarily grants that writer its predeclared existing paths, and seals reviewer
+output before exposing it to the orchestrator. Scouts and verifiers are
+read-only. The orchestrator can request follow-up or closure, while fixed rules
+and sealed evidence decide whether the protected transition succeeds.
+Hash-bound verifier evidence becomes stale when the final diff changes.
 
 ## Evaluation Boundary
 

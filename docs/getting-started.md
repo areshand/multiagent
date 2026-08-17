@@ -93,21 +93,24 @@ one workspace-write task and checks both the response and filesystem result.
 The regular test suite uses a fake Qwen executable and never requires network
 access or credentials.
 
-The Rust supervisor assigns Codex access from trusted process roles. On hosts
+The Rust runtime assigns coding-agent access from trusted process roles. On hosts
 where Codex's native sandbox is available, the orchestrator starts in the
 durable state directory with `workspace-write`, workers start in the target
 repository with `workspace-write`, and scouts/authority reviewers use
 `read-only`. The production Linux-container adapter uses separate unprivileged
 Unix identities instead because nested bubblewrap is unavailable under Docker's
 default seccomp profile. Its tmux server runs as the non-writing orchestrator
-identity. A narrowly gated, setuid Rust entrypoint may only start the fixed
+identity, while a separate authority UID owns protected state and a typed Unix
+socket. A narrowly gated, setuid Rust entrypoint may only start the fixed
 coding-agent binary recorded for a named headless role; all other invocations
 permanently drop back to the caller UID. Each role also receives a private
 Codex runtime home so one role's private lock/config files cannot stall another.
 The isolated orchestrator's real UID makes lifecycle enforcement mandatory, so
 shell-level environment overrides cannot authorize a writer after completion.
 In both environments the orchestrator can read the target but cannot write it,
-while workers can. Claude remains a compatibility path and does not provide
+while a single active worker receives temporary ownership only of its assigned
+existing paths. Reviewer output is sealed by the authority process before the
+orchestrator can read or cite it. Claude remains a compatibility path and does not provide
 Codex's native role boundary outside the production adapter. Qwen uses `plan`
 approval for read-only roles and its sandbox on non-Linux hosts, but the
 production security claim remains the outer Linux role boundary.
@@ -378,8 +381,10 @@ are normative input to the verifier. The verifier still reconstructs the task
 contract independently, then checks the worker diff against both the
 reconstructed contract and the scout's must-preserve requirements.
 
-The orchestrator reviews the verifier's findings and gives the verdict. Only
-accepted follow-ups are passed back to the original worker. The worker then
+The orchestrator reads the verifier's findings and chooses which follow-up to
+request. Protected closure is accepted only when the authority process can bind
+that request to completed, supervisor-sealed reviewer evidence; a forged public
+message cannot authorize it. Accepted follow-ups are passed back to the original worker. The worker then
 reports done again, the orchestrator reruns assignment checks, and verification
 may repeat until no accepted follow-up remains or the max iteration cap is
 reached. The cap limits accepted worker follow-up cycles after verifier review.
@@ -490,12 +495,15 @@ multiagent policy approve /tmp --actor orchestrator --assignment-id build-logs -
 For isolated coding-agent roles, the OS boundary mechanically prevents the orchestrator,
 authority reviewers, and scouts from writing the target repository. On native
 hosts that boundary is Codex's sandbox; in the production Linux container it is
-Unix ownership plus a permanent role UID drop. The tmux server itself has the
+Unix ownership plus a permanent role UID drop, with Landlock as an additional
+restriction when available. The tmux server itself has the
 orchestrator UID, so bypassing the Rust CLI to open a raw pane still produces a
 non-writing process. The only privileged transition is the fixed
 `role-agent-exec` path, which validates persisted role metadata and the
 root-owned, non-group-writable configured agent binary before dropping to the
-writer or reader UID. Generic `role-exec` calls from the orchestrator lose setuid
+writer or reader UID. An authority process under a fourth UID owns protected
+workflow state, one-time launch permits, the single-writer lease, and sealed
+reviewer output. Generic `role-exec` calls from the orchestrator lose setuid
 privilege before dispatch. The write-policy helper remains responsible for
 explicit writes outside the normal role root. Compatibility processes do not
 receive this mechanical boundary on native hosts unless their own sandbox is

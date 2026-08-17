@@ -665,11 +665,26 @@ if MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MUL
   exit 1
 fi
 assert_file_contains "$TMPDIR/gate-verifier-unbound-hash.out" $'reject\tlatest-verifier-final-diff-hash-mismatch'
-HASH_GATE_DIFF_SHA="$(git -C "$HASH_GATE_ROOT" diff --binary --ignore-submodules=all | shasum -a 256 | awk '{print $1}')"
+HASH_GATE_DIFF_SHA="$("$MULTIAGENT" snapshot --root "$HASH_GATE_ROOT" --format shell | awk '{print $1}')"
 printf 'ACCEPTED\nbuild-verification-passed: final-diff-sha256=%s compile_clean=true returncode=0\n' "$HASH_GATE_DIFF_SHA" >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
 MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
   "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-verifier-bound-hash.out"
 assert_file_contains "$TMPDIR/gate-verifier-bound-hash.out" "accepted"
+printf 'malicious post-review source\n' >"$HASH_GATE_ROOT/untracked-source.txt"
+if MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
+  "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-verifier-untracked-bypass.out" 2>&1; then
+  echo "expected post-review untracked source to invalidate verifier evidence" >&2
+  cat "$TMPDIR/gate-verifier-untracked-bypass.out" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/gate-verifier-untracked-bypass.out" $'reject\tlatest-verifier-final-diff-hash-mismatch'
+HASH_GATE_UNTRACKED_SHA="$("$MULTIAGENT" snapshot --root "$HASH_GATE_ROOT" --format shell | awk '{print $1}')"
+printf 'ACCEPTED\nbuild-verification-passed: final-diff-sha256=%s compile_clean=true returncode=0\n' "$HASH_GATE_UNTRACKED_SHA" >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
+MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
+  "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-verifier-untracked-bound.out"
+assert_file_contains "$TMPDIR/gate-verifier-untracked-bound.out" "accepted"
+rm "$HASH_GATE_ROOT/untracked-source.txt"
+printf 'ACCEPTED\nbuild-verification-passed: final-diff-sha256=%s compile_clean=true returncode=0\n' "$HASH_GATE_DIFF_SHA" >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
 printf 'ACCEPTED\n{"verdict":"ACCEPTED","final_diff_sha256":"%s","build_verification_passed":{"final_diff_sha256":"%s","compile_clean":true,"commands":[{"cmd":"test -f source.txt","rc":0}]}}\n' \
   "$HASH_GATE_DIFF_SHA" "$HASH_GATE_DIFF_SHA" >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
 printf 'running\n' >"$HASH_GATE_STATE/subagents/verifier-01-hash/status"
@@ -852,6 +867,7 @@ assert_file_contains "$ROOT/prompts/worker.md" "legitimate product or visible-te
 assert_file_contains "$ROOT/prompts/worker.md" "validation-repair-needed:"
 assert_file_contains "$ROOT/prompts/worker.md" "structured worker"
 assert_file_contains "$ROOT/prompts/worker.md" "resolution-create"
+assert_file_contains "$ROOT/prompts/worker.md" "assembled production"
 assert_file_contains "$ROOT/prompts/verifier.md" "Verifier Role Prompt"
 assert_file_contains "$ROOT/prompts/verifier.md" "Hidden Contract Verification"
 assert_file_contains "$ROOT/prompts/verifier.md" "unresolved risk"
@@ -872,6 +888,7 @@ assert_file_contains "$ROOT/prompts/verifier.md" "--severity blocking"
 assert_file_contains "$ROOT/prompts/verifier.md" "--affected PATH[,PATH...]"
 assert_file_contains "$ROOT/prompts/verifier.md" "--evidence-json"
 assert_file_contains "$ROOT/prompts/verifier.md" "do not invent"
+assert_file_contains "$ROOT/prompts/verifier.md" "assembled production"
 assert_file_contains "$ROOT/prompts/worker.md" 'Every entry in a `resolved` report'
 assert_file_contains "$ROOT/prompts/worker.md" 'must have `rc: 0`'
 assert_file_contains "$ROOT/prompts/playbooks/finding-todo-loop.md" 'All `validation-json` entries in a resolved report'
@@ -1079,6 +1096,7 @@ assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-owner-ledge
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "constructor-dependency contract"
 assert_file_contains "$ROOT/prompts/roles/build-verifier.md" "build-verification-passed:"
 assert_file_contains "$ROOT/prompts/roles/build-verifier.md" "final-diff-sha256="
+assert_file_contains "$ROOT/prompts/roles/build-verifier.md" "omits untracked new"
 assert_file_contains "$ROOT/prompts/roles/build-verifier.md" "go-package-validation-passed:"
 assert_file_contains "$ROOT/prompts/roles/build-verifier.md" "contract scout validation"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "source-owner-ledger:"
@@ -1099,7 +1117,11 @@ assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_lifecycle.py" "wor
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_lifecycle.py" '"MULTIAGENT_PROMPT_MODULE_ROOT": str(repo_root)'
 assert_file_contains "$ROOT/evaluation/native_solver/swe_prod_lifecycle.py" '"GOMODCACHE": ensure_cache_dir(RUNTIME_ROOT / "go-mod-cache")'
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "adapter only transports"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "autonomous run-to-terminal workflow"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "assignment omitted a path required by the approved plan"
 assert_file_not_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "status.json"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "must not silently narrow or"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Never forbid a required path"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "does not inspect or score patches"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" "_public_solver_metadata(dict(task.metadata or {}))"
 assert_file_contains "$ROOT/evaluation/evalscope_multiagent_native_runner.py" '"fail_to_pass"'
@@ -1539,6 +1561,23 @@ assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/owned-inline/assignment.
 assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/owned-inline/owned-paths" "prompts/verifier.md"
 assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/owned-inline/status" "running"
 assert_file_contains "$MOCK_TMUX_LOG" "send-key test-session:owned-inline Repair the bounded path"
+
+printf 'Claude prompt ready\n' >"$MOCK_TMUX_CAPTURES/owned-atomic.txt"
+owned_atomic_output="$("$MULTIAGENT" subagent spawn owned-atomic \
+  --own docs/architecture.md \
+  --assignment-id atomic-001 \
+  --workflow-id WF-ATOMIC \
+  --decision-id DEC-ATOMIC \
+  --plan-id PLAN-ATOMIC \
+  --branch atomic/worker \
+  --instruction "Run one atomic assignment and launch")"
+[[ "$owned_atomic_output" == $'spawned owned-atomic' ]]
+assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/owned-atomic/assignment.env" "assignment_id=atomic-001"
+assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/owned-atomic/assignment.env" "workflow_id=WF-ATOMIC"
+assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/owned-atomic/assignment.env" "decision_id=DEC-ATOMIC"
+assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/owned-atomic/assignment.env" "plan_id=PLAN-ATOMIC"
+assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/owned-atomic/assignment.env" "branch=atomic/worker"
+assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/owned-atomic/status" "running"
 
 "$MULTIAGENT" subagent assignment-create owned-mismatch --assignment-id existing-owned --branch "$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)" --owned prompts/worker.md >/dev/null
 printf 'Claude prompt ready\n' >"$MOCK_TMUX_CAPTURES/owned-mismatch.txt"

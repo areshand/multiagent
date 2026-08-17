@@ -29,6 +29,7 @@ from .swe_prod_contracts import (
 )
 from .swe_prod_repository import (
     git_head,
+    list_untracked_files,
     make_prompt,
     mark_untracked_intent_to_add,
     materialize_committed_changes,
@@ -38,6 +39,7 @@ from .swe_prod_repository import (
 ORCHESTRATOR_UID = 10001
 WRITER_UID = 10002
 READER_UID = 10003
+SUPERVISOR_UID = 10004
 ROLE_GID = 10001
 
 
@@ -69,7 +71,11 @@ def prepare_role_filesystem(workdir: Path, role_launcher: Path) -> None:
             except FileNotFoundError:
                 continue
 
-    prepare_tree(workdir, WRITER_UID, group_write=False)
+    # The repository starts neutral. The privileged Rust launcher grants the
+    # single active writer ownership only over its supervisor-owned paths and
+    # revokes that grant when the role exits. This remains enforceable on
+    # kernels where Landlock is unavailable.
+    prepare_tree(workdir, 0, group_write=False)
 
     os.chown(role_launcher, 0, 0)
     os.chmod(role_launcher, 0o4755)
@@ -85,6 +91,7 @@ def prepare_role_filesystem(workdir: Path, role_launcher: Path) -> None:
         ("orchestrator", ORCHESTRATOR_UID),
         ("writer", WRITER_UID),
         ("reader", READER_UID),
+        ("supervisor", SUPERVISOR_UID),
     ):
         home = ROLE_CODEX_HOME_ROOT / role
         home.mkdir(parents=True, exist_ok=True)
@@ -97,7 +104,12 @@ def prepare_role_filesystem(workdir: Path, role_launcher: Path) -> None:
         prepare_tree(home, uid, group_write=False)
         os.chmod(home, 0o700)
 
-    for cache in (RUNTIME_ROOT / "go-build-cache", RUNTIME_ROOT / "go-mod-cache"):
+    for cache in (
+        RUNTIME_ROOT / "go-build-cache",
+        RUNTIME_ROOT / "go-mod-cache",
+        RUNTIME_ROOT / "role-shared",
+    ):
+        cache.mkdir(parents=True, exist_ok=True)
         prepare_tree(cache, WRITER_UID, group_write=True)
 
 
@@ -188,7 +200,13 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
         )
 
     start_head = git_head(workdir)
+    baseline_untracked = set(list_untracked_files(workdir))
     RUNTIME_ROOT.mkdir(parents=True, exist_ok=True)
+    baseline_untracked_path = RUNTIME_ROOT / "baseline-untracked.txt"
+    baseline_untracked_path.write_text(
+        "".join(f"{path}\n" for path in sorted(baseline_untracked)),
+        encoding="utf-8",
+    )
     RUNTIME_IDENTITY_PATH.unlink(missing_ok=True)
 
     codex_version_result = run([real_codex, "--version"], timeout=30)
@@ -237,6 +255,7 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
             "MULTIAGENT_PROMPT_MODULE_ROOT": str(repo_root),
             "MULTIAGENT_RESUME": "0",
             "MULTIAGENT_START_HEAD": start_head,
+            "MULTIAGENT_BASELINE_UNTRACKED_FILE": str(baseline_untracked_path),
             "ORCHESTRATOR_CLI": "codex",
             "WORKER_CLI": "codex",
             "SUBAGENT_CLI": "codex",
@@ -246,7 +265,9 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
             "MULTIAGENT_CODEX_HOME_ROOT": str(ROLE_CODEX_HOME_ROOT),
             "MULTIAGENT_CODEX_EXEC": os.environ.get("MULTIAGENT_CODEX_EXEC", "1"),
             "MULTIAGENT_EXTRA_PATH": str(RUNTIME_ROOT),
-            "MULTIAGENT_ROLE_SHARED_WRITE_DIR": str(RUNTIME_ROOT),
+            "MULTIAGENT_ROLE_SHARED_WRITE_DIR": str(RUNTIME_ROOT / "role-shared"),
+            "CARGO_TARGET_DIR": str(RUNTIME_ROOT / "role-shared" / "cargo-target"),
+            "PYTHONPYCACHEPREFIX": str(RUNTIME_ROOT / "role-shared" / "pycache"),
             "MULTIAGENT_UID_SANDBOX": "1",
             "PATH": ":".join(part for part in path_parts if part),
             "GOCACHE": ensure_cache_dir(RUNTIME_ROOT / "go-build-cache"),
@@ -275,6 +296,6 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
 
     restore_workspace_owner(workdir)
     materialize_committed_changes(workdir, start_head)
-    mark_untracked_intent_to_add(workdir)
+    mark_untracked_intent_to_add(workdir, baseline_untracked=baseline_untracked)
     log("workspace prepared for EvalScope submission")
     return 0

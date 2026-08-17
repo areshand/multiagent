@@ -1,8 +1,9 @@
 use crate::{
     agent::{self, AgentRequest, BackendId, BackendPaths, InvocationMode, RoleAccess},
-    config, policy, role_sandbox,
+    config, policy, role_sandbox, supervisor,
 };
 use chrono::{Local, SecondsFormat, Utc};
+use fs2::FileExt;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -37,9 +38,9 @@ struct RuntimeConfig {
 type CodexAccess = RoleAccess;
 
 const ORCHESTRATOR_UID: u32 = config::ORCHESTRATOR_UID;
-const WRITER_UID: u32 = 10002;
-const READER_UID: u32 = 10003;
-const ROLE_GID: u32 = 10001;
+const WRITER_UID: u32 = config::WRITER_UID;
+const READER_UID: u32 = config::READER_UID;
+const ROLE_GID: u32 = config::ROLE_GID;
 
 impl RuntimeConfig {
     fn load() -> Result<Self, String> {
@@ -105,29 +106,36 @@ pub fn role_agent_exec(args: &[String]) -> Result<ExitCode, String> {
     }
 
     let cfg = RuntimeConfig::load()?;
+    supervisor::validate_runtime_state(&cfg.state)?;
     let dir = cfg.state.join("subagents").join(name);
-    let metadata = read_env(&dir.join("meta.env"))?;
-    let cli = metadata
-        .get("cli")
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "role-agent-exec metadata is missing the backend".to_string())?;
+    let writer_lock = if supervisor::launch_requires_writer(&cfg.state, name)? {
+        let lock_path = cfg.state.join("launch-authorizations/.writer.lock");
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .map_err(io_error("open secure writer lock"))?;
+        lock.try_lock_exclusive()
+            .map_err(|_| "another workspace writer is already active".to_string())?;
+        Some(lock)
+    } else {
+        None
+    };
+    let authorization = supervisor::claim_launch(&cfg.state, name)?;
+    let cli = &authorization.cli;
     validate_cli(cli)?;
     if !cfg.headless(cli) {
         return Err("role-agent-exec requires a headless coding-agent backend".into());
     }
     let configured_binary = cfg.cli_bin(cli)?;
-    if metadata.get("name").map(String::as_str) != Some(name)
-        || metadata.get("cli_bin").map(String::as_str) != Some(configured_binary)
-    {
-        return Err("role-agent-exec metadata does not match the requested coding agent".into());
+    if authorization.cli_bin != configured_binary {
+        return Err("authorized coding-agent binary does not match the launch manifest".into());
     }
-    let access = match metadata
-        .get("access")
-        .or_else(|| metadata.get("codex_access"))
-        .map(String::as_str)
-    {
-        Some("read-only") => CodexAccess::ReadOnly,
-        Some("workspace-write") => CodexAccess::WorkspaceWrite,
+    let access = match authorization.access.as_str() {
+        "read-only" => CodexAccess::ReadOnly,
+        "workspace-write" if authorization.role == "worker" => CodexAccess::WorkspaceWrite,
         _ => return Err("role-agent-exec metadata has invalid role access".into()),
     };
     let trusted_binary = resolve_command_path(configured_binary)?;
@@ -141,11 +149,7 @@ pub fn role_agent_exec(args: &[String]) -> Result<ExitCode, String> {
         },
         &trusted_binary,
     );
-    let prompt = dir.join(if restored {
-        "restore-instruction.txt"
-    } else {
-        "instruction.txt"
-    });
+    let prompt = authorization.instruction.clone();
     if !prompt.is_file() {
         return Err(format!(
             "role-agent-exec instruction is missing: {}",
@@ -159,12 +163,21 @@ pub fn role_agent_exec(args: &[String]) -> Result<ExitCode, String> {
         // cannot gain a writer by overriding launch-time environment flags.
         validate_implementation_context(&cfg, name, Some(&prompt), &instruction)?;
     }
-    let output = dir.join("last-message.txt");
+    let public_output = dir.join("last-message.txt");
     let trace_dir = cfg.logs.join("agents").join(name);
     let resume_session = restored
         .then(|| native_resume_session(&trace_dir))
         .flatten();
     let executable = env::current_exe().map_err(io_error("resolve multiagent executable"))?;
+    let role_uid = if access == CodexAccess::WorkspaceWrite {
+        WRITER_UID
+    } else {
+        READER_UID
+    };
+    if access == CodexAccess::WorkspaceWrite {
+        prepare_workspace_write_boundary(&cfg.state, &cfg.root, &authorization.owned_paths)?;
+    }
+    let output = supervisor::prepare_private_output(&cfg.state, name, role_uid)?;
     let runner_args = build_agent_runner_args(
         cli,
         &cfg.root,
@@ -180,17 +193,34 @@ pub fn role_agent_exec(args: &[String]) -> Result<ExitCode, String> {
         &format!("{}\n", std::process::id()),
         "role supervisor pid",
     )?;
+    prepare_role_output_paths(&output, &trace_dir, role_uid)?;
+    let write_roots = secure_agent_write_roots(&authorization.owned_paths, &output, &trace_dir);
     let result = role_sandbox::run_supervised(
-        if access == CodexAccess::WorkspaceWrite {
-            WRITER_UID
-        } else {
-            READER_UID
-        },
+        role_uid,
         ROLE_GID,
+        &write_roots,
+        true,
         &executable.display().to_string(),
         &runner_args,
     );
     let _ = fs::remove_file(supervisor_pid);
+    let revoked = if access == CodexAccess::WorkspaceWrite {
+        revoke_workspace_writes(&cfg.state, &cfg.root, &authorization.owned_paths)
+    } else {
+        Ok(())
+    };
+    let sealed = supervisor::seal_role_output(
+        &cfg.state,
+        name,
+        &authorization.role,
+        &authorization.workflow_id,
+        &output,
+        &public_output,
+    );
+    supervisor::finish_launch(&cfg.state, name)?;
+    drop(writer_lock);
+    revoked?;
+    sealed?;
     result
 }
 
@@ -478,10 +508,17 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
         resume,
     )?;
     if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
-        prepare_uid_state_permissions(&state_dir)?;
+        supervisor::register_runtime_state(&state_dir)?;
+        supervisor::prepare_state_permissions(&state_dir)?;
         if !log_dir.starts_with(&state_dir) {
             prepare_uid_state_permissions(&log_dir)?;
         }
+        let supervisor_pid = supervisor::start(&state_dir, &executable)?;
+        atomic_write(
+            &state_dir.join("runtime_state/authority-supervisor.pid"),
+            &format!("{supervisor_pid}\n"),
+            "authority supervisor pid",
+        )?;
     }
     let bootstrap_command = format!("bash {}", shell_escape(&bootstrap.display().to_string()));
     let new_session = [
@@ -583,6 +620,10 @@ fn launch_environment(
         (
             "MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER",
             env_nonempty("MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER").unwrap_or_else(|| "1".into()),
+        ),
+        (
+            "MULTIAGENT_BASELINE_UNTRACKED_FILE",
+            env_nonempty("MULTIAGENT_BASELINE_UNTRACKED_FILE").unwrap_or_default(),
         ),
         ("MULTIAGENT_STATE_DIR", state.display().to_string()),
         ("MULTIAGENT_LOG_DIR", logs.display().to_string()),
@@ -1165,7 +1206,7 @@ pub fn subagent(args: &[String]) -> Result<ExitCode, String> {
 
 fn print_subagent_usage() {
     println!(
-        "Usage:\n  multiagent subagent spawn NAME [--own PATH[,PATH...] ...] [--role ROLE] [--instruction TEXT | --instruction-file PATH | -- TEXT]\n  multiagent subagent list|recover-plan|restore-all|gate-check\n  multiagent subagent poll|inspect|restore|finalize|kill NAME [OPTIONS]\n  multiagent subagent wait NAME [--timeout SECONDS] [--poll-interval SECONDS]\n\nAll durable state and tmux subprocess orchestration are implemented by the Rust CLI."
+        "Usage:\n  multiagent subagent spawn NAME [--own PATH[,PATH...] ...] [--assignment-id ID] [--workflow-id ID --decision-id ID --plan-id ID] [--branch BRANCH] [--start-commit COMMIT] [--role ROLE] [--instruction TEXT | --instruction-file PATH | -- TEXT]\n  multiagent subagent list|recover-plan|restore-all|gate-check\n  multiagent subagent poll|inspect|restore|finalize|kill NAME [OPTIONS]\n  multiagent subagent wait NAME [--timeout SECONDS] [--poll-interval SECONDS]\n\nAll durable state and tmux subprocess orchestration are implemented by the Rust CLI."
     );
 }
 
@@ -1179,6 +1220,7 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
     let mut instruction_file = None::<PathBuf>;
     let mut owned = Vec::new();
     let mut role = String::new();
+    let mut assignment_values = BTreeMap::<String, String>::new();
     let mut index = 1;
     while index < args.len() {
         match args[index].as_str() {
@@ -1191,6 +1233,14 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
                 if !matches!(role.as_str(), "worker" | "verifier" | "reviewer" | "scout") {
                     return Err("spawn --role must be worker, verifier, reviewer, or scout".into());
                 }
+                index += 2;
+            }
+            "--assignment-id" | "--workflow-id" | "--decision-id" | "--plan-id" | "--branch"
+            | "--start-commit" => {
+                assignment_values.insert(
+                    args[index].clone(),
+                    required_value(args, index, "spawn assignment metadata")?.to_string(),
+                );
                 index += 2;
             }
             "--instruction" => {
@@ -1241,7 +1291,21 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
     instruction = compose_role_instruction(cfg, name, &role, &instruction)?;
     instruction = append_verifier_diff_binding(cfg, name, &role, &instruction)?;
     let assignment_role = assignment_role_for_spawn(cfg, name, &role);
-    let access = codex_access_for_spawn(cfg, name, &role);
+    let authority_role = if role.is_empty() {
+        match assignment_role {
+            "verifier" => "verifier",
+            "scout" => "scout",
+            _ => "worker",
+        }
+    } else {
+        role.as_str()
+    };
+    let access =
+        if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") && authority_role != "worker" {
+            CodexAccess::ReadOnly
+        } else {
+            codex_access_for_spawn(cfg, name, &role)
+        };
 
     require_command("tmux")?;
     let cli = &cfg.subagent_cli;
@@ -1254,9 +1318,30 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         return Err(format!("subagent window already exists: {name}"));
     }
     reject_parallel_generic_worker_spawn(cfg, name)?;
+    if owned.is_empty() && !assignment_values.is_empty() {
+        return Err("spawn assignment metadata requires --own PATH".into());
+    }
     if !owned.is_empty() {
         let assignment_dir = cfg.state.join("assignments").join(name);
         if assignment_dir.join("assignment.env").is_file() {
+            let metadata = read_env(&assignment_dir.join("assignment.env"))?;
+            for (flag, key) in [
+                ("--assignment-id", "assignment_id"),
+                ("--workflow-id", "workflow_id"),
+                ("--decision-id", "decision_id"),
+                ("--plan-id", "plan_id"),
+                ("--branch", "branch"),
+                ("--start-commit", "start_commit"),
+            ] {
+                if let Some(requested) = assignment_values.get(flag) {
+                    if metadata.get(key) != Some(requested) {
+                        return Err(format!(
+                            "spawn {flag} does not match existing assignment: agent={name} requested={requested} actual={}",
+                            metadata.get(key).map(String::as_str).unwrap_or("")
+                        ));
+                    }
+                }
+            }
             let allowed = fs::read_to_string(assignment_dir.join("owned-paths"))
                 .map_err(io_error("read assignment owned paths"))?
                 .lines()
@@ -1275,21 +1360,41 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
                 }
             }
         } else {
-            let branch = git_text(&cfg.root, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+            let branch = match assignment_values.get("--branch") {
+                Some(value) => value.clone(),
+                None => git_text(&cfg.root, &["rev-parse", "--abbrev-ref", "HEAD"])?,
+            };
             let joined = owned.join(",");
-            run_self_quiet(&[
-                "subagent",
-                "assignment-create",
-                name,
-                "--assignment-id",
-                &format!("spawn-{name}"),
-                "--branch",
-                &branch,
-                "--owned",
-                &joined,
-                "--role",
-                assignment_role,
-            ])?;
+            let assignment_id = assignment_values
+                .get("--assignment-id")
+                .cloned()
+                .unwrap_or_else(|| format!("spawn-{name}"));
+            let mut command = vec![
+                "subagent".to_string(),
+                "assignment-create".to_string(),
+                name.to_string(),
+                "--assignment-id".to_string(),
+                assignment_id,
+                "--branch".to_string(),
+                branch,
+                "--owned".to_string(),
+                joined,
+                "--role".to_string(),
+                assignment_role.to_string(),
+            ];
+            for flag in [
+                "--workflow-id",
+                "--decision-id",
+                "--plan-id",
+                "--start-commit",
+            ] {
+                if let Some(value) = assignment_values.get(flag) {
+                    command.push(flag.to_string());
+                    command.push(value.clone());
+                }
+            }
+            let command = command.iter().map(String::as_str).collect::<Vec<_>>();
+            run_self_quiet(&command)?;
         }
     }
     validate_implementation_context(cfg, name, instruction_file.as_deref(), &instruction)?;
@@ -1331,6 +1436,24 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
             &format!("\n----- instruction {} -----\n{prompt}", timestamp()),
         )?;
         prompt_file = Some(path);
+    }
+    if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
+        let registered_prompt = prompt_file
+            .as_deref()
+            .ok_or_else(|| format!("secure subagent prompt is missing: {name}"))?;
+        run_self_quiet(&[
+            "supervisor",
+            "register-launch",
+            name,
+            "--role",
+            authority_role,
+            "--cli",
+            cli,
+            "--cli-bin",
+            binary,
+            "--instruction-file",
+            &registered_prompt.display().to_string(),
+        ])?;
     }
     let cli_command = if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
         if !cfg.headless(cli) {
@@ -1730,6 +1853,31 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
     } else {
         None
     };
+    if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
+        let role = match metadata.get("role").map(String::as_str) {
+            Some("reviewer") => "reviewer",
+            Some("verifier") => "verifier",
+            Some("scout") => "scout",
+            _ => "worker",
+        };
+        run_self_quiet(&[
+            "supervisor",
+            "renew-launch",
+            name,
+            "--role",
+            role,
+            "--cli",
+            &cli,
+            "--cli-bin",
+            binary,
+            "--instruction-file",
+            &prompt_file
+                .as_deref()
+                .ok_or_else(|| format!("secure restore prompt is missing: {name}"))?
+                .display()
+                .to_string(),
+        ])?;
+    }
     let trace_dir = cfg.logs.join("agents").join(name);
     let executable = env::current_exe().map_err(io_error("resolve multiagent executable"))?;
     let cli_command = if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
@@ -1899,8 +2047,9 @@ fn record_supervisor_termination(
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&trace_dir, fs::Permissions::from_mode(0o2770))
-            .map_err(io_error("set supervisor trace directory permissions"))?;
+        // The role UID owns this directory. The orchestrator has group write
+        // access for the termination record, but must not attempt to chmod a
+        // reader-owned directory after cancellation.
         fs::set_permissions(&output, fs::Permissions::from_mode(0o660))
             .map_err(io_error("set supervisor trace file permissions"))?;
     }
@@ -2005,6 +2154,7 @@ fn codex_access_for_spawn(cfg: &RuntimeConfig, name: &str, role: &str) -> CodexA
             .map(|value| value.to_string_lossy().to_string())
     });
     if role == "reviewer"
+        || role == "verifier"
         || role == "scout"
         || lower.contains("decision-authority-reviewer")
         || matches!(
@@ -2020,9 +2170,9 @@ fn codex_access_for_spawn(cfg: &RuntimeConfig, name: &str, role: &str) -> CodexA
     {
         CodexAccess::ReadOnly
     } else {
-        // Workers need source writes. Technical/build verifiers retain workspace
-        // writes because repository-local compilers and test runners commonly
-        // create build artifacts; their role prompt still forbids source edits.
+        // Only implementation workers receive source writes. Verifiers use
+        // external caches and temporary directories, so their inability to
+        // mutate the candidate is mechanical rather than prompt-based.
         CodexAccess::WorkspaceWrite
     }
 }
@@ -2304,6 +2454,180 @@ fn role_write_roots(root: &Path, state: &Path, include_source: bool) -> Vec<Path
         }
     }
     paths.into_iter().collect()
+}
+
+fn secure_agent_write_roots(
+    owned_paths: &[PathBuf],
+    output: &Path,
+    trace_dir: &Path,
+) -> Vec<PathBuf> {
+    let mut paths = owned_paths.iter().cloned().collect::<BTreeSet<_>>();
+    paths.insert(output.to_path_buf());
+    paths.insert(trace_dir.to_path_buf());
+    for key in [
+        "CODEX_HOME",
+        "GOCACHE",
+        "GOMODCACHE",
+        "CARGO_TARGET_DIR",
+        "TMPDIR",
+        "MULTIAGENT_ROLE_SHARED_WRITE_DIR",
+    ] {
+        if let Some(path) = env_path(key) {
+            if path.exists() {
+                paths.insert(path);
+            }
+        }
+    }
+    for path in [PathBuf::from("/dev/null"), PathBuf::from("/dev/tty")] {
+        if path.exists() {
+            paths.insert(path);
+        }
+    }
+    paths.into_iter().collect()
+}
+
+#[cfg(target_os = "linux")]
+fn prepare_workspace_write_boundary(
+    state: &Path,
+    root: &Path,
+    owned_paths: &[PathBuf],
+) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let ledger = state.join("launch-authorizations/active-writer-paths");
+    if ledger.is_file() {
+        for line in fs::read_to_string(&ledger)
+            .map_err(io_error("read prior writer ownership ledger"))?
+            .lines()
+            .filter(|line| !line.is_empty())
+        {
+            let path = PathBuf::from(line);
+            if path.starts_with(root) && path != root && path.exists() {
+                set_workspace_tree_owner(&path, 0, false)?;
+            }
+        }
+    }
+    let text = owned_paths
+        .iter()
+        .map(|path| format!("{}\n", path.display()))
+        .collect::<String>();
+    atomic_write(&ledger, &text, "active writer ownership ledger")?;
+    fs::set_permissions(&ledger, fs::Permissions::from_mode(0o600))
+        .map_err(io_error("protect writer ownership ledger"))?;
+    for path in owned_paths {
+        if !path.starts_with(root) || path == root {
+            return Err(format!(
+                "writer ownership path is outside the repository: {}",
+                path.display()
+            ));
+        }
+        set_workspace_tree_owner(path, WRITER_UID, true)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn prepare_workspace_write_boundary(
+    _state: &Path,
+    _root: &Path,
+    _owned_paths: &[PathBuf],
+) -> Result<(), String> {
+    Err("filesystem writer ownership requires Linux".into())
+}
+
+#[cfg(target_os = "linux")]
+fn revoke_workspace_writes(
+    state: &Path,
+    root: &Path,
+    owned_paths: &[PathBuf],
+) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    for path in owned_paths {
+        if path.starts_with(root) && path != root && path.exists() {
+            set_workspace_tree_owner(path, 0, false)?;
+        }
+    }
+    let ledger = state.join("launch-authorizations/active-writer-paths");
+    atomic_write(&ledger, "", "clear writer ownership ledger")?;
+    fs::set_permissions(&ledger, fs::Permissions::from_mode(0o600))
+        .map_err(io_error("protect writer ownership ledger"))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn revoke_workspace_writes(
+    _state: &Path,
+    _root: &Path,
+    _owned_paths: &[PathBuf],
+) -> Result<(), String> {
+    Err("filesystem writer ownership requires Linux".into())
+}
+
+#[cfg(target_os = "linux")]
+fn set_workspace_tree_owner(path: &Path, uid: u32, writable: bool) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = fs::symlink_metadata(path).map_err(io_error("inspect workspace ownership"))?;
+    chown_path(path, uid, ROLE_GID)?;
+    if metadata.file_type().is_symlink() {
+        return Ok(());
+    }
+    let mode = metadata.permissions().mode();
+    if metadata.is_dir() {
+        let updated = if writable {
+            mode | 0o700
+        } else {
+            (mode & !0o222) | 0o550
+        };
+        fs::set_permissions(path, fs::Permissions::from_mode(updated & 0o7777))
+            .map_err(io_error("set workspace directory ownership mode"))?;
+        for entry in fs::read_dir(path).map_err(io_error("read workspace ownership tree"))? {
+            set_workspace_tree_owner(
+                &entry
+                    .map_err(io_error("read workspace ownership entry"))?
+                    .path(),
+                uid,
+                writable,
+            )?;
+        }
+    } else if metadata.is_file() {
+        let updated = if writable {
+            mode | 0o600
+        } else {
+            (mode & !0o222) | 0o440
+        };
+        fs::set_permissions(path, fs::Permissions::from_mode(updated & 0o7777))
+            .map_err(io_error("set workspace file ownership mode"))?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn prepare_role_output_paths(output: &Path, trace_dir: &Path, uid: u32) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent).map_err(io_error("create role output directory"))?;
+    }
+    OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(output)
+        .map_err(io_error("create role output"))?;
+    fs::create_dir_all(trace_dir).map_err(io_error("create role trace directory"))?;
+    chown_path(output, uid, ROLE_GID)?;
+    chown_path(trace_dir, uid, ROLE_GID)?;
+    fs::set_permissions(output, fs::Permissions::from_mode(0o660))
+        .map_err(io_error("set role output permissions"))?;
+    fs::set_permissions(trace_dir, fs::Permissions::from_mode(0o2770))
+        .map_err(io_error("set role trace permissions"))?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn prepare_role_output_paths(_output: &Path, _trace_dir: &Path, _uid: u32) -> Result<(), String> {
+    Err("secure role output preparation requires Linux".into())
 }
 
 #[cfg(target_os = "linux")]

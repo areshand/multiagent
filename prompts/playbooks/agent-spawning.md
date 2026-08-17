@@ -18,37 +18,42 @@ with a narrower locked hypothesis. Worker ownership and done criteria must
 cover every listed mutated output or explicitly preserve an open blocking todo
 for outputs assigned elsewhere.
 
+Before creating assignment metadata, compare the worker's owned paths and hard
+constraints with the approved implementation context. The assignment may split
+the approved plan across coordinated TODOs, but it must not silently narrow or
+contradict that plan. In particular, if the approved plan or contract ledger
+requires updating visible tests, fixtures, callers, generated files, or other
+outputs, either include those paths in this worker's ownership or assign them
+to another active TODO. Never forbid a required path and then accept the
+resulting partial diff or failed validation as completion.
+
 ## Worker Spawn Skill
 
-Before spawning a worker, create durable assignment metadata:
+Create durable assignment metadata and launch the worker with one atomic Rust
+CLI operation. Do not issue a separate `assignment-create` concurrently with
+`spawn`; doing so creates an avoidable race between authority registration and
+worker launch:
 
 ```bash
-multiagent subagent assignment-create worker-01-task \
+SUBAGENT_CLI="$WORKER_CLI" multiagent subagent spawn worker-01-task \
+  --role worker \
+  --own PATH[,PATH...] \
   --assignment-id ASSIGNMENT_ID \
-  --role exploitation \
   --workflow-id "$MULTIAGENT_WORKFLOW_ID" \
   --decision-id DECISION_ID \
   --plan-id PLAN_ID \
   --branch BRANCH \
-  --owned PATH[,PATH...]
-multiagent subagent checkpoint-update worker-01-task --step "assignment created" --status assigned
-```
-
-For the normal single-writer path, spawn through the Rust supervisor in the
-shared target workspace. The trusted worker role receives workspace-write
-access while the orchestrator remains unable to edit that workspace:
-
-```bash
-SUBAGENT_CLI="$WORKER_CLI" multiagent subagent spawn worker-01-task \
-  --role worker --instruction-file WORKER_INSTRUCTION
+  --instruction-file WORKER_INSTRUCTION
 multiagent subagent wait worker-01-task --timeout 1800
 ```
 
-The supervisor handles readiness and capture. Inspect a terminal `blocked` or
-`failed` result instead of treating it as completion. Separate git worktrees
-remain available for intentionally parallel, disjoint assignments, but require
-an explicit integration step before completion; do not use them for the normal
-SWE single-writer path.
+The supervisor creates the assignment under its lock, completes authority
+registration, and only then launches the trusted workspace-write worker. The
+orchestrator remains unable to edit the target workspace. Inspect a terminal
+`blocked` or `failed` result instead of treating it as completion. Separate git
+worktrees remain available for intentionally parallel, disjoint assignments,
+but require an explicit integration step before completion; do not use them for
+the normal SWE single-writer path.
 
 ## Long-Running Subagent Skill
 

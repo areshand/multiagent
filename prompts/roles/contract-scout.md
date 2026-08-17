@@ -108,6 +108,13 @@ production integration/caller path, default compatibility, and a probe that
 changes behavior through the extension surface rather than by editing core
 logic. Centralized hardcoding does not satisfy this contract.
 
+When the task explicitly adds an option/default across wrappers, record a
+propagation contract naming every layer. Require evidence that the declared
+default and one override are passed to the next layer. A pre-change exact-call
+mock that asserts the old argument list is stale where it directly conflicts
+with the new contract; preserving it by conditionally omitting the new default
+is not propagation and must be flagged.
+
 When the task asks for all, every, complete, associated, linked, repeated,
 alternate, fallback-chain, or multi-value behavior, include a completeness
 contract: workers and verifiers must check more than one matching value and must

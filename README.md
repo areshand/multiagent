@@ -186,16 +186,17 @@ an advanced path.
 tests/run.sh
 ```
 
-## Enforcement Caveat
+## Enforcement Boundary
 
-Decision-authority review, approved-context handoff, lifecycle TODO convergence,
-and completion are enforced by the orchestrator prompt plus normal-path checks
-in `multiagent workflow`, `multiagent subagent`, and `multiagent orchestrator`. This makes
-ordinary violations fail visibly, but it is not a security or capability
-boundary: an orchestrator with direct shell and state-file access can bypass or
-disable these checks.
+Production Linux launches separate the orchestrator, writer, reader, and
+authority supervisor into distinct Unix identities. The supervisor exclusively
+owns workflow state, one-time role launch authorizations, and sealed reviewer
+evidence. The orchestrator can request transitions and spawn named roles, but it
+cannot write the target repository or authority state directly. A writer gets
+temporary ownership only of its predeclared paths, and only one writer may be
+active at a time. Read-only roles cannot acquire those writes.
 
-Revisit this limitation before treating the workflow as strict enforcement.
-The stronger design is a trusted supervisor that exclusively owns writable
-worker launch and independently validates TODO state, decision ownership, user
-approval, context revision, and assignment scope before starting a worker.
+This is a capability boundary for filesystem writes and typed state changes,
+not proof that an agent's semantic judgment is correct. Reviewer evidence proves
+which isolated process produced a verdict and which workflow/diff it covered;
+task correctness still depends on the reviewer, tests, and final human review.

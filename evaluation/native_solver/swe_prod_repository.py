@@ -51,12 +51,19 @@ def materialize_committed_changes(cwd: Path, start_head: str) -> None:
         raise RuntimeError(f"failed to materialize committed changes with git reset --mixed: {tail}")
 
 
-def mark_untracked_intent_to_add(cwd: Path) -> list[str]:
-    """Make every solver-created file visible to EvalScope's Git diff."""
-
+def list_untracked_files(cwd: Path) -> list[str]:
+    """Return non-ignored untracked files in stable Git order."""
     others = run(["git", "ls-files", "--others", "--exclude-standard"], cwd=cwd, timeout=30)
-    untracked = [line.strip() for line in others.stdout.splitlines() if line.strip()]
+    return [line.strip() for line in others.stdout.splitlines() if line.strip()]
+
+
+def mark_untracked_intent_to_add(cwd: Path, *, baseline_untracked: set[str] | None = None) -> list[str]:
+    """Expose newly created solver files without submitting image residue."""
+
+    baseline = baseline_untracked or set()
+    untracked = list_untracked_files(cwd)
     intent_to_add = [path for path in untracked if (cwd / path).is_file()]
+    intent_to_add = [path for path in intent_to_add if path not in baseline]
     if intent_to_add:
         result = run(["git", "add", "-N", "--", *intent_to_add], cwd=cwd, timeout=120)
         if result.returncode != 0:

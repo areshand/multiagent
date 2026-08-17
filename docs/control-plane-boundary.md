@@ -23,15 +23,25 @@ allocate or emulate a PTY; tmux continues to own terminal lifecycle and
 interactive process semantics. This keeps PTY behavior without preserving shell
 implementations.
 
-In the production Linux-container boundary, tmux runs as the read-only
-orchestrator UID. A raw tmux window therefore cannot acquire repository writes.
+In the production Linux-container boundary, four Unix identities separate the
+orchestrator, the single active writer, read-only reviewers/scouts, and a small
+authority supervisor. Tmux runs as the non-writing orchestrator UID, so a raw
+tmux window cannot acquire repository writes. The supervisor owns the workflow,
+assignment, finding/TODO, launch-authorization, and sealed-evidence directories
+and exposes only typed operations over a Unix socket. Peer credentials determine
+which role may call each operation; choosing another state directory cannot
+replace the supervisor's root-registered socket.
+
 Worker/reviewer transitions use the Rust binary's narrowly gated
 `role-agent-exec` entrypoint: it accepts only a persisted named headless coding
 agent, validates the configured root-owned agent binary, and starts the shared
 Rust runner in a dedicated process group under the role's UID. The runner then
 executes the recorded Codex, Claude, or Qwen Code backend through argv and stdin.
-A minimal wait-only parent retains no workflow discretion;
-it exists solely to forward pane termination to the complete role process tree.
+Launch authorizations are one-time and bind the role, backend, prompt, workflow,
+and owned paths. Writer paths receive temporary writer ownership for the role's
+lifetime and are revoked afterward; a global authority-owned lease prevents two
+writers from overlapping. Landlock narrows this further when the kernel supports
+it, while Unix ownership remains the tested base boundary when it does not.
 `subagent kill` waits for that boundary to close, preventing detached or late
 worker output from modifying the workspace after cancellation. The setuid
 privilege gate drops privilege for every other command, including generic
@@ -41,6 +51,19 @@ not solely from its mutable environment. Before the privileged bridge starts a
 writer it revalidates the assignment against the live workflow phase and
 approved implementation context; setting
 `MULTIAGENT_LIFECYCLE_ENFORCEMENT=0` cannot reopen a completed workflow.
+
+Reviewer output is first written to a role-private file, then copied by the
+supervisor into an immutable evidence directory with role, workflow, completion,
+and SHA-256 metadata. The orchestrator may request `todo-close` or
+`finding-dismiss`, but the authority process authorizes it only from an accepted,
+seal-valid reviewer result (and the current final-diff hash when hash binding is
+enabled). Thus orchestration chooses what work to ask for; reviewer evidence and
+predetermined transition rules decide whether protected state may change.
+
+The boundary does not distinguish a good reviewer prompt from a biased one and
+does not prove semantic correctness. It guarantees process identity, access
+mode, evidence integrity, workflow binding, and filesystem scope. Reviewer/test
+quality and human acceptance remain separate concerns.
 
 Headless runs retain raw stdout/stderr, normalized JSONL events, provider session
 identity when available, the final message, and the exit/cancellation reason

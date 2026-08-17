@@ -640,7 +640,7 @@ fn record_review(args: &[String]) -> Result<(), String> {
         if reviewer.is_empty() {
             return Err("reviewer-backed lifecycle requires --reviewer NAME".into());
         }
-        validate_reviewer_evidence(&store, reviewer, kind, verdict, diff)?;
+        validate_reviewer_evidence(&store, id, reviewer, kind, verdict, diff)?;
     }
     let mut rows = read_reviews(&p.reviews)?;
     if rows.iter().any(|r| r.get(0) == review_id) {
@@ -852,7 +852,7 @@ fn completion_state(store: &Store, id: &str) -> Result<BTreeMap<String, String>,
                     review.get(1)
                 ));
             }
-            validate_reviewer_evidence(store, reviewer, review.get(1), "pass", diff)?;
+            validate_reviewer_evidence(store, id, reviewer, review.get(1), "pass", diff)?;
         }
     }
     validate_context(&state)?;
@@ -865,7 +865,12 @@ fn unrecorded_reviewer_findings(
     diff: &str,
     reviews: &[Review],
 ) -> Result<Vec<String>, String> {
-    let root = store.state_dir.join("subagents");
+    let secure = secure_reviewer_evidence();
+    let root = store.state_dir.join(if secure {
+        "reviewer-evidence"
+    } else {
+        "subagents"
+    });
     if !root.is_dir() {
         return Ok(Vec::new());
     }
@@ -875,9 +880,10 @@ fn unrecorded_reviewer_findings(
         if !dir.is_dir() {
             continue;
         }
-        let metadata = read_simple_env(&dir.join("meta.env"))?;
+        let metadata =
+            read_simple_env(&dir.join(if secure { "evidence.env" } else { "meta.env" }))?;
         if state_value(&metadata, "role") != "reviewer"
-            || state_value(&metadata, "codex_access") != "read-only"
+            || state_value(&metadata, if secure { "access" } else { "codex_access" }) != "read-only"
         {
             continue;
         }
@@ -885,9 +891,15 @@ fn unrecorded_reviewer_findings(
         if !reviewer_workflow.is_empty() && reviewer_workflow != workflow_id {
             continue;
         }
-        let status = fs::read_to_string(dir.join("status")).unwrap_or_default();
-        if status.trim() != "finalized" || !dir.join("finalized_at").is_file() {
-            continue;
+        if secure {
+            if state_value(&metadata, "state") != "completed" {
+                continue;
+            }
+        } else {
+            let status = fs::read_to_string(dir.join("status")).unwrap_or_default();
+            if status.trim() != "finalized" || !dir.join("finalized_at").is_file() {
+                continue;
+            }
         }
         let message = fs::read_to_string(dir.join("last-message.txt")).unwrap_or_default();
         let reviewer = dir
@@ -924,25 +936,44 @@ fn reviewer_evidence_required() -> bool {
 
 fn validate_reviewer_evidence(
     store: &Store,
+    workflow_id: &str,
     reviewer: &str,
     kind: &str,
     verdict: &str,
     diff: &str,
 ) -> Result<(), String> {
     valid_id("reviewer name", reviewer)?;
-    let dir = store.state_dir.join("subagents").join(reviewer);
-    let metadata = read_simple_env(&dir.join("meta.env"))?;
+    let secure = secure_reviewer_evidence();
+    let dir = store
+        .state_dir
+        .join(if secure {
+            "reviewer-evidence"
+        } else {
+            "subagents"
+        })
+        .join(reviewer);
+    let metadata = read_simple_env(&dir.join(if secure { "evidence.env" } else { "meta.env" }))?;
     if state_value(&metadata, "role") != "reviewer"
-        || state_value(&metadata, "codex_access") != "read-only"
+        || state_value(&metadata, if secure { "access" } else { "codex_access" }) != "read-only"
     {
         return Err(format!(
             "reviewer evidence must come from a read-only reviewer role: {reviewer}"
         ));
     }
-    let status = fs::read_to_string(dir.join("status"))
-        .map_err(|_| format!("reviewer status is missing: {reviewer}"))?;
-    if status.trim() != "finalized" || !dir.join("finalized_at").is_file() {
-        return Err(format!("reviewer is not finalized: {reviewer}"));
+    if secure {
+        if state_value(&metadata, "state") != "completed"
+            || state_value(&metadata, "workflow_id") != workflow_id
+        {
+            return Err(format!(
+                "reviewer evidence is not sealed for workflow {workflow_id}: {reviewer}"
+            ));
+        }
+    } else {
+        let status = fs::read_to_string(dir.join("status"))
+            .map_err(|_| format!("reviewer status is missing: {reviewer}"))?;
+        if status.trim() != "finalized" || !dir.join("finalized_at").is_file() {
+            return Err(format!("reviewer is not finalized: {reviewer}"));
+        }
     }
     let message = fs::read_to_string(dir.join("last-message.txt"))
         .map_err(|_| format!("reviewer final message is missing: {reviewer}"))?;
@@ -956,6 +987,11 @@ fn validate_reviewer_evidence(
         ));
     }
     Ok(())
+}
+
+fn secure_reviewer_evidence() -> bool {
+    std::env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1")
+        && std::env::var("MULTIAGENT_AUTHORITY_SERVER_CHILD").as_deref() == Ok("1")
 }
 
 fn review_marker_matches(line: &str, marker: &str) -> bool {
@@ -976,7 +1012,12 @@ fn review_marker_matches(line: &str, marker: &str) -> bool {
 }
 
 fn active_reviewers(store: &Store) -> Result<Vec<String>, String> {
-    let root = store.state_dir.join("subagents");
+    let secure = secure_reviewer_evidence();
+    let root = store.state_dir.join(if secure {
+        "launch-authorizations"
+    } else {
+        "subagents"
+    });
     if !root.is_dir() {
         return Ok(Vec::new());
     }
@@ -986,12 +1027,19 @@ fn active_reviewers(store: &Store) -> Result<Vec<String>, String> {
         if !dir.is_dir() {
             continue;
         }
-        let metadata = read_simple_env(&dir.join("meta.env"))?;
+        let metadata = read_simple_env(&dir.join(if secure { "launch.env" } else { "meta.env" }))?;
         if state_value(&metadata, "role") != "reviewer" {
             continue;
         }
-        let status = fs::read_to_string(dir.join("status")).unwrap_or_default();
-        if matches!(status.trim(), "starting" | "pending" | "running") {
+        let status = if secure {
+            state_value(&metadata, "state").to_string()
+        } else {
+            fs::read_to_string(dir.join("status")).unwrap_or_default()
+        };
+        if matches!(
+            status.trim(),
+            "starting" | "pending" | "registered" | "running"
+        ) {
             active.push(
                 dir.file_name()
                     .and_then(|value| value.to_str())

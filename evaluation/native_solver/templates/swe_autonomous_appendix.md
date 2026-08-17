@@ -14,7 +14,22 @@ detail open, use the narrowest backward-compatible interpretation supported by
 visible source/tests, record the assumption, and continue. Stop only for a true
 contradiction that makes the public task impossible to implement safely.
 
+If the public task explicitly changes an API, option default, or wrapper
+propagation path, that new contract outranks pre-change exact-call mocks that
+only encode the old argument shape. Preserve unrelated compatibility, but do
+not omit a newly required default at an intermediate layer merely to keep such
+a stale mock green; verify the declared default and an override reach the next
+layer.
+
 Leave the final working-tree changes in `/app`. The adapter only transports
 that workspace to EvalScope; the official SWE-bench verifier evaluates it.
+
+This is an autonomous run-to-terminal workflow. Do not end the orchestrator
+turn by offering to continue, reporting that implementation is still in
+flight, or submitting a known incomplete candidate. If a worker stops because
+its assignment omitted a path required by the approved plan or visible
+validation, create the bounded follow-up TODO and worker with that path. Exit
+only after the lifecycle completes or after recording a true source-visible
+blocker that the workflow cannot safely resolve.
 
 ## SWE Issue Text For Worker Assignments

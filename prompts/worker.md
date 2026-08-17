@@ -86,6 +86,14 @@ Also include:
   helper's name, arity, parameter order, return shape, or package placement
   unless you have updated all reachable callers and have source evidence that
   compatibility is preserved.
+- When the explicit task adds an option, default, or argument that must travel
+  through wrappers, the new task contract outranks pre-change exact-call mocks.
+  Trace the value through every named layer and probe both the default and an
+  override. Do not conditionally omit the default at an intermediate call just
+  to preserve a stale mock's old keyword/argv shape; that makes propagation
+  depend on a downstream default and does not prove the requested wiring. Treat
+  such exact-call expectations as tests to update when they directly conflict
+  with the explicit new API contract, while preserving unrelated compatibility.
 - Do not rely on leaked evaluator tests, hidden test names, non-public evaluator
   rows, or benchmark-only metadata as implementation guidance. Infer unstated
   contracts from legitimate task/source/product evidence.
@@ -324,3 +332,15 @@ expensive package validation command.
 
 If you intentionally take a shortcut, mark it with `ponytail:` and name the
 ceiling plus the trigger to revisit it.
+For route, router, middleware, handler-registration, plugin-registration, or
+dependency-injection changes, validate through the assembled production
+entrypoint. Prefer the existing focused integration test/module; otherwise
+start/build the real router and issue a request-level probe. Syntax checks,
+module loading, and hand-written handler stubs are useful diagnostics but are
+not completion evidence because they do not prove registration order, mount
+point, middleware, or URL reachability.
+For option/argument propagation across wrappers, validation must observe the
+next layer receiving the value for both the declared default and one override.
+An implementation that omits the default keyword/field and relies on the next
+layer to recreate it has not demonstrated propagation when the task explicitly
+requires the option at each layer.
