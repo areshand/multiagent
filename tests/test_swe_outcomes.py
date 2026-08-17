@@ -50,6 +50,22 @@ from evaluation.native_solver import swe_prod_repository  # noqa: E402
 
 
 class NativeOutcomeTest(unittest.TestCase):
+    def test_solver_timeout_reserves_only_orderly_shutdown_by_default(self):
+        with mock.patch.dict(
+            evalscope_multiagent_native_runner.os.environ,
+            {},
+            clear=True,
+        ):
+            self.assertEqual(evalscope_multiagent_native_runner.solver_internal_timeout(3600), 3420)
+
+    def test_solver_timeout_reserve_remains_configurable(self):
+        with mock.patch.dict(
+            evalscope_multiagent_native_runner.os.environ,
+            {"EVAL_NATIVE_SOLVER_TIMEOUT_RESERVE": "600"},
+            clear=True,
+        ):
+            self.assertEqual(evalscope_multiagent_native_runner.solver_internal_timeout(3600), 3000)
+
     def test_autonomous_authority_does_not_reopen_explicit_task_behavior(self):
         root = Path(__file__).resolve().parents[1]
         reviewer = (root / "prompts/roles/decision-authority-reviewer.md").read_text(
