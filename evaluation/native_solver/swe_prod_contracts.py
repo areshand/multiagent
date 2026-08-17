@@ -14,6 +14,7 @@ DEFAULT_MULTIAGENT_ROOT = Path("/opt/multiagent")
 DEFAULT_WORKDIR = Path("/app")
 RUNTIME_ROOT = Path("/tmp/multiagent-prod-swe")
 RUNTIME_IDENTITY_PATH = RUNTIME_ROOT / "runtime-identity.json"
+ORIGINAL_TASK_PATH = RUNTIME_ROOT / "original-public-task.md"
 TASK_METADATA_PATH = Path(os.environ.get("EVAL_TASK_METADATA_FILE", "/tmp/evalscope-native-multiagent-metadata.json"))
 CODEX_WRAPPER = RUNTIME_ROOT / "codex-bridge"
 CODEX_HOME = Path(os.environ.get("CODEX_HOME", "/tmp/multiagent-prod-swe/codex-home"))

@@ -172,13 +172,14 @@ decision is unanswered, and all four required reviews pass against the current
 candidate diff hash:
 
 ```bash
-multiagent workflow completion-check "$MULTIAGENT_WORKFLOW_ID"
-multiagent workflow transition "$MULTIAGENT_WORKFLOW_ID" complete
 multiagent orchestrator complete
 ```
 
-The final command also runs `multiagent subagent gate-check`, so lifecycle reviews
-cannot substitute for hash-bound technical finding and TODO closure.
+This is only a completion request. The supervisor holds the lifecycle lock,
+runs the lifecycle completion check and `subagent gate-check`, and only then
+atomically writes `phase=complete`. Direct `workflow transition ... complete`
+is forbidden. A rejected request leaves the workflow in post-implementation so
+the orchestrator can route repairs.
 After it succeeds, the candidate is sealed: stop launching workers or reviewers
 and do not mutate the repository. The privileged writer bridge independently
 rechecks the live lifecycle phase and rejects any post-completion writer, even

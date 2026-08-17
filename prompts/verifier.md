@@ -84,6 +84,13 @@ Start by reconstructing the task contract independently from the user request,
 issue text, source, nearby tests, docs, and worker diff. Do not rely on the
 worker's summary as the source of truth.
 
+Treat the supervisor-owned original task and registered contract scout artifact
+as immutable semantic input. Check every structured `must` and `must-not` rule
+against the live diff. An orchestrator checklist may narrow runtime execution,
+but it cannot narrow the clauses or acceptance meaning. This applies equally to
+a replacement for a stalled reviewer. If the diff violates a negative
+structural rule, emit a blocking finding even when visible legacy tests pass.
+
 For every code diff, identify the narrowest visible test file or documented
 behavior command that directly exercises the changed behavior. If it is
 runnable in the repository, acquire or receive its validation lease and run it

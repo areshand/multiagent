@@ -7,6 +7,7 @@ from pathlib import Path
 from .swe_prod_bootstrap import require_path
 from .swe_prod_contracts import (
     AUTONOMOUS_APPENDIX,
+    ORIGINAL_TASK_PATH,
     RUNTIME_ROOT,
     issue_with_public_problem_text,
     log,
@@ -22,6 +23,7 @@ def make_prompt(repo_root: Path, workdir: Path, issue: str, metadata: dict[str, 
     base_prompt = repo_root / "orchestrator_prompt.md"
     require_path(base_prompt, "production orchestrator prompt")
     public_task = issue_with_public_problem_text(issue, public_solver_metadata(metadata or {}))
+    ORIGINAL_TASK_PATH.write_text(public_task, encoding="utf-8")
     prompt = (
         base_prompt.read_text(encoding="utf-8")
         + AUTONOMOUS_APPENDIX

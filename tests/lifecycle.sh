@@ -145,6 +145,79 @@ if MULTIAGENT_STATE_DIR="$SKIP_STATE" "$MULTIAGENT" workflow resolve-todo WF-SKI
 fi
 assert_contains "$TEST_TMP/invalid-skip.out" "requires --destination or --resume-condition"
 
+CONTRACT_STATE="$TEST_TMP/contract-state"
+CONTRACT_TASK="$TEST_TMP/original-task.md"
+printf 'Refactor Widget: do not embed LegacyConfig; use a named cfg field.\n' >"$CONTRACT_TASK"
+MULTIAGENT_STATE_DIR="$CONTRACT_STATE" MULTIAGENT_ORIGINAL_TASK_FILE="$CONTRACT_TASK" \
+  "$MULTIAGENT" workflow init WF-CONTRACT >/dev/null
+CONTRACT_SCOUT="$CONTRACT_STATE/subagents/contract-scout-01-widget"
+mkdir -p "$CONTRACT_SCOUT"
+printf '%s\n' 'role=scout' 'codex_access=read-only' 'workflow_id=WF-CONTRACT' \
+  >"$CONTRACT_SCOUT/meta.env"
+printf 'finalized\n' >"$CONTRACT_SCOUT/status"
+printf '2026-08-17T00:00:00Z\n' >"$CONTRACT_SCOUT/finalized_at"
+cat >"$CONTRACT_SCOUT/last-message.txt" <<'EOF'
+contract-artifact: version=1
+contract-rule: id=WIDGET-01 polarity=must statement=Widget stores configuration in named cfg evidence=public task
+contract-rule: id=WIDGET-02 polarity=must-not statement=Widget must not anonymously embed LegacyConfig evidence=public task
+unknowns: none
+contract-ledger: migrate the internal shape
+must-preserve: both rules
+validation-plan: compile package tests
+mismatch-risk: legacy aliases can hide an incomplete migration
+implementation-routing: one bounded worker
+EOF
+MULTIAGENT_STATE_DIR="$CONTRACT_STATE" "$MULTIAGENT" workflow contract-register \
+  WF-CONTRACT --scout contract-scout-01-widget >/dev/null
+CONTRACT_HASH="$(MULTIAGENT_STATE_DIR="$CONTRACT_STATE" "$MULTIAGENT" workflow value WF-CONTRACT contract_artifact_sha256)"
+
+CONTRACT_REVIEWER="$CONTRACT_STATE/subagents/decision-authority-reviewer-contract"
+mkdir -p "$CONTRACT_REVIEWER"
+printf '%s\n' 'role=reviewer' 'codex_access=read-only' 'workflow_id=WF-CONTRACT' \
+  >"$CONTRACT_REVIEWER/meta.env"
+printf 'finalized\n' >"$CONTRACT_REVIEWER/status"
+printf '2026-08-17T00:00:00Z\n' >"$CONTRACT_REVIEWER/finalized_at"
+printf '%s\n' \
+  'review-record: type=decision-authority verdict=pass diff=-' \
+  "contract-review: artifact-sha256=$CONTRACT_HASH verdict=pass" \
+  >"$CONTRACT_REVIEWER/last-message.txt"
+MULTIAGENT_STATE_DIR="$CONTRACT_STATE" MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
+  "$MULTIAGENT" workflow record-review WF-CONTRACT AUTH-CONTRACT \
+    --type decision-authority --verdict pass --evidence "contract preserved" \
+    --reviewer decision-authority-reviewer-contract >/dev/null
+MULTIAGENT_STATE_DIR="$CONTRACT_STATE" "$MULTIAGENT" decision init DEC-CONTRACT \
+  --title "Contract plan" --owner orchestrator >/dev/null
+MULTIAGENT_STATE_DIR="$CONTRACT_STATE" "$MULTIAGENT" decision add-alternative DEC-CONTRACT \
+  --plan-id PLAN-CONTRACT --summary "Apply the registered contract" \
+  --proposed-by orchestrator >/dev/null
+MULTIAGENT_STATE_DIR="$CONTRACT_STATE" "$MULTIAGENT" decision commit DEC-CONTRACT \
+  --selected-plan PLAN-CONTRACT --reason "authority reviewer accepted the full artifact" >/dev/null
+CONTRACT_CONTEXT="$TEST_TMP/contract-context.md"
+printf '# Compressed context that omits the negative structural rule\n' >"$CONTRACT_CONTEXT"
+if MULTIAGENT_STATE_DIR="$CONTRACT_STATE" "$MULTIAGENT" workflow prepare-implementation \
+  WF-CONTRACT --decision-id DEC-CONTRACT --plan-id PLAN-CONTRACT --decision-revision 1 \
+  --implementation-context "$CONTRACT_CONTEXT" --authority-review AUTH-CONTRACT \
+  >"$TEST_TMP/contract-compression.out" 2>&1; then
+  echo "expected compressed implementation context to be rejected" >&2
+  exit 1
+fi
+assert_contains "$TEST_TMP/contract-compression.out" \
+  "must contain the registered contract artifact verbatim"
+printf 'contract-artifact-sha256=%s\n' "$CONTRACT_HASH" >"$CONTRACT_CONTEXT"
+cat "$CONTRACT_SCOUT/last-message.txt" >>"$CONTRACT_CONTEXT"
+MULTIAGENT_STATE_DIR="$CONTRACT_STATE" "$MULTIAGENT" workflow prepare-implementation \
+  WF-CONTRACT --decision-id DEC-CONTRACT --plan-id PLAN-CONTRACT --decision-revision 1 \
+  --implementation-context "$CONTRACT_CONTEXT" --authority-review AUTH-CONTRACT >/dev/null
+MULTIAGENT_STATE_DIR="$CONTRACT_STATE" "$MULTIAGENT" workflow transition \
+  WF-CONTRACT implementation >/dev/null
+printf '\nmutated\n' >>"$CONTRACT_SCOUT/last-message.txt"
+if MULTIAGENT_STATE_DIR="$CONTRACT_STATE" "$MULTIAGENT" workflow gate WF-CONTRACT implementation \
+  >"$TEST_TMP/contract-mutation.out" 2>&1; then
+  echo "expected registered contract mutation to invalidate implementation" >&2
+  exit 1
+fi
+assert_contains "$TEST_TMP/contract-mutation.out" "contract artifact changed after registration"
+
 LOOP_STATE="$TEST_TMP/loop-state"
 LOOP_CONTEXT="$TEST_TMP/loop-implementation-context.md"
 printf 'revision 1\n' >"$LOOP_CONTEXT"
@@ -238,7 +311,27 @@ fi
 assert_contains "$TEST_TMP/current-reviewer-findings.out" \
   "completion blocked by current-diff review findings: technical"
 loop completion-check WF-LOOP >/dev/null
-loop transition WF-LOOP complete >/dev/null
+if loop transition WF-LOOP complete >"$TEST_TMP/direct-complete.out" 2>&1; then
+  echo "expected direct lifecycle completion to be rejected" >&2
+  exit 1
+fi
+assert_contains "$TEST_TMP/direct-complete.out" "complete is supervisor-owned"
+
+BLOCKED_COMPLETE_STATE="$TEST_TMP/blocked-complete-state"
+cp -R "$LOOP_STATE" "$BLOCKED_COMPLETE_STATE"
+mkdir -p "$BLOCKED_COMPLETE_STATE/findings/BLOCK-COMPLETE"
+printf '%s\n' 'severity=blocking' >"$BLOCKED_COMPLETE_STATE/findings/BLOCK-COMPLETE/finding.env"
+if MULTIAGENT_ROOT="$TEST_REPO" MULTIAGENT_STATE_DIR="$BLOCKED_COMPLETE_STATE" \
+  MULTIAGENT_WORKFLOW_ID=WF-LOOP MULTIAGENT_RUN_ID=RUN-BLOCKED-COMPLETE \
+  MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
+  "$MULTIAGENT" orchestrator complete >"$TEST_TMP/blocked-complete.out" 2>&1; then
+  echo "expected supervisor completion to reject an unqueued blocking finding" >&2
+  exit 1
+fi
+assert_contains "$TEST_TMP/blocked-complete.out" $'reject\tunqueued-blocking-finding\tfinding=BLOCK-COMPLETE'
+assert_contains "$BLOCKED_COMPLETE_STATE/workflows/WF-LOOP/lifecycle/lifecycle.env" \
+  "phase=post-implementation"
+
 if ! MULTIAGENT_ROOT="$TEST_REPO" MULTIAGENT_STATE_DIR="$LOOP_STATE" \
   MULTIAGENT_WORKFLOW_ID=WF-LOOP MULTIAGENT_RUN_ID=RUN-LIFECYCLE \
   MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
@@ -247,5 +340,7 @@ if ! MULTIAGENT_ROOT="$TEST_REPO" MULTIAGENT_STATE_DIR="$LOOP_STATE" \
   exit 1
 fi
 assert_contains "$TEST_TMP/complete.out" $'run completed\tRUN-LIFECYCLE'
+assert_contains "$LOOP_STATE/workflows/WF-LOOP/lifecycle/lifecycle.env" "phase=complete"
+assert_contains "$LOOP_STATE/workflows/WF-LOOP/lifecycle/events.log" "authority=supervisor"
 
 echo "implementation lifecycle tests passed"

@@ -168,6 +168,15 @@ Core routing rules:
 
 - Use `prompts/roles/contract-scout.md` before implementation when user intent,
   proxy/scaffold, target-system, or broad contract risk is material.
+- Finalize and register a contract scout with `multiagent workflow
+  contract-register`; its supervisor-owned output is immutable workflow input.
+  Preserve all `must` and `must-not` rules verbatim in the implementation
+  context. Do not rewrite a negative structural contract as a compatibility
+  assumption.
+- A contract artifact must be the supervisor-sealed scout final message. Never
+  write, patch, copy, reconstruct, or use an environment override to substitute
+  orchestrator-authored bytes. Wait at least 300 seconds for a live scout; one
+  empty-artifact replacement is the limit.
 - Use `prompts/roles/acceptance-scout.md` before implementation when a patch
   could pass visible checks while missing source-derived hidden contracts,
   public API shape, edge cases, data shape, runtime behavior, or compatibility

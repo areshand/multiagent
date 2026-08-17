@@ -1011,6 +1011,10 @@ fn gate_check(args: &[String]) -> Result<(), String> {
     }
 }
 
+pub fn completion_gate_check() -> Result<(), String> {
+    gate_check(&[])
+}
+
 fn verifier_dirs(state: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(sorted_directories(&state.join("subagents"))?
         .into_iter()

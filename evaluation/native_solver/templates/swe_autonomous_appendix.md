@@ -6,6 +6,14 @@ repository is `/app` and the framework is installed at `/opt/multiagent`.
 Use only the public task and visible repository contents. Do not use hidden
 tests, expected patches, benchmark scores, row identity, or private metadata.
 
+Before implementation, run a read-only contract scout, finalize it, and
+register its structured output with `multiagent workflow contract-register`.
+The approved implementation context must include the registered contract
+artifact verbatim and its exact `contract-artifact-sha256=...` binding. Preserve
+every explicit `must` and `must-not` rule; do not replace a task-requested
+structural migration with legacy aliases merely because pre-change tests still
+compile against the old shape.
+
 This run has no interactive user. Treat every behavior explicitly stated in the
 public task as already user-approved. Do not stop to ask the user to reselect an
 explicit requirement because the repository exposes aliases, legacy APIs, or

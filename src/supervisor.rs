@@ -25,6 +25,7 @@ const AUTHORITY_REGISTRY: &str = "/run/multiagent/authority-state-10001";
 #[cfg(target_os = "linux")]
 const CONTROL_DIRECTORIES: &[&str] = &[
     "assignments",
+    "contract-evidence",
     "decisions",
     "findings",
     "launch-authorizations",
@@ -104,6 +105,7 @@ pub fn proxy_if_required(command: &str, args: &[String]) -> Option<Result<ExitCo
 
 fn proxy_command(command: &str, args: &[String]) -> bool {
     match command {
+        "orchestrator" => args == ["complete"],
         "workflow" | "decision" | "dag" => true,
         "supervisor" => args.first().is_some_and(|value| {
             matches!(value.as_str(), "stop" | "register-launch" | "renew-launch")
@@ -351,8 +353,13 @@ pub fn seal_role_output(
     chown(public_output, config::ORCHESTRATOR_UID, config::ROLE_GID)?;
     fs::set_permissions(public_output, fs::Permissions::from_mode(0o660))
         .map_err(|error| format!("set public role output permissions: {error}"))?;
-    if role == "reviewer" {
-        let directory = state.join("reviewer-evidence").join(name);
+    if matches!(role, "reviewer" | "scout") {
+        let evidence_root = if role == "reviewer" {
+            "reviewer-evidence"
+        } else {
+            "contract-evidence"
+        };
+        let directory = state.join(evidence_root).join(name);
         fs::create_dir_all(&directory)
             .map_err(|error| format!("create reviewer evidence directory: {error}"))?;
         chown(&directory, config::SUPERVISOR_UID, config::ROLE_GID)?;
@@ -360,7 +367,7 @@ pub fn seal_role_output(
             .map_err(|error| format!("protect reviewer evidence directory: {error}"))?;
         atomic_write_bytes(&directory.join("last-message.txt"), &bytes)?;
         let metadata = format!(
-            "name={name}\nrole=reviewer\naccess=read-only\nworkflow_id={workflow_id}\nstate=completed\noutput_sha256={:x}\n",
+            "name={name}\nrole={role}\naccess=read-only\nworkflow_id={workflow_id}\nstate=completed\noutput_sha256={:x}\n",
             Sha256::digest(&bytes)
         );
         atomic_write_bytes(&directory.join("evidence.env"), metadata.as_bytes())?;
@@ -665,72 +672,99 @@ fn serve(socket: &Path) -> Result<ExitCode, String> {
         .map_err(|error| format!("bind authority socket {}: {error}", socket.display()))?;
     set_mode(socket, 0o660)?;
     for incoming in listener.incoming() {
-        let mut stream = incoming.map_err(|error| format!("accept authority request: {error}"))?;
-        let peer_uid = peer_uid(&stream)?;
-        if !matches!(
-            peer_uid,
-            0 | config::ORCHESTRATOR_UID | config::WRITER_UID | config::READER_UID
-        ) {
-            let _ = write_response(
-                &mut stream,
-                &Response {
-                    code: 1,
-                    stdout: String::new(),
-                    stderr: "authority supervisor: unauthorized peer\n".into(),
-                },
-            );
-            continue;
-        }
-        let mut bytes = Vec::new();
-        stream
-            .read_to_end(&mut bytes)
-            .map_err(|error| format!("read authority request: {error}"))?;
-        let request: Request = match serde_json::from_slice(&bytes) {
-            Ok(request) => request,
+        let mut stream = match incoming {
+            Ok(stream) => stream,
             Err(error) => {
-                write_response(
-                    &mut stream,
-                    &Response {
-                        code: 1,
-                        stdout: String::new(),
-                        stderr: format!("authority supervisor: invalid request: {error}\n"),
-                    },
-                )?;
+                eprintln!("authority supervisor: accept request: {error}");
                 continue;
             }
         };
-        if request.command == "supervisor" && request.args == ["shutdown"] {
-            write_response(
-                &mut stream,
-                &Response {
-                    code: 0,
-                    stdout: String::new(),
-                    stderr: String::new(),
-                },
-            )?;
+        if serve_connection(&mut stream)? {
             let _ = fs::remove_file(socket);
             return Ok(ExitCode::SUCCESS);
         }
-        if !proxy_command(&request.command, &request.args)
-            || !caller_authorized(peer_uid, &request.command, &request.args)
-        {
-            write_response(
-                &mut stream,
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Serves one authority client. Client disconnects and malformed requests are
+/// isolated to this connection so they cannot take down the workflow's only
+/// trusted state writer. Returns true only for an authorized shutdown request.
+#[cfg(target_os = "linux")]
+fn serve_connection(stream: &mut UnixStream) -> Result<bool, String> {
+    let peer_uid = match peer_uid(stream) {
+        Ok(uid) => uid,
+        Err(error) => {
+            eprintln!("authority supervisor: {error}");
+            return Ok(false);
+        }
+    };
+    if !matches!(
+        peer_uid,
+        0 | config::ORCHESTRATOR_UID | config::WRITER_UID | config::READER_UID
+    ) {
+        let _ = write_response(
+            stream,
+            &Response {
+                code: 1,
+                stdout: String::new(),
+                stderr: "authority supervisor: unauthorized peer\n".into(),
+            },
+        );
+        return Ok(false);
+    }
+    let mut bytes = Vec::new();
+    if let Err(error) = stream.read_to_end(&mut bytes) {
+        eprintln!("authority supervisor: read request: {error}");
+        return Ok(false);
+    }
+    let request: Request = match serde_json::from_slice(&bytes) {
+        Ok(request) => request,
+        Err(error) => {
+            let _ = write_response(
+                stream,
                 &Response {
                     code: 1,
                     stdout: String::new(),
-                    stderr: format!(
-                        "authority supervisor: caller uid {peer_uid} is not authorized for: {} {}\n",
-                        request.command,
-                        request.args.first().map(String::as_str).unwrap_or("")
-                    ),
+                    stderr: format!("authority supervisor: invalid request: {error}\n"),
                 },
-            )?;
-            continue;
+            );
+            return Ok(false);
         }
-        write_response(&mut stream, &execute(request)?)?;
+    };
+    if request.command == "supervisor" && request.args == ["shutdown"] {
+        let _ = write_response(
+            stream,
+            &Response {
+                code: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            },
+        );
+        return Ok(true);
     }
-    Ok(ExitCode::SUCCESS)
+    if !proxy_command(&request.command, &request.args)
+        || !caller_authorized(peer_uid, &request.command, &request.args)
+    {
+        let _ = write_response(
+            stream,
+            &Response {
+                code: 1,
+                stdout: String::new(),
+                stderr: format!(
+                    "authority supervisor: caller uid {peer_uid} is not authorized for: {} {}\n",
+                    request.command,
+                    request.args.first().map(String::as_str).unwrap_or("")
+                ),
+            },
+        );
+        return Ok(false);
+    }
+    let response = execute(request)?;
+    if let Err(error) = write_response(stream, &response) {
+        eprintln!("authority supervisor: {error}");
+    }
+    Ok(false)
 }
 
 #[cfg(target_os = "linux")]
@@ -791,7 +825,9 @@ fn caller_authorized(uid: u32, command: &str, args: &[String]) -> bool {
     }
     let subcommand = args.first().map(String::as_str).unwrap_or("");
     match command {
-        "workflow" | "decision" | "dag" | "supervisor" => uid == config::ORCHESTRATOR_UID,
+        "workflow" | "decision" | "dag" | "orchestrator" | "supervisor" => {
+            uid == config::ORCHESTRATOR_UID
+        }
         "subagent" => match subcommand {
             "finding-create" => uid == config::READER_UID,
             // The orchestrator may request a disposition, but subagent.rs
@@ -1012,8 +1048,12 @@ pub fn start(_state: &Path, _executable: &Path) -> Result<u32, String> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
+    use super::serve_connection;
     use super::{caller_authorized, proxy_command};
     use crate::config;
+    #[cfg(target_os = "linux")]
+    use std::os::unix::net::UnixStream;
 
     #[test]
     fn typed_api_excludes_runtime_and_arbitrary_execution() {
@@ -1053,5 +1093,14 @@ mod tests {
             "workflow",
             &["transition".into()]
         ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn disconnected_client_does_not_fail_the_supervisor_loop() {
+        let (mut server, client) = UnixStream::pair().expect("create authority socket pair");
+        drop(client);
+
+        assert!(!serve_connection(&mut server).expect("isolate disconnected client"));
     }
 }

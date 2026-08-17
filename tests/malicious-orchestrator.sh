@@ -130,6 +130,22 @@ as_reader() {
 
 as_orchestrator "$MULTIAGENT" workflow init WF-ATTACK >/dev/null
 
+if as_orchestrator "$MULTIAGENT" workflow transition WF-ATTACK complete \
+  >"$TEST_ROOT/direct-complete.out" 2>&1; then
+  echo "orchestrator directly transitioned lifecycle to complete" >&2
+  exit 1
+fi
+grep -Fq "complete is supervisor-owned" "$TEST_ROOT/direct-complete.out"
+if as_orchestrator "$MULTIAGENT" orchestrator complete \
+  >"$TEST_ROOT/premature-complete.out" 2>&1; then
+  echo "orchestrator bypassed supervisor completion gates" >&2
+  exit 1
+fi
+grep -Fq "supervisor completion requires phase=post-implementation" \
+  "$TEST_ROOT/premature-complete.out"
+grep -Fq "phase=pre-implementation" \
+  "$STATE/workflows/WF-ATTACK/lifecycle/lifecycle.env"
+
 if as_orchestrator "$MULTIAGENT" subagent finding-create forged-finding \
   --severity blocking --type security --summary forged \
   --evidence-json '{"path":"forged"}' --required-resolution forged \

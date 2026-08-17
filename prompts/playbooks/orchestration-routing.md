@@ -26,12 +26,21 @@ relevant files or benchmark metadata, known constraints, and any proxy/scaffold
 risk.
 
 ```bash
-SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn contract-scout-01-task --instruction "FIRST_INSTRUCTION_TEXT"
+SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn contract-scout-01-task --role scout --instruction "FIRST_INSTRUCTION_TEXT"
 ```
 
 Paste the scout's compact contract ledger, must-preserve list, validation plan,
 and mismatch risks into worker and verifier first instructions. If the scout
 finds a fundamental mismatch, surface it before spawning implementation.
+Finalize the scout and register its sealed output with `multiagent workflow
+contract-register "$MULTIAGENT_WORKFLOW_ID" --scout NAME`. The approved
+implementation context must contain that artifact verbatim plus its reported
+`contract-artifact-sha256=...` binding. Do not translate a negative structural
+rule into a compatibility preference.
+Wait at least 300 seconds for a live scout. At most one empty-artifact
+replacement is allowed, and the replacement may narrow source reads but not
+semantic scope. Never synthesize or patch a scout artifact from orchestrator
+notes; if the replacement also exits empty, record an infrastructure blocker.
 Copy any `historical-contract-ledger:` block verbatim, including all mutated
 outputs. A task-specific hypothesis may refine how those outputs are repaired,
 but it must not narrow, replace, or contradict the scout's historical ledger.
@@ -96,6 +105,9 @@ acceptance review. Load `prompts/playbooks/agent-spawning.md` for the
 worker/verifier loop mechanics and `prompts/verifier.md` for the review role.
 The verifier module requires a verifier contract ledger, source-derived
 hidden-contract probes, assumption challenges, and an over-engineering pass.
+The launcher injects the immutable original task and registered scout artifact
+into technical and replacement reviewer prompts. Orchestrator-added checklists
+are supplemental and cannot narrow that semantic envelope.
 Give the verifier a validation lease for the narrowest visible behavior test
 that directly covers the changed path. When a scout or worker names such a test,
 the verifier must run it after the final diff or return a concrete environment

@@ -119,12 +119,14 @@ multiagent workflow prepare-implementation "$MULTIAGENT_WORKFLOW_ID" \
   --implementation-context CONTEXT_PATH --authority-review REVIEW_ID
 multiagent workflow transition "$MULTIAGENT_WORKFLOW_ID" implementation
 multiagent workflow completion-check "$MULTIAGENT_WORKFLOW_ID"
+multiagent orchestrator complete
 ```
 
 `MULTIAGENT_LIFECYCLE_ENFORCEMENT=1` is the default. Existing structured
-technical findings and repair TODOs remain authoritative. Running
-`multiagent orchestrator complete` requires both the lifecycle completion gate and
-`multiagent subagent gate-check`.
+technical findings and repair TODOs remain authoritative. The orchestrator can
+only request completion. The supervisor atomically runs the lifecycle gate and
+`multiagent subagent gate-check` before it writes `phase=complete`; direct
+transitions to `complete` are rejected.
 
 The default roles use Codex for orchestration and verification and Claude for
 workers. `WORKER_CLI`: worker coding-agent backend for manual worker windows,

@@ -1679,6 +1679,13 @@ printf 'Codex prompt ready\n' >"$MOCK_TMUX_CAPTURES/contract-scout-01-contract.t
 SUBAGENT_CLI="$VERIFIER_CLI" "$MULTIAGENT" subagent spawn contract-scout-01-contract --instruction "Extract source contracts"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/contract-scout-01-contract/instruction.txt" "Contract Scout Role Prompt"
 assert_file_not_contains "$MULTIAGENT_STATE_DIR/subagents/contract-scout-01-contract/instruction.txt" "Acceptance Scout Role Prompt"
+if "$MULTIAGENT" subagent finalize contract-scout-01-contract \
+  >"$TMPDIR/premature-scout-finalize.out" 2>&1; then
+  echo "expected finalize to preserve a running scout without a final artifact" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/premature-scout-finalize.out" \
+  "cannot finalize running scout without a final artifact"
 
 printf 'Blocker: this line is stale prompt context\nfinal status: codex exec exited rc=0\n' >"$MOCK_TMUX_CAPTURES/verifier-01-docs.txt"
 cat >"$MULTIAGENT_STATE_DIR/subagents/verifier-01-docs/last-message.txt" <<'EOF'

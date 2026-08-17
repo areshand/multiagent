@@ -288,12 +288,16 @@ non-public evaluator rows, hidden row names, or benchmark-only metadata.
 Use the same subagent helper with the verifier CLI:
 
 ```bash
-SUBAGENT_CLI="${VERIFIER_CLI:-codex}" multiagent subagent spawn contract-scout-01-docs --instruction "Review only; extract the contract ledger."
+SUBAGENT_CLI="${VERIFIER_CLI:-codex}" multiagent subagent spawn contract-scout-01-docs --role scout --instruction "Review only; extract the contract ledger."
+multiagent subagent finalize contract-scout-01-docs
+multiagent workflow contract-register "$MULTIAGENT_WORKFLOW_ID" --scout contract-scout-01-docs
 ```
 
 The scout does not edit files or coordinate with workers. The orchestrator
-pastes the scout's `must-preserve` requirements and validation plan into worker
-and verifier first instructions. If the scout finds that the current path only
+pastes its sealed structured artifact verbatim into the approved implementation
+context. The supervisor binds that artifact by hash, and the launcher injects
+it together with the original task into workers and reviewers. If the scout
+finds that the current path only
 validates a scaffold, shim, infrastructure path, or proxy behavior, the
 orchestrator surfaces that mismatch before spawning implementation.
 

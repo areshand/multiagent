@@ -60,6 +60,13 @@ seal-valid reviewer result (and the current final-diff hash when hash binding is
 enabled). Thus orchestration chooses what work to ask for; reviewer evidence and
 predetermined transition rules decide whether protected state may change.
 
+Contract-scout output uses the same sealing boundary. A registered contract is
+hash-bound into lifecycle state and automatically included with the immutable
+original task in later worker and reviewer prompts. Completion is likewise a
+supervisor-owned transition: `orchestrator complete` is a request, and the
+supervisor writes `complete` only after both lifecycle and technical gates pass
+inside the lifecycle lock.
+
 The boundary does not distinguish a good reviewer prompt from a biased one and
 does not prove semantic correctness. It guarantees process identity, access
 mode, evidence integrity, workflow binding, and filesystem scope. Reviewer/test
