@@ -948,6 +948,14 @@ pub fn prepare_state_permissions(_state: &Path) -> Result<(), String> {
 #[cfg(target_os = "linux")]
 pub fn start(state: &Path, executable: &Path) -> Result<u32, String> {
     let socket = authority_socket(state);
+    if socket.exists() && UnixStream::connect(&socket).is_ok() {
+        let pid_path = state.join("runtime_state/authority-supervisor.pid");
+        return fs::read_to_string(&pid_path)
+            .map_err(|error| format!("read existing authority supervisor pid: {error}"))?
+            .trim()
+            .parse::<u32>()
+            .map_err(|error| format!("parse existing authority supervisor pid: {error}"));
+    }
     let log_path = state.join("runtime_state/authority-supervisor.log");
     if let Some(parent) = log_path.parent() {
         fs::create_dir_all(parent)

@@ -382,9 +382,15 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
             lifecycle_prompt.display()
         ));
     }
-    if tmux_success(&["has-session", "-t", &session]) {
+    let session_exists = tmux_success(&["has-session", "-t", &session]);
+    if session_exists && !resume {
         return Err(format!(
             "tmux session already exists: {session}\nAttach with: tmux attach -t {session}"
+        ));
+    }
+    if session_exists && window_exists(&session, "orchestrator") {
+        return Err(format!(
+            "tmux session already has an orchestrator window: {session}\nAttach with: tmux attach -t {session}"
         ));
     }
 
@@ -521,15 +527,27 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
         )?;
     }
     let bootstrap_command = format!("bash {}", shell_escape(&bootstrap.display().to_string()));
-    let new_session = [
-        "new-session",
-        "-d",
-        "-s",
-        &session,
-        "-n",
-        "orchestrator",
-        &bootstrap_command,
-    ];
+    let new_session = if session_exists {
+        vec![
+            "new-window",
+            "-d",
+            "-t",
+            &session,
+            "-n",
+            "orchestrator",
+            &bootstrap_command,
+        ]
+    } else {
+        vec![
+            "new-session",
+            "-d",
+            "-s",
+            &session,
+            "-n",
+            "orchestrator",
+            &bootstrap_command,
+        ]
+    };
     if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
         tmux_checked_as_uid(&new_session, &executable, ORCHESTRATOR_UID)?;
     } else {

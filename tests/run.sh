@@ -453,6 +453,32 @@ assert_file_contains "$LAUNCH_RESUME_BOOTSTRAP" "export MULTIAGENT_RESUME=1"
 assert_file_contains "$LAUNCH_RESUME_BOOTSTRAP" "export MULTIAGENT_VERIFIER_MAX_ITERATIONS=5"
 assert_file_contains "$LAUNCH_RESUME_BOOTSTRAP" "resume"
 
+rm -f "$MOCK_TMUX_LOG"
+printf 'reviewer-still-running\n' >"$MOCK_TMUX_WINDOWS"
+MOCK_TMUX_HAS_SESSION=1 \
+  MULTIAGENT_SESSION="launch-resume" \
+  MULTIAGENT_ROOT= \
+  MULTIAGENT_PROMPT= \
+  MULTIAGENT_VERIFIER_MAX_ITERATIONS=5 \
+  MULTIAGENT_STATE_DIR="$TMPDIR/launch-resume-state" \
+  MULTIAGENT_WRITE_POLICY="$TMPDIR/launch-resume-policy/write-policy.paths" \
+  "$ROOT/launch.sh" --session launch-resume --root "$LAUNCH_TARGET" --resume --no-attach >"$TMPDIR/launch-resume-existing.out"
+assert_file_contains "$TMPDIR/launch-resume-existing.out" "Resume mode: 1"
+assert_file_contains "$MOCK_TMUX_LOG" "new-window -d launch-resume orchestrator"
+assert_file_not_contains "$MOCK_TMUX_LOG" "new-session launch-resume orchestrator"
+
+if MOCK_TMUX_HAS_SESSION=1 \
+  MULTIAGENT_SESSION="launch-existing-clean" \
+  MULTIAGENT_ROOT= \
+  MULTIAGENT_PROMPT= \
+  MULTIAGENT_STATE_DIR="$TMPDIR/launch-existing-clean-state" \
+  MULTIAGENT_WRITE_POLICY="$TMPDIR/launch-existing-clean-policy/write-policy.paths" \
+  "$ROOT/launch.sh" --session launch-existing-clean --root "$LAUNCH_TARGET" --no-attach >"$TMPDIR/launch-existing-clean.out" 2>&1; then
+  echo "expected clean launch against existing tmux session to fail" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/launch-existing-clean.out" "tmux session already exists"
+
 if MOCK_TMUX_HAS_SESSION=0 \
   MULTIAGENT_SESSION="launch-invalid-verifier-cap" \
   MULTIAGENT_ROOT= \
