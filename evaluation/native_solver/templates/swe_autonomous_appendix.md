@@ -21,6 +21,16 @@ not omit a newly required default at an intermediate layer merely to keep such
 a stale mock green; verify the declared default and an override reach the next
 layer.
 
+When an explicit API removal or rename leaves visible pre-change tests referring
+to the removed symbol, that test-only dependency is not by itself a true contradiction.
+Update the production callers, keep the public-contract source change in `/app`,
+and record the stale-test compile failure as residual
+validation evidence. Do not create a cleanup worker or revert a non-empty
+public-contract candidate to an empty diff merely to restore the old test API.
+Preserve the best task-directed candidate unless source review shows that the
+candidate itself violates the public task or causes an unrelated regression
+that cannot be separated from it.
+
 Leave the final working-tree changes in `/app`. The adapter only transports
 that workspace to EvalScope; the official SWE-bench verifier evaluates it.
 
