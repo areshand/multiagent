@@ -67,6 +67,18 @@ When task text contrasts embedding with an internal or named field, emit both
 the positive named-field obligation and a separate negative rule forbidding the
 old anonymous embedding. Do this independently for each named type (for
 example, configuration and router); a generic alias-cleanup rule is not enough.
+Use these machine-readable fields on the paired rules:
+
+- positive: `structure=positive owner=OWNER member=FIELD member-type=TYPE`
+- negative: `structure=negative owner=OWNER embedded-type=TYPE`
+
+`OWNER` and `TYPE` must match across the pair. Inspect the current source and
+nearby codebase conventions to name the concrete replacement field. For
+example, replacing `type Forwarder struct { ForwarderConfig }` should produce a
+positive rule for a named `cfg ForwarderConfig` member and a negative rule that
+`Forwarder` must not anonymously embed `ForwarderConfig`. A rule that merely
+lists fields exposed by `ForwarderConfig`, or forbids unrelated router
+embedding, does not satisfy this structural pair.
 
 If an issue, visible test, doc, source path, or user message includes literal
 expected values, command argv, serialized output, error text, ordered lists, or

@@ -1360,19 +1360,51 @@ fn validate_contract_schema(text: &str, original_task: &str) -> Result<(), Strin
         }
     }
     if requires_embedding_rule {
-        let positive = rules.iter().any(|rule| rule.contains(" polarity=must "));
-        let negative = rules.iter().any(|rule| {
-            let statement = contract_rule_statement(rule).to_ascii_lowercase();
-            rule.contains(" polarity=must-not ") && statement.contains("embed")
+        let positive = rules.iter().find_map(|rule| {
+            (rule.contains(" polarity=must ") && rule.contains(" structure=positive ")).then(|| {
+                (
+                    contract_rule_field(rule, "owner"),
+                    contract_rule_field(rule, "member"),
+                    contract_rule_field(rule, "member-type"),
+                )
+            })
         });
-        if !positive {
-            return Err("contract scout artifact requires a positive structural rule".into());
-        }
-        if !negative {
-            return Err("contract scout artifact requires a separate `polarity=must-not` rule covering the requested embedding prohibition".into());
+        let negative = rules.iter().find_map(|rule| {
+            let statement = contract_rule_statement(rule).to_ascii_lowercase();
+            (rule.contains(" polarity=must-not ")
+                && rule.contains(" structure=negative ")
+                && statement.contains("embed"))
+            .then(|| {
+                (
+                    contract_rule_field(rule, "owner"),
+                    contract_rule_field(rule, "embedded-type"),
+                )
+            })
+        });
+        let Some((positive_owner, member, member_type)) = positive else {
+            return Err("contract scout artifact requires a machine-readable positive structural rule with `structure=positive owner=OWNER member=FIELD member-type=TYPE`".into());
+        };
+        let Some((negative_owner, embedded_type)) = negative else {
+            return Err("contract scout artifact requires a machine-readable negative structural rule with `structure=negative owner=OWNER embedded-type=TYPE` covering the embedding prohibition".into());
+        };
+        if positive_owner.is_empty()
+            || member.is_empty()
+            || member_type.is_empty()
+            || negative_owner.is_empty()
+            || embedded_type.is_empty()
+            || positive_owner != negative_owner
+            || member_type != embedded_type
+        {
+            return Err("contract scout embedding rules must name one matching owner/type pair and a concrete replacement member".into());
         }
     }
     Ok(())
+}
+
+fn contract_rule_field<'a>(rule: &'a str, key: &str) -> &'a str {
+    rule.split_whitespace()
+        .find_map(|part| part.strip_prefix(&format!("{key}=")))
+        .unwrap_or("")
 }
 
 fn contract_rule_statement(rule: &str) -> &str {
@@ -1600,11 +1632,18 @@ contract-rule: id=R1 polarity=must statement=WidgetConfig exposes named fields e
 contract-rule: id=R2 polarity=must-not statement=Old WidgetConfig names must not remain evidence=task mentions unnecessary embedding\n";
         assert!(validate_contract_schema(incomplete, task)
             .unwrap_err()
-            .contains("embedding prohibition"));
+            .contains("machine-readable positive structural rule"));
 
-        let complete = format!(
-            "{incomplete}contract-rule: id=R3 polarity=must-not statement=WidgetConfig must not be anonymously embedded evidence=task\n"
-        );
+        let complete = "contract-artifact: version=1\n\
+contract-rule: id=R1 polarity=must structure=positive owner=Widget member=cfg member-type=WidgetConfig statement=Widget must store WidgetConfig in the named cfg field evidence=source\n\
+contract-rule: id=R2 polarity=must-not structure=negative owner=Widget embedded-type=WidgetConfig statement=Widget must not anonymously embed WidgetConfig evidence=task\n";
         assert!(validate_contract_schema(&complete, task).is_ok());
+
+        let mismatched = "contract-artifact: version=1\n\
+contract-rule: id=R1 polarity=must structure=positive owner=Widget member=cfg member-type=WidgetConfig statement=Widget has a named cfg field evidence=source\n\
+contract-rule: id=R2 polarity=must-not structure=negative owner=Other embedded-type=RouterConfig statement=Other must not embed RouterConfig evidence=task\n";
+        assert!(validate_contract_schema(mismatched, task)
+            .unwrap_err()
+            .contains("matching owner/type pair"));
     }
 }

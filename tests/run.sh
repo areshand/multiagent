@@ -1132,6 +1132,8 @@ assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "active 
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "assignment-status NAME failed"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-symbol map contract"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-symbol-map-passed:"
+assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "structure=positive owner=OWNER member=FIELD member-type=TYPE"
+assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "structure=negative owner=OWNER embedded-type=TYPE"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-owner-ledger:"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "constructor-dependency contract"
 assert_file_contains "$ROOT/prompts/roles/build-verifier.md" "build-verification-passed:"
