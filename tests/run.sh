@@ -422,8 +422,15 @@ assert_file_contains "$LAUNCH_BOOTSTRAP" "export VERIFIER_CLI=codex"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "Multiagent launch mode:"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "$(printf '%q' "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md")"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "export MULTIAGENT_LIFECYCLE_ENFORCEMENT=1"
+assert_file_contains "$LAUNCH_BOOTSTRAP" 'if [[ ${BASH_SOURCE[0]} != "$0" ]]; then return 0; fi'
 assert_file_contains "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "BEGIN ORCHESTRATOR ROLE"
 assert_file_contains "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "BEGIN MANDATORY IMPLEMENTATION LIFECYCLE"
+SOURCE_BOOTSTRAP_OUTPUT="$(bash -c 'source "$1"; printf "source-complete\\n"' bash "$LAUNCH_BOOTSTRAP")"
+if [[ "$SOURCE_BOOTSTRAP_OUTPUT" != "source-complete" ]]; then
+  echo "sourcing orchestrator bootstrap unexpectedly executed the agent entrypoint" >&2
+  printf '%s\n' "$SOURCE_BOOTSTRAP_OUTPUT" >&2
+  exit 1
+fi
 LAUNCH_WORKFLOW_ID="$(tr -d '\r\n' <"$LAUNCH_STATE/runtime_state/active-workflow-id")"
 assert_file_contains "$LAUNCH_STATE/workflows/$LAUNCH_WORKFLOW_ID/lifecycle/lifecycle.env" "phase=pre-implementation"
 if grep -Fq "$LAUNCH_TARGET/orchestrator_prompt.md" "$MOCK_TMUX_LOG" "$TMPDIR/launch.out" "$LAUNCH_BOOTSTRAP"; then

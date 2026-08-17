@@ -740,6 +740,10 @@ fn write_bootstrap(
     for (key, value) in environment {
         text.push_str(&format!("export {key}={}\n", shell_escape(value)));
     }
+    // The bootstrap is also a convenient source of the canonical runtime
+    // environment during recovery.  Sourcing it must never execute the agent
+    // command and create a second orchestrator in the same workflow.
+    text.push_str("if [[ ${BASH_SOURCE[0]} != \"$0\" ]]; then return 0; fi\n");
     if environment
         .get("MULTIAGENT_UID_SANDBOX")
         .map(String::as_str)
