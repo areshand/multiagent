@@ -96,6 +96,11 @@ acceptance review. Load `prompts/playbooks/agent-spawning.md` for the
 worker/verifier loop mechanics and `prompts/verifier.md` for the review role.
 The verifier module requires a verifier contract ledger, source-derived
 hidden-contract probes, assumption challenges, and an over-engineering pass.
+Give the verifier a validation lease for the narrowest visible behavior test
+that directly covers the changed path. When a scout or worker names such a test,
+the verifier must run it after the final diff or return a concrete environment
+blocker; compile-only or syntax-only evidence cannot satisfy behavior
+verification.
 
 Before behavior verification or submission, run the build-verifier workflow for
 any code diff. Load `prompts/roles/build-verifier.md` and require

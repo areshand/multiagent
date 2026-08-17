@@ -72,6 +72,14 @@ class NativeOutcomeTest(unittest.TestCase):
         self.assertIn("autonomous run-to-terminal workflow", autonomous)
         self.assertIn("turn by offering to continue", autonomous)
         self.assertIn("assignment omitted a path required by the approved plan", autonomous)
+        verifier = (root / "prompts/verifier.md").read_text(encoding="utf-8")
+        routing = (root / "prompts/playbooks/orchestration-routing.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("narrowest visible test file", verifier)
+        self.assertIn("Syntax checks, compile-only commands", verifier)
+        self.assertIn("command=... returncode=0", verifier)
+        self.assertIn("validation lease for the narrowest visible behavior test", routing)
 
     def test_runner_has_no_submission_rejection_path(self):
         self.assertFalse(hasattr(evalscope_multiagent_native_runner, "is_submission_gate_rejection"))
@@ -129,6 +137,83 @@ class NativeOutcomeTest(unittest.TestCase):
 
         for call in run.call_args_list:
             self.assertEqual(call.args[0][:3], ["tmux", "-S", str(swe_prod_lifecycle.TMUX_SOCKET)])
+
+    def test_active_workflow_phase_reads_persisted_lifecycle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = Path(directory)
+            state = runtime / "state"
+            (state / "runtime_state").mkdir(parents=True)
+            (state / "runtime_state" / "active-workflow-id").write_text(
+                "workflow-1\n", encoding="utf-8"
+            )
+            lifecycle = state / "workflows" / "workflow-1" / "lifecycle"
+            lifecycle.mkdir(parents=True)
+            (lifecycle / "lifecycle.env").write_text(
+                "workflow_id=workflow-1\nphase=implementation\n", encoding="utf-8"
+            )
+
+            with mock.patch.object(swe_prod_lifecycle, "RUNTIME_ROOT", runtime):
+                self.assertEqual(swe_prod_lifecycle.active_workflow_phase(), "implementation")
+
+    def test_incomplete_workflow_is_resumed_before_workspace_handoff(self):
+        completed = SimpleNamespace(returncode=0, stdout="codex-cli 1.0\n", stderr="")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prompt = root / "prompt.md"
+            prompt.write_text("prompt", encoding="utf-8")
+            lifecycle_patches = {
+                "require_path": mock.DEFAULT,
+                "multiagent_command": mock.Mock(return_value=["multiagent"]),
+                "find_codex_cli": mock.Mock(return_value="/usr/bin/codex"),
+                "git_head": mock.Mock(return_value="a" * 40),
+                "list_untracked_files": mock.Mock(return_value=[]),
+                "run": mock.Mock(return_value=completed),
+                "write_codex_bridge": mock.DEFAULT,
+                "write_apply_patch_helper": mock.DEFAULT,
+                "write_rg_fallback": mock.DEFAULT,
+                "read_prompt": mock.Mock(return_value="public task"),
+                "read_task_metadata": mock.Mock(return_value={}),
+                "make_prompt": mock.Mock(return_value=prompt),
+                "toolchain_path_prefixes": mock.Mock(return_value=[]),
+                "ensure_cache_dir": mock.Mock(return_value=str(root)),
+                "prepare_role_filesystem": mock.DEFAULT,
+                "restore_workspace_owner": mock.DEFAULT,
+                "tmux_has_session": mock.Mock(return_value=True),
+                "tmux_has_orchestrator": mock.Mock(return_value=False),
+                "active_workflow_phase": mock.Mock(side_effect=["implementation", "complete"]),
+                "materialize_committed_changes": mock.DEFAULT,
+                "mark_untracked_intent_to_add": mock.DEFAULT,
+            }
+            with mock.patch.multiple(swe_prod_lifecycle, **lifecycle_patches):
+                with mock.patch.object(
+                    swe_prod_lifecycle.shutil,
+                    "which",
+                    side_effect=lambda name: "/usr/bin/tmux" if name == "tmux" else None,
+                ):
+                    with mock.patch.dict(
+                        swe_prod_lifecycle.os.environ,
+                        {
+                            "EVAL_CODEX_AUTH_MODE": "bridge",
+                            "OPENAI_BASE_URL": "http://127.0.0.1:1/v1",
+                            "OPENAI_API_KEY": "test-key",
+                        },
+                    ):
+                        self.assertEqual(swe_prod_lifecycle.run_prod_solver(None, root, root, 60), 0)
+
+                launch_calls = [
+                    call
+                    for call in swe_prod_lifecycle.run.call_args_list
+                    if call.kwargs.get("env") is not None
+                    and call.args
+                    and isinstance(call.args[0], list)
+                    and call.args[0]
+                    and str(call.args[0][0]).endswith("launch.sh")
+                ]
+
+        self.assertEqual(len(launch_calls), 2)
+        self.assertNotIn("--resume", launch_calls[0].args[0])
+        self.assertIn("--resume", launch_calls[1].args[0])
 
     def test_shard_problem_statement_uses_relative_sample_id(self):
         with tempfile.TemporaryDirectory() as directory:

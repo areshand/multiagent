@@ -169,6 +169,29 @@ def tmux_has_orchestrator(session: str) -> bool:
     return result.returncode == 0 and "orchestrator" in result.stdout.splitlines()
 
 
+def active_workflow_phase() -> str | None:
+    """Return the persisted lifecycle phase for the active production workflow."""
+
+    state = RUNTIME_ROOT / "state"
+    active_id_path = state / "runtime_state" / "active-workflow-id"
+    try:
+        workflow_id = active_id_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not workflow_id:
+        return None
+    lifecycle_path = state / "workflows" / workflow_id / "lifecycle" / "lifecycle.env"
+    try:
+        lines = lifecycle_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        key, separator, value = line.partition("=")
+        if separator and key == "phase":
+            return value.strip() or None
+    return None
+
+
 def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, timeout: int) -> int:
     """Run the production workflow and leave its current diff for SWE-bench.
 
@@ -287,9 +310,34 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
         raise RuntimeError(f"production multiagent launch failed: {launch_tail}")
 
     deadline = time.monotonic() + timeout
+    resume_count = 0
     try:
-        while time.monotonic() < deadline and tmux_has_orchestrator(session):
-            time.sleep(5)
+        while time.monotonic() < deadline:
+            while time.monotonic() < deadline and tmux_has_orchestrator(session):
+                time.sleep(5)
+
+            phase = active_workflow_phase()
+            if phase in {None, "complete"} or time.monotonic() >= deadline:
+                break
+
+            resume_count += 1
+            log(
+                "orchestrator exited before lifecycle completion; "
+                f"resuming session={session} phase={phase} attempt={resume_count}"
+            )
+            resume_args = [
+                str(repo_root / "launch.sh"),
+                "--session",
+                session,
+                "--root",
+                str(workdir),
+                "--resume",
+                "--no-attach",
+            ]
+            resumed = run(resume_args, env=env, timeout=120)
+            resume_tail = ((resumed.stderr or "") + "\n" + (resumed.stdout or "")).strip()[-4000:]
+            if resumed.returncode != 0:
+                raise RuntimeError(f"production multiagent resume failed: {resume_tail}")
     finally:
         if tmux_has_session(session):
             run(["tmux", "-S", str(TMUX_SOCKET), "kill-session", "-t", session], timeout=30)

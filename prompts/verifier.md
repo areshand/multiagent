@@ -84,6 +84,17 @@ Start by reconstructing the task contract independently from the user request,
 issue text, source, nearby tests, docs, and worker diff. Do not rely on the
 worker's summary as the source of truth.
 
+For every code diff, identify the narrowest visible test file or documented
+behavior command that directly exercises the changed behavior. If it is
+runnable in the repository, acquire or receive its validation lease and run it
+after the final diff. Syntax checks, compile-only commands, source review, and
+another agent's narrative are not behavioral validation. If no direct visible
+test exists, run a source-derived behavior probe through the affected public or
+production entrypoint. If the direct test cannot run because of a concrete
+environment dependency, report that exact command and dependency as unresolved
+risk; do not silently replace it with `node --check`, `git diff --check`, or an
+equally weak proxy.
+
 Report a compact verifier contract ledger:
 
 - intended outcome
@@ -440,7 +451,7 @@ accept, accept with follow-up, or reject pending follow-up.
 
 The first non-empty line of the final verifier message must be exactly
 `ACCEPTED` or `BLOCKING`. For a code diff, behavior `ACCEPTED` must include
-`behavior-verification-passed: final-diff-sha256=... behavior_clean=true public-clauses-covered=true`
+`behavior-verification-passed: final-diff-sha256=... behavior_clean=true public-clauses-covered=true command=... returncode=0`
 for the exact live final diff. Build acceptance remains a separate build
 verifier artifact. A missing verdict, stale hash, or unbound acceptance is
 blocking at the framework gate.
