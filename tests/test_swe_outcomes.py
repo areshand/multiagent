@@ -158,7 +158,7 @@ class NativeOutcomeTest(unittest.TestCase):
             with mock.patch.object(swe_prod_lifecycle, "RUNTIME_ROOT", runtime):
                 self.assertEqual(swe_prod_lifecycle.active_workflow_phase(), "implementation")
 
-    def test_incomplete_workflow_is_resumed_before_workspace_handoff(self):
+    def test_incomplete_workflow_keeps_resuming_before_workspace_handoff(self):
         completed = SimpleNamespace(returncode=0, stdout="codex-cli 1.0\n", stderr="")
 
         with tempfile.TemporaryDirectory() as directory:
@@ -184,7 +184,9 @@ class NativeOutcomeTest(unittest.TestCase):
                 "restore_workspace_owner": mock.DEFAULT,
                 "tmux_has_session": mock.Mock(return_value=True),
                 "tmux_has_orchestrator": mock.Mock(return_value=False),
-                "active_workflow_phase": mock.Mock(side_effect=["implementation", "complete"]),
+                "active_workflow_phase": mock.Mock(
+                    side_effect=["implementation", "implementation", "implementation", "implementation", "complete"]
+                ),
                 "materialize_committed_changes": mock.DEFAULT,
                 "mark_untracked_intent_to_add": mock.DEFAULT,
             }
@@ -214,9 +216,10 @@ class NativeOutcomeTest(unittest.TestCase):
                     and str(call.args[0][0]).endswith("launch.sh")
                 ]
 
-        self.assertEqual(len(launch_calls), 2)
+        self.assertEqual(len(launch_calls), 5)
         self.assertNotIn("--resume", launch_calls[0].args[0])
-        self.assertIn("--resume", launch_calls[1].args[0])
+        for call in launch_calls[1:]:
+            self.assertIn("--resume", call.args[0])
 
     def test_shard_problem_statement_uses_relative_sample_id(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -267,6 +270,7 @@ class NativeOutcomeTest(unittest.TestCase):
                 "restore_workspace_owner": mock.DEFAULT,
                 "tmux_has_session": mock.Mock(return_value=True),
                 "tmux_has_orchestrator": mock.Mock(return_value=False),
+                "active_workflow_phase": mock.Mock(return_value="complete"),
                 "materialize_committed_changes": mock.DEFAULT,
                 "mark_untracked_intent_to_add": mock.DEFAULT,
             }
@@ -313,6 +317,63 @@ class NativeOutcomeTest(unittest.TestCase):
             launch_env["MULTIAGENT_CODEX_HOME_ROOT"],
             str(swe_prod_lifecycle.ROLE_CODEX_HOME_ROOT),
         )
+
+    def test_incomplete_workflow_at_deadline_is_not_handed_off(self):
+        completed = SimpleNamespace(returncode=0, stdout="codex-cli 1.0\n", stderr="")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prompt = root / "prompt.md"
+            prompt.write_text("prompt", encoding="utf-8")
+            lifecycle_patches = {
+                "require_path": mock.DEFAULT,
+                "multiagent_command": mock.Mock(return_value=["multiagent"]),
+                "find_codex_cli": mock.Mock(return_value="/usr/bin/codex"),
+                "git_head": mock.Mock(return_value="a" * 40),
+                "list_untracked_files": mock.Mock(return_value=[]),
+                "run": mock.Mock(return_value=completed),
+                "write_codex_bridge": mock.DEFAULT,
+                "write_apply_patch_helper": mock.DEFAULT,
+                "write_rg_fallback": mock.DEFAULT,
+                "read_prompt": mock.Mock(return_value="public task"),
+                "read_task_metadata": mock.Mock(return_value={}),
+                "make_prompt": mock.Mock(return_value=prompt),
+                "toolchain_path_prefixes": mock.Mock(return_value=[]),
+                "ensure_cache_dir": mock.Mock(return_value=str(root)),
+                "prepare_role_filesystem": mock.DEFAULT,
+                "restore_workspace_owner": mock.DEFAULT,
+                "tmux_has_session": mock.Mock(return_value=True),
+                "tmux_has_orchestrator": mock.Mock(return_value=True),
+                "active_workflow_phase": mock.Mock(return_value="implementation"),
+                "materialize_committed_changes": mock.DEFAULT,
+                "mark_untracked_intent_to_add": mock.DEFAULT,
+            }
+            with mock.patch.multiple(swe_prod_lifecycle, **lifecycle_patches):
+                with mock.patch.object(
+                    swe_prod_lifecycle.shutil,
+                    "which",
+                    side_effect=lambda name: "/usr/bin/tmux" if name == "tmux" else None,
+                ):
+                    with mock.patch.object(
+                        swe_prod_lifecycle.time,
+                        "monotonic",
+                        side_effect=[0, 1, 61, 61],
+                    ):
+                        with mock.patch.object(swe_prod_lifecycle.time, "sleep"):
+                            with mock.patch.dict(
+                                swe_prod_lifecycle.os.environ,
+                                {
+                                    "EVAL_CODEX_AUTH_MODE": "bridge",
+                                    "OPENAI_BASE_URL": "http://127.0.0.1:1/v1",
+                                    "OPENAI_API_KEY": "test-key",
+                                },
+                            ):
+                                with self.assertRaisesRegex(RuntimeError, "refusing workspace handoff"):
+                                    swe_prod_lifecycle.run_prod_solver(None, root, root, 60)
+
+                swe_prod_lifecycle.restore_workspace_owner.assert_called_once_with(root)
+                swe_prod_lifecycle.materialize_committed_changes.assert_not_called()
+                swe_prod_lifecycle.mark_untracked_intent_to_add.assert_not_called()
 
     def test_workspace_handoff_includes_new_source_and_test_files(self):
         with tempfile.TemporaryDirectory() as directory:
