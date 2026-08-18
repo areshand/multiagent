@@ -966,7 +966,8 @@ assert_file_contains "$ROOT/prompts/playbooks/intent-contract.md" "Intent And Co
 assert_file_contains "$ROOT/prompts/playbooks/intent-contract.md" "proxy/scaffold limitations"
 assert_file_contains "$ROOT/prompts/playbooks/intent-contract.md" "contract-ledger"
 assert_file_contains "$ROOT/prompts/playbooks/parallel-execution.md" "Parallel Execution Playbook"
-assert_file_contains "$ROOT/prompts/playbooks/parallel-execution.md" "Default to broad safe fan-out"
+assert_file_contains "$ROOT/prompts/playbooks/parallel-execution.md" "does not prescribe a worker count"
+assert_file_contains "$ROOT/prompts/playbooks/parallel-execution.md" "task-specific responsibility"
 assert_file_contains "$ROOT/prompts/playbooks/parallel-execution.md" "If one subtree is blocked"
 assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "Validation Scheduling Playbook"
 assert_file_contains "$ROOT/prompts/playbooks/validation-scheduling.md" "Validation Lease"
@@ -1639,15 +1640,23 @@ if grep -Fq "new-window -d test-session owned-mismatch" "$MOCK_TMUX_LOG"; then
 fi
 
 printf 'Claude prompt ready\n' >"$MOCK_TMUX_CAPTURES/worker-generic-01.txt"
-"$MULTIAGENT" subagent spawn worker-generic-01 --instruction "First generic worker"
+"$MULTIAGENT" subagent spawn worker-generic-01 --own src/agent.rs \
+  --responsibility "adapt agent backend" --instruction "First adaptive worker"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/worker-generic-01/status" "running"
+assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/worker-generic-01/assignment.env" "responsibility=adapt agent backend"
 printf 'Claude prompt ready\n' >"$MOCK_TMUX_CAPTURES/worker-generic-02.txt"
-if "$MULTIAGENT" subagent spawn worker-generic-02 --instruction "Second generic worker" >"$TMPDIR/worker-generic-conflict.out" 2>&1; then
-  echo "expected generic worker spawn to reject active generic worker" >&2
+"$MULTIAGENT" subagent spawn worker-generic-02 --own src/dag.rs \
+  --responsibility "adapt workflow graph" --instruction "Second adaptive worker"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/worker-generic-02/status" "running"
+assert_file_contains "$MULTIAGENT_STATE_DIR/assignments/worker-generic-02/assignment.env" "responsibility=adapt workflow graph"
+
+printf 'Claude prompt ready\n' >"$MOCK_TMUX_CAPTURES/worker-generic-overlap.txt"
+if "$MULTIAGENT" subagent spawn worker-generic-overlap --own src/agent.rs --instruction "Overlap existing worker" >"$TMPDIR/worker-generic-conflict.out" 2>&1; then
+  echo "expected overlapping adaptive worker ownership to fail" >&2
   cat "$TMPDIR/worker-generic-conflict.out" >&2
   exit 1
 fi
-assert_file_contains "$TMPDIR/worker-generic-conflict.out" "active generic worker already running"
+assert_file_contains "$TMPDIR/worker-generic-conflict.out" "active assignment owned-path overlap"
 
 printf 'Codex prompt ready\n' >"$MOCK_TMUX_CAPTURES/verifier-01-docs.txt"
 SUBAGENT_CLI="$VERIFIER_CLI" "$MULTIAGENT" subagent spawn verifier-01-docs --instruction "Review worker-01-docs"
@@ -2104,10 +2113,11 @@ mkdir -p "$ORG_ASSIGN_REPO" "$ORG_ASSIGN_STATE"
   git switch -q -c worker/org-task
 )
 
-org_assignment_create_output="$(MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ORG_ASSIGN_STATE" "$MULTIAGENT" subagent assignment-create worker-org --assignment-id org-001 --branch worker/org-task --owned README.md --role qa --decision-id DEC-001 --plan-id PLAN-A)"
+org_assignment_create_output="$(MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ORG_ASSIGN_STATE" "$MULTIAGENT" subagent assignment-create worker-org --assignment-id org-001 --branch worker/org-task --owned README.md --role qa --responsibility "migrate the storage adapter" --decision-id DEC-001 --plan-id PLAN-A)"
 [[ "$org_assignment_create_output" == $'assignment created\tworker-org\torg-001\tworker/org-task' ]]
 assert_file_contains "$ORG_ASSIGN_STATE/assignments/worker-org/assignment.env" "assignment_id=org-001"
 assert_file_contains "$ORG_ASSIGN_STATE/assignments/worker-org/assignment.env" "role=qa"
+assert_file_contains "$ORG_ASSIGN_STATE/assignments/worker-org/assignment.env" "responsibility=migrate the storage adapter"
 assert_file_contains "$ORG_ASSIGN_STATE/assignments/worker-org/assignment.env" "decision_id=DEC-001"
 assert_file_contains "$ORG_ASSIGN_STATE/assignments/worker-org/assignment.env" "plan_id=PLAN-A"
 # Test invalid role rejection
@@ -2126,6 +2136,7 @@ checkpoint_org_output="$(MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STATE_DIR
 [[ "$checkpoint_org_output" == $'checkpoint updated\tworker-org\trunning' ]]
 checkpoint_show_org_output="$(MULTIAGENT_ROOT="$ORG_ASSIGN_REPO" MULTIAGENT_STATE_DIR="$ORG_ASSIGN_STATE" "$MULTIAGENT" subagent checkpoint-show worker-org)"
 [[ "$checkpoint_show_org_output" == *"role=qa"* ]]
+[[ "$checkpoint_show_org_output" == *"responsibility=migrate the storage adapter"* ]]
 [[ "$checkpoint_show_org_output" == *"decision_id=DEC-001"* ]]
 [[ "$checkpoint_show_org_output" == *"plan_id=PLAN-A"* ]]
 # Test multiagent status includes organizational metadata columns
@@ -2319,15 +2330,12 @@ if MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag status WF-001 NODE-A 
 fi
 assert_file_contains "$TMPDIR/invalid-status.out" "invalid status: invalid-status"
 
-# Test role validation - invalid roles should be rejected
-if MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag add-node WF-001 NODE-INVALID-ROLE --agent worker-invalid --assignment-id assign-invalid --role decision --branch worker/invalid --owned file-invalid.txt >"$TMPDIR/invalid-role.out" 2>&1; then
-  echo "expected invalid role 'decision' to fail" >&2
-  cat "$TMPDIR/invalid-role.out" >&2
-  exit 1
-fi
-assert_file_contains "$TMPDIR/invalid-role.out" "invalid role: decision"
+# DAG responsibility is orchestrator-defined rather than a framework enum.
+custom_responsibility_output="$(MULTIAGENT_STATE_DIR="$DAG_STATE_DIR" "$MULTIAGENT" dag add-node WF-001 NODE-CUSTOM-RESPONSIBILITY --agent worker-custom --assignment-id assign-custom --responsibility "audit storage compatibility" --branch worker/custom --owned file-custom.txt)"
+[[ "$custom_responsibility_output" == *"node added"* ]]
+assert_file_contains "$DAG_STATE_DIR/workflows/WF-001/nodes.tsv" $'NODE-CUSTOM-RESPONSIBILITY\tworker-custom\tassign-custom\taudit storage compatibility'
 
-# Test role validation - valid roles should be accepted
+# The legacy --role spelling remains a compatibility alias for responsibility.
 valid_roles=("exploitation" "exploration" "reflection" "architecture" "qa" "verifier" "scout")
 for i in "${!valid_roles[@]}"; do
   role="${valid_roles[$i]}"

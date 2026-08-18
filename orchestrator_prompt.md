@@ -142,8 +142,9 @@ Use clear names:
 - Verifiers: `verifier-01-short-task`
 - Long-running subagents: `subagent-build-watch`
 
-Use one verifier window per worker assignment at a time. A verifier is a
-read-only reviewer, not a second implementer.
+Choose verifier topology from the evidence boundary. A verifier may review one
+assignment or a consolidated diff; the framework does not require one verifier
+per worker. A verifier is a read-only reviewer, not a second implementer.
 
 Before spawning a replacement worker for the same owned files, poll the existing
 worker and either finalize/kill it or explicitly wait. Prefer the bounded

@@ -498,8 +498,8 @@ class MigrationCliContractTest(unittest.TestCase):
                         "worker-{:02d}".format(index),
                         "--assignment-id",
                         "A-{:02d}".format(index),
-                        "--role",
-                        "qa",
+                        "--responsibility",
+                        "repair-component-{:02d}".format(index),
                         "--branch",
                         "worker/{:02d}".format(index),
                         "--owned",
@@ -523,6 +523,10 @@ class MigrationCliContractTest(unittest.TestCase):
         with (dag_dir / "nodes.tsv").open(encoding="utf-8", newline="") as handle:
             rows = list(csv.DictReader(handle, delimiter="\t"))
         self.assertEqual(len(rows), 12)
+        self.assertEqual(
+            {row["responsibility"] for row in rows},
+            {"repair-component-{:02d}".format(index) for index in range(12)},
+        )
         self.assertEqual(
             {row["node_id"] for row in rows},
             {"NODE-{:02d}".format(index) for index in range(12)},

@@ -5,7 +5,6 @@ use crate::{
     supervisor,
 };
 use chrono::{Local, Utc};
-use fs2::FileExt;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -110,22 +109,17 @@ pub fn role_agent_exec(args: &[String]) -> Result<ExitCode, String> {
     let cfg = RuntimeConfig::load()?;
     supervisor::validate_runtime_state(&cfg.state)?;
     let dir = cfg.state.join("subagents").join(name);
-    let writer_lock = if supervisor::launch_requires_writer(&cfg.state, name)? {
-        let lock_path = cfg.state.join("launch-authorizations/.writer.lock");
-        let lock = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(&lock_path)
-            .map_err(io_error("open secure writer lock"))?;
-        lock.try_lock_exclusive()
-            .map_err(|_| "another workspace writer is already active".to_string())?;
-        Some(lock)
+    let requires_writer = supervisor::launch_requires_writer(&cfg.state, name)?;
+    let authorization = supervisor::claim_launch(&cfg.state, name)?;
+    let writer_lease = if requires_writer {
+        Some(supervisor::acquire_writer_lease(
+            &cfg.state,
+            name,
+            &authorization.owned_paths,
+        )?)
     } else {
         None
     };
-    let authorization = supervisor::claim_launch(&cfg.state, name)?;
     let cli = &authorization.cli;
     validate_cli(cli)?;
     if !cfg.headless(cli) {
@@ -176,9 +170,16 @@ pub fn role_agent_exec(args: &[String]) -> Result<ExitCode, String> {
     } else {
         READER_UID
     };
-    if access == CodexAccess::WorkspaceWrite {
-        prepare_workspace_write_boundary(&cfg.state, &cfg.root, &authorization.owned_paths)?;
-    }
+    let mut write_boundary = if access == CodexAccess::WorkspaceWrite {
+        Some(WorkspaceWriteBoundary::acquire(
+            &cfg.state,
+            &cfg.root,
+            &authorization.owned_paths,
+            writer_lease.as_ref().is_some_and(|lease| lease.scoped()),
+        )?)
+    } else {
+        None
+    };
     let output = supervisor::prepare_private_output(&cfg.state, name, role_uid)?;
     let runner_args = build_agent_runner_args(
         cli,
@@ -206,11 +207,10 @@ pub fn role_agent_exec(args: &[String]) -> Result<ExitCode, String> {
         &runner_args,
     );
     let _ = fs::remove_file(supervisor_pid);
-    let revoked = if access == CodexAccess::WorkspaceWrite {
-        revoke_workspace_writes(&cfg.state, &cfg.root, &authorization.owned_paths)
-    } else {
-        Ok(())
-    };
+    let revoked = write_boundary
+        .as_mut()
+        .map(WorkspaceWriteBoundary::close)
+        .unwrap_or(Ok(()));
     let sealed = supervisor::seal_role_output(
         &cfg.state,
         name,
@@ -220,9 +220,9 @@ pub fn role_agent_exec(args: &[String]) -> Result<ExitCode, String> {
         &public_output,
     );
     supervisor::finish_launch(&cfg.state, name)?;
-    drop(writer_lock);
     revoked?;
     sealed?;
+    drop(writer_lease);
     result
 }
 
@@ -1229,7 +1229,7 @@ pub fn subagent(args: &[String]) -> Result<ExitCode, String> {
 
 fn print_subagent_usage() {
     println!(
-        "Usage:\n  multiagent subagent spawn NAME [--own PATH[,PATH...] ...] [--assignment-id ID] [--workflow-id ID --decision-id ID --plan-id ID] [--branch BRANCH] [--start-commit COMMIT] [--role ROLE] [--instruction TEXT | --instruction-file PATH | -- TEXT]\n  multiagent subagent list|recover-plan|restore-all|gate-check\n  multiagent subagent poll|inspect|restore|finalize|kill NAME [OPTIONS]\n  multiagent subagent wait NAME [--timeout SECONDS] [--poll-interval SECONDS]\n\nAll durable state and tmux subprocess orchestration are implemented by the Rust CLI."
+        "Usage:\n  multiagent subagent spawn NAME [--own PATH[,PATH...] ...] [--assignment-id ID] [--workflow-id ID --decision-id ID --plan-id ID] [--branch BRANCH] [--start-commit COMMIT] [--role ROLE] [--responsibility TEXT] [--instruction TEXT | --instruction-file PATH | -- TEXT]\n  multiagent subagent list|recover-plan|restore-all|gate-check\n  multiagent subagent poll|inspect|restore|finalize|kill NAME [OPTIONS]\n  multiagent subagent wait NAME [--timeout SECONDS] [--poll-interval SECONDS]\n\nAll durable state and tmux subprocess orchestration are implemented by the Rust CLI."
     );
 }
 
@@ -1259,7 +1259,7 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
                 index += 2;
             }
             "--assignment-id" | "--workflow-id" | "--decision-id" | "--plan-id" | "--branch"
-            | "--start-commit" => {
+            | "--start-commit" | "--responsibility" => {
                 assignment_values.insert(
                     args[index].clone(),
                     required_value(args, index, "spawn assignment metadata")?.to_string(),
@@ -1342,7 +1342,6 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
     if window_exists(&cfg.session, name) {
         return Err(format!("subagent window already exists: {name}"));
     }
-    reject_parallel_generic_worker_spawn(cfg, name)?;
     if owned.is_empty() && !assignment_values.is_empty() {
         return Err("spawn assignment metadata requires --own PATH".into());
     }
@@ -1357,6 +1356,7 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
                 ("--plan-id", "plan_id"),
                 ("--branch", "branch"),
                 ("--start-commit", "start_commit"),
+                ("--responsibility", "responsibility"),
             ] {
                 if let Some(requested) = assignment_values.get(flag) {
                     if metadata.get(key) != Some(requested) {
@@ -1412,6 +1412,7 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
                 "--decision-id",
                 "--plan-id",
                 "--start-commit",
+                "--responsibility",
             ] {
                 if let Some(value) = assignment_values.get(flag) {
                     command.push(flag.to_string());
@@ -2402,27 +2403,6 @@ fn implementation_context(cfg: &RuntimeConfig, name: &str) -> Result<Option<Path
     Ok(Some(path))
 }
 
-fn reject_parallel_generic_worker_spawn(cfg: &RuntimeConfig, name: &str) -> Result<(), String> {
-    if env::var("MULTIAGENT_ALLOW_PARALLEL_WORKERS").as_deref() == Ok("1")
-        || !name.starts_with("worker-")
-    {
-        return Ok(());
-    }
-    for dir in sorted_directories(&cfg.state.join("subagents"))? {
-        let existing = file_name(&dir)?;
-        if existing == name || !existing.starts_with("worker-") {
-            continue;
-        }
-        let status = read_trimmed(&dir.join("status")).unwrap_or_else(|| "unknown".into());
-        if matches!(status.as_str(), "starting" | "running" | "restoring")
-            && window_exists(&cfg.session, &existing)
-        {
-            return Err(format!("active generic worker already running: existing={existing} status={status}; wait, finalize/kill it, or set MULTIAGENT_ALLOW_PARALLEL_WORKERS=1 only with explicit disjoint ownership"));
-        }
-    }
-    Ok(())
-}
-
 #[allow(clippy::too_many_arguments)]
 fn build_cli_command(
     cli: &str,
@@ -2580,34 +2560,78 @@ fn secure_agent_write_roots(
     paths.into_iter().collect()
 }
 
+struct WorkspaceWriteBoundary {
+    state: PathBuf,
+    root: PathBuf,
+    owned_paths: Vec<PathBuf>,
+    scoped: bool,
+    active: bool,
+}
+
+impl WorkspaceWriteBoundary {
+    fn acquire(
+        state: &Path,
+        root: &Path,
+        owned_paths: &[PathBuf],
+        scoped: bool,
+    ) -> Result<Self, String> {
+        prepare_workspace_write_boundary(state, root, owned_paths, scoped)?;
+        Ok(Self {
+            state: state.to_path_buf(),
+            root: root.to_path_buf(),
+            owned_paths: owned_paths.to_vec(),
+            scoped,
+            active: true,
+        })
+    }
+
+    fn close(&mut self) -> Result<(), String> {
+        if !self.active {
+            return Ok(());
+        }
+        revoke_workspace_writes(&self.state, &self.root, &self.owned_paths, self.scoped)?;
+        self.active = false;
+        Ok(())
+    }
+}
+
+impl Drop for WorkspaceWriteBoundary {
+    fn drop(&mut self) {
+        let _ = self.close();
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn prepare_workspace_write_boundary(
     state: &Path,
     root: &Path,
     owned_paths: &[PathBuf],
+    scoped: bool,
 ) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
-    let ledger = state.join("launch-authorizations/active-writer-paths");
-    if ledger.is_file() {
-        for line in fs::read_to_string(&ledger)
-            .map_err(io_error("read prior writer ownership ledger"))?
-            .lines()
-            .filter(|line| !line.is_empty())
-        {
-            let path = PathBuf::from(line);
-            if path.starts_with(root) && path != root && path.exists() {
-                set_workspace_tree_owner(&path, 0, false)?;
+    if !scoped {
+        let ledger = state.join("launch-authorizations/active-writer-paths");
+        if ledger.is_file() {
+            for line in fs::read_to_string(&ledger)
+                .map_err(io_error("read prior writer ownership ledger"))?
+                .lines()
+                .filter(|line| !line.is_empty())
+            {
+                let path = PathBuf::from(line);
+                if path.starts_with(root) && path != root && path.exists() {
+                    set_workspace_tree_owner(&path, 0, false)?;
+                }
             }
         }
+        let text = owned_paths
+            .iter()
+            .map(|path| format!("{}\n", path.display()))
+            .collect::<String>();
+        atomic_write(&ledger, &text, "active writer ownership ledger")?;
+        fs::set_permissions(&ledger, fs::Permissions::from_mode(0o600))
+            .map_err(io_error("protect writer ownership ledger"))?;
     }
-    let text = owned_paths
-        .iter()
-        .map(|path| format!("{}\n", path.display()))
-        .collect::<String>();
-    atomic_write(&ledger, &text, "active writer ownership ledger")?;
-    fs::set_permissions(&ledger, fs::Permissions::from_mode(0o600))
-        .map_err(io_error("protect writer ownership ledger"))?;
     for path in owned_paths {
         if !path.starts_with(root) || path == root {
             return Err(format!(
@@ -2625,6 +2649,7 @@ fn prepare_workspace_write_boundary(
     _state: &Path,
     _root: &Path,
     _owned_paths: &[PathBuf],
+    _scoped: bool,
 ) -> Result<(), String> {
     Err("filesystem writer ownership requires Linux".into())
 }
@@ -2634,6 +2659,7 @@ fn revoke_workspace_writes(
     state: &Path,
     root: &Path,
     owned_paths: &[PathBuf],
+    scoped: bool,
 ) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
@@ -2642,10 +2668,14 @@ fn revoke_workspace_writes(
             set_workspace_tree_owner(path, 0, false)?;
         }
     }
-    let ledger = state.join("launch-authorizations/active-writer-paths");
-    atomic_write(&ledger, "", "clear writer ownership ledger")?;
-    fs::set_permissions(&ledger, fs::Permissions::from_mode(0o600))
-        .map_err(io_error("protect writer ownership ledger"))
+    if scoped {
+        Ok(())
+    } else {
+        let ledger = state.join("launch-authorizations/active-writer-paths");
+        atomic_write(&ledger, "", "clear writer ownership ledger")?;
+        fs::set_permissions(&ledger, fs::Permissions::from_mode(0o600))
+            .map_err(io_error("protect writer ownership ledger"))
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -2653,6 +2683,7 @@ fn revoke_workspace_writes(
     _state: &Path,
     _root: &Path,
     _owned_paths: &[PathBuf],
+    _scoped: bool,
 ) -> Result<(), String> {
     Err("filesystem writer ownership requires Linux".into())
 }

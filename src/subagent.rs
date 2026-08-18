@@ -246,6 +246,7 @@ fn checkpoint_update(args: &[String]) -> Result<(), String> {
         ("idempotency", idempotency),
         ("status", status),
         ("role", role),
+        ("responsibility", env_value(&metadata, "responsibility")),
         ("decision_id", env_value(&metadata, "decision_id")),
         ("plan_id", env_value(&metadata, "plan_id")),
         ("workflow_id", env_value(&metadata, "workflow_id")),
@@ -432,6 +433,7 @@ struct AssignmentOptions {
     status: String,
     start_commit: String,
     role: String,
+    responsibility: String,
     decision_id: String,
     plan_id: String,
     workflow_id: String,
@@ -448,6 +450,7 @@ fn assignment_create(args: &[String]) -> Result<(), String> {
             options.role
         ));
     }
+    reject_newline("--responsibility", &options.responsibility)?;
 
     let root =
         fs::canonicalize(config::root()?).map_err(io_error("canonicalize MULTIAGENT_ROOT"))?;
@@ -530,6 +533,7 @@ fn assignment_create(args: &[String]) -> Result<(), String> {
         ("subagent_cli", subagent_cli.as_str()),
         ("verifier_cli", verifier_cli.as_str()),
         ("role", options.role.as_str()),
+        ("responsibility", options.responsibility.as_str()),
         ("decision_id", options.decision_id.as_str()),
         ("plan_id", options.plan_id.as_str()),
         (
@@ -2523,7 +2527,8 @@ fn parse_assignment(args: &[String]) -> Result<AssignmentOptions, String> {
         match key.as_str() {
             "--owned" => owned.push(value.clone()),
             "--assignment-id" | "--branch" | "--status" | "--start-commit" | "--role"
-            | "--decision-id" | "--plan-id" | "--workflow-id" | "--node-id" | "--depends-on" => {
+            | "--responsibility" | "--decision-id" | "--plan-id" | "--workflow-id"
+            | "--node-id" | "--depends-on" => {
                 values.insert(key.clone(), value.clone());
             }
             _ => return Err(format!("unknown assignment-create argument: {key}")),
@@ -2554,6 +2559,7 @@ fn parse_assignment(args: &[String]) -> Result<AssignmentOptions, String> {
             .get("--role")
             .cloned()
             .unwrap_or_else(|| "exploitation".into()),
+        responsibility: values.get("--responsibility").cloned().unwrap_or_default(),
         decision_id: values.get("--decision-id").cloned().unwrap_or_default(),
         plan_id: values.get("--plan-id").cloned().unwrap_or_default(),
         workflow_id: values.get("--workflow-id").cloned().unwrap_or_default(),

@@ -6,24 +6,14 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 const NODE_HEADER: &str =
-    "node_id\tagent\tassignment_id\trole\tbranch\towned_paths\tstatus\tdecision_id\tplan_id\tadded_at";
+    "node_id\tagent\tassignment_id\tresponsibility\tbranch\towned_paths\tstatus\tdecision_id\tplan_id\tadded_at";
 const EDGE_HEADER: &str = "from_node\tto_node\tadded_at";
 const STATUSES: &[&str] = &[
     "pending", "ready", "running", "blocked", "done", "failed", "skipped",
 ];
-const ROLES: &[&str] = &[
-    "exploitation",
-    "exploration",
-    "reflection",
-    "architecture",
-    "qa",
-    "verifier",
-    "scout",
-];
-
 const USAGE: &str = r#"Usage:
   multiagent dag init WORKFLOW_ID --title TEXT [--owner NAME]
-  multiagent dag add-node WORKFLOW_ID NODE_ID --agent NAME --assignment-id ID --role ROLE --branch BRANCH --owned PATH[,PATH...] [--depends-on NODE[,NODE...]] [--status STATUS] [--decision-id ID] [--plan-id ID]
+  multiagent dag add-node WORKFLOW_ID NODE_ID --agent NAME --assignment-id ID --responsibility TEXT --branch BRANCH --owned PATH[,PATH...] [--depends-on NODE[,NODE...]] [--status STATUS] [--decision-id ID] [--plan-id ID]
   multiagent dag status WORKFLOW_ID NODE_ID STATUS [--reason TEXT]
   multiagent dag ready WORKFLOW_ID
   multiagent dag blocked WORKFLOW_ID
@@ -108,7 +98,7 @@ struct Node {
     node_id: String,
     agent: String,
     assignment_id: String,
-    role: String,
+    responsibility: String,
     branch: String,
     owned_paths: String,
     status: String,
@@ -125,7 +115,7 @@ impl Node {
             node_id: fields[0].to_string(),
             agent: fields[1].to_string(),
             assignment_id: fields[2].to_string(),
-            role: fields[3].to_string(),
+            responsibility: fields[3].to_string(),
             branch: fields[4].to_string(),
             owned_paths: fields[5].to_string(),
             status: fields[6].to_string(),
@@ -140,7 +130,7 @@ impl Node {
             self.node_id.as_str(),
             self.agent.as_str(),
             self.assignment_id.as_str(),
-            self.role.as_str(),
+            self.responsibility.as_str(),
             self.branch.as_str(),
             self.owned_paths.as_str(),
             self.status.as_str(),
@@ -222,6 +212,7 @@ fn add_node(args: &[String]) -> Result<(), String> {
         &[
             "agent",
             "assignment-id",
+            "responsibility",
             "role",
             "branch",
             "owned",
@@ -237,19 +228,27 @@ fn add_node(args: &[String]) -> Result<(), String> {
         "assignment-id",
         "add-node requires --assignment-id",
     )?;
-    let role = required(&options, "role", "add-node requires --role")?;
+    let responsibility = match (
+        options.get("responsibility").map(String::as_str),
+        options.get("role").map(String::as_str),
+    ) {
+        (Some(_), Some(_)) => {
+            return Err("add-node accepts only one of --responsibility or --role".into())
+        }
+        (Some(value), None) | (None, Some(value)) if !value.is_empty() => value,
+        _ => return Err("add-node requires --responsibility".into()),
+    };
     let branch = required(&options, "branch", "add-node requires --branch")?;
     let owned = required(&options, "owned", "add-node requires --owned")?;
     let status = options
         .get("status")
         .map(String::as_str)
         .unwrap_or("pending");
-    validate_role(role)?;
     validate_status(status)?;
     for (label, current) in [
         ("--agent", agent),
         ("--assignment-id", assignment_id),
-        ("--role", role),
+        ("--responsibility", responsibility),
         ("--branch", branch),
         ("--owned", owned),
         ("--depends-on", value(&options, "depends-on")),
@@ -293,7 +292,7 @@ fn add_node(args: &[String]) -> Result<(), String> {
         node_id: node_id.clone(),
         agent: agent.to_string(),
         assignment_id: assignment_id.to_string(),
-        role: role.to_string(),
+        responsibility: responsibility.to_string(),
         branch: branch.to_string(),
         owned_paths: owned.to_string(),
         status: status.to_string(),
@@ -521,19 +520,9 @@ fn validate_status(status: &str) -> Result<(), String> {
     }
 }
 
-fn validate_role(role: &str) -> Result<(), String> {
-    if ROLES.contains(&role) {
-        Ok(())
-    } else {
-        Err(format!(
-            "invalid role: {role} (expected exploitation|exploration|reflection|architecture|qa|verifier|scout)"
-        ))
-    }
-}
-
 fn reject_newline(label: &str, current: &str) -> Result<(), String> {
-    if current.contains('\n') || current.contains('\r') {
-        Err(format!("{label} may not contain newlines"))
+    if current.contains(['\n', '\r', '\t']) {
+        Err(format!("{label} may not contain tabs or newlines"))
     } else {
         Ok(())
     }

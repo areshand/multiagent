@@ -50,7 +50,8 @@ for the remaining outputs before implementation.
 Before spawning the edit-capable implementation worker, poll or inspect any
 active scout once, persist useful findings, then finalize or kill the scout if it
 is still running. Do not let an active generic scout block the implementation
-worker spawn; enable parallel workers only for explicit disjoint ownership.
+worker spawn. Choose the implementation topology from the task and record
+explicit, non-overlapping ownership for every concurrent writer.
 When a task may add, remove, rename, or move source symbols, the worker first
 instruction must include `source-owner-ledger:` with `selected-owner=...`, all
 plausible `candidate-owner=...`, rejected-owner reasons, and

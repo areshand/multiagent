@@ -192,6 +192,20 @@ fn landlock_unavailable(error: &str) -> bool {
             || error.contains("Protocol not supported"))
 }
 
+/// Return whether this kernel can enforce a distinct write allowlist for each
+/// writer process. Callers may use this capability to admit disjoint writers
+/// concurrently; the filesystem ownership fallback is safe only for one
+/// writer at a time.
+#[cfg(target_os = "linux")]
+pub fn supports_scoped_writers() -> bool {
+    linux::abi_version().is_some()
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn supports_scoped_writers() -> bool {
+    false
+}
+
 #[cfg(unix)]
 extern "C" fn terminate_supervised_child(_signal: libc::c_int) {
     let child = SUPERVISED_CHILD.load(Ordering::SeqCst);
@@ -313,6 +327,18 @@ mod linux {
     const ACCESS_TRUNCATE: u64 = 1 << 14;
     const ACCESS_IOCTL_DEV: u64 = 1 << 15;
 
+    pub fn abi_version() -> Option<libc::c_long> {
+        let abi = unsafe {
+            libc::syscall(
+                libc::SYS_landlock_create_ruleset,
+                std::ptr::null::<RulesetAttr>(),
+                0,
+                LANDLOCK_CREATE_RULESET_VERSION,
+            )
+        };
+        (abi >= 1).then_some(abi)
+    }
+
     #[repr(C)]
     struct RulesetAttr {
         handled_access_fs: u64,
@@ -325,20 +351,12 @@ mod linux {
     }
 
     pub fn restrict_writes(write_roots: &[PathBuf]) -> Result<(), String> {
-        let abi = unsafe {
-            libc::syscall(
-                libc::SYS_landlock_create_ruleset,
-                std::ptr::null::<RulesetAttr>(),
-                0,
-                LANDLOCK_CREATE_RULESET_VERSION,
-            )
-        };
-        if abi < 1 {
+        let Some(abi) = abi_version() else {
             return Err(format!(
                 "Landlock is unavailable; refusing to run without role write enforcement: {}",
                 io::Error::last_os_error()
             ));
-        }
+        };
 
         let handled_access = handled_access_for_abi(abi);
         let ruleset_attr = RulesetAttr {

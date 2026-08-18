@@ -86,7 +86,7 @@ Production Linux runs four process identities:
 | Identity | May read target | May write target | Protected-state authority |
 | --- | --- | --- | --- |
 | Orchestrator | yes | no | typed requests only |
-| Writer | yes | assigned paths while leased | no |
+| Writers | yes | assigned paths while leased | no |
 | Scout/reviewer | yes | no | sealed evidence only |
 | Supervisor | metadata needed for gates | grants/revokes writer paths | yes |
 
@@ -127,10 +127,17 @@ pre-implementation -> implementation -> post-implementation -> complete
 
 ### Implementation
 
-The supervisor authorizes one writer for predeclared paths. The writer receives
-the complete approved context and registered contract. Assignment checks reject
-changed files outside the declared scope. Read-only exploration can still run
-in parallel.
+The orchestrator builds an adaptive task graph and chooses worker
+responsibilities. The supervisor does not choose a worker count or task split;
+it authorizes each writer for predeclared paths only after the implementation
+gate is ready. The DAG reports dependency-ready nodes for orchestrator routing.
+Assignment checks reject changed files outside the declared scope.
+
+Disjoint writers can run concurrently when Linux Landlock provides a distinct
+per-process write boundary. Overlapping ownership is rejected. On systems
+without that boundary, the same workflow remains valid but writer execution is
+serialized as a security fallback. Read-only agents are not subject to the
+writer lease.
 
 ### Post-implementation
 

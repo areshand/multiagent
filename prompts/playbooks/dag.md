@@ -39,12 +39,13 @@ pending -> ready -> running -> done
 Only the orchestrator updates node status. Agents report their state; the
 orchestrator translates reports into DAG state.
 
-## Typical Role Dependencies
+## Responsibilities
 
-- Exploration nodes usually depend only on initial architecture or research.
-- Exploitation nodes depend on the selected decision and required architecture.
-- QA/verifier nodes depend on the implementation nodes they verify.
-- Reflection nodes depend on implementation, QA, or metrics nodes.
+`--responsibility` is orchestrator-defined text, not a framework enum. Describe
+the concrete output of the node, such as `repair storage adapter` or `verify API
+compatibility`. Security authority is selected separately when the agent is
+spawned.
 
 The DAG provides structure and dependency tracking; it does not automatically
-spawn agents. The orchestrator remains the active workflow controller.
+spawn agents or prescribe a topology. The orchestrator remains the active
+workflow controller.

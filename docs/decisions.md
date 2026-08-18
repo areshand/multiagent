@@ -77,19 +77,26 @@ state, create work requests, and ask for completion, but it cannot directly edit
 the target or protected state. A bypassed high-level CLI still runs under the
 same non-writing Unix identity.
 
-## Permit One Path-Scoped Writer
+## Keep Topology Adaptive and Writing Path-Scoped
 
-**Decision:** Only one writer may be active. Its launch authorization binds the
-workflow, assignment, backend, prompt, and predeclared owned paths. Ownership is
-granted for the role lifetime and revoked after exit or cancellation.
+**Decision:** The orchestrator chooses the task graph, worker count, and each
+worker's responsibility. The supervisor does not encode a preferred topology.
+It admits write-capable workers only when their durable assignments own
+non-overlapping paths and the lifecycle gate is open.
 
-**Why:** Multiple writers complicate overlap detection and permit detached or
-late writes after cancellation. Sequential publication gives one consistent
-snapshot and acceptance boundary while agents may still explore in parallel as
-read-only roles.
+On Linux kernels with Landlock, disjoint writers may run concurrently under
+per-process write allowlists. If that isolation is unavailable, the supervisor
+falls back to a single active writer because shared Unix ownership cannot
+safely distinguish two processes using the writer UID.
 
-**Consequence:** Multiagent prioritizes deterministic authority over maximum
-write concurrency.
+**Why:** Task decomposition is semantic and belongs to the orchestrator;
+non-overlap, lifecycle readiness, and isolation capability are mechanical and
+belong to the supervisor. A hard-coded worker count makes simple work expensive
+and parallelizable work unnecessarily slow.
+
+**Consequence:** Multiagent imposes no fixed worker count or responsibility
+catalog. Available isolation and actual path conflicts determine concurrency,
+while completion still evaluates one canonical diff.
 
 ## Bind Semantics and Reviews to Immutable Evidence
 

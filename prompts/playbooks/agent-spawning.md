@@ -87,9 +87,11 @@ progress, before stopping, and whenever a blocker appears.
 Read-only scouts are temporary evidence gatherers. Before spawning the first
 edit-capable worker, poll or inspect any active scout once, persist the useful
 ledger/findings, then finalize or kill the scout if it is still running. Do not
-let an active generic scout block `multiagent subagent spawn` for the implementation
-worker. Use `MULTIAGENT_ALLOW_PARALLEL_WORKERS=1` only when you intentionally
-want parallel disjoint workers and have recorded non-overlapping ownership.
+let an active generic scout block `multiagent subagent spawn` for implementation.
+The orchestrator may select any number of workers and task-specific
+responsibilities. Give every concurrent writer a durable path-scoped
+assignment; the supervisor admits disjoint leases and rejects overlap
+mechanically.
 
 For a contract scout, finalize it and register its sealed output before any
 worker or reviewer starts:

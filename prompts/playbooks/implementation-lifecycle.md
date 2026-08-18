@@ -100,7 +100,9 @@ workers.
 
 ## Implementation
 
-Spawn bounded exploitation workers only after the implementation gate passes.
+Spawn bounded write-capable workers only after the implementation gate passes.
+Choose their count and responsibilities from the approved plan rather than a
+framework default. Concurrent writers must have disjoint owned paths.
 Every assignment must reference the active workflow, decision, and plan. The
 worker's first instruction must contain the complete current approved
 implementation context; a decision ID alone is insufficient.

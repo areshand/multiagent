@@ -1,9 +1,10 @@
-use crate::{authority::AuthorityRequest, config, state::read_env as read_env_file};
+use crate::{authority::AuthorityRequest, config, role_sandbox, state::read_env as read_env_file};
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::env;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -99,6 +100,144 @@ pub struct LaunchAuthorization {
     pub cli_bin: String,
     pub instruction: PathBuf,
     pub owned_paths: Vec<PathBuf>,
+}
+
+/// A live workspace-writer lease.
+///
+/// Kernels with Landlock receive path-scoped leases, so any number of
+/// non-overlapping writers can run. Other kernels retain the conservative
+/// single-writer lock because Unix ownership alone cannot isolate processes
+/// that share the writer UID.
+pub struct WriterLease {
+    file: File,
+    path: Option<PathBuf>,
+    scoped: bool,
+}
+
+impl WriterLease {
+    pub fn scoped(&self) -> bool {
+        self.scoped
+    }
+}
+
+impl Drop for WriterLease {
+    fn drop(&mut self) {
+        if let Some(path) = &self.path {
+            let _ = fs::remove_file(path);
+        }
+        let _ = FileExt::unlock(&self.file);
+    }
+}
+
+pub fn acquire_writer_lease(
+    state: &Path,
+    name: &str,
+    owned_paths: &[PathBuf],
+) -> Result<WriterLease, String> {
+    if !role_sandbox::supports_scoped_writers() {
+        let path = state.join("launch-authorizations/.writer.lock");
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .map_err(|error| format!("open serial writer lock {}: {error}", path.display()))?;
+        file.try_lock_exclusive()
+            .map_err(|_| "another workspace writer is already active".to_string())?;
+        return Ok(WriterLease {
+            file,
+            path: None,
+            scoped: false,
+        });
+    }
+
+    acquire_scoped_writer_lease(state, name, owned_paths)
+}
+
+fn acquire_scoped_writer_lease(
+    state: &Path,
+    name: &str,
+    owned_paths: &[PathBuf],
+) -> Result<WriterLease, String> {
+    if owned_paths.is_empty() {
+        return Err("workspace writer requires at least one owned path".into());
+    }
+    let base = state.join("launch-authorizations/writer-leases");
+    fs::create_dir_all(&base).map_err(|error| format!("create writer lease directory: {error}"))?;
+    let registry_path = base.join(".lock");
+    let registry = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&registry_path)
+        .map_err(|error| format!("open writer lease registry: {error}"))?;
+    registry
+        .lock_exclusive()
+        .map_err(|error| format!("lock writer lease registry: {error}"))?;
+
+    for entry in fs::read_dir(&base).map_err(|error| format!("read writer leases: {error}"))? {
+        let path = entry
+            .map_err(|error| format!("read writer lease entry: {error}"))?
+            .path();
+        if path == registry_path
+            || path.extension().and_then(|value| value.to_str()) != Some("lease")
+        {
+            continue;
+        }
+        let existing = match OpenOptions::new().read(true).write(true).open(&path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("open writer lease {}: {error}", path.display())),
+        };
+        if existing.try_lock_exclusive().is_ok() {
+            fs::remove_file(&path).map_err(|error| {
+                format!("remove stale writer lease {}: {error}", path.display())
+            })?;
+            continue;
+        }
+        let active = fs::read_to_string(&path)
+            .map_err(|error| format!("read writer lease {}: {error}", path.display()))?;
+        for requested in owned_paths {
+            if let Some(conflict) = active
+                .lines()
+                .filter(|line| !line.is_empty())
+                .map(Path::new)
+                .find(|current| paths_overlap(requested, current))
+            {
+                return Err(format!(
+                    "active writer path overlap: requested={} existing={}",
+                    requested.display(),
+                    conflict.display()
+                ));
+            }
+        }
+    }
+
+    let path = base.join(format!("{name}.lease"));
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .map_err(|error| format!("create writer lease {}: {error}", path.display()))?;
+    file.lock_exclusive()
+        .map_err(|error| format!("lock writer lease {}: {error}", path.display()))?;
+    for owned in owned_paths {
+        writeln!(file, "{}", owned.display())
+            .map_err(|error| format!("write writer lease {}: {error}", path.display()))?;
+    }
+    FileExt::unlock(&registry).map_err(|error| format!("unlock writer lease registry: {error}"))?;
+    Ok(WriterLease {
+        file,
+        path: Some(path),
+        scoped: true,
+    })
+}
+
+fn paths_overlap(left: &Path, right: &Path) -> bool {
+    left == right || left.starts_with(right) || right.starts_with(left)
 }
 
 fn register_launch(args: &[String], renew: bool) -> Result<(), String> {
@@ -942,10 +1081,13 @@ pub fn start(_state: &Path, _executable: &Path) -> Result<u32, String> {
 
 #[cfg(test)]
 mod tests {
+    use super::acquire_scoped_writer_lease;
     #[cfg(target_os = "linux")]
     use super::serve_connection;
+    use std::fs;
     #[cfg(target_os = "linux")]
     use std::os::unix::net::UnixStream;
+    use std::path::PathBuf;
 
     #[cfg(target_os = "linux")]
     #[test]
@@ -954,5 +1096,31 @@ mod tests {
         drop(client);
 
         assert!(!serve_connection(&mut server).expect("isolate disconnected client"));
+    }
+
+    #[test]
+    fn scoped_writer_leases_allow_disjoint_topology_and_reject_overlap() {
+        let state = std::env::temp_dir().join(format!(
+            "multiagent-writer-lease-test-{}",
+            std::process::id()
+        ));
+        let first_paths = [PathBuf::from("/workspace/src/api")];
+        let second_paths = [PathBuf::from("/workspace/src/storage")];
+        let overlap_paths = [PathBuf::from("/workspace/src/api/routes")];
+
+        let first = acquire_scoped_writer_lease(&state, "first", &first_paths)
+            .expect("acquire first writer");
+        let second = acquire_scoped_writer_lease(&state, "second", &second_paths)
+            .expect("acquire disjoint writer");
+        let error = acquire_scoped_writer_lease(&state, "overlap", &overlap_paths)
+            .err()
+            .expect("reject overlapping writer");
+        assert!(error.contains("active writer path overlap"));
+
+        drop(first);
+        acquire_scoped_writer_lease(&state, "replacement", &overlap_paths)
+            .expect("released paths can be reassigned");
+        drop(second);
+        fs::remove_dir_all(state).expect("remove writer lease test state");
     }
 }

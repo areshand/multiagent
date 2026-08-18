@@ -5,10 +5,16 @@ uncertainty justifies parallel exploration before implementation.
 
 ## Fan-Out Rule
 
-Default to broad safe fan-out. Build a dependency graph from true blocking
-artifacts, not vague ordering preferences. When multiple useful workers are
-ready and their owned paths do not overlap, spawn them in the same wave and
-consolidate their outputs later.
+Choose topology from the task. The framework does not prescribe a worker count,
+fixed worker responsibilities, or a default fan-out width. Build a dependency
+graph from true blocking artifacts, not vague ordering preferences. When
+multiple useful workers are ready and their owned paths do not overlap, they may
+run in the same wave and consolidate their outputs later. A small cohesive task
+may still use one worker.
+
+Record each task-specific responsibility in assignment metadata. Security roles
+such as writer, scout, and reviewer describe authority only; they are not a
+catalog of what an agent is allowed to reason about.
 
 If one subtree is blocked, keep spawning every other ready subtree. If work runs
 sequentially, state the exact dependency that prevents safe parallelism.
