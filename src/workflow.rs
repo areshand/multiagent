@@ -991,10 +991,17 @@ fn completion_state(store: &Store, id: &str) -> Result<BTreeMap<String, String>,
     }
     let iteration = state_value(&state, "iteration");
     let reviews = read_reviews(&p.reviews)?;
-    let findings: BTreeSet<&str> = reviews
+    let mut latest = BTreeMap::new();
+    for review in reviews
         .iter()
-        .filter(|r| r.get(5) == iteration && r.get(3) == diff && r.get(2) == "findings")
-        .map(|r| r.get(1))
+        .filter(|r| r.get(5) == iteration && r.get(3) == diff)
+    {
+        latest.insert(review.get(1), review);
+    }
+    let findings: BTreeSet<&str> = latest
+        .values()
+        .filter(|review| review.get(2) == "findings")
+        .map(|review| review.get(1))
         .collect();
     if !findings.is_empty() {
         return Err(format!(
@@ -1002,10 +1009,10 @@ fn completion_state(store: &Store, id: &str) -> Result<BTreeMap<String, String>,
             findings.into_iter().collect::<Vec<_>>().join(",")
         ));
     }
-    let passed: BTreeSet<&str> = reviews
-        .iter()
-        .filter(|r| r.get(5) == iteration && r.get(3) == diff && r.get(2) == "pass")
-        .map(|r| r.get(1))
+    let passed: BTreeSet<&str> = latest
+        .values()
+        .filter(|review| review.get(2) == "pass")
+        .map(|review| review.get(1))
         .collect();
     let missing: Vec<&str> = POST_REVIEWS
         .iter()
@@ -1033,12 +1040,10 @@ fn completion_state(store: &Store, id: &str) -> Result<BTreeMap<String, String>,
                 unfinished.join(",")
             ));
         }
-        for review in reviews.iter().filter(|row| {
-            row.get(5) == iteration
-                && row.get(3) == diff
-                && row.get(2) == "pass"
-                && POST_REVIEWS.contains(&row.get(1))
-        }) {
+        for review in latest
+            .values()
+            .filter(|row| row.get(2) == "pass" && POST_REVIEWS.contains(&row.get(1)))
+        {
             let reviewer = review.get(7);
             if reviewer.is_empty() {
                 return Err(format!(

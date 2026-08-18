@@ -163,6 +163,13 @@ todos, the supervisor atomically marks those todos `superseded` and binds them t
 the same sealed reviewer evidence; no role may edit todo files directly.
 Orchestrator prose alone cannot erase a finding or weaken its done criteria.
 
+For lifecycle review rows on one frozen diff, a later supervisor-sealed review
+of the same type is the current verdict. Use a later `pass` only after the
+reviewer independently rechecks the original task, contract artifact, live diff,
+and the evidence or repair that addressed the earlier finding. The earlier row
+remains in the audit log. Do not manufacture a source-only change merely to get
+a new diff hash; a latest `findings` verdict still blocks completion.
+
 ## Verifier Infrastructure Failures
 
 If a verifier cannot complete its review because a tool call failed, a command
