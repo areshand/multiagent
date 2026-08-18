@@ -23,6 +23,11 @@ subagents persisted memory.
 
 ## Recovery Actions
 
+The lifecycle supervisor already restores exits covered by each agent's
+persisted `infra_retry_budget`. Rows that remain in this plan exhausted that
+budget or require semantic judgment; the supervisor deliberately does not
+choose a new worker, scope, or repair strategy.
+
 - `restore`: closed subagent with recoverable context. Report the restore, then run `multiagent subagent restore NAME` when appropriate.
 - `skip-open`: active tmux window already exists. Poll or inspect it; do not restore it.
 - `skip-finalized`: appears done, finalized, killed, or intentionally stopped. Do not restore by default.

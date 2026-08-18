@@ -67,12 +67,16 @@ Tmux owns PTYs and interactive terminal lifecycle. Python is restricted to
 evaluation and provenance; it does not implement a second production workflow
 or acceptance gate.
 
-On production Linux, separate Unix identities isolate the orchestrator, the
-single active writer, read-only agents, and the authority supervisor. The
+On production Linux, separate Unix identities isolate the orchestrator,
+path-scoped writers, read-only agents, and the authority supervisor. The
 orchestrator can read worker and reviewer state but cannot write the target
 repository or protected lifecycle state. Completion is a request to the
 supervisor, which checks every gate under the lifecycle lock before changing
-the phase to `complete`.
+the phase to `complete`. A Rust lifecycle reconciler also performs mechanical
+process polling, terminal cleanup, assignment settlement, stale validation
+lease handling, and only pre-budgeted infrastructure retries. It owns no
+semantic policy and sends protected mutations to the authority supervisor;
+prompts retain semantic routing but no longer implement those fixed operations.
 
 ## Common Commands
 

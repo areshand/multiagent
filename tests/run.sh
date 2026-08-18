@@ -403,6 +403,9 @@ assert_file_contains "$TMPDIR/launch.out" "Dashboard: MULTIAGENT_SESSION=launch-
 LAUNCH_BOOTSTRAP="$LAUNCH_STATE/orchestrator-bootstrap.sh"
 assert_file_contains "$MOCK_TMUX_LOG" "$(printf '%q' "$LAUNCH_BOOTSTRAP")"
 assert_file_contains "$MOCK_TMUX_LOG" "pipe-pane launch-cross-repo:orchestrator cat >> $LAUNCH_STATE/logs/orchestrator.log"
+assert_file_contains "$MOCK_TMUX_LOG" "new-window -d launch-cross-repo supervisor"
+assert_file_contains "$MOCK_TMUX_LOG" "$MULTIAGENT supervisor reconcile --watch --interval 2"
+assert_file_contains "$MOCK_TMUX_LOG" "pipe-pane launch-cross-repo:supervisor cat >> $LAUNCH_STATE/logs/supervisor.log"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "--cd $LAUNCH_STATE"
 if [[ "$HOST_KERNEL" == Linux ]]; then
   assert_file_contains "$LAUNCH_BOOTSTRAP" "$MULTIAGENT role-exec"
@@ -997,7 +1000,7 @@ assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "gate-check"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "required-path-outside-owned:"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "ownership blocker"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" 'SUBAGENT_CLI="$WORKER_CLI" multiagent subagent spawn'
-assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "multiagent subagent wait worker-01-task"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "lifecycle supervisor monitors and finalizes"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "Orchestration Routing Playbook"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "Contract Scout Workflow"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "Scope Guard Workflow"
@@ -1126,11 +1129,11 @@ assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Do not spawn w
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "live worker remains no-diff after a planning checkpoint"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Scout To Worker Handoff"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "active generic scout block"
-assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "assignment-status NAME failed"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Do not manually reproduce"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "most one same-owned-path replacement"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "live worker remains no-diff after a planning checkpoint"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "active generic scout block"
-assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "assignment-status NAME failed"
+assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "lifecycle supervisor settles terminal assignments"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-symbol map contract"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-symbol-map-passed:"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "structure=positive owner=OWNER member=FIELD member-type=TYPE"
@@ -1988,6 +1991,87 @@ restore_all_output="$("$MULTIAGENT" subagent restore-all)"
 [[ "$restore_all_output" == *$'skipped subagent-watch\tskip-finalized'* ]]
 [[ "$restore_all_output" == *"restored subagent-prompt-only"* ]]
 [[ "$restore_all_output" == *"restore-all complete: restored=1"* ]]
+
+# The Rust lifecycle supervisor owns mechanical terminal cleanup, assignment
+# synchronization, abandoned validation leases, and explicitly budgeted
+# infrastructure retries. It does not decide how to repair blocked work.
+RECON_STATE="$TMPDIR/reconcile-state"
+RECON_WINDOWS="$TMPDIR/reconcile-windows"
+RECON_CAPTURES="$TMPDIR/reconcile-captures"
+RECON_LOG="$TMPDIR/reconcile-tmux.log"
+mkdir -p "$RECON_STATE" "$RECON_CAPTURES"
+: >"$RECON_WINDOWS"
+: >"$RECON_LOG"
+
+printf 'Claude prompt ready\n' >"$RECON_CAPTURES/reconcile-done.txt"
+MOCK_TMUX_WINDOWS="$RECON_WINDOWS" MOCK_TMUX_CAPTURES="$RECON_CAPTURES" \
+  MOCK_TMUX_LOG="$RECON_LOG" MULTIAGENT_STATE_DIR="$RECON_STATE" \
+  "$MULTIAGENT" subagent spawn reconcile-done --own src/agent.rs \
+  --responsibility "exercise lifecycle reconciliation" --instruction "Finish cleanly" >/dev/null
+printf 'final status: coding agent exited rc=0\n' >"$RECON_CAPTURES/reconcile-done.txt"
+printf 'ACCEPTED\n' >"$RECON_STATE/subagents/reconcile-done/last-message.txt"
+MULTIAGENT_STATE_DIR="$RECON_STATE" "$MULTIAGENT" subagent validation-lease-acquire \
+  reconcile-lease --owner reconcile-done --target reconcile-target \
+  --command "cargo test" >/dev/null
+
+mkdir -p "$RECON_STATE/subagents/reconcile-blocked"
+printf 'running\n' >"$RECON_STATE/subagents/reconcile-blocked/status"
+printf 'Blocked: semantic input required\n' >"$RECON_STATE/subagents/reconcile-blocked/current.txt"
+printf 'reconcile-blocked\n' >>"$RECON_WINDOWS"
+printf 'Blocked: semantic input required\n' >"$RECON_CAPTURES/reconcile-blocked.txt"
+
+mkdir -p "$RECON_STATE/subagents/reconcile-untrusted-done"
+printf 'running\n' >"$RECON_STATE/subagents/reconcile-untrusted-done/status"
+printf 'reconcile-untrusted-done\n' >>"$RECON_WINDOWS"
+printf 'Final status: completed\n' >"$RECON_CAPTURES/reconcile-untrusted-done.txt"
+
+mkdir -p "$RECON_STATE/subagents/reconcile-retry"
+printf 'missing\n' >"$RECON_STATE/subagents/reconcile-retry/status"
+printf 'Previous progress before infrastructure exit\n' >"$RECON_STATE/subagents/reconcile-retry/current.txt"
+printf 'Previous transcript before infrastructure exit\n' >"$RECON_STATE/subagents/reconcile-retry/transcript.log"
+cat >"$RECON_STATE/subagents/reconcile-retry/meta.env" <<EOF
+name=reconcile-retry
+session=$MULTIAGENT_SESSION
+root=$ROOT
+write_policy=$MULTIAGENT_WRITE_POLICY
+cli=claude
+cli_bin=true
+infra_retry_budget=1
+infra_retry_count=0
+created_at=2026-01-01T00:00:00Z
+EOF
+printf 'Restored Claude prompt ready\n' >"$RECON_CAPTURES/reconcile-retry.txt"
+
+reconcile_output="$(MOCK_TMUX_WINDOWS="$RECON_WINDOWS" \
+  MOCK_TMUX_CAPTURES="$RECON_CAPTURES" MOCK_TMUX_LOG="$RECON_LOG" \
+  MULTIAGENT_STATE_DIR="$RECON_STATE" "$MULTIAGENT" supervisor reconcile)"
+[[ "$reconcile_output" == *$'reconcile-done\tdone\tfinalized\tterminal-process-cleaned'* ]]
+[[ "$reconcile_output" == *$'reconcile-blocked\tblocked\tneeds-decision\twindow-open'* ]]
+[[ "$reconcile_output" == *$'reconcile-untrusted-done\trunning\tobserved\twindow-open'* ]]
+[[ "$reconcile_output" == *$'reconcile-retry\tmissing\trestored\tbudgeted-infrastructure-retry'* ]]
+assert_file_contains "$RECON_STATE/subagents/reconcile-done/status" "done"
+assert_file_contains "$RECON_STATE/assignments/reconcile-done/status" "done"
+assert_file_contains "$RECON_STATE/validation-leases/reconcile-lease/status" "stale"
+assert_file_contains "$RECON_STATE/validation-leases/reconcile-lease/result.json" \
+  "owner-terminal-without-lease-result"
+assert_file_contains "$RECON_WINDOWS" "reconcile-blocked"
+assert_file_contains "$RECON_WINDOWS" "reconcile-untrusted-done"
+assert_file_contains "$RECON_WINDOWS" "reconcile-retry"
+assert_file_contains "$RECON_STATE/subagents/reconcile-retry/meta.env" "infra_retry_count=1"
+
+grep -Fvx -- "reconcile-retry" "$RECON_WINDOWS" >"$RECON_WINDOWS.next" || true
+mv "$RECON_WINDOWS.next" "$RECON_WINDOWS"
+printf 'missing\n' >"$RECON_STATE/subagents/reconcile-retry/status"
+printf 'Progress stopped again before completion\n' >"$RECON_STATE/subagents/reconcile-retry/current.txt"
+retry_exhausted_output="$(MOCK_TMUX_WINDOWS="$RECON_WINDOWS" \
+  MOCK_TMUX_CAPTURES="$RECON_CAPTURES" MOCK_TMUX_LOG="$RECON_LOG" \
+  MULTIAGENT_STATE_DIR="$RECON_STATE" "$MULTIAGENT" supervisor reconcile)"
+[[ "$retry_exhausted_output" == *$'reconcile-done\tdone\tunchanged\talready-settled'* ]]
+[[ "$retry_exhausted_output" == *$'reconcile-retry\tmissing\tneeds-recovery\tclosed-with-recoverable-context'* ]]
+if grep -Fqx -- "reconcile-retry" "$RECON_WINDOWS"; then
+  echo "expected the lifecycle supervisor to honor the exhausted retry budget" >&2
+  exit 1
+fi
 
 # Test organizational learning functionality
 

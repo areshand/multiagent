@@ -106,6 +106,15 @@ workspace.
 The supervisor isolates connection failures. A disconnected client or broken
 pipe terminates that request, not the authority service.
 
+A dedicated Rust lifecycle reconciler runs in the tmux session under the
+non-writing orchestrator identity, because that identity owns the tmux socket.
+It observes panes, persists terminal output, and closes completed processes.
+Assignment and validation-lease settlement crosses the typed socket to the
+authority supervisor; the reconciler cannot write protected state directly. It
+may restore a recoverable infrastructure exit only when the agent was launched
+with remaining `infra_retry_budget`. It never chooses the worker count, task
+split, owned paths, or semantic repair.
+
 ## Lifecycle
 
 The normal state sequence is:
@@ -138,6 +147,11 @@ per-process write boundary. Overlapping ownership is rejected. On systems
 without that boundary, the same workflow remains valid but writer execution is
 serialized as a security fallback. Read-only agents are not subject to the
 writer lease.
+
+This separates decisions from mechanics: the orchestrator reacts to `blocked`
+or exhausted recovery states, while the supervisor continuously reconciles
+observable process state without needing prompt instructions for polling,
+finalization, ownership release, or lease cleanup.
 
 ### Post-implementation
 

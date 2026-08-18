@@ -516,6 +516,10 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
         resume,
     )?;
     if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
+        let ready = state_dir.join("runtime_state/tmux-access-ready");
+        if ready.is_file() {
+            fs::remove_file(&ready).map_err(io_error("remove stale tmux access marker"))?;
+        }
         supervisor::register_runtime_state(&state_dir)?;
         supervisor::prepare_state_permissions(&state_dir)?;
         if !log_dir.starts_with(&state_dir) {
@@ -564,6 +568,23 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
             "tmux access marker",
         )?;
     }
+    if !window_exists(&session, "supervisor") {
+        let reconcile_command = format!(
+            "{} supervisor reconcile --watch --interval 2",
+            shell_escape(&executable.display().to_string())
+        );
+        tmux_checked(&[
+            "new-window",
+            "-d",
+            "-t",
+            &session,
+            "-n",
+            "supervisor",
+            &reconcile_command,
+        ])?;
+        pipe_log(&session, "supervisor", &log_dir)?;
+    }
+    tmux_checked(&["select-window", "-t", &format!("{session}:orchestrator")])?;
 
     println!("Started tmux session: {session}");
     println!("Attach with: tmux attach -t {session}");
@@ -573,6 +594,7 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
     println!("Prompt bundle: {}", prompt_bundle.display());
     println!("Subagent state: {}", state_dir.display());
     println!("Logs: {}", log_dir.display());
+    println!("Lifecycle reconciler: supervisor window (automatic)");
     println!(
         "Dashboard: MULTIAGENT_SESSION={} MULTIAGENT_ROOT={} {} watch",
         shell_escape(&session),
@@ -594,7 +616,7 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
 
 fn print_launch_usage() {
     println!(
-        "Usage: multiagent launch [--session NAME] [--root DIR] [--resume] [--attach|--no-attach]\n\nStarts a tmux multi-agent session with one orchestrator window."
+        "Usage: multiagent launch [--session NAME] [--root DIR] [--resume] [--attach|--no-attach]\n\nStarts a tmux multi-agent session with orchestrator and lifecycle-supervisor windows."
     );
 }
 
@@ -905,6 +927,251 @@ pub fn status(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ReconcileRow {
+    name: String,
+    observed: String,
+    action: String,
+    detail: String,
+}
+
+impl ReconcileRow {
+    fn line(&self) -> String {
+        format!(
+            "{}\t{}\t{}\t{}",
+            self.name, self.observed, self.action, self.detail
+        )
+    }
+}
+
+/// Reconcile process observations with protected lifecycle state.
+///
+/// This loop intentionally contains no worker-topology or semantic repair
+/// policy. It only performs operations whose result follows mechanically from
+/// observable process state and the retry budget recorded at spawn time.
+pub fn supervisor_reconcile(args: &[String]) -> Result<ExitCode, String> {
+    let cfg = RuntimeConfig::load()?;
+    let mut watch = false;
+    let mut interval = 2.0f64;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--watch" => {
+                watch = true;
+                index += 1;
+            }
+            "--interval" => {
+                interval = required_value(args, index, "reconcile --interval")?
+                    .parse::<f64>()
+                    .map_err(|_| "reconcile --interval must be a positive number".to_string())?;
+                if !interval.is_finite() || interval <= 0.0 {
+                    return Err("reconcile --interval must be a positive number".into());
+                }
+                index += 2;
+            }
+            "-h" | "--help" => {
+                println!(
+                    "Usage: multiagent supervisor reconcile [--watch] [--interval SECONDS]\n\nObserves coding-agent processes, finalizes terminal sessions, synchronizes assignments, marks abandoned validation leases stale, and applies only explicitly budgeted infrastructure retries."
+                );
+                return Ok(ExitCode::SUCCESS);
+            }
+            other => return Err(format!("unknown reconcile argument: {other}")),
+        }
+    }
+
+    require_command("tmux")?;
+    let mut previous = BTreeMap::<String, ReconcileRow>::new();
+    loop {
+        let rows = reconcile_once(&cfg)?;
+        if !watch {
+            println!("NAME\tOBSERVED\tACTION\tDETAIL");
+        }
+        let current = rows
+            .iter()
+            .map(|row| (row.name.clone(), row.clone()))
+            .collect::<BTreeMap<_, _>>();
+        for row in rows {
+            if !watch || previous.get(&row.name) != Some(&row) {
+                println!("{}", row.line());
+            }
+        }
+        if !watch {
+            return Ok(ExitCode::SUCCESS);
+        }
+        previous = current;
+        thread::sleep(Duration::from_secs_f64(interval));
+    }
+}
+
+fn reconcile_once(cfg: &RuntimeConfig) -> Result<Vec<ReconcileRow>, String> {
+    let mut rows = Vec::new();
+    for dir in sorted_directories(&cfg.state.join("subagents"))? {
+        let name = file_name(&dir)?;
+        let open = window_exists(&cfg.session, &name);
+        if open {
+            if let Err(error) = capture_subagent(cfg, &name) {
+                rows.push(ReconcileRow {
+                    name,
+                    observed: "unknown".into(),
+                    action: "error".into(),
+                    detail: error.replace(['\n', '\t'], " "),
+                });
+                continue;
+            }
+            let observed = infer_reconcile_status(cfg, &name);
+            set_subagent_status(cfg, &name, &observed)?;
+            if matches!(observed.as_str(), "done" | "failed") {
+                settle_terminal_process(cfg, &name, &observed)?;
+                rows.push(ReconcileRow {
+                    name,
+                    observed,
+                    action: "finalized".into(),
+                    detail: "terminal-process-cleaned".into(),
+                });
+            } else {
+                rows.push(ReconcileRow {
+                    name,
+                    action: if observed == "blocked" {
+                        "needs-decision".into()
+                    } else {
+                        "observed".into()
+                    },
+                    observed,
+                    detail: "window-open".into(),
+                });
+            }
+            continue;
+        }
+
+        // A headless tmux window may close between observations. Reconstruct
+        // current.txt from the final message/transcript before classifying it.
+        let persisted = read_trimmed(&dir.join("status")).unwrap_or_else(|| "unknown".into());
+        if dir.join("finalized_at").is_file()
+            && matches!(
+                persisted.as_str(),
+                "done" | "failed" | "finalized" | "killed" | "cancelled" | "canceled"
+            )
+        {
+            rows.push(ReconcileRow {
+                name,
+                observed: persisted,
+                action: "unchanged".into(),
+                detail: "already-settled".into(),
+            });
+            continue;
+        }
+        let _ = capture_subagent(cfg, &name);
+        let inferred = infer_reconcile_status(cfg, &name);
+        if matches!(inferred.as_str(), "done" | "failed") {
+            set_subagent_status(cfg, &name, &inferred)?;
+            settle_terminal_process(cfg, &name, &inferred)?;
+            rows.push(ReconcileRow {
+                name,
+                observed: inferred,
+                action: "settled".into(),
+                detail: "durable-terminal-output".into(),
+            });
+            continue;
+        }
+        if matches!(persisted.as_str(), "killed" | "cancelled" | "canceled") {
+            run_self_quiet(&["supervisor", "settle-agent", &name, "killed"])?;
+            atomic_write(
+                &dir.join("finalized_at"),
+                &format!("{}\n", timestamp()),
+                "finalized timestamp",
+            )?;
+            rows.push(ReconcileRow {
+                name,
+                observed: persisted,
+                action: "settled".into(),
+                detail: "intentional-stop".into(),
+            });
+            continue;
+        }
+
+        let recovery = classify_recovery(cfg, &name)?;
+        if recovery.action == "restore" && consume_infra_retry(&dir)? {
+            match restore(cfg, std::slice::from_ref(&name)) {
+                Ok(()) => rows.push(ReconcileRow {
+                    name,
+                    observed: persisted,
+                    action: "restored".into(),
+                    detail: "budgeted-infrastructure-retry".into(),
+                }),
+                Err(error) => rows.push(ReconcileRow {
+                    name,
+                    observed: persisted,
+                    action: "error".into(),
+                    detail: error.replace(['\n', '\t'], " "),
+                }),
+            }
+        } else {
+            rows.push(ReconcileRow {
+                name,
+                observed: persisted,
+                action: match recovery.action.as_str() {
+                    "restore" => "needs-recovery",
+                    "skip-blocked" => "needs-decision",
+                    _ => "unchanged",
+                }
+                .into(),
+                detail: recovery.reason,
+            });
+        }
+    }
+    Ok(rows)
+}
+
+fn settle_terminal_process(cfg: &RuntimeConfig, name: &str, status: &str) -> Result<(), String> {
+    let supervisor_pid = read_supervisor_pid(cfg, name);
+    if window_exists(&cfg.session, name) {
+        let _ = capture_subagent(cfg, name);
+        tmux_checked(&["kill-window", "-t", &format!("{}:{name}", cfg.session)])?;
+    }
+    if let Some(pid) = supervisor_pid {
+        wait_for_process_exit(pid, name)?;
+    }
+    record_supervisor_termination(
+        cfg,
+        name,
+        if status == "done" {
+            "completed"
+        } else {
+            "failed"
+        },
+    )?;
+    set_subagent_status(cfg, name, status)?;
+    atomic_write(
+        &cfg.state.join("subagents").join(name).join("finalized_at"),
+        &format!("{}\n", timestamp()),
+        "finalized timestamp",
+    )?;
+    run_self_quiet(&["supervisor", "settle-agent", name, status])
+}
+
+fn consume_infra_retry(dir: &Path) -> Result<bool, String> {
+    let path = dir.join("meta.env");
+    let mut metadata = read_env(&path).unwrap_or_default();
+    let budget = metadata
+        .get("infra_retry_budget")
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(0);
+    let count = metadata
+        .get("infra_retry_count")
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(0);
+    if count >= budget {
+        return Ok(false);
+    }
+    metadata.insert("infra_retry_count".into(), (count + 1).to_string());
+    let body = metadata
+        .iter()
+        .map(|(key, value)| format!("{key}={value}\n"))
+        .collect::<String>();
+    atomic_write(&path, &body, "subagent metadata")?;
+    Ok(true)
+}
+
 fn status_text() -> Result<String, String> {
     require_command("tmux")?;
     let cfg = RuntimeConfig::load()?;
@@ -919,7 +1186,9 @@ fn status_text() -> Result<String, String> {
         .collect::<BTreeSet<_>>();
     let mut result = STATUS_HEADER.to_string();
     for name in &window_names {
-        if name == "orchestrator" || cfg.state.join("subagents").join(name).is_dir() {
+        if matches!(name.as_str(), "orchestrator" | "supervisor")
+            || cfg.state.join("subagents").join(name).is_dir()
+        {
             continue;
         }
         let capture = capture_window(&cfg.session, name, 300).unwrap_or_default();
@@ -1229,7 +1498,7 @@ pub fn subagent(args: &[String]) -> Result<ExitCode, String> {
 
 fn print_subagent_usage() {
     println!(
-        "Usage:\n  multiagent subagent spawn NAME [--own PATH[,PATH...] ...] [--assignment-id ID] [--workflow-id ID --decision-id ID --plan-id ID] [--branch BRANCH] [--start-commit COMMIT] [--role ROLE] [--responsibility TEXT] [--instruction TEXT | --instruction-file PATH | -- TEXT]\n  multiagent subagent list|recover-plan|restore-all|gate-check\n  multiagent subagent poll|inspect|restore|finalize|kill NAME [OPTIONS]\n  multiagent subagent wait NAME [--timeout SECONDS] [--poll-interval SECONDS]\n\nAll durable state and tmux subprocess orchestration are implemented by the Rust CLI."
+        "Usage:\n  multiagent subagent spawn NAME [--own PATH[,PATH...] ...] [--assignment-id ID] [--workflow-id ID --decision-id ID --plan-id ID] [--branch BRANCH] [--start-commit COMMIT] [--role ROLE] [--responsibility TEXT] [--infra-retries N] [--instruction TEXT | --instruction-file PATH | -- TEXT]\n  multiagent subagent list|recover-plan|restore-all|gate-check\n  multiagent subagent poll|inspect|restore|finalize|kill NAME [OPTIONS]\n  multiagent subagent wait NAME [--timeout SECONDS] [--poll-interval SECONDS]\n\nAll durable state and tmux subprocess orchestration are implemented by the Rust CLI."
     );
 }
 
@@ -1243,6 +1512,7 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
     let mut instruction_file = None::<PathBuf>;
     let mut owned = Vec::new();
     let mut role = String::new();
+    let mut infra_retries = 0u32;
     let mut assignment_values = BTreeMap::<String, String>::new();
     let mut index = 1;
     while index < args.len() {
@@ -1256,6 +1526,14 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
                 if !matches!(role.as_str(), "worker" | "verifier" | "reviewer" | "scout") {
                     return Err("spawn --role must be worker, verifier, reviewer, or scout".into());
                 }
+                index += 2;
+            }
+            "--infra-retries" => {
+                infra_retries = required_value(args, index, "spawn --infra-retries")?
+                    .parse::<u32>()
+                    .map_err(|_| {
+                        "spawn --infra-retries must be a non-negative integer".to_string()
+                    })?;
                 index += 2;
             }
             "--assignment-id" | "--workflow-id" | "--decision-id" | "--plan-id" | "--branch"
@@ -1431,7 +1709,7 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
     fs::create_dir_all(&cfg.logs).map_err(io_error("create subagent log directory"))?;
     let executable = env::current_exe().map_err(io_error("resolve multiagent executable"))?;
     let metadata = format!(
-        "name={name}\nsession={}\nroot={}\nrole={}\naccess={}\ncodex_access={}\nworkflow_id={}\nwrite_policy={}\nlog_file={}\ntrace_dir={}\ncli={cli}\ncli_bin={binary}\nhelper={}\ncreated_at={}\n",
+        "name={name}\nsession={}\nroot={}\nrole={}\naccess={}\ncodex_access={}\nworkflow_id={}\nwrite_policy={}\nlog_file={}\ntrace_dir={}\ncli={cli}\ncli_bin={binary}\nhelper={}\ninfra_retry_budget={infra_retries}\ninfra_retry_count=0\ncreated_at={}\n",
         cfg.session,
         cfg.root.display(),
         authority_role,
@@ -3054,11 +3332,12 @@ fn capture_subagent(cfg: &RuntimeConfig, name: &str) -> Result<(), String> {
     fs::create_dir_all(&dir).map_err(io_error("create subagent directory"))?;
     match capture_window(&cfg.session, name, 1000) {
         Ok(capture) => {
-            atomic_write(
-                &dir.join("current.txt"),
-                &format!("{capture}\n"),
-                "current capture",
-            )?;
+            let current = format!("{capture}\n");
+            if fs::read_to_string(dir.join("current.txt")).is_ok_and(|previous| previous == current)
+            {
+                return Ok(());
+            }
+            atomic_write(&dir.join("current.txt"), &current, "current capture")?;
             append_file(
                 &dir.join("transcript.log"),
                 &format!("\n----- capture {} -----\n{capture}\n", timestamp()),
@@ -3080,14 +3359,15 @@ fn capture_subagent(cfg: &RuntimeConfig, name: &str) -> Result<(), String> {
                 if last.is_empty() { String::new() } else { format!("\n----- last-message.txt -----\n{last}") },
                 if transcript.is_empty() { String::new() } else { format!("\n----- transcript tail -----\n{}", tail_lines(&transcript, 240)) }
             );
-            atomic_write(&dir.join("current.txt"), &recovered, "durable capture")?;
-            append_file(
-                &dir.join("transcript.log"),
-                &format!(
-                    "\n----- durable capture {} -----\n{recovered}\n",
-                    timestamp()
-                ),
-            )
+            if fs::read_to_string(dir.join("current.txt"))
+                .is_ok_and(|previous| previous == recovered)
+            {
+                return Ok(());
+            }
+            // The transcript already contains the durable process log. Do not
+            // append this synthetic reconstruction back into it: a watch loop
+            // would recursively duplicate the same tail on every pass.
+            atomic_write(&dir.join("current.txt"), &recovered, "durable capture")
         }
     }
 }
@@ -3105,6 +3385,23 @@ fn infer_status(cfg: &RuntimeConfig, name: &str) -> String {
         "blocked".into()
     } else if looks_done_report(&current) {
         "done".into()
+    } else if window_exists(&cfg.session, name) {
+        "running".into()
+    } else {
+        "exited".into()
+    }
+}
+
+fn infer_reconcile_status(cfg: &RuntimeConfig, name: &str) -> String {
+    let dir = cfg.state.join("subagents").join(name);
+    let current = fs::read_to_string(dir.join("current.txt")).unwrap_or_default();
+    let lower = current.to_ascii_lowercase();
+    if nonzero_exec_status(&lower) || lower.contains("warning: no last agent message") {
+        "failed".into()
+    } else if zero_exec_status(&lower) {
+        "done".into()
+    } else if looks_blocked_report(&tail_lines(&current, 160)) {
+        "blocked".into()
     } else if window_exists(&cfg.session, name) {
         "running".into()
     } else {
@@ -3204,6 +3501,24 @@ fn nonzero_exec_status(text: &str) -> bool {
                     .next()
                     .and_then(|value| value.parse::<u32>().ok())
                     .is_some_and(|value| value > 0)
+            })
+        })
+    })
+}
+
+fn zero_exec_status(text: &str) -> bool {
+    let markers = [
+        "final status: codex exec exited rc=",
+        "final status: coding agent exited rc=",
+    ];
+    text.lines().any(|line| {
+        markers.iter().any(|marker| {
+            line.find(marker).is_some_and(|index| {
+                line[index + marker.len()..]
+                    .split_whitespace()
+                    .next()
+                    .and_then(|value| value.parse::<u32>().ok())
+                    == Some(0)
             })
         })
     })

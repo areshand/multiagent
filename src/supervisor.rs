@@ -1,4 +1,6 @@
-use crate::{authority::AuthorityRequest, config, role_sandbox, state::read_env as read_env_file};
+use crate::{
+    authority::AuthorityRequest, config, role_sandbox, state::read_env as read_env_file, subagent,
+};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -57,8 +59,19 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
             register_launch(rest, true)?;
             Ok(ExitCode::SUCCESS)
         }
+        [command, rest @ ..] if command == "settle-agent" && server_child() => {
+            subagent::supervisor_settle_agent(rest)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        [command, rest @ ..]
+            if command == "settle-agent"
+                && env::var("MULTIAGENT_UID_SANDBOX").as_deref() != Ok("1") =>
+        {
+            subagent::supervisor_settle_agent(rest)?;
+            Ok(ExitCode::SUCCESS)
+        }
         [command] if command == "shutdown" && server_child() => Ok(ExitCode::SUCCESS),
-        _ => Err("usage: multiagent supervisor stop".into()),
+        _ => Err("usage: multiagent supervisor reconcile|stop".into()),
     }
 }
 

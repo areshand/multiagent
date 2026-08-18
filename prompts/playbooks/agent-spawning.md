@@ -1,7 +1,7 @@
 # Agent Spawning Playbook
 
-Use this playbook whenever the orchestrator is about to create, monitor,
-replace, verify, or finalize worker windows or named subagents.
+Use this playbook whenever the orchestrator is about to create, inspect,
+replace, or verify worker windows or named subagents.
 
 ## Worker First Instruction
 
@@ -43,14 +43,18 @@ SUBAGENT_CLI="$WORKER_CLI" multiagent subagent spawn worker-01-task \
   --decision-id DECISION_ID \
   --plan-id PLAN_ID \
   --branch BRANCH \
+  --infra-retries 1 \
   --instruction-file WORKER_INSTRUCTION
-multiagent subagent wait worker-01-task --timeout 1800
 ```
 
 The supervisor creates the assignment under its lock, completes authority
-registration, and only then launches the trusted workspace-write worker. The
-orchestrator remains unable to edit the target workspace. Inspect a terminal
-`blocked` or `failed` result instead of treating it as completion. Separate git
+registration, and only then launches the trusted workspace-write worker. Its
+lifecycle reconciler observes the process, closes terminal windows, updates the
+assignment, and marks any abandoned validation lease stale. `--infra-retries`
+is an optional per-task policy; the supervisor may restore only that many
+recoverable infrastructure exits and never invents repair work. The orchestrator
+remains unable to edit the target workspace. Inspect a terminal `blocked` or
+`failed` result instead of treating it as completion. Separate git
 worktrees remain available for intentionally parallel, disjoint assignments,
 but require an explicit integration step before completion; do not use them for
 the normal SWE single-writer path.
@@ -62,10 +66,12 @@ persists context:
 
 ```bash
 multiagent subagent spawn subagent-build-watch --instruction "FIRST_INSTRUCTION_TEXT"
-multiagent subagent wait subagent-build-watch --timeout 900
 multiagent subagent inspect subagent-build-watch --lines 160
-multiagent subagent finalize subagent-build-watch
 ```
+
+The lifecycle supervisor monitors and finalizes the process automatically.
+Use `multiagent status` when a semantic decision depends on its result; do not
+reimplement polling or terminal cleanup in the prompt.
 
 For a bounded worker in the current worktree, `spawn` can create the durable
 assignment and worker in one command:
@@ -85,19 +91,18 @@ progress, before stopping, and whenever a blocker appears.
 ## Scout To Worker Handoff
 
 Read-only scouts are temporary evidence gatherers. Before spawning the first
-edit-capable worker, poll or inspect any active scout once, persist the useful
-ledger/findings, then finalize or kill the scout if it is still running. Do not
+edit-capable worker, inspect the supervisor-observed status and persist the
+useful ledger/findings. Do not
 let an active generic scout block `multiagent subagent spawn` for implementation.
 The orchestrator may select any number of workers and task-specific
 responsibilities. Give every concurrent writer a durable path-scoped
 assignment; the supervisor admits disjoint leases and rejects overlap
 mechanically.
 
-For a contract scout, finalize it and register its sealed output before any
-worker or reviewer starts:
+For a contract scout, wait for supervisor-finalized output and register its
+sealed output before any worker or reviewer starts:
 
 ```bash
-multiagent subagent finalize CONTRACT_SCOUT_NAME
 multiagent workflow contract-register "$MULTIAGENT_WORKFLOW_ID" \
   --scout CONTRACT_SCOUT_NAME
 ```
@@ -109,8 +114,8 @@ injects the supervisor-owned original task and registered contract into every
 later worker and reviewer instruction.
 
 Give a live contract scout one bounded wait of at least 300 seconds before
-classifying it as stalled. Do not kill or finalize a running scout merely
-because one short poll has no final message. If it exits with an empty sealed
+classifying it as stalled. Do not cancel a running scout merely because one
+short status observation has no final message. If it exits with an empty sealed
 artifact, allow at most one replacement with a narrower source list and an
 explicit "return the structured artifact before any ninth tool call" reminder.
 If that replacement also has no artifact, stop with a recorded infrastructure
@@ -187,11 +192,10 @@ continue indefinitely: the next state must be a source diff,
 `required-path-outside-owned: RELATIVE_PATH`, `validation-repair-needed:`, or
 blocked status with a source-visible reason.
 
-After `multiagent subagent kill NAME` or `multiagent subagent finalize NAME`, ensure the
-assignment no longer owns paths before reusing them. If needed, run
-`multiagent subagent assignment-status NAME failed` for killed workers or
-`multiagent subagent assignment-status NAME done` for finalized workers before
-creating the replacement assignment.
+After a worker reaches a terminal state, wait for the lifecycle supervisor to
+settle its assignment before reusing those paths. Do not manually reproduce the
+assignment or validation-lease cleanup sequence. A blocked worker is not
+terminal; replacement remains an explicit orchestrator decision.
 
 Before final acceptance, run:
 

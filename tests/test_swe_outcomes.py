@@ -468,6 +468,11 @@ class NativeOutcomeTest(unittest.TestCase):
         self.assertIn("feature.py", diff)
         self.assertNotIn(".multiagent", diff)
 
+    def test_framework_path_normalization_remains_python38_compatible(self):
+        self.assertTrue(swe_prod_repository.is_framework_internal_path("./.multiagent/status"))
+        source = Path(swe_prod_repository.__file__).read_text(encoding="utf-8")
+        self.assertNotIn(".removeprefix(", source)
+
     def test_summary_counts_submitted_patch_even_when_official_score_is_zero(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

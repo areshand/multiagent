@@ -32,8 +32,8 @@ for the orchestrator.
   or memory, or hide the real failure behind timeout noise.
 - Assign or recommend a single validation lease owner for each package/path,
   command family, and resource boundary.
-- Recommend whether the orchestrator should wait, poll, kill/finalize a stale
-  pane, or route a follow-up worker.
+- Recommend whether the orchestrator should wait for lifecycle settlement,
+  cancel genuinely stuck work, or route a follow-up worker.
 
 ## Output
 
@@ -43,11 +43,11 @@ Report compactly to the orchestrator:
    when known.
 2. `overlaps:` duplicate or risky validators, including why they conflict.
 3. `validation-leases:` package/path, command, owner, state, and resource risk.
-4. `stale-agents:` panes that should be captured and finalized or killed before
-   replacement work is spawned.
+4. `stale-agents:` work that needs cancellation or a semantic replacement
+   decision before replacement is spawned.
 5. `released-leases:` completed or stale leases safe to replace.
-6. `routing:` exact next orchestrator action: wait, poll, kill/finalize, release
-   a lease, spawn a verifier, or spawn a bounded follow-up worker.
+6. `routing:` exact next semantic action: wait for supervisor settlement,
+   cancel stuck work, spawn a verifier, or spawn a bounded follow-up worker.
 
 Keep the report short enough for the orchestrator to paste into a worker or
 verifier instruction when needed.

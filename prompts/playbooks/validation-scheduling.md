@@ -48,17 +48,18 @@ not silently take a second lease for the same package/path.
 
 ## Routing Rules
 
-- If a package/path has a running lease, poll that owner before starting another
-  equivalent command.
+- If a package/path has a running lease, inspect its supervisor-observed owner
+  state before starting another equivalent command.
 - Before starting an expensive command, acquire a validation lease. If the
-  helper reports a conflict, do not run the duplicate command; poll or inspect
-  the named owner and report `blocked-validations:`.
+  helper reports a conflict, do not run the duplicate command; inspect the
+  named owner's recorded state and report `blocked-validations:`.
 - Do not spawn a verifier for a worker while that worker still owns a running
-  validation lease. First capture/poll the worker until the leased command
-  reaches passed, failed, timed-out, stale, or released. Then pass the captured
+  validation lease. Wait until the supervisor-observed lease reaches passed,
+  failed, timed-out, stale, or released. Then pass the captured
   result to the verifier.
-- If the owner is stale, capture the pane and process list, then explicitly
-  kill/finalize or release the lease before replacement work starts.
+- If an owner terminates without recording a result, the lifecycle supervisor
+  marks its active lease `stale`. Inspect that recorded state before choosing a
+  replacement; do not manually race terminal cleanup.
 - If the lease result is failed and the command is relevant to the changed
   source or contract ledger, route a bounded repair worker before acceptance.
   Pass the failing command, output tail, changed files, and lease target to that

@@ -70,12 +70,13 @@ Spawn that review read-only through the normal subagent path, for example:
 ```bash
 SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn decision-authority-reviewer \
   --role reviewer --instruction-file AUTHORITY_REVIEW_INPUT
-multiagent subagent wait decision-authority-reviewer --timeout 900
+multiagent status
 ```
 
-Do not continue merely because an immediate poll still reports `running`.
-Inspect the completed or blocked result after the bounded wait and persist its
-actual authority finding before preparing implementation.
+The lifecycle supervisor monitors and finalizes the reviewer. Do not continue
+merely because one observation still reports `running`; wait for its completed
+or blocked state and persist the actual authority finding before preparing
+implementation.
 
 Create an approved implementation context document containing the selected
 plan, decision and plan IDs, authority and approval basis, intended outcome,
@@ -130,7 +131,8 @@ Run independent reviews against the frozen candidate diff:
 Every reviewer final message must include an exact durable marker on its own
 line: `review-record: type=TYPE verdict=pass|findings diff=DIFF_HASH` (use
 `diff=-` for decision-authority). A Markdown list prefix or enclosing backticks
-are accepted as cosmetic formatting, but surrounding prose is not. Wait for and finalize that reviewer before
+are accepted as cosmetic formatting, but surrounding prose is not. Wait for the
+supervisor-finalized reviewer result before
 recording its result. Record each review with `multiagent workflow
 record-review ... --reviewer REVIEWER_NAME`; the supervisor rejects an
 orchestrator-authored verdict that is not backed by the finalized read-only

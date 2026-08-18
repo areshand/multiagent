@@ -21,6 +21,7 @@ enum AuthorityOperation {
     OrchestratorComplete,
     SupervisorRegisterLaunch,
     SupervisorRenewLaunch,
+    SupervisorSettleAgent,
     SupervisorShutdown,
     AssignmentCreate,
     AssignmentShow,
@@ -60,6 +61,7 @@ impl AuthorityRequest {
                     (AuthorityOperation::SupervisorRegisterLaunch, &args[1..])
                 }
                 Some("renew-launch") => (AuthorityOperation::SupervisorRenewLaunch, &args[1..]),
+                Some("settle-agent") => (AuthorityOperation::SupervisorSettleAgent, &args[1..]),
                 Some("stop") => (AuthorityOperation::SupervisorShutdown, &args[1..]),
                 _ => return None,
             },
@@ -123,6 +125,7 @@ impl AuthorityRequest {
             | AuthorityOperation::OrchestratorComplete
             | AuthorityOperation::SupervisorRegisterLaunch
             | AuthorityOperation::SupervisorRenewLaunch
+            | AuthorityOperation::SupervisorSettleAgent
             | AuthorityOperation::SupervisorShutdown
             | AuthorityOperation::AssignmentCreate
             | AuthorityOperation::AssignmentShow
@@ -165,6 +168,7 @@ impl AuthorityRequest {
             AuthorityOperation::OrchestratorComplete => ("orchestrator", Some("complete")),
             AuthorityOperation::SupervisorRegisterLaunch => ("supervisor", Some("register-launch")),
             AuthorityOperation::SupervisorRenewLaunch => ("supervisor", Some("renew-launch")),
+            AuthorityOperation::SupervisorSettleAgent => ("supervisor", Some("settle-agent")),
             AuthorityOperation::SupervisorShutdown => ("supervisor", Some("shutdown")),
             AuthorityOperation::AssignmentCreate => ("subagent", Some("assignment-create")),
             AuthorityOperation::AssignmentShow => ("subagent", Some("assignment-show")),
@@ -226,6 +230,7 @@ mod tests {
         assert!(AuthorityRequest::from_cli("agent", &strings(&["run"])).is_none());
         assert!(AuthorityRequest::from_cli("role-exec", &[]).is_none());
         assert!(AuthorityRequest::from_cli("subagent", &strings(&["spawn"])).is_none());
+        assert!(AuthorityRequest::from_cli("supervisor", &strings(&["reconcile"])).is_none());
         assert!(AuthorityRequest::from_cli("subagent", &strings(&["worktree-create"])).is_none());
         assert!(AuthorityRequest::from_cli("subagent", &strings(&["validation-run"])).is_none());
     }
@@ -238,10 +243,17 @@ mod tests {
             .expect("finding request");
         let close = AuthorityRequest::from_cli("subagent", &strings(&["todo-close"]))
             .expect("close request");
+        let settle = AuthorityRequest::from_cli(
+            "supervisor",
+            &strings(&["settle-agent", "worker-01", "done"]),
+        )
+        .expect("settle request");
         assert!(workflow.authorized_for(config::ORCHESTRATOR_UID));
         assert!(!finding.authorized_for(config::ORCHESTRATOR_UID));
         assert!(finding.authorized_for(config::READER_UID));
         assert!(close.authorized_for(config::ORCHESTRATOR_UID));
+        assert!(settle.authorized_for(config::ORCHESTRATOR_UID));
+        assert!(!settle.authorized_for(config::WRITER_UID));
         assert!(!workflow.authorized_for(config::WRITER_UID));
     }
 

@@ -77,6 +77,9 @@ fn main() -> ExitCode {
             .map(|_| ExitCode::SUCCESS)
             .map_err(|message| ("snapshot", message)),
         "subagent" => subagent::run(&args).map_err(|message| ("subagent", message)),
+        "supervisor" if args.first().map(String::as_str) == Some("reconcile") => {
+            runtime::supervisor_reconcile(&args[1..]).map_err(|message| ("supervisor", message))
+        }
         "supervisor" => supervisor::run(&args).map_err(|message| ("supervisor", message)),
         "workflow" => workflow::run(&args)
             .map(|_| ExitCode::SUCCESS)

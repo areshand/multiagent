@@ -50,7 +50,8 @@ multiagent launch \
   --root /absolute/path/to/target-repo
 ```
 
-The default launch creates one tmux orchestrator window. It is a clean launch:
+The default launch creates an orchestrator window and a Rust lifecycle-supervisor
+window. It is a clean launch:
 persisted subagents are not automatically restored.
 
 Resume after an interrupted run:
@@ -190,8 +191,6 @@ multiagent subagent spawn contract-scout-01 \
   --role scout \
   --instruction "Extract structured must and must-not contract rules. Do not edit."
 
-multiagent subagent wait contract-scout-01 --timeout 900
-multiagent subagent finalize contract-scout-01
 multiagent workflow contract-register "$MULTIAGENT_WORKFLOW_ID" \
   --scout contract-scout-01
 ```
@@ -239,15 +238,18 @@ multiagent subagent spawn worker-01 \
   --workflow-id "$MULTIAGENT_WORKFLOW_ID" \
   --decision-id DEC-001 \
   --plan-id PLAN-A \
+  --infra-retries 1 \
   --instruction-file /absolute/path/to/worker-instruction.md
 
-multiagent subagent wait worker-01 --timeout 1800
 multiagent subagent assignment-check worker-01
 ```
 
 Only the supervisor-authorized writer receives temporary access to its existing
-owned paths. The global writer lease prevents a second writer from becoming
-active at the same time.
+owned paths. On Linux, disjoint path-scoped writers may run concurrently;
+overlapping writers are rejected. The lifecycle supervisor observes completion,
+settles ownership and validation state, and applies only the explicitly
+budgeted infrastructure retry. Use `multiagent status` to decide semantic next
+steps such as repairing blocked work.
 
 Update a durable checkpoint during long work:
 
@@ -269,7 +271,8 @@ multiagent snapshot --root "$MULTIAGENT_ROOT" --base HEAD --format json
 Transition to post-implementation with the reported hash, then run read-only
 scope, technical, decision-drift, and reflection reviews. Review instructions
 must include the original task, registered contract, approved context, and
-canonical diff. Finalize each reviewer so the supervisor can seal its output.
+canonical diff. The lifecycle supervisor finalizes terminal reviewer processes
+so their output can be sealed.
 
 Record review findings and todos through `multiagent workflow` and
 `multiagent subagent` commands. A changed diff invalidates previous acceptance.

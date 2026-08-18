@@ -77,6 +77,11 @@ state, create work requests, and ask for completion, but it cannot directly edit
 the target or protected state. A bypassed high-level CLI still runs under the
 same non-writing Unix identity.
 
+The tmux-owning identity also hosts a fixed Rust lifecycle reconciler. That
+process may observe and close panes, but protected assignment and lease changes
+still cross the supervisor's typed authority socket. This avoids granting the
+shared worker/reviewer group access to the tmux control socket.
+
 ## Keep Topology Adaptive and Writing Path-Scoped
 
 **Decision:** The orchestrator chooses the task graph, worker count, and each

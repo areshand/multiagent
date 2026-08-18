@@ -47,9 +47,10 @@ but it must not narrow, replace, or contradict the scout's historical ledger.
 If the proposed worker scope cannot address every output in that ledger, widen
 the bounded ownership to the actual transition owner or create explicit todos
 for the remaining outputs before implementation.
-Before spawning the edit-capable implementation worker, poll or inspect any
-active scout once, persist useful findings, then finalize or kill the scout if it
-is still running. Do not let an active generic scout block the implementation
+Before spawning the edit-capable implementation worker, inspect the
+supervisor-observed state of active scouts and persist useful findings. If a
+generic scout remains genuinely stalled after the bounded wait, explicitly
+cancel it; terminal cleanup is automatic. Do not let an active generic scout block the implementation
 worker spawn. Choose the implementation topology from the task and record
 explicit, non-overlapping ownership for every concurrent writer.
 When a task may add, remove, rename, or move source symbols, the worker first
@@ -87,9 +88,8 @@ intended validation commands.
 SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn validation-coordinator-01-task --instruction "FIRST_INSTRUCTION_TEXT"
 ```
 
-Use the coordinator's lease report to decide whether to wait, poll,
-kill/finalize stale panes, release a validation lease, or route a bounded
-follow-up worker.
+Use the coordinator's lease report to decide whether to wait for the lifecycle
+supervisor, cancel genuinely stuck work, or route a bounded follow-up worker.
 
 ## Required Worker First Instruction
 
@@ -131,8 +131,8 @@ Before spawning the verifier, load `prompts/playbooks/validation-scheduling.md`
 if the worker ran or is running expensive validation. Do not spawn the verifier
 until the worker's validation lease has a captured passed, failed, timed-out,
 stale, or released state. If the worker final message appears before its
-validation command exits, poll the worker/process list instead of starting a
-verifier that may duplicate the command.
+validation command exits, wait for the supervisor-observed process and lease
+state instead of starting a verifier that may duplicate the command.
 
 The orchestrator decides which findings become accepted follow-up; never pass
 raw verifier findings directly to the worker as orders. Accepted blocking
@@ -158,8 +158,8 @@ test, fixture, compile, package, component, or source-derived probe failed after
 the patch. This is a repair signal, not acceptance evidence.
 
 1. Capture the exact failing command, return code, and output tail.
-2. Record or release the validation lease for the package/path before starting
-   replacement work.
+2. Require a terminal validation-lease record before starting replacement work;
+   the lifecycle supervisor marks an abandoned active lease stale.
 3. Derive the implicated source paths from the failing command, stack trace,
    fixture name, changed files, and contract ledger.
 4. Spawn a fresh bounded repair worker with those paths in `--owned`; do not
@@ -171,7 +171,7 @@ the patch. This is a repair signal, not acceptance evidence.
 6. Only after the repair worker returns should a verifier decide acceptance,
    residual risk, or a bounded second follow-up.
 
-Do not finalize on source review, compile-only checks, or synthetic helper
+Do not accept on source review, compile-only checks, or synthetic helper
 probes while a relevant visible validation command is still failing. A stale
 visible expectation can be accepted only when the repair/verifier transcript
 contains both the source-visible reason and a replacement probe for the exact
@@ -206,14 +206,13 @@ and use its progress/status procedure.
   source mapping: the next state must be a source diff,
   `required-path-outside-owned: RELATIVE_PATH`, `validation-repair-needed:`, or
   blocked status with a source-visible reason.
-- After killing or finalizing a worker, release its assignment ownership before
-  reusing paths: `multiagent subagent assignment-status NAME failed` for killed
-  workers or `multiagent subagent assignment-status NAME done` for finalized
-  workers, then create the replacement assignment.
+- The lifecycle supervisor settles terminal assignments and abandoned
+  validation leases. Wait for that observed state before reusing paths; do not
+  duplicate the cleanup commands in orchestration instructions.
 - Never let a verifier receive writable ownership for a worker's owned paths.
 - Before accepting completed worker or subagent work, run `multiagent subagent assignment-check NAME`.
 - Always capture final output before killing a worker.
-- Always poll or inspect a long-running subagent before finalizing it.
+- Use supervisor-observed state rather than manual poll/finalize sequences.
 - Do not delete `$MULTIAGENT_STATE_DIR`; it is durable context.
 - Prefer killing and respawning a stuck worker over manually untangling a confused one.
 - Keep a state table of active agents, owned files, branch names, status, and state directory.
@@ -222,9 +221,11 @@ and use its progress/status procedure.
 
 1. Plan: understand intent, run a contract scout when risk justifies it, update the contract ledger, split work, assign owner/branch/scope.
 2. Spawn: create assignment metadata, load the right prompt module, start the agent, send the assignment.
-3. Monitor: use `multiagent status`, inspect busy/blocked/done states, update checkpoints.
+3. Monitor: use `multiagent status`; the lifecycle supervisor performs process
+   polling, terminal cleanup, assignment settlement, and budgeted infrastructure
+   retry while the orchestrator handles only semantic busy/blocked/done routing.
 4. Coordinate: resolve blockers, prevent ownership conflicts, maintain validation leases, run scope guard when diff shape is risky, route verification, spawn independent follow-ups.
-5. Accept: run `assignment-check`, review verifier findings, close accepted todo resolutions with `multiagent subagent todo-close ...` after reverification or reopen them, run `multiagent subagent gate-check`, finalize agents.
+5. Accept: run `assignment-check`, review verifier findings, close accepted todo resolutions with `multiagent subagent todo-close ...` after reverification or reopen them, and run `multiagent subagent gate-check`; terminal process cleanup is automatic.
 6. Report: summarize status, branches, commits, blockers, state paths, validation, and residual risk.
 
 ## Optional Playbooks

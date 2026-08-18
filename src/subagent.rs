@@ -129,6 +129,74 @@ fn assignment_status(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Apply the deterministic state cleanup for a terminal coding-agent process.
+///
+/// In UID-isolated runs this function is reached only through the typed
+/// authority socket. The reconciler observes tmux; the authority supervisor
+/// owns the protected assignment and validation state transition.
+pub fn supervisor_settle_agent(args: &[String]) -> Result<(), String> {
+    if args.len() != 2 {
+        return Err("settle-agent requires NAME STATUS".into());
+    }
+    let name = &args[0];
+    validate_name(name)?;
+    let assignment_state = match args[1].as_str() {
+        "done" => "done",
+        "failed" | "killed" => "failed",
+        other => {
+            return Err(format!(
+                "settle-agent status must be done, failed, or killed: {other}"
+            ))
+        }
+    };
+
+    let state = config::state_dir()?;
+    let assignment = state.join("assignments").join(name);
+    if assignment.join("assignment.env").is_file() {
+        let base = state.join("assignments");
+        let _lock = lock_file(&base.join(".lock"), "assignments")?;
+        atomic_write(&assignment.join("status"), &format!("{assignment_state}\n"))?;
+    }
+
+    let leases = state.join("validation-leases");
+    fs::create_dir_all(&leases).map_err(io_error("create validation leases directory"))?;
+    let _lock = lock_file(&leases.join(".lock"), "validation leases")?;
+    let mut stale = 0usize;
+    for dir in sorted_directories(&leases)? {
+        let metadata_path = dir.join("lease.env");
+        if !metadata_path.is_file() {
+            continue;
+        }
+        let mut metadata = read_env(&metadata_path)?;
+        if env_value(&metadata, "owner") != name {
+            continue;
+        }
+        let lease_state = fs::read_to_string(dir.join("status")).unwrap_or_default();
+        if !matches!(lease_state.trim(), "planned" | "running") {
+            continue;
+        }
+        metadata.insert("updated_at".into(), timestamp());
+        write_lease_env(&metadata_path, &metadata)?;
+        atomic_write(&dir.join("status"), "stale\n")?;
+        atomic_write(
+            &dir.join("result.json"),
+            &format!(
+                "{}\n",
+                serde_json::to_string(&json!({
+                    "reason": "owner-terminal-without-lease-result",
+                    "owner": name,
+                    "owner_status": assignment_state,
+                }))
+                .map_err(json_error)?
+            ),
+        )?;
+        write_validation_lease_json(&dir)?;
+        stale += 1;
+    }
+    println!("settled agent\t{name}\t{assignment_state}\tstale_leases={stale}");
+    Ok(())
+}
+
 fn assignment_check(args: &[String]) -> Result<(), String> {
     let name = one_agent("assignment-check", args)?;
     let dir = require_assignment(name)?;
