@@ -1541,6 +1541,9 @@ env "${CLOSED_HASH_ENV[@]}" "$MULTIAGENT" subagent finding-create superseded-vis
   --severity blocking --type test-gap --summary "Old visible expectation conflicts with the public task" \
   --affected source.txt --evidence-json '{"source_evidence":"source.txt old expectation"}' \
   --required-resolution "Edit the old expectation." >/dev/null
+env "${CLOSED_HASH_ENV[@]}" "$MULTIAGENT" subagent todo-create superseded-visible-test-todo \
+  --source-finding-id superseded-visible-test --task "Edit the old expectation." \
+  --done-criteria "run false" >/dev/null
 if env "${CLOSED_HASH_ENV[@]}" "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-undismissed-finding.out" 2>&1; then
   echo "expected gate-check to reject an undismissed blocking finding" >&2
   exit 1
@@ -1551,6 +1554,9 @@ env "${CLOSED_HASH_ENV[@]}" "$MULTIAGENT" subagent finding-dismiss superseded-vi
 dismissed_finding_gate_output="$(env "${CLOSED_HASH_ENV[@]}" "$MULTIAGENT" subagent gate-check)"
 [[ "$dismissed_finding_gate_output" == $'accepted\tfinal-gate' ]]
 assert_file_contains "$CLOSED_HASH_STATE/findings/superseded-visible-test/dismissal.json" '"disposition": "superseded"'
+assert_file_contains "$CLOSED_HASH_STATE/todos/superseded-visible-test-todo/status" "superseded"
+assert_file_contains "$CLOSED_HASH_STATE/todos/superseded-visible-test-todo/supersession.json" \
+  '"source_finding_id": "superseded-visible-test"'
 python3 - "$CLOSED_HASH_STATE/todos/closed-hash-todo/closure.json" <<'PY'
 import json
 import pathlib

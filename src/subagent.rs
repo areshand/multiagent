@@ -736,17 +736,13 @@ fn finding_dismiss(args: &[String]) -> Result<(), String> {
     if dir.join("dismissal.json").is_file() {
         return Err(format!("finding already dismissed: {id}"));
     }
-    for todo in sorted_directories(&todos)? {
-        let metadata = read_env(&todo.join("todo.env"))?;
-        if env_value(&metadata, "source_finding_id") == id {
-            return Err(format!(
-                "finding-dismiss refuses finding with todo: {}",
-                todo.file_name()
-                    .and_then(|value| value.to_str())
-                    .unwrap_or("")
-            ));
-        }
-    }
+    let linked_todos = sorted_directories(&todos)?
+        .into_iter()
+        .filter(|todo| {
+            read_env(&todo.join("todo.env"))
+                .is_ok_and(|metadata| env_value(&metadata, "source_finding_id") == id)
+        })
+        .collect::<Vec<_>>();
     let (evidence_path, evidence) = verifier_evidence(&state, verified, "finding-dismiss")?;
     let recheck: Value = serde_json::from_str(recheck_raw)
         .map_err(|error| format!("invalid finding dismissal recheck: {error}"))?;
@@ -808,6 +804,22 @@ fn finding_dismiss(args: &[String]) -> Result<(), String> {
     }
     let payload = json!({"finding_id":id,"finding_hash":finding_hash,"verified_by":verified,"verifier_evidence":evidence_path.display().to_string(),"recheck":recheck,"notes":notes});
     write_json(&dir.join("dismissal.json"), &payload)?;
+    for todo in &linked_todos {
+        let todo_id = todo
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
+        let supersession = json!({
+            "todo_id": todo_id,
+            "source_finding_id": id,
+            "source_finding_hash": finding_hash,
+            "verified_by": verified,
+            "verifier_evidence": evidence_path.display().to_string(),
+            "recheck": recheck,
+        });
+        write_json(&todo.join("supersession.json"), &supersession)?;
+        update_todo_state_locked(todo, None, "superseded")?;
+    }
     println!("finding dismissed\t{id}\t{verified}");
     Ok(())
 }
@@ -1034,7 +1046,11 @@ fn gate_check(args: &[String]) -> Result<(), String> {
             .and_then(|value| value.to_str())
             .unwrap_or("");
         let status = fs::read_to_string(todo_dir.join("status")).unwrap_or_default();
-        if status.trim() != "closed" {
+        if status.trim() == "superseded" {
+            if !audit_superseded_todo(&state, &todo_dir, todo_id, &final_hash) {
+                failed = true;
+            }
+        } else if status.trim() != "closed" {
             println!(
                 "reject\topen-todo\ttodo={todo_id}\tstatus={}",
                 status.trim()
@@ -1271,6 +1287,60 @@ fn audit_dismissed_finding(dir: &Path, id: &str, final_hash: &str) -> bool {
     })();
     if let Err(reason) = result {
         println!("reject\tinvalid-finding-dismissal-evidence\tfinding={id}\treason={reason}");
+        false
+    } else {
+        true
+    }
+}
+
+fn audit_superseded_todo(state: &Path, dir: &Path, id: &str, final_hash: &str) -> bool {
+    let result = (|| -> Result<(), String> {
+        let metadata = read_env(&dir.join("todo.env"))?;
+        let source = env_value(&metadata, "source_finding_id");
+        let expected_hash = env_value(&metadata, "source_finding_hash");
+        let finding_dir = state.join("findings").join(&source);
+        let finding_path = finding_dir.join("finding.json");
+        if source.is_empty() || !finding_path.is_file() {
+            return Err("missing-source-finding".into());
+        }
+        if expected_hash.is_empty() || file_sha256(&finding_path)? != expected_hash {
+            return Err("source-finding-hash-mismatch".into());
+        }
+        if !finding_dir.join("dismissal.json").is_file() {
+            return Err("source-finding-not-dismissed".into());
+        }
+        let dismissal: Value = serde_json::from_str(
+            &fs::read_to_string(finding_dir.join("dismissal.json"))
+                .map_err(io_error("read finding dismissal"))?,
+        )
+        .map_err(|error| format!("invalid dismissal JSON: {error}"))?;
+        let supersession: Value = serde_json::from_str(
+            &fs::read_to_string(dir.join("supersession.json"))
+                .map_err(io_error("read todo supersession"))?,
+        )
+        .map_err(|error| format!("invalid supersession JSON: {error}"))?;
+        if supersession.get("todo_id").and_then(Value::as_str) != Some(id)
+            || supersession
+                .get("source_finding_id")
+                .and_then(Value::as_str)
+                != Some(source)
+            || supersession
+                .get("source_finding_hash")
+                .and_then(Value::as_str)
+                != Some(expected_hash)
+            || supersession.get("verified_by") != dismissal.get("verified_by")
+            || supersession.get("verifier_evidence") != dismissal.get("verifier_evidence")
+            || supersession.get("recheck") != dismissal.get("recheck")
+        {
+            return Err("supersession-binding-mismatch".into());
+        }
+        if !audit_dismissed_finding(&finding_dir, &source, final_hash) {
+            return Err("invalid-source-finding-dismissal".into());
+        }
+        Ok(())
+    })();
+    if let Err(reason) = result {
+        println!("reject\tinvalid-todo-supersession\ttodo={id}\treason={reason}");
         false
     } else {
         true

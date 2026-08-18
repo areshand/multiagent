@@ -158,8 +158,10 @@ persisted finding and proves that finding invalid, superseded by the public task
 or not reproducible, it may call `finding-dismiss`. Dismissal requires an
 `ACCEPTED` verifier report, the exact current diff hash, the finding ID, a narrow
 disposition, and concrete source/command evidence. The gate revalidates the
-dismissal artifact and verifier transcript. Orchestrator prose cannot erase a
-finding, and findings with repair todos must use the normal resolution loop.
+dismissal artifact and verifier transcript. If the finding already has repair
+todos, the supervisor atomically marks those todos `superseded` and binds them to
+the same sealed reviewer evidence; no role may edit todo files directly.
+Orchestrator prose alone cannot erase a finding or weaken its done criteria.
 
 ## Verifier Infrastructure Failures
 
