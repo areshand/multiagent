@@ -68,11 +68,12 @@ evaluation and provenance; it does not implement a second production workflow
 or acceptance gate.
 
 Production operations use a separate enforcement boundary. Ephemeral runbook
-agents carry certified runbooks through manifest preparation, review, execution
-request, and receipt verification. The OS-isolated supervisor binds roles and
-tasks, signs short-lived permits through KMS or Vault, and submits them to
-`prod-mcp`, which performs the side effect. Agents and the orchestrator never
-receive production credentials or signing keys. See
+agents carry certified runbooks through reviewer-approved operation proposals,
+execution request, and receipt verification. The OS-isolated supervisor binds
+roles and tasks, signs short-lived permits through KMS or Vault only for
+reviewer-approved exact operations, and submits them to `prod-mcp`, which
+performs the side effect. Agents and the orchestrator never receive production
+credentials or signing keys. See
 [Production operations](docs/production-operations.md).
 
 On production Linux, separate Unix identities isolate the orchestrator, the
@@ -105,8 +106,8 @@ the status, watch, recovery, and inspection commands to supervise a run.
   lifecycle, state, and evaluation boundary.
 - [Getting started and operations](docs/getting-started.md) — configuration,
   normal operation, decisions, agents, recovery, traces, and troubleshooting.
-- [Production operations](docs/production-operations.md) — fixed runbook agents,
-  supervisor role binding, signing backends, and MCP submission.
+- [Production operations](docs/production-operations.md) — runbook-guided agents,
+  reviewer-approved operations, supervisor signing backends, and MCP submission.
 
 ## Test
 

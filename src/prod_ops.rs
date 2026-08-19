@@ -48,6 +48,14 @@ struct ApprovalV1 {
 struct RunbookReference {
     id: String,
     version: String,
+    phase: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct OperationReference {
+    id: String,
+    version: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -61,7 +69,7 @@ struct TargetReference {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ActionManifestV1 {
+struct OperationRequestV1 {
     api_version: String,
     kind: String,
     action_id: String,
@@ -70,6 +78,9 @@ struct ActionManifestV1 {
     delegated_role: OperationsRole,
     intent_sha256: String,
     runbook: RunbookReference,
+    runbook_context_sha256: String,
+    history_sha256: String,
+    operation: OperationReference,
     target: TargetReference,
     parameters: Value,
     approvals: Vec<ApprovalV1>,
@@ -85,7 +96,7 @@ struct ActionManifestV1 {
 struct ActionPermitV1<'a> {
     api_version: &'static str,
     kind: &'static str,
-    manifest: &'a ActionManifestV1,
+    request: &'a OperationRequestV1,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -253,7 +264,7 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
             submit(&args[1..])
         }
         _ => Err(
-            "usage: multiagent prod-ops validate|role-assign|role-revoke|permit-issue|submit ..."
+            "usage: multiagent prod-ops validate --request FILE | role-assign | role-revoke | permit-issue --request FILE --output FILE | submit ..."
                 .into(),
         ),
     }
@@ -261,12 +272,12 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
 
 fn validate_command(args: &[String]) -> Result<ExitCode, String> {
     let options = options(args)?;
-    let path = required_option(&options, "--manifest")?;
-    let manifest = read_manifest(Path::new(path))?;
-    validate_manifest(&manifest)?;
+    let path = required_option(&options, "--request")?;
+    let request = read_request(Path::new(path))?;
+    validate_request(&request)?;
     println!(
         "{}",
-        canonical_json(&serde_json::to_value(manifest).map_err(json_error)?)?
+        canonical_json(&serde_json::to_value(request).map_err(json_error)?)?
     );
     Ok(ExitCode::SUCCESS)
 }
@@ -322,21 +333,21 @@ fn role_assign(args: &[String]) -> Result<ExitCode, String> {
 
 fn permit_issue(args: &[String]) -> Result<ExitCode, String> {
     let options = options(args)?;
-    let manifest_path = Path::new(required_option(&options, "--manifest")?);
+    let request_path = Path::new(required_option(&options, "--request")?);
     let output_path = Path::new(required_option(&options, "--output")?);
-    let manifest = read_manifest(manifest_path)?;
-    validate_manifest(&manifest)?;
-    validate_assignment(&manifest)?;
+    let request = read_request(request_path)?;
+    validate_request(&request)?;
+    validate_assignment(&request)?;
     let signer = signer_from_env()?;
     let permit = ActionPermitV1 {
         api_version: API_VERSION,
         kind: "ActionPermit",
-        manifest: &manifest,
+        request: &request,
     };
     let payload = canonical_json(&serde_json::to_value(permit).map_err(json_error)?)?;
     let compact = compact_jws(signer.as_ref(), payload.as_bytes())?;
     atomic_write(output_path, &format!("{compact}\n"))?;
-    println!("permit issued\t{}\t{}", manifest.action_id, signer.key_id());
+    println!("permit issued\t{}\t{}", request.action_id, signer.key_id());
     Ok(ExitCode::SUCCESS)
 }
 
@@ -485,8 +496,8 @@ fn compact_jws(signer: &dyn SigningBackend, payload: &[u8]) -> Result<String, St
     ))
 }
 
-fn validate_assignment(manifest: &ActionManifestV1) -> Result<(), String> {
-    let path = role_path(&manifest.delegated_subject)?;
+fn validate_assignment(request: &OperationRequestV1) -> Result<(), String> {
+    let path = role_path(&request.delegated_subject)?;
     let assignment: RoleAssignment =
         serde_json::from_str(&fs::read_to_string(&path).map_err(|error| {
             format!(
@@ -498,80 +509,87 @@ fn validate_assignment(manifest: &ActionManifestV1) -> Result<(), String> {
     if assignment.api_version != API_VERSION || assignment.kind != "RoleAssignment" {
         return Err("role assignment contract is not supported".into());
     }
-    if assignment.delegated_subject != manifest.delegated_subject
-        || assignment.delegated_role != manifest.delegated_role
-        || assignment.task_id != manifest.task_id
+    if assignment.delegated_subject != request.delegated_subject
+        || assignment.delegated_role != request.delegated_role
+        || assignment.task_id != request.task_id
     {
         return Err(
-            "manifest subject, role, or task does not match the supervisor assignment".into(),
+            "operation request subject, role, or task does not match the supervisor assignment"
+                .into(),
         );
     }
-    if assignment.expires_at <= Utc::now() || manifest.expires_at > assignment.expires_at {
+    if assignment.expires_at <= Utc::now() || request.expires_at > assignment.expires_at {
         return Err("role assignment is expired or shorter than the requested permit".into());
     }
     Ok(())
 }
 
-fn validate_manifest(manifest: &ActionManifestV1) -> Result<(), String> {
-    if manifest.api_version != API_VERSION || manifest.kind != "ActionManifest" {
-        return Err("unsupported ActionManifest contract".into());
+fn validate_request(request: &OperationRequestV1) -> Result<(), String> {
+    if request.api_version != API_VERSION || request.kind != "OperationRequest" {
+        return Err("unsupported OperationRequest contract".into());
     }
     for (label, value) in [
-        ("actionId", manifest.action_id.as_str()),
-        ("taskId", manifest.task_id.as_str()),
-        ("delegatedSubject", manifest.delegated_subject.as_str()),
-        ("nonce", manifest.nonce.as_str()),
+        ("actionId", request.action_id.as_str()),
+        ("taskId", request.task_id.as_str()),
+        ("delegatedSubject", request.delegated_subject.as_str()),
+        ("nonce", request.nonce.as_str()),
     ] {
         validate_id(label, value)?;
     }
-    validate_digest("intentSha256", &manifest.intent_sha256)?;
+    validate_digest("intentSha256", &request.intent_sha256)?;
+    validate_digest("runbookContextSha256", &request.runbook_context_sha256)?;
+    validate_digest("historySha256", &request.history_sha256)?;
+    validate_id("runbook id", &request.runbook.id)?;
+    validate_id("runbook phase", &request.runbook.phase)?;
+    validate_id("operation id", &request.operation.id)?;
     if !matches!(
-        manifest.target.environment.as_str(),
+        request.target.environment.as_str(),
         "development" | "staging" | "production"
     ) {
         return Err("target environment must be development, staging, or production".into());
     }
     for (label, value) in [
-        ("cluster", manifest.target.cluster.as_str()),
-        ("namespace", manifest.target.namespace.as_str()),
-        ("service", manifest.target.service.as_str()),
+        ("cluster", request.target.cluster.as_str()),
+        ("namespace", request.target.namespace.as_str()),
+        ("service", request.target.service.as_str()),
     ] {
         validate_id(label, value)?;
     }
-    if manifest.issued_at > Utc::now() + Duration::seconds(30) {
-        return Err("manifest issuedAt is in the future".into());
+    if request.issued_at > Utc::now() + Duration::seconds(30) {
+        return Err("operation request issuedAt is in the future".into());
     }
-    if manifest.expires_at <= Utc::now()
-        || manifest.expires_at <= manifest.issued_at
-        || manifest.expires_at - manifest.issued_at > Duration::minutes(5)
+    if request.expires_at <= Utc::now()
+        || request.expires_at <= request.issued_at
+        || request.expires_at - request.issued_at > Duration::minutes(5)
     {
         return Err(
-            "manifest lifetime must be positive, unexpired, and at most five minutes".into(),
+            "operation request lifetime must be positive, unexpired, and at most five minutes"
+                .into(),
         );
     }
     let (roles, required_parameters, required_reviews, ticket) =
-        runbook_contract(&manifest.runbook)?;
-    if !roles.contains(&manifest.delegated_role.as_str()) {
-        return Err("supervisor-assigned role cannot execute this runbook".into());
+        operation_contract(&request.runbook, &request.operation)?;
+    if !roles.contains(&request.delegated_role.as_str()) {
+        return Err("supervisor-assigned role cannot execute this operation".into());
     }
     validate_parameters(
-        &manifest.runbook.id,
-        &manifest.parameters,
+        &request.operation.id,
+        &request.parameters,
         required_parameters,
     )?;
     if ticket
-        && match manifest.change_ticket.as_deref() {
+        && match request.change_ticket.as_deref() {
             Some(value) => !valid_ticket(value),
             None => true,
         }
     {
-        return Err("mutating runbook requires a valid changeTicket".into());
+        return Err("mutating operation requires a valid changeTicket".into());
     }
     let mut subjects = BTreeSet::new();
-    if manifest.approvals.len() > 4 {
-        return Err("manifest may contain at most four approvals".into());
+    if request.approvals.len() > 4 {
+        return Err("operation request may contain at most four approvals".into());
     }
-    for approval in &manifest.approvals {
+    for approval in &request.approvals {
         if !matches!(
             approval.reviewer_role.as_str(),
             "safety-reviewer" | "operations-reviewer"
@@ -581,12 +599,12 @@ fn validate_manifest(manifest: &ActionManifestV1) -> Result<(), String> {
         }
         validate_id("reviewer subject", &approval.reviewer_subject)?;
         validate_digest("review evidence", &approval.evidence_sha256)?;
-        if approval.approved_at > manifest.issued_at {
+        if approval.approved_at > request.issued_at {
             return Err("review approval must predate permit issuance".into());
         }
     }
     for role in required_reviews {
-        let approval = manifest
+        let approval = request
             .approvals
             .iter()
             .find(|approval| approval.reviewer_role == role && approval.decision == "approve")
@@ -598,8 +616,9 @@ fn validate_manifest(manifest: &ActionManifestV1) -> Result<(), String> {
     Ok(())
 }
 
-fn runbook_contract(
-    reference: &RunbookReference,
+fn operation_contract(
+    runbook: &RunbookReference,
+    operation: &OperationReference,
 ) -> Result<
     (
         BTreeSet<&'static str>,
@@ -609,11 +628,14 @@ fn runbook_contract(
     ),
     String,
 > {
-    if reference.version != "1.0.0" {
+    if runbook.version != "1.0.0" {
         return Err("runbook version is not certified".into());
     }
-    let contract = match reference.id.as_str() {
-        "k8s.report-deployment-health" => (
+    if operation.version != "1.0.0" {
+        return Err("operation version is not certified".into());
+    }
+    let contract = match operation.id.as_str() {
+        "k8s.deployment-health" => (
             ["runbook-observer", "runbook-operator", "service-deployer"]
                 .into_iter()
                 .collect(),
@@ -621,7 +643,7 @@ fn runbook_contract(
             vec![],
             false,
         ),
-        "k8s.diagnose-service" => (
+        "k8s.service-diagnostics" => (
             ["runbook-observer", "runbook-operator", "service-deployer"]
                 .into_iter()
                 .collect(),
@@ -637,7 +659,7 @@ fn runbook_contract(
             vec!["safety-reviewer", "operations-reviewer"],
             true,
         ),
-        "service.deploy-approved-release" => (
+        "service.deploy-release" => (
             ["service-deployer"].into_iter().collect(),
             [
                 "imageDigest",
@@ -650,13 +672,23 @@ fn runbook_contract(
             vec!["safety-reviewer", "operations-reviewer"],
             true,
         ),
-        _ => return Err("request is not one of the certified runbooks".into()),
+        _ => return Err("request is not one of the certified operation primitives".into()),
     };
+    let allowed_runbook = match operation.id.as_str() {
+        "k8s.deployment-health" | "k8s.service-diagnostics" | "k8s.restart-deployment" => {
+            runbook.id == "k8s.service-recovery"
+        }
+        "service.deploy-release" => runbook.id == "service.approved-release-deployment",
+        _ => false,
+    };
+    if !allowed_runbook {
+        return Err("operation is not allowed under the signed runbook".into());
+    }
     Ok(contract)
 }
 
 fn validate_parameters(
-    runbook: &str,
+    operation: &str,
     value: &Value,
     expected: BTreeSet<&str>,
 ) -> Result<(), String> {
@@ -665,7 +697,7 @@ fn validate_parameters(
         .ok_or_else(|| "parameters must be an object".to_string())?;
     let actual: BTreeSet<&str> = object.keys().map(String::as_str).collect();
     if actual != expected {
-        return Err("parameters deviate from the fixed runbook schema".into());
+        return Err("parameters deviate from the fixed operation schema".into());
     }
     let integer = |name: &str, minimum: i64, maximum: i64| {
         let value = object
@@ -677,9 +709,9 @@ fn validate_parameters(
         }
         Ok(())
     };
-    match runbook {
-        "k8s.report-deployment-health" => integer("timeoutSeconds", 5, 120)?,
-        "k8s.diagnose-service" => {
+    match operation {
+        "k8s.deployment-health" => integer("timeoutSeconds", 5, 120)?,
+        "k8s.service-diagnostics" => {
             integer("lookbackMinutes", 5, 120)?;
             if object.get("includeLogs").and_then(Value::as_bool).is_none() {
                 return Err("includeLogs must be a boolean".into());
@@ -693,7 +725,7 @@ fn validate_parameters(
             integer("waitForReadySeconds", 30, 600)?;
             integer("expectedReplicaCount", 1, 500)?;
         }
-        "service.deploy-approved-release" => {
+        "service.deploy-release" => {
             validate_digest(
                 "imageDigest",
                 object
@@ -711,7 +743,7 @@ fn validate_parameters(
             integer("waitForReadySeconds", 30, 900)?;
             integer("expectedReplicaCount", 1, 500)?;
         }
-        _ => return Err("unknown runbook parameter contract".into()),
+        _ => return Err("unknown operation parameter contract".into()),
     }
     Ok(())
 }
@@ -746,12 +778,12 @@ fn canonical_json(value: &Value) -> Result<String, String> {
     }
 }
 
-fn read_manifest(path: &Path) -> Result<ActionManifestV1, String> {
+fn read_request(path: &Path) -> Result<OperationRequestV1, String> {
     serde_json::from_str(
         &fs::read_to_string(path)
-            .map_err(|error| format!("read manifest {}: {error}", path.display()))?,
+            .map_err(|error| format!("read operation request {}: {error}", path.display()))?,
     )
-    .map_err(|error| format!("decode ActionManifestV1: {error}"))
+    .map_err(|error| format!("decode OperationRequestV1: {error}"))
 }
 
 fn role_path(subject: &str) -> Result<PathBuf, String> {
@@ -778,7 +810,7 @@ fn require_supervisor() -> Result<(), String> {
     {
         return Ok(());
     }
-    Err("only the OS-isolated supervisor may assign operations roles, issue permits, or submit runbooks".into())
+    Err("only the OS-isolated supervisor may assign operations roles, issue permits, or submit operations".into())
 }
 
 fn options(args: &[String]) -> Result<BTreeMap<String, String>, String> {
@@ -863,17 +895,24 @@ mod tests {
     use p256::pkcs8::EncodePrivateKey;
     use sha2::{Digest, Sha256};
 
-    fn manifest() -> ActionManifestV1 {
+    fn request() -> OperationRequestV1 {
         let issued_at = Utc::now() - Duration::seconds(1);
-        ActionManifestV1 {
+        OperationRequestV1 {
             api_version: API_VERSION.into(),
-            kind: "ActionManifest".into(),
+            kind: "OperationRequest".into(),
             action_id: "action-123".into(),
             task_id: "task-123".into(),
             delegated_subject: "agent-123".into(),
             delegated_role: OperationsRole::RunbookOperator,
             intent_sha256: format!("sha256:{}", "1".repeat(64)),
             runbook: RunbookReference {
+                id: "k8s.service-recovery".into(),
+                version: "1.0.0".into(),
+                phase: "restart".into(),
+            },
+            runbook_context_sha256: format!("sha256:{}", "4".repeat(64)),
+            history_sha256: format!("sha256:{}", "5".repeat(64)),
+            operation: OperationReference {
                 id: "k8s.restart-deployment".into(),
                 version: "1.0.0".into(),
             },
@@ -909,14 +948,19 @@ mod tests {
 
     #[test]
     fn role_and_parameter_escalation_are_rejected() {
-        let mut candidate = manifest();
+        let mut candidate = request();
         candidate.delegated_role = OperationsRole::RunbookObserver;
-        assert!(validate_manifest(&candidate).unwrap_err().contains("role"));
-        let mut candidate = manifest();
+        assert!(validate_request(&candidate).unwrap_err().contains("role"));
+        let mut candidate = request();
         candidate.parameters = json!({ "command": "kubectl delete namespace payments" });
-        assert!(validate_manifest(&candidate)
+        assert!(validate_request(&candidate)
             .unwrap_err()
             .contains("deviate"));
+        let mut candidate = request();
+        candidate.runbook.id = "service.approved-release-deployment".into();
+        assert!(validate_request(&candidate)
+            .unwrap_err()
+            .contains("not allowed"));
     }
 
     #[test]
@@ -931,7 +975,7 @@ mod tests {
         let permit = ActionPermitV1 {
             api_version: API_VERSION,
             kind: "ActionPermit",
-            manifest: &manifest(),
+            request: &request(),
         };
         let payload = canonical_json(&serde_json::to_value(permit).unwrap()).unwrap();
         let compact = compact_jws(&signer, payload.as_bytes()).unwrap();
