@@ -59,12 +59,23 @@ def list_untracked_files(cwd: Path) -> list[str]:
     return [line.strip() for line in others.stdout.splitlines() if line.strip()]
 
 
+def is_framework_internal_path(path: str) -> bool:
+    """Return whether an untracked path belongs to multiagent's control plane."""
+
+    normalized = path.removeprefix("./")
+    return normalized == ".multiagent" or normalized.startswith(".multiagent/")
+
+
 def mark_untracked_intent_to_add(cwd: Path, *, baseline_untracked: set[str] | None = None) -> list[str]:
     """Expose newly created solver files without submitting image residue."""
 
     baseline = baseline_untracked or set()
     untracked = list_untracked_files(cwd)
-    intent_to_add = [path for path in untracked if (cwd / path).is_file()]
+    intent_to_add = [
+        path
+        for path in untracked
+        if (cwd / path).is_file() and not is_framework_internal_path(path)
+    ]
     intent_to_add = [path for path in intent_to_add if path not in baseline]
     if intent_to_add:
         result = run(["git", "add", "-N", "--", *intent_to_add], cwd=cwd, timeout=120)

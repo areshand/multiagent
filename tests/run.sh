@@ -703,6 +703,25 @@ printf 'ACCEPTED\nbuild-verification-passed: final-diff-sha256=%s compile_clean=
 MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
   "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-verifier-bound-hash.out"
 assert_file_contains "$TMPDIR/gate-verifier-bound-hash.out" "accepted"
+mkdir -p "$HASH_GATE_ROOT/src/routes"
+printf 'before route\n' >"$HASH_GATE_ROOT/src/routes/index.js"
+git -C "$HASH_GATE_ROOT" add src/routes/index.js
+git -C "$HASH_GATE_ROOT" commit -qm route-baseline
+printf 'after route\n' >"$HASH_GATE_ROOT/src/routes/index.js"
+HASH_GATE_ROUTE_SHA="$("$MULTIAGENT" snapshot --root "$HASH_GATE_ROOT" --format shell | awk '{print $1}')"
+printf 'ACCEPTED\nbuild-verification-passed: final-diff-sha256=%s compile_clean=true returncode=0\n' "$HASH_GATE_ROUTE_SHA" >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
+if MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
+  "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-route-missing-probe.out" 2>&1; then
+  echo "expected a route diff without an integration probe marker to fail gate-check" >&2
+  exit 1
+fi
+assert_file_contains "$TMPDIR/gate-route-missing-probe.out" $'reject\tmissing-route-integration-probe'
+printf 'ACCEPTED\nbuild-verification-passed: final-diff-sha256=%s compile_clean=true returncode=0\nroute-integration-probe-passed: final-diff-sha256=%s command=request-test returncode=0\n' \
+  "$HASH_GATE_ROUTE_SHA" "$HASH_GATE_ROUTE_SHA" >"$HASH_GATE_STATE/subagents/verifier-01-hash/last-message.txt"
+MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
+  "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-route-probe-passed.out"
+assert_file_contains "$TMPDIR/gate-route-probe-passed.out" "accepted"
+git -C "$HASH_GATE_ROOT" restore src/routes/index.js
 printf 'malicious post-review source\n' >"$HASH_GATE_ROOT/untracked-source.txt"
 if MULTIAGENT_ROOT="$HASH_GATE_ROOT" MULTIAGENT_STATE_DIR="$HASH_GATE_STATE" MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1 \
   "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-verifier-untracked-bypass.out" 2>&1; then
@@ -1017,7 +1036,11 @@ assert_file_contains "$ROOT/prompts/verifier.md" "state-space partition audit"
 assert_file_contains "$ROOT/prompts/verifier.md" "mixed-category, unknown/forward-compatible variant"
 assert_file_contains "$ROOT/prompts/verifier.md" "state-space-partition-audit:"
 assert_file_contains "$ROOT/prompts/verifier.md" "behavior-verification-passed:"
+assert_file_contains "$ROOT/prompts/verifier.md" "route-integration-probe-passed:"
 assert_file_contains "$ROOT/prompts/verifier.md" "narrowest visible test file"
+assert_file_contains "$ROOT/prompts/verifier.md" "visible-test-replay-passed:"
+assert_file_contains "$ROOT/prompts/verifier.md" "exact boundary values"
+assert_file_contains "$ROOT/prompts/worker.md" "visible-test-replay-passed:"
 assert_file_contains "$ROOT/prompts/verifier.md" "Syntax checks, compile-only commands"
 assert_file_contains "$ROOT/prompts/verifier.md" "command=... returncode=0"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "partition contract"
@@ -1063,6 +1086,7 @@ assert_file_contains "$ROOT/prompts/worker.md" "no-test compile check"
 assert_file_contains "$ROOT/prompts/worker.md" "declared static type"
 assert_file_contains "$ROOT/prompts/worker.md" "validation-repair-needed:"
 assert_file_contains "$ROOT/prompts/worker.md" "multi-value-probe-passed:"
+assert_file_contains "$ROOT/prompts/worker.md" "route-integration-probe-passed:"
 assert_file_contains "$ROOT/prompts/worker.md" "actual-output-count=N"
 assert_file_contains "$ROOT/prompts/worker.md" "multi-value-probe.txt"
 assert_file_contains "$ROOT/prompts/worker.md" "source-symbol-map-passed:"
@@ -1108,6 +1132,8 @@ assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "active 
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "assignment-status NAME failed"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-symbol map contract"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-symbol-map-passed:"
+assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "structure=positive owner=OWNER member=FIELD member-type=TYPE"
+assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "structure=negative owner=OWNER embedded-type=TYPE"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "source-owner-ledger:"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "constructor-dependency contract"
 assert_file_contains "$ROOT/prompts/roles/build-verifier.md" "build-verification-passed:"
@@ -1515,6 +1541,9 @@ env "${CLOSED_HASH_ENV[@]}" "$MULTIAGENT" subagent finding-create superseded-vis
   --severity blocking --type test-gap --summary "Old visible expectation conflicts with the public task" \
   --affected source.txt --evidence-json '{"source_evidence":"source.txt old expectation"}' \
   --required-resolution "Edit the old expectation." >/dev/null
+env "${CLOSED_HASH_ENV[@]}" "$MULTIAGENT" subagent todo-create superseded-visible-test-todo \
+  --source-finding-id superseded-visible-test --task "Edit the old expectation." \
+  --done-criteria "run false" >/dev/null
 if env "${CLOSED_HASH_ENV[@]}" "$MULTIAGENT" subagent gate-check >"$TMPDIR/gate-undismissed-finding.out" 2>&1; then
   echo "expected gate-check to reject an undismissed blocking finding" >&2
   exit 1
@@ -1525,6 +1554,9 @@ env "${CLOSED_HASH_ENV[@]}" "$MULTIAGENT" subagent finding-dismiss superseded-vi
 dismissed_finding_gate_output="$(env "${CLOSED_HASH_ENV[@]}" "$MULTIAGENT" subagent gate-check)"
 [[ "$dismissed_finding_gate_output" == $'accepted\tfinal-gate' ]]
 assert_file_contains "$CLOSED_HASH_STATE/findings/superseded-visible-test/dismissal.json" '"disposition": "superseded"'
+assert_file_contains "$CLOSED_HASH_STATE/todos/superseded-visible-test-todo/status" "superseded"
+assert_file_contains "$CLOSED_HASH_STATE/todos/superseded-visible-test-todo/supersession.json" \
+  '"source_finding_id": "superseded-visible-test"'
 python3 - "$CLOSED_HASH_STATE/todos/closed-hash-todo/closure.json" <<'PY'
 import json
 import pathlib

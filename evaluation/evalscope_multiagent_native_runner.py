@@ -82,7 +82,10 @@ exit 127
 
 
 def solver_internal_timeout(agent_timeout: float) -> int:
-    reserve = int(os.environ.get("EVAL_NATIVE_SOLVER_TIMEOUT_RESERVE", "600"))
+    # Trace export and official verification happen after the solver process
+    # returns, so this reserve only needs to cover orderly tmux shutdown and
+    # workspace ownership restoration before AgentEnvironment's hard timeout.
+    reserve = int(os.environ.get("EVAL_NATIVE_SOLVER_TIMEOUT_RESERVE", "180"))
     reserve = max(90, min(reserve, int(agent_timeout) - 300))
     return max(300, int(agent_timeout) - reserve)
 

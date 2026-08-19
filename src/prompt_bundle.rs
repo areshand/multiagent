@@ -1,6 +1,6 @@
+use crate::state::atomic_write;
 use std::collections::BTreeMap;
-use std::fs::{self, File};
-use std::io::Write;
+use std::fs;
 use std::path::Path;
 
 const USAGE:&str="Usage:\n  multiagent prompt-bundle --orchestrator PATH --lifecycle PATH --output PATH\n\nBuilds the canonical initial orchestrator prompt from the role prompt and the\nmandatory implementation lifecycle playbook.";
@@ -53,18 +53,6 @@ fn parse_options(args: &[String]) -> Result<BTreeMap<String, String>, String> {
         index += 2;
     }
     Ok(values)
-}
-fn atomic_write(path: &Path, text: &str) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("output path has no parent: {}", path.display()))?;
-    fs::create_dir_all(parent).map_err(io_error("create output directory"))?;
-    let temporary = path.with_file_name(format!(".orchestrator-prompt.{}.tmp", std::process::id()));
-    let mut file = File::create(&temporary).map_err(io_error("create prompt bundle"))?;
-    file.write_all(text.as_bytes())
-        .map_err(io_error("write prompt bundle"))?;
-    file.sync_all().map_err(io_error("sync prompt bundle"))?;
-    fs::rename(temporary, path).map_err(io_error("publish prompt bundle"))
 }
 fn io_error(action: &'static str) -> impl Fn(std::io::Error) -> String {
     move |error| format!("{action}: {error}")

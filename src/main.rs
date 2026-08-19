@@ -1,4 +1,5 @@
 mod agent;
+mod authority;
 mod config;
 mod dag;
 mod decision;
@@ -7,6 +8,7 @@ mod prompt_bundle;
 mod role_sandbox;
 mod runtime;
 mod snapshot;
+mod state;
 mod subagent;
 mod supervisor;
 mod workflow;

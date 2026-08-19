@@ -1,13 +1,15 @@
 use crate::{
     agent::{self, AgentRequest, BackendId, BackendPaths, InvocationMode, RoleAccess},
-    config, policy, role_sandbox, supervisor,
+    config, policy, role_sandbox,
+    state::{atomic_write as write_state, read_env, timestamp},
+    supervisor,
 };
-use chrono::{Local, SecondsFormat, Utc};
+use chrono::{Local, Utc};
 use fs2::FileExt;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Output};
@@ -3487,17 +3489,6 @@ fn csv_values(raw: &str) -> Vec<String> {
     values
 }
 
-fn read_env(path: &Path) -> Result<BTreeMap<String, String>, String> {
-    let text = fs::read_to_string(path).map_err(io_error("read environment state"))?;
-    let mut values = BTreeMap::new();
-    for line in text.lines() {
-        if let Some((key, value)) = line.split_once('=') {
-            values.insert(key.into(), value.into());
-        }
-    }
-    Ok(values)
-}
-
 fn required_env_field<'a>(
     values: &'a BTreeMap<String, String>,
     key: &str,
@@ -3629,22 +3620,7 @@ fn append_file(path: &Path, text: &str) -> Result<(), String> {
 }
 
 fn atomic_write(path: &Path, text: &str, label: &str) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("{label} path has no parent: {}", path.display()))?;
-    fs::create_dir_all(parent).map_err(io_error("create output directory"))?;
-    let temporary = path.with_file_name(format!(
-        ".{}.{}.tmp",
-        path.file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or("state"),
-        std::process::id()
-    ));
-    let mut file = File::create(&temporary).map_err(io_error("create temporary file"))?;
-    file.write_all(text.as_bytes())
-        .map_err(io_error("write temporary file"))?;
-    file.sync_all().map_err(io_error("sync temporary file"))?;
-    fs::rename(temporary, path).map_err(io_error("publish file"))
+    write_state(path, text).map_err(|error| format!("{label}: {error}"))
 }
 
 #[cfg(unix)]
@@ -3660,10 +3636,6 @@ fn set_executable(path: &Path, mode: u32) -> Result<(), String> {
 #[cfg(not(unix))]
 fn set_executable(_path: &Path, _mode: u32) -> Result<(), String> {
     Ok(())
-}
-
-fn timestamp() -> String {
-    Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
 fn io_error(action: &'static str) -> impl Fn(std::io::Error) -> String {

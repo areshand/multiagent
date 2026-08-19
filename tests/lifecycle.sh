@@ -279,6 +279,31 @@ for review_type in decision-drift scope technical reflection; do
     --type "$review_type" --verdict pass --diff-hash DIFF-FINAL \
     --evidence "$review_type passed" --reviewer "$reviewer_name" >/dev/null
 done
+SUPERSEDED_REVIEW_STATE="$TEST_TMP/superseded-review-state"
+cp -R "$LOOP_STATE" "$SUPERSEDED_REVIEW_STATE"
+for reviewer_name in reviewer-scope-gap reviewer-scope-recheck; do
+  reviewer_state="$SUPERSEDED_REVIEW_STATE/subagents/$reviewer_name"
+  mkdir -p "$reviewer_state"
+  printf '%s\n' 'role=reviewer' 'codex_access=read-only' >"$reviewer_state/meta.env"
+  printf 'finalized\n' >"$reviewer_state/status"
+  printf '2026-08-15T00:00:00Z\n' >"$reviewer_state/finalized_at"
+done
+printf 'review-record: type=scope verdict=findings diff=DIFF-FINAL\n' \
+  >"$SUPERSEDED_REVIEW_STATE/subagents/reviewer-scope-gap/last-message.txt"
+MULTIAGENT_STATE_DIR="$SUPERSEDED_REVIEW_STATE" MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
+  "$MULTIAGENT" workflow record-review WF-LOOP REVIEW-SCOPE-GAP \
+    --type scope --verdict findings --diff-hash DIFF-FINAL \
+    --evidence "scope reviewer requested additional validation" \
+    --reviewer reviewer-scope-gap >/dev/null
+printf 'review-record: type=scope verdict=pass diff=DIFF-FINAL\n' \
+  >"$SUPERSEDED_REVIEW_STATE/subagents/reviewer-scope-recheck/last-message.txt"
+MULTIAGENT_STATE_DIR="$SUPERSEDED_REVIEW_STATE" MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
+  "$MULTIAGENT" workflow record-review WF-LOOP REVIEW-SCOPE-RECHECK \
+    --type scope --verdict pass --diff-hash DIFF-FINAL \
+    --evidence "independent recheck accepted the same diff after evidence collection" \
+    --reviewer reviewer-scope-recheck >/dev/null
+MULTIAGENT_STATE_DIR="$SUPERSEDED_REVIEW_STATE" MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
+  "$MULTIAGENT" workflow completion-check WF-LOOP >/dev/null
 FINDINGS_STATE="$TEST_TMP/findings-state"
 cp -R "$LOOP_STATE" "$FINDINGS_STATE"
 UNRECORDED_REVIEWER="$FINDINGS_STATE/subagents/reviewer-unrecorded-findings"

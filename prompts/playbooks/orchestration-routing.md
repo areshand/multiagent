@@ -179,7 +179,9 @@ failing field/path.
 If that recheck disproves a previously persisted finding, pass the exact finding
 ID to the adjudication verifier and require `finding-dismiss` with accepted
 exact-hash evidence. A newer acceptance does not implicitly erase older finding
-state, and a finding that already has a todo must complete the normal repair loop.
+state. When a finding already has a todo, successful reviewer-backed dismissal
+atomically supersedes that todo; never try to edit supervisor-owned todo metadata
+or launch a writer merely to rewrite its required commands.
 
 ## Progress And Status
 

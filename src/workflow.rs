@@ -1,5 +1,7 @@
-use crate::config;
-use chrono::{SecondsFormat, Utc};
+use crate::{
+    config,
+    state::{atomic_write, atomic_write_bytes, read_env_optional, timestamp},
+};
 use fs2::FileExt;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -989,10 +991,17 @@ fn completion_state(store: &Store, id: &str) -> Result<BTreeMap<String, String>,
     }
     let iteration = state_value(&state, "iteration");
     let reviews = read_reviews(&p.reviews)?;
-    let findings: BTreeSet<&str> = reviews
+    let mut latest = BTreeMap::new();
+    for review in reviews
         .iter()
-        .filter(|r| r.get(5) == iteration && r.get(3) == diff && r.get(2) == "findings")
-        .map(|r| r.get(1))
+        .filter(|r| r.get(5) == iteration && r.get(3) == diff)
+    {
+        latest.insert(review.get(1), review);
+    }
+    let findings: BTreeSet<&str> = latest
+        .values()
+        .filter(|review| review.get(2) == "findings")
+        .map(|review| review.get(1))
         .collect();
     if !findings.is_empty() {
         return Err(format!(
@@ -1000,10 +1009,10 @@ fn completion_state(store: &Store, id: &str) -> Result<BTreeMap<String, String>,
             findings.into_iter().collect::<Vec<_>>().join(",")
         ));
     }
-    let passed: BTreeSet<&str> = reviews
-        .iter()
-        .filter(|r| r.get(5) == iteration && r.get(3) == diff && r.get(2) == "pass")
-        .map(|r| r.get(1))
+    let passed: BTreeSet<&str> = latest
+        .values()
+        .filter(|review| review.get(2) == "pass")
+        .map(|review| review.get(1))
         .collect();
     let missing: Vec<&str> = POST_REVIEWS
         .iter()
@@ -1031,12 +1040,10 @@ fn completion_state(store: &Store, id: &str) -> Result<BTreeMap<String, String>,
                 unfinished.join(",")
             ));
         }
-        for review in reviews.iter().filter(|row| {
-            row.get(5) == iteration
-                && row.get(3) == diff
-                && row.get(2) == "pass"
-                && POST_REVIEWS.contains(&row.get(1))
-        }) {
+        for review in latest
+            .values()
+            .filter(|row| row.get(2) == "pass" && POST_REVIEWS.contains(&row.get(1)))
+        {
             let reviewer = review.get(7);
             if reviewer.is_empty() {
                 return Err(format!(
@@ -1358,19 +1365,51 @@ fn validate_contract_schema(text: &str, original_task: &str) -> Result<(), Strin
         }
     }
     if requires_embedding_rule {
-        let positive = rules.iter().any(|rule| rule.contains(" polarity=must "));
-        let negative = rules.iter().any(|rule| {
-            let statement = contract_rule_statement(rule).to_ascii_lowercase();
-            rule.contains(" polarity=must-not ") && statement.contains("embed")
+        let positive = rules.iter().find_map(|rule| {
+            (rule.contains(" polarity=must ") && rule.contains(" structure=positive ")).then(|| {
+                (
+                    contract_rule_field(rule, "owner"),
+                    contract_rule_field(rule, "member"),
+                    contract_rule_field(rule, "member-type"),
+                )
+            })
         });
-        if !positive {
-            return Err("contract scout artifact requires a positive structural rule".into());
-        }
-        if !negative {
-            return Err("contract scout artifact requires a separate `polarity=must-not` rule covering the requested embedding prohibition".into());
+        let negative = rules.iter().find_map(|rule| {
+            let statement = contract_rule_statement(rule).to_ascii_lowercase();
+            (rule.contains(" polarity=must-not ")
+                && rule.contains(" structure=negative ")
+                && statement.contains("embed"))
+            .then(|| {
+                (
+                    contract_rule_field(rule, "owner"),
+                    contract_rule_field(rule, "embedded-type"),
+                )
+            })
+        });
+        let Some((positive_owner, member, member_type)) = positive else {
+            return Err("contract scout artifact requires a machine-readable positive structural rule with `structure=positive owner=OWNER member=FIELD member-type=TYPE`".into());
+        };
+        let Some((negative_owner, embedded_type)) = negative else {
+            return Err("contract scout artifact requires a machine-readable negative structural rule with `structure=negative owner=OWNER embedded-type=TYPE` covering the embedding prohibition".into());
+        };
+        if positive_owner.is_empty()
+            || member.is_empty()
+            || member_type.is_empty()
+            || negative_owner.is_empty()
+            || embedded_type.is_empty()
+            || positive_owner != negative_owner
+            || member_type != embedded_type
+        {
+            return Err("contract scout embedding rules must name one matching owner/type pair and a concrete replacement member".into());
         }
     }
     Ok(())
+}
+
+fn contract_rule_field<'a>(rule: &'a str, key: &str) -> &'a str {
+    rule.split_whitespace()
+        .find_map(|part| part.strip_prefix(&format!("{key}=")))
+        .unwrap_or("")
 }
 
 fn contract_rule_statement(rule: &str) -> &str {
@@ -1411,19 +1450,7 @@ fn read_env(path: &Path, id: &str) -> Result<BTreeMap<String, String>, String> {
     read_simple_env(path)
 }
 fn read_simple_env(path: &Path) -> Result<BTreeMap<String, String>, String> {
-    let mut out = BTreeMap::new();
-    if !path.is_file() {
-        return Ok(out);
-    }
-    for line in fs::read_to_string(path)
-        .map_err(io_error("read state"))?
-        .lines()
-    {
-        if let Some((k, v)) = line.split_once('=') {
-            out.insert(k.into(), v.into());
-        }
-    }
-    Ok(out)
+    read_env_optional(path)
 }
 fn write_env(path: &Path, state: &BTreeMap<String, String>) -> Result<(), String> {
     let text = ENV_ORDER
@@ -1480,25 +1507,6 @@ fn event(path: &Path, name: &str, detail: &str) -> Result<(), String> {
     writeln!(file, "{}\t{}\t{}", timestamp(), name, detail)
         .map_err(io_error("append lifecycle event"))
 }
-fn atomic_write(path: &Path, text: &str) -> Result<(), String> {
-    atomic_write_bytes(path, text.as_bytes())
-}
-
-fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(io_error("create state directory"))?;
-    }
-    let temp = path.with_file_name(format!(
-        ".{}.{}.tmp",
-        path.file_name().and_then(|v| v.to_str()).unwrap_or("state"),
-        std::process::id()
-    ));
-    let mut file = File::create(&temp).map_err(io_error("create temporary state"))?;
-    file.write_all(bytes)
-        .map_err(io_error("write temporary state"))?;
-    file.sync_all().map_err(io_error("sync temporary state"))?;
-    fs::rename(&temp, path).map_err(io_error("publish state"))
-}
 fn sha256(path: &Path) -> Result<String, String> {
     let mut file = File::open(path).map_err(io_error("read implementation context"))?;
     let mut digest = Sha256::new();
@@ -1529,9 +1537,6 @@ fn active(status: &str) -> bool {
 }
 fn state_value<'a>(state: &'a BTreeMap<String, String>, key: &str) -> &'a str {
     state.get(key).map(String::as_str).unwrap_or("")
-}
-fn timestamp() -> String {
-    Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 fn valid_id(label: &str, value: &str) -> Result<(), String> {
     if value.is_empty()
@@ -1632,11 +1637,18 @@ contract-rule: id=R1 polarity=must statement=WidgetConfig exposes named fields e
 contract-rule: id=R2 polarity=must-not statement=Old WidgetConfig names must not remain evidence=task mentions unnecessary embedding\n";
         assert!(validate_contract_schema(incomplete, task)
             .unwrap_err()
-            .contains("embedding prohibition"));
+            .contains("machine-readable positive structural rule"));
 
-        let complete = format!(
-            "{incomplete}contract-rule: id=R3 polarity=must-not statement=WidgetConfig must not be anonymously embedded evidence=task\n"
-        );
+        let complete = "contract-artifact: version=1\n\
+contract-rule: id=R1 polarity=must structure=positive owner=Widget member=cfg member-type=WidgetConfig statement=Widget must store WidgetConfig in the named cfg field evidence=source\n\
+contract-rule: id=R2 polarity=must-not structure=negative owner=Widget embedded-type=WidgetConfig statement=Widget must not anonymously embed WidgetConfig evidence=task\n";
         assert!(validate_contract_schema(&complete, task).is_ok());
+
+        let mismatched = "contract-artifact: version=1\n\
+contract-rule: id=R1 polarity=must structure=positive owner=Widget member=cfg member-type=WidgetConfig statement=Widget has a named cfg field evidence=source\n\
+contract-rule: id=R2 polarity=must-not structure=negative owner=Other embedded-type=RouterConfig statement=Other must not embed RouterConfig evidence=task\n";
+        assert!(validate_contract_schema(mismatched, task)
+            .unwrap_err()
+            .contains("matching owner/type pair"));
     }
 }

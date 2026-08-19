@@ -1,5 +1,8 @@
-use crate::{config, runtime, workflow};
-use chrono::{SecondsFormat, Utc};
+use crate::{
+    config, runtime,
+    state::{atomic_write, read_env, timestamp},
+    workflow,
+};
 use fs2::FileExt;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -733,17 +736,13 @@ fn finding_dismiss(args: &[String]) -> Result<(), String> {
     if dir.join("dismissal.json").is_file() {
         return Err(format!("finding already dismissed: {id}"));
     }
-    for todo in sorted_directories(&todos)? {
-        let metadata = read_env(&todo.join("todo.env"))?;
-        if env_value(&metadata, "source_finding_id") == id {
-            return Err(format!(
-                "finding-dismiss refuses finding with todo: {}",
-                todo.file_name()
-                    .and_then(|value| value.to_str())
-                    .unwrap_or("")
-            ));
-        }
-    }
+    let linked_todos = sorted_directories(&todos)?
+        .into_iter()
+        .filter(|todo| {
+            read_env(&todo.join("todo.env"))
+                .is_ok_and(|metadata| env_value(&metadata, "source_finding_id") == id)
+        })
+        .collect::<Vec<_>>();
     let (evidence_path, evidence) = verifier_evidence(&state, verified, "finding-dismiss")?;
     let recheck: Value = serde_json::from_str(recheck_raw)
         .map_err(|error| format!("invalid finding dismissal recheck: {error}"))?;
@@ -805,6 +804,22 @@ fn finding_dismiss(args: &[String]) -> Result<(), String> {
     }
     let payload = json!({"finding_id":id,"finding_hash":finding_hash,"verified_by":verified,"verifier_evidence":evidence_path.display().to_string(),"recheck":recheck,"notes":notes});
     write_json(&dir.join("dismissal.json"), &payload)?;
+    for todo in &linked_todos {
+        let todo_id = todo
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("");
+        let supersession = json!({
+            "todo_id": todo_id,
+            "source_finding_id": id,
+            "source_finding_hash": finding_hash,
+            "verified_by": verified,
+            "verifier_evidence": evidence_path.display().to_string(),
+            "recheck": recheck,
+        });
+        write_json(&todo.join("supersession.json"), &supersession)?;
+        update_todo_state_locked(todo, None, "superseded")?;
+    }
     println!("finding dismissed\t{id}\t{verified}");
     Ok(())
 }
@@ -902,6 +917,35 @@ fn current_final_diff_sha256() -> Result<String, String> {
     Ok(format!("{:x}", digest.finalize()))
 }
 
+fn current_diff_requires_route_probe() -> Result<bool, String> {
+    if env::var("MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER").as_deref() != Ok("1") {
+        return Ok(false);
+    }
+    let root = config::root()?;
+    if !root.is_dir() {
+        return Ok(false);
+    }
+    let base = env::var("MULTIAGENT_START_HEAD")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "HEAD".into());
+    let diff = crate::snapshot::canonical_diff(&root, &base)?;
+    let text = String::from_utf8_lossy(&diff);
+    Ok(text.lines().any(|line| {
+        let Some(path) = line
+            .strip_prefix("diff --git a/")
+            .and_then(|line| line.split_once(" b/").map(|(_, path)| path))
+        else {
+            return false;
+        };
+        path.split('/').any(|component| {
+            let component = component.to_ascii_lowercase();
+            let stem = component.split('.').next().unwrap_or(&component);
+            matches!(stem, "route" | "routes" | "router" | "routers" | "routing")
+        })
+    }))
+}
+
 fn gate_check(args: &[String]) -> Result<(), String> {
     if !args.is_empty() {
         return Err("gate-check takes no arguments".into());
@@ -909,6 +953,7 @@ fn gate_check(args: &[String]) -> Result<(), String> {
     let state = config::state_dir()?;
     reconcile_terminal_verifiers(&state)?;
     let final_hash = current_final_diff_sha256()?;
+    let route_probe_required = current_diff_requires_route_probe()?;
     let mut failed = false;
 
     for (name, status) in active_verifiers(&state)? {
@@ -935,6 +980,14 @@ fn gate_check(args: &[String]) -> Result<(), String> {
                 let evidence = fs::read_to_string(&evidence_path).unwrap_or_default();
                 if !evidence_matches_hash(&evidence, &final_hash) {
                     println!("reject\tlatest-verifier-final-diff-hash-mismatch\tverifier={name}\texpected={final_hash}\tevidence={}", evidence_path.display());
+                    failed = true;
+                }
+                if route_probe_required
+                    && !evidence.contains(&format!(
+                        "route-integration-probe-passed: final-diff-sha256={final_hash}"
+                    ))
+                {
+                    println!("reject\tmissing-route-integration-probe\tverifier={name}\texpected={final_hash}\tevidence={}", evidence_path.display());
                     failed = true;
                 }
             }
@@ -993,7 +1046,11 @@ fn gate_check(args: &[String]) -> Result<(), String> {
             .and_then(|value| value.to_str())
             .unwrap_or("");
         let status = fs::read_to_string(todo_dir.join("status")).unwrap_or_default();
-        if status.trim() != "closed" {
+        if status.trim() == "superseded" {
+            if !audit_superseded_todo(&state, &todo_dir, todo_id, &final_hash) {
+                failed = true;
+            }
+        } else if status.trim() != "closed" {
             println!(
                 "reject\topen-todo\ttodo={todo_id}\tstatus={}",
                 status.trim()
@@ -1230,6 +1287,60 @@ fn audit_dismissed_finding(dir: &Path, id: &str, final_hash: &str) -> bool {
     })();
     if let Err(reason) = result {
         println!("reject\tinvalid-finding-dismissal-evidence\tfinding={id}\treason={reason}");
+        false
+    } else {
+        true
+    }
+}
+
+fn audit_superseded_todo(state: &Path, dir: &Path, id: &str, final_hash: &str) -> bool {
+    let result = (|| -> Result<(), String> {
+        let metadata = read_env(&dir.join("todo.env"))?;
+        let source = env_value(&metadata, "source_finding_id");
+        let expected_hash = env_value(&metadata, "source_finding_hash");
+        let finding_dir = state.join("findings").join(&source);
+        let finding_path = finding_dir.join("finding.json");
+        if source.is_empty() || !finding_path.is_file() {
+            return Err("missing-source-finding".into());
+        }
+        if expected_hash.is_empty() || file_sha256(&finding_path)? != expected_hash {
+            return Err("source-finding-hash-mismatch".into());
+        }
+        if !finding_dir.join("dismissal.json").is_file() {
+            return Err("source-finding-not-dismissed".into());
+        }
+        let dismissal: Value = serde_json::from_str(
+            &fs::read_to_string(finding_dir.join("dismissal.json"))
+                .map_err(io_error("read finding dismissal"))?,
+        )
+        .map_err(|error| format!("invalid dismissal JSON: {error}"))?;
+        let supersession: Value = serde_json::from_str(
+            &fs::read_to_string(dir.join("supersession.json"))
+                .map_err(io_error("read todo supersession"))?,
+        )
+        .map_err(|error| format!("invalid supersession JSON: {error}"))?;
+        if supersession.get("todo_id").and_then(Value::as_str) != Some(id)
+            || supersession
+                .get("source_finding_id")
+                .and_then(Value::as_str)
+                != Some(source)
+            || supersession
+                .get("source_finding_hash")
+                .and_then(Value::as_str)
+                != Some(expected_hash)
+            || supersession.get("verified_by") != dismissal.get("verified_by")
+            || supersession.get("verifier_evidence") != dismissal.get("verifier_evidence")
+            || supersession.get("recheck") != dismissal.get("recheck")
+        {
+            return Err("supersession-binding-mismatch".into());
+        }
+        if !audit_dismissed_finding(&finding_dir, &source, final_hash) {
+            return Err("invalid-source-finding-dismissal".into());
+        }
+        Ok(())
+    })();
+    if let Err(reason) = result {
+        println!("reject\tinvalid-todo-supersession\ttodo={id}\treason={reason}");
         false
     } else {
         true
@@ -2639,18 +2750,6 @@ fn resolve_commit(root: &Path, requested: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn read_env(path: &Path) -> Result<BTreeMap<String, String>, String> {
-    let mut values = BTreeMap::new();
-    for line in fs::read_to_string(path)
-        .map_err(io_error("read assignment"))?
-        .lines()
-    {
-        if let Some((key, value)) = line.split_once('=') {
-            values.insert(key.into(), value.into());
-        }
-    }
-    Ok(values)
-}
 fn repeated_options(
     args: &[String],
     repeatable: &[&str],
@@ -2833,21 +2932,6 @@ fn validate_name(name: &str) -> Result<(), String> {
         return Err(format!("reserved subagent name: {name}"));
     }
     Ok(())
-}
-fn atomic_write(path: &Path, text: &str) -> Result<(), String> {
-    let temporary = path.with_file_name(format!(
-        ".{}.{}.tmp",
-        path.file_name().and_then(|v| v.to_str()).unwrap_or("state"),
-        std::process::id()
-    ));
-    let mut file = File::create(&temporary).map_err(io_error("create assignment state"))?;
-    file.write_all(text.as_bytes())
-        .map_err(io_error("write assignment state"))?;
-    file.sync_all().map_err(io_error("sync assignment state"))?;
-    fs::rename(temporary, path).map_err(io_error("publish assignment state"))
-}
-fn timestamp() -> String {
-    Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 fn io_error(action: &'static str) -> impl Fn(std::io::Error) -> String {
     move |error| format!("{action}: {error}")

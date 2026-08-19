@@ -102,6 +102,14 @@ environment dependency, report that exact command and dependency as unresolved
 risk; do not silently replace it with `node --check`, `git diff --check`, or an
 equally weak proxy.
 
+When that blocked direct test is visible in the checkout, read its exact setup,
+inputs, boundary values, and assertion. Reproduce those same values and
+assertion through the narrowest runnable stubbed or source-level probe; a weaker
+hand-picked happy path is not equivalent. Do not accept unless the exact replay
+passes or source-visible task evidence proves the assertion intentionally
+changed. Report a passing replay as `visible-test-replay-passed:` with the test
+name, exact boundary values, command, and return code.
+
 Report a compact verifier contract ledger:
 
 - intended outcome
@@ -493,3 +501,7 @@ start/build the real router and make a request-level probe. Loading the edited
 module, checking syntax, or invoking a handler through a hand-written stub does
 not prove that production registration order, mount point, middleware, or URL
 reachability works. Treat stub-only validation as a blocking validation gap.
+For a route/router diff, acceptance must include
+`route-integration-probe-passed: final-diff-sha256=HASH command=... returncode=0`
+for the exact live diff. The supervisor rejects route changes without this
+marker; never emit it for a stub-only handler or isolated registration probe.

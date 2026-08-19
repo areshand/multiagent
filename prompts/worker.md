@@ -159,6 +159,12 @@ implicated source paths, and the next bounded repair assignment. Source review,
 compile-only checks, or a weaker synthetic probe cannot clear a still-failing
 nearby visible command.
 
+If a direct visible test is blocked by a missing service or other environment
+dependency, read the test and replay its exact setup, boundary values, and
+assertion with the narrowest runnable stubbed probe. Do not substitute easier
+values. Report `visible-test-replay-passed:` only when that exact assertion
+passes; otherwise return `validation-repair-needed:`.
+
 For any code diff, final validation must include hash-bound build evidence for
 the final patch:
 `build-verification-passed: final-diff-sha256=... changed-files=N
@@ -339,6 +345,9 @@ start/build the real router and issue a request-level probe. Syntax checks,
 module loading, and hand-written handler stubs are useful diagnostics but are
 not completion evidence because they do not prove registration order, mount
 point, middleware, or URL reachability.
+For a route/router diff, report successful production-entrypoint validation as
+`route-integration-probe-passed: final-diff-sha256=HASH command=... returncode=0`.
+Do not emit this marker for a stub-only handler or isolated registration probe.
 For option/argument propagation across wrappers, validation must observe the
 next layer receiving the value for both the declared default and one override.
 An implementation that omits the default keyword/field and relies on the next

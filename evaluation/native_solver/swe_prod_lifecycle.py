@@ -313,14 +313,20 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
 
     deadline = time.monotonic() + timeout
     resume_count = 0
+    final_phase: str | None = None
     try:
         while time.monotonic() < deadline:
             while time.monotonic() < deadline and tmux_has_orchestrator(session):
                 time.sleep(5)
 
             phase = active_workflow_phase()
-            if phase in {None, "complete"} or time.monotonic() >= deadline:
+            final_phase = phase
+            if phase == "complete" or time.monotonic() >= deadline:
                 break
+            if phase is None:
+                raise RuntimeError(
+                    "production multiagent orchestrator exited without a persisted workflow lifecycle"
+                )
 
             resume_count += 1
             log(
@@ -343,8 +349,15 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     finally:
         if tmux_has_session(session):
             run(["tmux", "-S", str(TMUX_SOCKET), "kill-session", "-t", session], timeout=30)
+        restore_workspace_owner(workdir)
 
-    restore_workspace_owner(workdir)
+    if final_phase != "complete":
+        rendered_phase = final_phase or "missing"
+        raise RuntimeError(
+            "production multiagent workflow did not reach supervisor-owned completion before "
+            f"the solver deadline (phase={rendered_phase}); refusing workspace handoff"
+        )
+
     materialize_committed_changes(workdir, start_head)
     mark_untracked_intent_to_add(workdir, baseline_untracked=baseline_untracked)
     log("workspace prepared for EvalScope submission")
