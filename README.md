@@ -68,10 +68,11 @@ evaluation and provenance; it does not implement a second production workflow
 or acceptance gate.
 
 Production operations use a separate enforcement boundary. Ephemeral runbook
-agents can propose only fixed `ActionManifestV1` documents; the OS-isolated
-supervisor binds roles and tasks, signs short-lived permits through KMS or
-Vault, and submits them to `prod-mcp`. Agents and the orchestrator never receive
-production credentials or signing keys. See
+agents carry certified runbooks through manifest preparation, review, execution
+request, and receipt verification. The OS-isolated supervisor binds roles and
+tasks, signs short-lived permits through KMS or Vault, and submits them to
+`prod-mcp`, which performs the side effect. Agents and the orchestrator never
+receive production credentials or signing keys. See
 [Production operations](docs/production-operations.md).
 
 On production Linux, separate Unix identities isolate the orchestrator, the

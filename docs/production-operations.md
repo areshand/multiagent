@@ -1,16 +1,17 @@
 # Production operations integration
 
-Multiagent remains the reasoning and proposal layer. `prod-mcp` is the independent enforcement and execution layer.
+The ephemeral operations agent owns the runbook workflow. The supervisor is the independent authorization and submission boundary, and `prod-mcp` is the enforcement and execution boundary.
 
 ## Flow
 
 1. The orchestrator instantiates an ephemeral read-only runbook agent.
-2. The agent proposes one `ActionManifestV1`; it cannot contact production or sign permits.
+2. The agent selects one certified runbook and prepares its `ActionManifestV1`; it cannot contact production or sign permits.
 3. Independent reviewers produce evidence bound by SHA-256.
 4. The OS-isolated supervisor assigns an operations role bound to the exact agent and task.
 5. The supervisor validates the manifest against that assignment and signs a five-minute ES256 permit through AWS KMS, Vault Transit, or a development-only local key.
-6. The supervisor calls `operations_preview`, then `operations_execute`, over an OIDC-authenticated MCP connection.
+6. At the agent's execution request, the supervisor calls `operations_preview`, then `operations_execute`, over an OIDC-authenticated MCP connection.
 7. `prod-mcp` independently revalidates the signature, role, reviews, target allowlist, and fixed runbook schema and returns a durable receipt.
+8. The agent interprets the receipt, verifies the requested postcondition, and reports or escalates the outcome.
 
 An agent changing its JSON role does nothing: the supervisor refuses to sign a mismatch, and `prod-mcp` refuses any altered signed payload.
 
