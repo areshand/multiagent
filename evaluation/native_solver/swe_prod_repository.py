@@ -62,7 +62,7 @@ def list_untracked_files(cwd: Path) -> list[str]:
 def is_framework_internal_path(path: str) -> bool:
     """Return whether an untracked path belongs to multiagent's control plane."""
 
-    normalized = path.removeprefix("./")
+    normalized = path[2:] if path.startswith("./") else path
     return normalized == ".multiagent" or normalized.startswith(".multiagent/")
 
 
