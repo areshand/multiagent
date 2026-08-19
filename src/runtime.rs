@@ -1253,8 +1253,17 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
             }
             "--role" => {
                 role = required_value(args, index, "spawn --role")?.to_string();
-                if !matches!(role.as_str(), "worker" | "verifier" | "reviewer" | "scout") {
-                    return Err("spawn --role must be worker, verifier, reviewer, or scout".into());
+                if !matches!(
+                    role.as_str(),
+                    "worker"
+                        | "verifier"
+                        | "reviewer"
+                        | "scout"
+                        | "runbook-observer"
+                        | "runbook-operator"
+                        | "service-deployer"
+                ) {
+                    return Err("spawn --role must be worker, verifier, reviewer, scout, runbook-observer, runbook-operator, or service-deployer".into());
                 }
                 index += 2;
             }
@@ -2209,6 +2218,11 @@ fn role_prompt_name(name: &str, role: &str) -> Option<&'static str> {
     let lower = name.to_ascii_lowercase();
     let relative = if lower.contains("decision-authority-reviewer") {
         "prompts/roles/decision-authority-reviewer.md"
+    } else if matches!(
+        role,
+        "runbook-observer" | "runbook-operator" | "service-deployer"
+    ) {
+        "prompts/roles/runbook-operator.md"
     } else if lower.contains("contract-scout") || role == "scout" {
         "prompts/roles/contract-scout.md"
     } else if lower.contains("acceptance-scout") {
@@ -2251,6 +2265,10 @@ fn codex_access_for_spawn(cfg: &RuntimeConfig, name: &str, role: &str) -> CodexA
     if role == "reviewer"
         || role == "verifier"
         || role == "scout"
+        || matches!(
+            role,
+            "runbook-observer" | "runbook-operator" | "service-deployer"
+        )
         || lower.contains("decision-authority-reviewer")
         || matches!(
             prompt.as_deref(),
@@ -3693,5 +3711,15 @@ review-record: type=decision-authority verdict=pass diff=-\n";
             assignment_role_for_spawn("contract-scout-01-api", "reviewer"),
             "scout"
         );
+    }
+
+    #[test]
+    fn production_operations_roles_use_the_fixed_runbook_prompt() {
+        for role in ["runbook-observer", "runbook-operator", "service-deployer"] {
+            assert_eq!(
+                role_prompt_name("ephemeral-operations-agent", role),
+                Some("prompts/roles/runbook-operator.md")
+            );
+        }
     }
 }

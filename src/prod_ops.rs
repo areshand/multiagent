@@ -1,0 +1,962 @@
+use crate::{config, state::atomic_write};
+use base64::{engine::general_purpose, Engine as _};
+use chrono::{DateTime, Duration, Utc};
+use p256::ecdsa::{signature::Signer as _, Signature, SigningKey};
+use p256::pkcs8::DecodePrivateKey;
+use reqwest::blocking::Client;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::collections::{BTreeMap, BTreeSet};
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::{Command, ExitCode};
+
+const API_VERSION: &str = "prod.moveindustries.io/v1";
+const PERMIT_TYPE: &str = "prod-mcp-action-permit+jws";
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum OperationsRole {
+    RunbookObserver,
+    RunbookOperator,
+    ServiceDeployer,
+}
+
+impl OperationsRole {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::RunbookObserver => "runbook-observer",
+            Self::RunbookOperator => "runbook-operator",
+            Self::ServiceDeployer => "service-deployer",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ApprovalV1 {
+    reviewer_subject: String,
+    reviewer_role: String,
+    decision: String,
+    evidence_sha256: String,
+    approved_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RunbookReference {
+    id: String,
+    version: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct TargetReference {
+    environment: String,
+    cluster: String,
+    namespace: String,
+    service: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ActionManifestV1 {
+    api_version: String,
+    kind: String,
+    action_id: String,
+    task_id: String,
+    delegated_subject: String,
+    delegated_role: OperationsRole,
+    intent_sha256: String,
+    runbook: RunbookReference,
+    target: TargetReference,
+    parameters: Value,
+    approvals: Vec<ApprovalV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    change_ticket: Option<String>,
+    issued_at: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+    nonce: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActionPermitV1<'a> {
+    api_version: &'static str,
+    kind: &'static str,
+    manifest: &'a ActionManifestV1,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RoleAssignment {
+    api_version: String,
+    kind: String,
+    delegated_subject: String,
+    delegated_role: OperationsRole,
+    task_id: String,
+    assigned_at: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+}
+
+trait SigningBackend {
+    fn key_id(&self) -> &str;
+    fn sign(&self, signing_input: &[u8]) -> Result<Vec<u8>, String>;
+}
+
+struct FileSigningBackend {
+    key_id: String,
+    key: SigningKey,
+}
+
+impl FileSigningBackend {
+    fn load(key_id: String, path: &Path) -> Result<Self, String> {
+        let pem = fs::read_to_string(path)
+            .map_err(|error| format!("read local signing key {}: {error}", path.display()))?;
+        let key = SigningKey::from_pkcs8_pem(&pem)
+            .map_err(|error| format!("parse local P-256 PKCS#8 key: {error}"))?;
+        Ok(Self { key_id, key })
+    }
+}
+
+impl SigningBackend for FileSigningBackend {
+    fn key_id(&self) -> &str {
+        &self.key_id
+    }
+
+    fn sign(&self, signing_input: &[u8]) -> Result<Vec<u8>, String> {
+        let signature: Signature = self.key.sign(signing_input);
+        Ok(signature.to_bytes().to_vec())
+    }
+}
+
+struct AwsKmsSigningBackend {
+    key_id: String,
+    aws_bin: String,
+}
+
+impl SigningBackend for AwsKmsSigningBackend {
+    fn key_id(&self) -> &str {
+        &self.key_id
+    }
+
+    fn sign(&self, signing_input: &[u8]) -> Result<Vec<u8>, String> {
+        let output = Command::new(&self.aws_bin)
+            .args([
+                "kms",
+                "sign",
+                "--key-id",
+                &self.key_id,
+                "--message-type",
+                "RAW",
+                "--signing-algorithm",
+                "ECDSA_SHA_256",
+                "--message",
+                &general_purpose::STANDARD.encode(signing_input),
+                "--output",
+                "json",
+            ])
+            .output()
+            .map_err(|error| format!("invoke AWS KMS signer: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "AWS KMS signer failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        let response: Value = serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("decode AWS KMS response: {error}"))?;
+        let encoded = response
+            .get("Signature")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "AWS KMS response omitted Signature".to_string())?;
+        let der = general_purpose::STANDARD
+            .decode(encoded)
+            .map_err(|error| format!("decode AWS KMS signature: {error}"))?;
+        let signature = Signature::from_der(&der)
+            .map_err(|error| format!("decode AWS KMS ECDSA signature: {error}"))?;
+        Ok(signature.to_bytes().to_vec())
+    }
+}
+
+struct VaultTransitSigningBackend {
+    key_id: String,
+    address: String,
+    mount: String,
+    key_name: String,
+    token: String,
+    client: Client,
+}
+
+impl SigningBackend for VaultTransitSigningBackend {
+    fn key_id(&self) -> &str {
+        &self.key_id
+    }
+
+    fn sign(&self, signing_input: &[u8]) -> Result<Vec<u8>, String> {
+        let url = format!(
+            "{}/v1/{}/sign/{}",
+            self.address.trim_end_matches('/'),
+            self.mount.trim_matches('/'),
+            self.key_name
+        );
+        let response: Value = self
+            .client
+            .post(url)
+            .header("X-Vault-Token", &self.token)
+            .json(&json!({
+                "input": general_purpose::STANDARD.encode(signing_input),
+                "hash_algorithm": "sha2-256",
+                "marshaling_algorithm": "jws"
+            }))
+            .send()
+            .map_err(|error| format!("Vault Transit sign request: {error}"))?
+            .error_for_status()
+            .map_err(|error| format!("Vault Transit sign response: {error}"))?
+            .json()
+            .map_err(|error| format!("decode Vault Transit response: {error}"))?;
+        let encoded = response
+            .pointer("/data/signature")
+            .and_then(Value::as_str)
+            .and_then(|value| value.rsplit(':').next())
+            .ok_or_else(|| "Vault Transit response omitted signature".to_string())?;
+        let signature = general_purpose::STANDARD
+            .decode(encoded)
+            .or_else(|_| general_purpose::URL_SAFE_NO_PAD.decode(encoded))
+            .map_err(|error| format!("decode Vault Transit JWS signature: {error}"))?;
+        if signature.len() != 64 {
+            return Err("Vault Transit must return a 64-byte JWS ECDSA signature".into());
+        }
+        Ok(signature)
+    }
+}
+
+pub fn run(args: &[String]) -> Result<ExitCode, String> {
+    let command = args.first().map(String::as_str).unwrap_or("");
+    match command {
+        "validate" => validate_command(&args[1..]),
+        "role-assign" => {
+            require_supervisor()?;
+            role_assign(&args[1..])
+        }
+        "role-revoke" => {
+            require_supervisor()?;
+            role_revoke(&args[1..])
+        }
+        "permit-issue" => {
+            require_supervisor()?;
+            permit_issue(&args[1..])
+        }
+        "submit" => {
+            require_supervisor()?;
+            submit(&args[1..])
+        }
+        _ => Err(
+            "usage: multiagent prod-ops validate|role-assign|role-revoke|permit-issue|submit ..."
+                .into(),
+        ),
+    }
+}
+
+fn validate_command(args: &[String]) -> Result<ExitCode, String> {
+    let options = options(args)?;
+    let path = required_option(&options, "--manifest")?;
+    let manifest = read_manifest(Path::new(path))?;
+    validate_manifest(&manifest)?;
+    println!(
+        "{}",
+        canonical_json(&serde_json::to_value(manifest).map_err(json_error)?)?
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+fn role_assign(args: &[String]) -> Result<ExitCode, String> {
+    let options = options(args)?;
+    let subject = required_option(&options, "--agent")?;
+    validate_id("agent", subject)?;
+    let role: OperationsRole =
+        serde_json::from_value(Value::String(required_option(&options, "--role")?.into()))
+            .map_err(|_| {
+                "--role must be runbook-observer, runbook-operator, or service-deployer".to_string()
+            })?;
+    let task_id = required_option(&options, "--task-id")?;
+    validate_id("task id", task_id)?;
+    let expires_at = DateTime::parse_from_rfc3339(required_option(&options, "--expires-at")?)
+        .map_err(|error| format!("parse --expires-at: {error}"))?
+        .with_timezone(&Utc);
+    if expires_at <= Utc::now() || expires_at > Utc::now() + Duration::hours(24) {
+        return Err("role assignment expiry must be within the next 24 hours".into());
+    }
+    let assignment = RoleAssignment {
+        api_version: API_VERSION.into(),
+        kind: "RoleAssignment".into(),
+        delegated_subject: subject.into(),
+        delegated_role: role,
+        task_id: task_id.into(),
+        assigned_at: Utc::now(),
+        expires_at,
+    };
+    let path = role_path(subject)?;
+    if path.exists() {
+        return Err("role assignment already exists; supervisor must revoke it before assigning a different role".into());
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| "invalid role assignment path".to_string())?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("create prod-ops role directory: {error}"))?;
+    atomic_write(
+        &path,
+        &format!(
+            "{}\n",
+            serde_json::to_string_pretty(&assignment).map_err(json_error)?
+        ),
+    )?;
+    println!(
+        "role assigned\t{subject}\t{}\t{task_id}",
+        assignment.delegated_role.as_str()
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+fn permit_issue(args: &[String]) -> Result<ExitCode, String> {
+    let options = options(args)?;
+    let manifest_path = Path::new(required_option(&options, "--manifest")?);
+    let output_path = Path::new(required_option(&options, "--output")?);
+    let manifest = read_manifest(manifest_path)?;
+    validate_manifest(&manifest)?;
+    validate_assignment(&manifest)?;
+    let signer = signer_from_env()?;
+    let permit = ActionPermitV1 {
+        api_version: API_VERSION,
+        kind: "ActionPermit",
+        manifest: &manifest,
+    };
+    let payload = canonical_json(&serde_json::to_value(permit).map_err(json_error)?)?;
+    let compact = compact_jws(signer.as_ref(), payload.as_bytes())?;
+    atomic_write(output_path, &format!("{compact}\n"))?;
+    println!("permit issued\t{}\t{}", manifest.action_id, signer.key_id());
+    Ok(ExitCode::SUCCESS)
+}
+
+fn role_revoke(args: &[String]) -> Result<ExitCode, String> {
+    let options = options(args)?;
+    let subject = required_option(&options, "--agent")?;
+    let path = role_path(subject)?;
+    fs::remove_file(&path)
+        .map_err(|error| format!("revoke role assignment {}: {error}", path.display()))?;
+    println!("role revoked\t{subject}");
+    Ok(ExitCode::SUCCESS)
+}
+
+fn submit(args: &[String]) -> Result<ExitCode, String> {
+    let options = options(args)?;
+    let permit = fs::read_to_string(required_option(&options, "--permit")?)
+        .map_err(|error| format!("read permit: {error}"))?;
+    let token = fs::read_to_string(required_env("MULTIAGENT_PROD_MCP_TOKEN_FILE")?)
+        .map_err(|error| format!("read MCP access token: {error}"))?;
+    let client = ProdMcpClient::new(
+        required_env("MULTIAGENT_PROD_MCP_URL")?,
+        token.trim().into(),
+    )?;
+    let preview = client.call_tool("operations_preview", json!({ "permit": permit.trim() }))?;
+    if preview.get("accepted").and_then(Value::as_bool) != Some(true) {
+        return Err("prod-mcp preview did not accept the permit".into());
+    }
+    let receipt = client.call_tool("operations_execute", json!({ "permit": permit.trim() }))?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&receipt).map_err(json_error)?
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+struct ProdMcpClient {
+    url: String,
+    token: String,
+    client: Client,
+}
+
+impl ProdMcpClient {
+    fn new(url: String, token: String) -> Result<Self, String> {
+        let client = Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .map_err(|error| format!("build prod-mcp client: {error}"))?;
+        Ok(Self { url, token, client })
+    }
+
+    fn call_tool(&self, name: &str, arguments: Value) -> Result<Value, String> {
+        let response = self
+            .client
+            .post(&self.url)
+            .bearer_auth(&self.token)
+            .header("accept", "application/json, text/event-stream")
+            .header("mcp-protocol-version", "2025-11-25")
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": { "name": name, "arguments": arguments }
+            }))
+            .send()
+            .map_err(|error| format!("call prod-mcp {name}: {error}"))?
+            .error_for_status()
+            .map_err(|error| format!("prod-mcp {name} response: {error}"))?;
+        let body = response
+            .text()
+            .map_err(|error| format!("read prod-mcp {name} response: {error}"))?;
+        let json_body = body
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .next_back()
+            .unwrap_or(body.trim());
+        let response: Value = serde_json::from_str(json_body)
+            .map_err(|error| format!("decode prod-mcp {name} response: {error}"))?;
+        if let Some(error) = response.get("error") {
+            return Err(format!("prod-mcp {name} error: {error}"));
+        }
+        let result = response
+            .get("result")
+            .ok_or_else(|| format!("prod-mcp {name} response omitted result"))?;
+        if result.get("isError").and_then(Value::as_bool) == Some(true) {
+            return Err(format!("prod-mcp {name} rejected request: {result}"));
+        }
+        result
+            .get("structuredContent")
+            .cloned()
+            .ok_or_else(|| format!("prod-mcp {name} response omitted structuredContent"))
+    }
+}
+
+fn signer_from_env() -> Result<Box<dyn SigningBackend>, String> {
+    let backend = required_env("MULTIAGENT_PROD_OPS_SIGNER")?;
+    let key_id = required_env("MULTIAGENT_PROD_OPS_KEY_ID")?;
+    match backend.as_str() {
+        "file" => {
+            if !cfg!(feature = "insecure-dev-signer")
+                || env::var("MULTIAGENT_PROD_OPS_DEVELOPMENT").as_deref() != Ok("1")
+            {
+                return Err("file signer requires the insecure-dev-signer build feature and MULTIAGENT_PROD_OPS_DEVELOPMENT=1".into());
+            }
+            Ok(Box::new(FileSigningBackend::load(
+                key_id,
+                Path::new(&required_env("MULTIAGENT_PROD_OPS_KEY_FILE")?),
+            )?))
+        }
+        "aws-kms" => Ok(Box::new(AwsKmsSigningBackend {
+            key_id,
+            aws_bin: env::var("MULTIAGENT_PROD_OPS_AWS_BIN").unwrap_or_else(|_| "aws".into()),
+        })),
+        "vault-transit" => {
+            let token_file = required_env("MULTIAGENT_PROD_OPS_VAULT_TOKEN_FILE")?;
+            let token = fs::read_to_string(&token_file)
+                .map_err(|error| format!("read Vault token file {token_file}: {error}"))?
+                .trim()
+                .to_string();
+            Ok(Box::new(VaultTransitSigningBackend {
+                key_id,
+                address: required_env("MULTIAGENT_PROD_OPS_VAULT_ADDR")?,
+                mount: env::var("MULTIAGENT_PROD_OPS_VAULT_MOUNT")
+                    .unwrap_or_else(|_| "transit".into()),
+                key_name: required_env("MULTIAGENT_PROD_OPS_VAULT_KEY")?,
+                token,
+                client: Client::new(),
+            }))
+        }
+        _ => Err("MULTIAGENT_PROD_OPS_SIGNER must be file, aws-kms, or vault-transit".into()),
+    }
+}
+
+fn compact_jws(signer: &dyn SigningBackend, payload: &[u8]) -> Result<String, String> {
+    let header = json!({ "alg": "ES256", "kid": signer.key_id(), "typ": PERMIT_TYPE });
+    let header = canonical_json(&header)?;
+    let protected = general_purpose::URL_SAFE_NO_PAD.encode(header.as_bytes());
+    let payload = general_purpose::URL_SAFE_NO_PAD.encode(payload);
+    let signing_input = format!("{protected}.{payload}");
+    let signature = signer.sign(signing_input.as_bytes())?;
+    if signature.len() != 64 {
+        return Err("ES256 signing backend returned a non-JWS signature".into());
+    }
+    Ok(format!(
+        "{signing_input}.{}",
+        general_purpose::URL_SAFE_NO_PAD.encode(signature)
+    ))
+}
+
+fn validate_assignment(manifest: &ActionManifestV1) -> Result<(), String> {
+    let path = role_path(&manifest.delegated_subject)?;
+    let assignment: RoleAssignment =
+        serde_json::from_str(&fs::read_to_string(&path).map_err(|error| {
+            format!(
+                "read supervisor role assignment {}: {error}",
+                path.display()
+            )
+        })?)
+        .map_err(|error| format!("decode supervisor role assignment: {error}"))?;
+    if assignment.api_version != API_VERSION || assignment.kind != "RoleAssignment" {
+        return Err("role assignment contract is not supported".into());
+    }
+    if assignment.delegated_subject != manifest.delegated_subject
+        || assignment.delegated_role != manifest.delegated_role
+        || assignment.task_id != manifest.task_id
+    {
+        return Err(
+            "manifest subject, role, or task does not match the supervisor assignment".into(),
+        );
+    }
+    if assignment.expires_at <= Utc::now() || manifest.expires_at > assignment.expires_at {
+        return Err("role assignment is expired or shorter than the requested permit".into());
+    }
+    Ok(())
+}
+
+fn validate_manifest(manifest: &ActionManifestV1) -> Result<(), String> {
+    if manifest.api_version != API_VERSION || manifest.kind != "ActionManifest" {
+        return Err("unsupported ActionManifest contract".into());
+    }
+    for (label, value) in [
+        ("actionId", manifest.action_id.as_str()),
+        ("taskId", manifest.task_id.as_str()),
+        ("delegatedSubject", manifest.delegated_subject.as_str()),
+        ("nonce", manifest.nonce.as_str()),
+    ] {
+        validate_id(label, value)?;
+    }
+    validate_digest("intentSha256", &manifest.intent_sha256)?;
+    if !matches!(
+        manifest.target.environment.as_str(),
+        "development" | "staging" | "production"
+    ) {
+        return Err("target environment must be development, staging, or production".into());
+    }
+    for (label, value) in [
+        ("cluster", manifest.target.cluster.as_str()),
+        ("namespace", manifest.target.namespace.as_str()),
+        ("service", manifest.target.service.as_str()),
+    ] {
+        validate_id(label, value)?;
+    }
+    if manifest.issued_at > Utc::now() + Duration::seconds(30) {
+        return Err("manifest issuedAt is in the future".into());
+    }
+    if manifest.expires_at <= Utc::now()
+        || manifest.expires_at <= manifest.issued_at
+        || manifest.expires_at - manifest.issued_at > Duration::minutes(5)
+    {
+        return Err(
+            "manifest lifetime must be positive, unexpired, and at most five minutes".into(),
+        );
+    }
+    let (roles, required_parameters, required_reviews, ticket) =
+        runbook_contract(&manifest.runbook)?;
+    if !roles.contains(&manifest.delegated_role.as_str()) {
+        return Err("supervisor-assigned role cannot execute this runbook".into());
+    }
+    validate_parameters(
+        &manifest.runbook.id,
+        &manifest.parameters,
+        required_parameters,
+    )?;
+    if ticket
+        && match manifest.change_ticket.as_deref() {
+            Some(value) => !valid_ticket(value),
+            None => true,
+        }
+    {
+        return Err("mutating runbook requires a valid changeTicket".into());
+    }
+    let mut subjects = BTreeSet::new();
+    if manifest.approvals.len() > 4 {
+        return Err("manifest may contain at most four approvals".into());
+    }
+    for approval in &manifest.approvals {
+        if !matches!(
+            approval.reviewer_role.as_str(),
+            "safety-reviewer" | "operations-reviewer"
+        ) || approval.decision != "approve"
+        {
+            return Err("approval role or decision is not supported".into());
+        }
+        validate_id("reviewer subject", &approval.reviewer_subject)?;
+        validate_digest("review evidence", &approval.evidence_sha256)?;
+        if approval.approved_at > manifest.issued_at {
+            return Err("review approval must predate permit issuance".into());
+        }
+    }
+    for role in required_reviews {
+        let approval = manifest
+            .approvals
+            .iter()
+            .find(|approval| approval.reviewer_role == role && approval.decision == "approve")
+            .ok_or_else(|| format!("missing {role} approval"))?;
+        if !subjects.insert(&approval.reviewer_subject) {
+            return Err("required reviews must come from distinct subjects".into());
+        }
+    }
+    Ok(())
+}
+
+fn runbook_contract(
+    reference: &RunbookReference,
+) -> Result<
+    (
+        BTreeSet<&'static str>,
+        BTreeSet<&'static str>,
+        Vec<&'static str>,
+        bool,
+    ),
+    String,
+> {
+    if reference.version != "1.0.0" {
+        return Err("runbook version is not certified".into());
+    }
+    let contract = match reference.id.as_str() {
+        "k8s.report-deployment-health" => (
+            ["runbook-observer", "runbook-operator", "service-deployer"]
+                .into_iter()
+                .collect(),
+            ["timeoutSeconds"].into_iter().collect(),
+            vec![],
+            false,
+        ),
+        "k8s.diagnose-service" => (
+            ["runbook-observer", "runbook-operator", "service-deployer"]
+                .into_iter()
+                .collect(),
+            ["lookbackMinutes", "includeLogs"].into_iter().collect(),
+            vec![],
+            false,
+        ),
+        "k8s.restart-deployment" => (
+            ["runbook-operator"].into_iter().collect(),
+            ["reason", "waitForReadySeconds", "expectedReplicaCount"]
+                .into_iter()
+                .collect(),
+            vec!["safety-reviewer", "operations-reviewer"],
+            true,
+        ),
+        "service.deploy-approved-release" => (
+            ["service-deployer"].into_iter().collect(),
+            [
+                "imageDigest",
+                "releaseId",
+                "waitForReadySeconds",
+                "expectedReplicaCount",
+            ]
+            .into_iter()
+            .collect(),
+            vec!["safety-reviewer", "operations-reviewer"],
+            true,
+        ),
+        _ => return Err("request is not one of the certified runbooks".into()),
+    };
+    Ok(contract)
+}
+
+fn validate_parameters(
+    runbook: &str,
+    value: &Value,
+    expected: BTreeSet<&str>,
+) -> Result<(), String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| "parameters must be an object".to_string())?;
+    let actual: BTreeSet<&str> = object.keys().map(String::as_str).collect();
+    if actual != expected {
+        return Err("parameters deviate from the fixed runbook schema".into());
+    }
+    let integer = |name: &str, minimum: i64, maximum: i64| {
+        let value = object
+            .get(name)
+            .and_then(Value::as_i64)
+            .ok_or_else(|| format!("{name} must be an integer"))?;
+        if !(minimum..=maximum).contains(&value) {
+            return Err(format!("{name} must be between {minimum} and {maximum}"));
+        }
+        Ok(())
+    };
+    match runbook {
+        "k8s.report-deployment-health" => integer("timeoutSeconds", 5, 120)?,
+        "k8s.diagnose-service" => {
+            integer("lookbackMinutes", 5, 120)?;
+            if object.get("includeLogs").and_then(Value::as_bool).is_none() {
+                return Err("includeLogs must be a boolean".into());
+            }
+        }
+        "k8s.restart-deployment" => {
+            let reason = object.get("reason").and_then(Value::as_str).unwrap_or("");
+            if !(10..=500).contains(&reason.len()) {
+                return Err("reason must contain 10 to 500 bytes".into());
+            }
+            integer("waitForReadySeconds", 30, 600)?;
+            integer("expectedReplicaCount", 1, 500)?;
+        }
+        "service.deploy-approved-release" => {
+            validate_digest(
+                "imageDigest",
+                object
+                    .get("imageDigest")
+                    .and_then(Value::as_str)
+                    .unwrap_or(""),
+            )?;
+            validate_id(
+                "releaseId",
+                object
+                    .get("releaseId")
+                    .and_then(Value::as_str)
+                    .unwrap_or(""),
+            )?;
+            integer("waitForReadySeconds", 30, 900)?;
+            integer("expectedReplicaCount", 1, 500)?;
+        }
+        _ => return Err("unknown runbook parameter contract".into()),
+    }
+    Ok(())
+}
+
+fn canonical_json(value: &Value) -> Result<String, String> {
+    match value {
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {
+            serde_json::to_string(value).map_err(json_error)
+        }
+        Value::Array(values) => Ok(format!(
+            "[{}]",
+            values
+                .iter()
+                .map(canonical_json)
+                .collect::<Result<Vec<_>, _>>()?
+                .join(",")
+        )),
+        Value::Object(values) => {
+            let ordered: BTreeMap<&String, &Value> = values.iter().collect();
+            let entries = ordered
+                .into_iter()
+                .map(|(key, child)| {
+                    Ok(format!(
+                        "{}:{}",
+                        serde_json::to_string(key).map_err(json_error)?,
+                        canonical_json(child)?
+                    ))
+                })
+                .collect::<Result<Vec<String>, String>>()?;
+            Ok(format!("{{{}}}", entries.join(",")))
+        }
+    }
+}
+
+fn read_manifest(path: &Path) -> Result<ActionManifestV1, String> {
+    serde_json::from_str(
+        &fs::read_to_string(path)
+            .map_err(|error| format!("read manifest {}: {error}", path.display()))?,
+    )
+    .map_err(|error| format!("decode ActionManifestV1: {error}"))
+}
+
+fn role_path(subject: &str) -> Result<PathBuf, String> {
+    validate_id("agent", subject)?;
+    Ok(config::state_dir()?
+        .join("prod-ops/roles")
+        .join(format!("{subject}.json")))
+}
+
+fn require_supervisor() -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        let uid = unsafe { libc::getuid() };
+        if uid == 0 || uid == config::SUPERVISOR_UID {
+            return Ok(());
+        }
+    }
+    #[cfg(all(unix, not(target_os = "linux")))]
+    if unsafe { libc::getuid() } == 0 {
+        return Ok(());
+    }
+    if cfg!(feature = "insecure-dev-signer")
+        && env::var("MULTIAGENT_PROD_OPS_DEVELOPMENT").as_deref() == Ok("1")
+    {
+        return Ok(());
+    }
+    Err("only the OS-isolated supervisor may assign operations roles, issue permits, or submit runbooks".into())
+}
+
+fn options(args: &[String]) -> Result<BTreeMap<String, String>, String> {
+    let mut result = BTreeMap::new();
+    let mut index = 0;
+    while index < args.len() {
+        let key = args[index].clone();
+        if !key.starts_with("--") || index + 1 >= args.len() {
+            return Err(format!("invalid option: {key}"));
+        }
+        if result
+            .insert(key.clone(), args[index + 1].clone())
+            .is_some()
+        {
+            return Err(format!("duplicate option: {key}"));
+        }
+        index += 2;
+    }
+    Ok(result)
+}
+
+fn required_option<'a>(
+    options: &'a BTreeMap<String, String>,
+    key: &str,
+) -> Result<&'a str, String> {
+    options
+        .get(key)
+        .filter(|value| !value.is_empty())
+        .map(String::as_str)
+        .ok_or_else(|| format!("missing {key}"))
+}
+
+fn required_env(name: &str) -> Result<String, String> {
+    env::var(name)
+        .ok()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("{name} is required"))
+}
+
+fn validate_id(label: &str, value: &str) -> Result<(), String> {
+    let valid = !value.is_empty()
+        && value.len() <= 128
+        && value
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_alphanumeric())
+        && value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || ".-_:".contains(character));
+    if valid {
+        Ok(())
+    } else {
+        Err(format!("invalid {label}"))
+    }
+}
+
+fn validate_digest(label: &str, value: &str) -> Result<(), String> {
+    let valid = value.len() == 71
+        && value.starts_with("sha256:")
+        && value[7..]
+            .chars()
+            .all(|character| character.is_ascii_hexdigit() && !character.is_ascii_uppercase());
+    if valid {
+        Ok(())
+    } else {
+        Err(format!("invalid {label}"))
+    }
+}
+
+fn valid_ticket(value: &str) -> bool {
+    let mut parts = value.split('-');
+    matches!((parts.next(), parts.next(), parts.next()), (Some(prefix), Some(number), None) if !prefix.is_empty() && prefix.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) && number.chars().all(|c| c.is_ascii_digit()))
+}
+
+fn json_error(error: serde_json::Error) -> String {
+    format!("JSON error: {error}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use p256::pkcs8::EncodePrivateKey;
+    use sha2::{Digest, Sha256};
+
+    fn manifest() -> ActionManifestV1 {
+        let issued_at = Utc::now() - Duration::seconds(1);
+        ActionManifestV1 {
+            api_version: API_VERSION.into(),
+            kind: "ActionManifest".into(),
+            action_id: "action-123".into(),
+            task_id: "task-123".into(),
+            delegated_subject: "agent-123".into(),
+            delegated_role: OperationsRole::RunbookOperator,
+            intent_sha256: format!("sha256:{}", "1".repeat(64)),
+            runbook: RunbookReference {
+                id: "k8s.restart-deployment".into(),
+                version: "1.0.0".into(),
+            },
+            target: TargetReference {
+                environment: "production".into(),
+                cluster: "mainnet-a".into(),
+                namespace: "payments".into(),
+                service: "api".into(),
+            },
+            parameters: json!({ "expectedReplicaCount": 3, "reason": "readiness checks are failing", "waitForReadySeconds": 120 }),
+            approvals: vec![
+                ApprovalV1 {
+                    reviewer_subject: "safety-1".into(),
+                    reviewer_role: "safety-reviewer".into(),
+                    decision: "approve".into(),
+                    evidence_sha256: format!("sha256:{}", "2".repeat(64)),
+                    approved_at: issued_at - Duration::seconds(2),
+                },
+                ApprovalV1 {
+                    reviewer_subject: "operations-1".into(),
+                    reviewer_role: "operations-reviewer".into(),
+                    decision: "approve".into(),
+                    evidence_sha256: format!("sha256:{}", "3".repeat(64)),
+                    approved_at: issued_at - Duration::seconds(1),
+                },
+            ],
+            change_ticket: Some("OPS-123".into()),
+            issued_at,
+            expires_at: issued_at + Duration::minutes(5),
+            nonce: "nonce-123".into(),
+        }
+    }
+
+    #[test]
+    fn role_and_parameter_escalation_are_rejected() {
+        let mut candidate = manifest();
+        candidate.delegated_role = OperationsRole::RunbookObserver;
+        assert!(validate_manifest(&candidate).unwrap_err().contains("role"));
+        let mut candidate = manifest();
+        candidate.parameters = json!({ "command": "kubectl delete namespace payments" });
+        assert!(validate_manifest(&candidate)
+            .unwrap_err()
+            .contains("deviate"));
+    }
+
+    #[test]
+    fn compact_file_signature_uses_jws_raw_es256_shape() {
+        let key = SigningKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
+        let pem = key.to_pkcs8_pem(Default::default()).unwrap();
+        let parsed = SigningKey::from_pkcs8_pem(pem.as_str()).unwrap();
+        let signer = FileSigningBackend {
+            key_id: "test-key".into(),
+            key: parsed,
+        };
+        let permit = ActionPermitV1 {
+            api_version: API_VERSION,
+            kind: "ActionPermit",
+            manifest: &manifest(),
+        };
+        let payload = canonical_json(&serde_json::to_value(permit).unwrap()).unwrap();
+        let compact = compact_jws(&signer, payload.as_bytes()).unwrap();
+        let parts: Vec<&str> = compact.split('.').collect();
+        assert_eq!(parts.len(), 3);
+        assert_eq!(
+            general_purpose::URL_SAFE_NO_PAD
+                .decode(parts[2])
+                .unwrap()
+                .len(),
+            64
+        );
+    }
+
+    #[test]
+    fn canonical_json_sorts_nested_keys() {
+        assert_eq!(
+            canonical_json(&json!({"z": 1, "a": {"y": 2, "b": 3}})).unwrap(),
+            r#"{"a":{"b":3,"y":2},"z":1}"#
+        );
+    }
+
+    #[test]
+    fn signer_hashes_are_stable() {
+        let digest = Sha256::digest(b"intent");
+        assert_eq!(format!("sha256:{digest:x}").len(), 71);
+    }
+}

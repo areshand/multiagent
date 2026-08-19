@@ -4,6 +4,7 @@ mod config;
 mod dag;
 mod decision;
 mod policy;
+mod prod_ops;
 mod prompt_bundle;
 mod role_sandbox;
 mod runtime;
@@ -22,6 +23,7 @@ const USAGE: &str = r#"Usage:
   multiagent decision COMMAND [ARGS...]
   multiagent policy COMMAND [ARGS...]
   multiagent prompt-bundle [ARGS...]
+  multiagent prod-ops COMMAND [ARGS...]
   multiagent subagent COMMAND [ARGS...]
   multiagent workflow COMMAND [ARGS...]
   multiagent launch|orchestrator|status|watch [ARGS...]
@@ -66,6 +68,7 @@ fn main() -> ExitCode {
         "policy" => policy::run(&args)
             .map(|_| ExitCode::SUCCESS)
             .map_err(|message| ("write-policy", message)),
+        "prod-ops" => prod_ops::run(&args).map_err(|message| ("prod-ops", message)),
         "prompt-bundle" => prompt_bundle::run(&args)
             .map(|_| ExitCode::SUCCESS)
             .map_err(|message| ("prompt-bundle", message)),

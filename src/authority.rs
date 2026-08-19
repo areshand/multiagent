@@ -224,6 +224,8 @@ mod tests {
         assert!(AuthorityRequest::from_cli("workflow", &strings(&["status"])).is_some());
         assert!(AuthorityRequest::from_cli("subagent", &strings(&["assignment-create"])).is_some());
         assert!(AuthorityRequest::from_cli("agent", &strings(&["run"])).is_none());
+        assert!(AuthorityRequest::from_cli("prod-ops", &strings(&["permit-issue"])).is_none());
+        assert!(AuthorityRequest::from_cli("prod-ops", &strings(&["submit"])).is_none());
         assert!(AuthorityRequest::from_cli("role-exec", &[]).is_none());
         assert!(AuthorityRequest::from_cli("subagent", &strings(&["spawn"])).is_none());
         assert!(AuthorityRequest::from_cli("subagent", &strings(&["worktree-create"])).is_none());

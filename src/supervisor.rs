@@ -29,6 +29,7 @@ const CONTROL_DIRECTORIES: &[&str] = &[
     "decisions",
     "findings",
     "launch-authorizations",
+    "prod-ops",
     "reviewer-evidence",
     "role-io",
     "todos",
