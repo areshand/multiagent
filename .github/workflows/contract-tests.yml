@@ -17,7 +17,7 @@ jobs:
         python-version: ["3.8", "3.13"]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.75.0
+      - uses: dtolnay/rust-toolchain@1.90.0
         with:
           components: rustfmt
       - uses: actions/setup-python@v5
@@ -36,7 +36,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.75.0
+      - uses: dtolnay/rust-toolchain@1.90.0
         with:
           components: rustfmt
       - uses: actions/setup-python@v5
