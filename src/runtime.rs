@@ -13,6 +13,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Output};
+use std::str::FromStr;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -38,6 +39,61 @@ struct RuntimeConfig {
 }
 
 type CodexAccess = RoleAccess;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SpawnRole {
+    Worker,
+    Verifier,
+    Reviewer,
+    Scout,
+    RunbookObserver,
+    RunbookOperator,
+    ServiceDeployer,
+}
+
+impl SpawnRole {
+    const EXPECTED: &'static str = "worker, verifier, reviewer, scout, runbook-observer, runbook-operator, or service-deployer";
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Worker => "worker",
+            Self::Verifier => "verifier",
+            Self::Reviewer => "reviewer",
+            Self::Scout => "scout",
+            Self::RunbookObserver => "runbook-observer",
+            Self::RunbookOperator => "runbook-operator",
+            Self::ServiceDeployer => "service-deployer",
+        }
+    }
+
+    const fn is_production_operations(self) -> bool {
+        matches!(
+            self,
+            Self::RunbookObserver | Self::RunbookOperator | Self::ServiceDeployer
+        )
+    }
+
+    const fn is_read_only(self) -> bool {
+        !matches!(self, Self::Worker)
+    }
+}
+
+impl FromStr for SpawnRole {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "worker" => Ok(Self::Worker),
+            "verifier" => Ok(Self::Verifier),
+            "reviewer" => Ok(Self::Reviewer),
+            "scout" => Ok(Self::Scout),
+            "runbook-observer" => Ok(Self::RunbookObserver),
+            "runbook-operator" => Ok(Self::RunbookOperator),
+            "service-deployer" => Ok(Self::ServiceDeployer),
+            _ => Err(format!("spawn --role must be {}", Self::EXPECTED)),
+        }
+    }
+}
 
 const ORCHESTRATOR_UID: u32 = config::ORCHESTRATOR_UID;
 const WRITER_UID: u32 = config::WRITER_UID;
@@ -197,11 +253,13 @@ pub fn role_agent_exec(args: &[String]) -> Result<ExitCode, String> {
     )?;
     prepare_role_output_paths(&output, &trace_dir, role_uid)?;
     let write_roots = secure_agent_write_roots(&authorization.owned_paths, &output, &trace_dir);
+    // Landlock hardening is Linux-only by design; macOS relies on setuid +
+    // POSIX ownership isolation.
     let result = role_sandbox::run_supervised(
         role_uid,
         ROLE_GID,
         &write_roots,
-        true,
+        cfg!(target_os = "linux"),
         &executable.display().to_string(),
         &runner_args,
     );
@@ -1242,7 +1300,7 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
     let mut instruction = String::new();
     let mut instruction_file = None::<PathBuf>;
     let mut owned = Vec::new();
-    let mut role = String::new();
+    let mut role = None::<SpawnRole>;
     let mut assignment_values = BTreeMap::<String, String>::new();
     let mut index = 1;
     while index < args.len() {
@@ -1252,10 +1310,7 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
                 index += 2;
             }
             "--role" => {
-                role = required_value(args, index, "spawn --role")?.to_string();
-                if !matches!(role.as_str(), "worker" | "verifier" | "reviewer" | "scout") {
-                    return Err("spawn --role must be worker, verifier, reviewer, or scout".into());
-                }
+                role = Some(required_value(args, index, "spawn --role")?.parse()?);
                 index += 2;
             }
             "--assignment-id" | "--workflow-id" | "--decision-id" | "--plan-id" | "--branch"
@@ -1311,25 +1366,24 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
             "{label} subagent spawn requires --instruction or --instruction-file: {name}"
         ));
     }
-    instruction = compose_role_instruction(cfg, name, &role, &instruction)?;
-    instruction = append_semantic_envelope(cfg, name, &role, &instruction)?;
-    instruction = append_verifier_diff_binding(cfg, name, &role, &instruction)?;
-    let assignment_role = assignment_role_for_spawn(name, &role);
+    instruction = compose_role_instruction(cfg, name, role, &instruction)?;
+    instruction = append_semantic_envelope(cfg, name, role, &instruction)?;
+    instruction = append_verifier_diff_binding(cfg, name, role, &instruction)?;
+    let assignment_role = assignment_role_for_spawn(name, role);
     let authority_role = match assignment_role {
         // Semantic scout identity wins over an accidentally generic reviewer
         // label so prompt selection, finalization, and launch authorization all
         // enforce the same read-only contract-artifact role.
         "scout" => "scout",
-        "verifier" if role == "reviewer" => "reviewer",
+        "verifier" if role == Some(SpawnRole::Reviewer) => "reviewer",
         "verifier" => "verifier",
-        _ if role.is_empty() => "worker",
-        _ => role.as_str(),
+        _ => role.map(SpawnRole::as_str).unwrap_or("worker"),
     };
     let access =
         if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") && authority_role != "worker" {
             CodexAccess::ReadOnly
         } else {
-            codex_access_for_spawn(cfg, name, &role)
+            codex_access_for_spawn(cfg, name, role)
         };
 
     require_command("tmux")?;
@@ -2127,7 +2181,7 @@ fn wait_for_process_exit(_pid: u32, _name: &str) -> Result<(), String> {
 fn compose_role_instruction(
     cfg: &RuntimeConfig,
     name: &str,
-    role: &str,
+    role: Option<SpawnRole>,
     instruction: &str,
 ) -> Result<String, String> {
     let Some(path) = role_prompt_path(cfg, name, role) else {
@@ -2147,7 +2201,7 @@ fn compose_role_instruction(
 fn append_semantic_envelope(
     cfg: &RuntimeConfig,
     name: &str,
-    role: &str,
+    role: Option<SpawnRole>,
     instruction: &str,
 ) -> Result<String, String> {
     if !config::lifecycle_enforced() {
@@ -2201,26 +2255,28 @@ fn append_semantic_envelope(
     Ok(output)
 }
 
-fn role_prompt_path(cfg: &RuntimeConfig, name: &str, role: &str) -> Option<PathBuf> {
+fn role_prompt_path(cfg: &RuntimeConfig, name: &str, role: Option<SpawnRole>) -> Option<PathBuf> {
     role_prompt_name(name, role).map(|relative| cfg.prompt_root.join(relative))
 }
 
-fn role_prompt_name(name: &str, role: &str) -> Option<&'static str> {
+fn role_prompt_name(name: &str, role: Option<SpawnRole>) -> Option<&'static str> {
     let lower = name.to_ascii_lowercase();
     let relative = if lower.contains("decision-authority-reviewer") {
         "prompts/roles/decision-authority-reviewer.md"
-    } else if lower.contains("contract-scout") || role == "scout" {
+    } else if role.is_some_and(SpawnRole::is_production_operations) {
+        "prompts/roles/runbook-operator.md"
+    } else if lower.contains("contract-scout") || role == Some(SpawnRole::Scout) {
         "prompts/roles/contract-scout.md"
     } else if lower.contains("acceptance-scout") {
         "prompts/roles/acceptance-scout.md"
     } else if lower.contains("build-verifier") {
         "prompts/roles/build-verifier.md"
-    } else if matches!(role, "verifier" | "reviewer")
+    } else if matches!(role, Some(SpawnRole::Verifier | SpawnRole::Reviewer))
         || lower.contains("verifier")
         || lower.contains("review")
     {
         "prompts/verifier.md"
-    } else if role == "worker" || lower.starts_with("worker-") {
+    } else if role == Some(SpawnRole::Worker) || lower.starts_with("worker-") {
         "prompts/worker.md"
     } else {
         return None;
@@ -2228,12 +2284,12 @@ fn role_prompt_name(name: &str, role: &str) -> Option<&'static str> {
     Some(relative)
 }
 
-fn assignment_role_for_spawn<'a>(name: &str, role: &'a str) -> &'a str {
+fn assignment_role_for_spawn(name: &str, role: Option<SpawnRole>) -> &'static str {
     match role_prompt_name(name, role) {
         Some("prompts/roles/acceptance-scout.md" | "prompts/roles/contract-scout.md") => "scout",
         _ => match role {
-            "verifier" | "reviewer" => "verifier",
-            "scout" => "scout",
+            Some(SpawnRole::Verifier | SpawnRole::Reviewer) => "verifier",
+            Some(SpawnRole::Scout) => "scout",
             _ => match role_prompt_name(name, role) {
                 Some("prompts/verifier.md" | "prompts/roles/build-verifier.md") => "verifier",
                 _ => "exploitation",
@@ -2242,15 +2298,13 @@ fn assignment_role_for_spawn<'a>(name: &str, role: &'a str) -> &'a str {
     }
 }
 
-fn codex_access_for_spawn(cfg: &RuntimeConfig, name: &str, role: &str) -> CodexAccess {
+fn codex_access_for_spawn(cfg: &RuntimeConfig, name: &str, role: Option<SpawnRole>) -> CodexAccess {
     let lower = name.to_ascii_lowercase();
     let prompt = role_prompt_path(cfg, name, role).and_then(|path| {
         path.file_name()
             .map(|value| value.to_string_lossy().to_string())
     });
-    if role == "reviewer"
-        || role == "verifier"
-        || role == "scout"
+    if role.is_some_and(SpawnRole::is_read_only)
         || lower.contains("decision-authority-reviewer")
         || matches!(
             prompt.as_deref(),
@@ -2275,7 +2329,7 @@ fn codex_access_for_spawn(cfg: &RuntimeConfig, name: &str, role: &str) -> CodexA
 fn append_verifier_diff_binding(
     cfg: &RuntimeConfig,
     name: &str,
-    role: &str,
+    role: Option<SpawnRole>,
     instruction: &str,
 ) -> Result<String, String> {
     let Some(role_prompt) = role_prompt_path(cfg, name, role) else {
@@ -3686,12 +3740,35 @@ review-record: type=decision-authority verdict=pass diff=-\n";
     #[test]
     fn contract_scout_name_overrides_generic_reviewer_role() {
         assert_eq!(
-            role_prompt_name("contract-scout-01-api", "reviewer"),
+            role_prompt_name("contract-scout-01-api", Some(SpawnRole::Reviewer)),
             Some("prompts/roles/contract-scout.md")
         );
         assert_eq!(
-            assignment_role_for_spawn("contract-scout-01-api", "reviewer"),
+            assignment_role_for_spawn("contract-scout-01-api", Some(SpawnRole::Reviewer)),
             "scout"
         );
+    }
+
+    #[test]
+    fn production_operations_roles_use_the_fixed_runbook_prompt() {
+        for role in [
+            SpawnRole::RunbookObserver,
+            SpawnRole::RunbookOperator,
+            SpawnRole::ServiceDeployer,
+        ] {
+            assert_eq!(
+                role_prompt_name("ephemeral-operations-agent", Some(role)),
+                Some("prompts/roles/runbook-operator.md")
+            );
+        }
+    }
+
+    #[test]
+    fn spawn_roles_are_parsed_once_into_a_closed_enum() {
+        assert_eq!(
+            "runbook-operator".parse::<SpawnRole>().unwrap(),
+            SpawnRole::RunbookOperator
+        );
+        assert!("admin".parse::<SpawnRole>().is_err());
     }
 }

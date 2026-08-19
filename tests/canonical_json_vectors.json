@@ -1,0 +1,62 @@
+[
+  {
+    "name": "simple-reorder",
+    "value": {"b": 1, "a": 2},
+    "canonical": "{\"a\":2,\"b\":1}"
+  },
+  {
+    "name": "case-order-diverges-from-locale-collation",
+    "value": {"B": 1, "a": 2},
+    "canonical": "{\"B\":1,\"a\":2}"
+  },
+  {
+    "name": "nested-object-and-array",
+    "value": {"z": [1, 2, {"y": true, "x": null}], "a": "hi"},
+    "canonical": "{\"a\":\"hi\",\"z\":[1,2,{\"x\":null,\"y\":true}]}"
+  },
+  {
+    "name": "empty-object",
+    "value": {},
+    "canonical": "{}"
+  },
+  {
+    "name": "empty-array",
+    "value": [],
+    "canonical": "[]"
+  },
+  {
+    "name": "unicode-string-value",
+    "value": {"a": "café"},
+    "canonical": "{\"a\":\"café\"}"
+  },
+  {
+    "name": "numbers",
+    "value": {"a": 1, "b": -5, "c": 3.5},
+    "canonical": "{\"a\":1,\"b\":-5,\"c\":3.5}"
+  },
+  {
+    "name": "escaped-key-prefix-ordering",
+    "value": {"a\"b": 1, "a": 2},
+    "canonical": "{\"a\":2,\"a\\\"b\":1}"
+  },
+  {
+    "name": "array-order-preserved",
+    "value": [3, 1, 2],
+    "canonical": "[3,1,2]"
+  },
+  {
+    "name": "array-of-objects-keys-sorted",
+    "value": [{"b": 1, "a": 2}, {"d": 4, "c": 3}],
+    "canonical": "[{\"a\":2,\"b\":1},{\"c\":3,\"d\":4}]"
+  },
+  {
+    "name": "literals-null-true-false",
+    "value": {"a": null, "b": true, "c": false},
+    "canonical": "{\"a\":null,\"b\":true,\"c\":false}"
+  },
+  {
+    "name": "supplementary-plane-vs-high-bmp-byte-order",
+    "value": {"￿": 1, "😀": 2},
+    "canonical": "{\"￿\":1,\"😀\":2}"
+  }
+]

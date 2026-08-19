@@ -210,9 +210,18 @@ class MigrationCliContractTest(unittest.TestCase):
         self.assertTrue((self.state / "decisions" / ".lock").is_file())
         self.assertEqual(
             set(metadata),
-            {"decision_id", "title", "owner", "status", "created_at", "committed_at"},
+            {
+                "decision_id",
+                "title",
+                "owner",
+                "status",
+                "created_at",
+                "committed_at",
+                "owner_type",
+            },
         )
         self.assertEqual(metadata["status"], "committed")
+        self.assertEqual(metadata["owner_type"], "orchestrator")
         outcome = read_env_file(decision_dir / "outcome.env")
         self.assertEqual(
             set(outcome),

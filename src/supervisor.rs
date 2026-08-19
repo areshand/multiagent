@@ -7,14 +7,14 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::{Command, Stdio};
 #[cfg(target_os = "linux")]
 use std::thread;
 #[cfg(target_os = "linux")]
 use std::time::{Duration, Instant};
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::os::unix::net::UnixListener;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
@@ -29,6 +29,7 @@ const CONTROL_DIRECTORIES: &[&str] = &[
     "decisions",
     "findings",
     "launch-authorizations",
+    "prod-ops",
     "reviewer-evidence",
     "role-io",
     "todos",
@@ -262,7 +263,7 @@ pub fn finish_launch(state: &Path, name: &str) -> Result<(), String> {
     write_launch_state(&directory, &metadata, "completed")
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn prepare_private_output(state: &Path, name: &str, uid: u32) -> Result<PathBuf, String> {
     use std::os::unix::fs::PermissionsExt;
 
@@ -280,12 +281,12 @@ pub fn prepare_private_output(state: &Path, name: &str, uid: u32) -> Result<Path
     Ok(output)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn prepare_private_output(_state: &Path, _name: &str, _uid: u32) -> Result<PathBuf, String> {
-    Err("private role output requires Linux UID isolation".into())
+    Err("private role output requires Linux or macOS UID isolation".into())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn seal_role_output(
     state: &Path,
     name: &str,
@@ -324,7 +325,7 @@ pub fn seal_role_output(
     Ok(())
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn seal_role_output(
     _state: &Path,
     _name: &str,
@@ -333,7 +334,7 @@ pub fn seal_role_output(
     _private_output: &Path,
     _public_output: &Path,
 ) -> Result<(), String> {
-    Err("sealed role output requires Linux UID isolation".into())
+    Err("sealed role output requires Linux or macOS UID isolation".into())
 }
 
 fn write_launch_state(
@@ -455,7 +456,7 @@ fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), String> {
     fs::rename(&temporary, path).map_err(|error| format!("publish authority file: {error}"))?;
     #[cfg(unix)]
     set_mode(path, 0o640)?;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     if unsafe { libc::geteuid() } == 0 {
         chown(path, config::SUPERVISOR_UID, config::ROLE_GID)?;
     }
@@ -485,6 +486,30 @@ fn authority_client_uid() -> bool {
 
 pub fn authority_socket(state: &Path) -> PathBuf {
     state.join("authority.sock")
+}
+
+/// True only when the four fixed role UIDs are pairwise distinct.
+///
+/// The UIDs are hardcoded literals today, so this is cheap, but it guards
+/// against a future change that makes them configurable: UID isolation
+/// between the orchestrator, writer, reader, and supervisor identities is
+/// fictitious the moment any two of them collide.
+#[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
+fn uids_are_pairwise_distinct(
+    orchestrator: u32,
+    writer: u32,
+    reader: u32,
+    supervisor: u32,
+) -> bool {
+    let uids = [orchestrator, writer, reader, supervisor];
+    for i in 0..uids.len() {
+        for j in (i + 1)..uids.len() {
+            if uids[i] == uids[j] {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 #[cfg(target_os = "linux")]
@@ -588,8 +613,19 @@ fn proxy_request(_request: AuthorityRequest) -> Result<ExitCode, String> {
     Err("authority supervisor requires Unix".into())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn serve(socket: &Path) -> Result<ExitCode, String> {
+    if !uids_are_pairwise_distinct(
+        config::ORCHESTRATOR_UID,
+        config::WRITER_UID,
+        config::READER_UID,
+        config::SUPERVISOR_UID,
+    ) {
+        return Err(
+            "authority supervisor refuses to start: ORCHESTRATOR_UID, WRITER_UID, READER_UID, and SUPERVISOR_UID must be pairwise distinct"
+                .into(),
+        );
+    }
     if unsafe { libc::getuid() } != config::SUPERVISOR_UID {
         return Err(format!(
             "authority supervisor must run as uid {}",
@@ -626,7 +662,7 @@ fn serve(socket: &Path) -> Result<ExitCode, String> {
 /// Serves one authority client. Client disconnects and malformed requests are
 /// isolated to this connection so they cannot take down the workflow's only
 /// trusted state writer. Returns true only for an authorized shutdown request.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn serve_connection(stream: &mut UnixStream) -> Result<bool, String> {
     let peer_uid = match peer_uid(stream) {
         Ok(uid) => uid,
@@ -700,7 +736,7 @@ fn serve_connection(stream: &mut UnixStream) -> Result<bool, String> {
     Ok(false)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn execute(request: AuthorityRequest) -> Result<Response, String> {
     let executable =
         env::current_exe().map_err(|error| format!("resolve authority executable: {error}"))?;
@@ -719,7 +755,7 @@ fn execute(request: AuthorityRequest) -> Result<Response, String> {
     })
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn write_response(stream: &mut UnixStream, response: &Response) -> Result<(), String> {
     let bytes = serde_json::to_vec(response)
         .map_err(|error| format!("encode authority response: {error}"))?;
@@ -752,9 +788,38 @@ fn peer_uid(stream: &UnixStream) -> Result<u32, String> {
     Ok(credentials.uid)
 }
 
-#[cfg(not(target_os = "linux"))]
+/// Darwin peer-credential identification. `SOL_LOCAL`/`LOCAL_PEERCRED` and
+/// `libc::xucred` are exposed by the pinned `libc` crate (0.2.189) for
+/// `target_os = "macos"`; if a future libc bump ever drops one of these three
+/// symbols, replace it with a local `extern "C"` binding using the same
+/// layout rather than blocking macOS support on the upstream crate.
+#[cfg(target_os = "macos")]
+fn peer_uid(stream: &UnixStream) -> Result<u32, String> {
+    use std::os::fd::AsRawFd;
+
+    let mut credentials: libc::xucred = unsafe { std::mem::zeroed() };
+    let mut length = std::mem::size_of::<libc::xucred>() as libc::socklen_t;
+    let result = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_LOCAL,
+            libc::LOCAL_PEERCRED,
+            &mut credentials as *mut _ as *mut libc::c_void,
+            &mut length,
+        )
+    };
+    if result != 0 {
+        return Err(format!(
+            "read authority peer credentials: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(credentials.cr_uid)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn serve(_socket: &Path) -> Result<ExitCode, String> {
-    Err("authority supervisor requires Unix".into())
+    Err("authority supervisor requires Linux or macOS".into())
 }
 
 #[cfg(unix)]
@@ -853,7 +918,7 @@ fn prepare_tree(path: &Path, uid: u32, authority: bool) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn chown(path: &Path, uid: u32, gid: u32) -> Result<(), String> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
@@ -877,6 +942,26 @@ pub fn prepare_state_permissions(_state: &Path) -> Result<(), String> {
 
 #[cfg(target_os = "linux")]
 pub fn start(state: &Path, executable: &Path) -> Result<u32, String> {
+    if !uids_are_pairwise_distinct(
+        config::ORCHESTRATOR_UID,
+        config::WRITER_UID,
+        config::READER_UID,
+        config::SUPERVISOR_UID,
+    ) {
+        return Err(
+            "authority supervisor refuses to start: ORCHESTRATOR_UID, WRITER_UID, READER_UID, and SUPERVISOR_UID must be pairwise distinct"
+                .into(),
+        );
+    }
+    // `role-exec --uid SUPERVISOR_UID` below drops this process's privilege
+    // to the fixed supervisor UID; that drop is fictitious unless this
+    // process is actually root-capable right now.
+    if unsafe { libc::geteuid() } != 0 {
+        return Err(
+            "authority supervisor refuses to start: process lacks the effective root capability required to drop to the supervisor UID"
+                .into(),
+        );
+    }
     let socket = authority_socket(state);
     if socket.exists() && UnixStream::connect(&socket).is_ok() {
         let pid_path = state.join("runtime_state/authority-supervisor.pid");
@@ -942,17 +1027,36 @@ pub fn start(_state: &Path, _executable: &Path) -> Result<u32, String> {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(target_os = "linux")]
-    use super::serve_connection;
-    #[cfg(target_os = "linux")]
+    use super::uids_are_pairwise_distinct;
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    use super::{peer_uid, serve_connection};
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     use std::os::unix::net::UnixStream;
 
-    #[cfg(target_os = "linux")]
+    #[test]
+    fn distinct_uids_are_required() {
+        assert!(uids_are_pairwise_distinct(10001, 10002, 10003, 10004));
+        assert!(!uids_are_pairwise_distinct(10001, 10001, 10003, 10004));
+        assert!(!uids_are_pairwise_distinct(10001, 10002, 10001, 10004));
+        assert!(!uids_are_pairwise_distinct(10001, 10002, 10003, 10002));
+        assert!(!uids_are_pairwise_distinct(7, 7, 7, 7));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn disconnected_client_does_not_fail_the_supervisor_loop() {
         let (mut server, client) = UnixStream::pair().expect("create authority socket pair");
         drop(client);
 
         assert!(!serve_connection(&mut server).expect("isolate disconnected client"));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn peer_uid_of_a_self_connected_socket_is_the_real_uid() {
+        let (server, client) = UnixStream::pair().expect("create peer credential socket pair");
+        let expected = unsafe { libc::getuid() };
+        assert_eq!(peer_uid(&server).expect("read peer credentials"), expected);
+        drop(client);
     }
 }

@@ -23,6 +23,9 @@ const ROLES: &[&str] = &[
     "qa",
     "verifier",
     "scout",
+    "runbook-observer",
+    "runbook-operator",
+    "service-deployer",
 ];
 const TERMINAL_STATUSES: &[&str] = &[
     "done",
@@ -2638,7 +2641,10 @@ fn reject_overlap(
     new_role: &str,
     new_owned: &BTreeSet<String>,
 ) -> Result<(), String> {
-    if matches!(new_role, "verifier" | "scout") {
+    if matches!(
+        new_role,
+        "verifier" | "scout" | "runbook-observer" | "runbook-operator" | "service-deployer"
+    ) {
         return Ok(());
     }
     for entry in fs::read_dir(assignments).map_err(io_error("read assignments"))? {
