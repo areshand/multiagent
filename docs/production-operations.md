@@ -15,6 +15,8 @@ The ephemeral operations agent owns the runbook workflow. Reviewers approve each
 
 An agent changing its JSON role does nothing: the supervisor refuses to sign a mismatch, and `prod-mcp` refuses any altered signed payload.
 
+Reviewer approval is sealed evidence, not caller-supplied metadata. Before signing, the supervisor requires each approval hash to match `reviewer-evidence/<reviewer>/last-message.txt` and requires that sealed message to contain the exact `prod-ops-review:` marker for the action ID, task ID, runbook, operation, runbook context hash, and history hash.
+
 ## Supervisor commands
 
 ```bash

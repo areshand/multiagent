@@ -6,6 +6,7 @@ use p256::pkcs8::DecodePrivateKey;
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
@@ -338,6 +339,7 @@ fn permit_issue(args: &[String]) -> Result<ExitCode, String> {
     let request = read_request(request_path)?;
     validate_request(&request)?;
     validate_assignment(&request)?;
+    validate_approval_evidence(&request)?;
     let signer = signer_from_env()?;
     let permit = ActionPermitV1 {
         api_version: API_VERSION,
@@ -522,6 +524,71 @@ fn validate_assignment(request: &OperationRequestV1) -> Result<(), String> {
         return Err("role assignment is expired or shorter than the requested permit".into());
     }
     Ok(())
+}
+
+fn validate_approval_evidence(request: &OperationRequestV1) -> Result<(), String> {
+    let state = config::state_dir()?;
+    validate_approval_evidence_at(request, &state)
+}
+
+fn validate_approval_evidence_at(request: &OperationRequestV1, state: &Path) -> Result<(), String> {
+    for approval in &request.approvals {
+        let directory = state
+            .join("reviewer-evidence")
+            .join(&approval.reviewer_subject);
+        let metadata = read_key_values(&directory.join("evidence.env"))?;
+        if metadata.get("role").map(String::as_str) != Some("reviewer")
+            || metadata.get("access").map(String::as_str) != Some("read-only")
+            || metadata.get("state").map(String::as_str) != Some("completed")
+        {
+            return Err(format!(
+                "reviewer evidence must be sealed read-only output: {}",
+                approval.reviewer_subject
+            ));
+        }
+        let message_path = directory.join("last-message.txt");
+        let message = fs::read_to_string(&message_path).map_err(|error| {
+            format!(
+                "read reviewer evidence {}: {error}",
+                message_path.display()
+            )
+        })?;
+        let actual = format!("sha256:{:x}", Sha256::digest(message.as_bytes()));
+        let recorded = metadata
+            .get("output_sha256")
+            .map(|value| format!("sha256:{value}"))
+            .unwrap_or_default();
+        if actual != approval.evidence_sha256 || recorded != approval.evidence_sha256 {
+            return Err(format!(
+                "review evidence hash does not match sealed reviewer output: {}",
+                approval.reviewer_subject
+            ));
+        }
+        let marker = prod_ops_review_marker(request, approval);
+        if !message.lines().any(|line| line.trim() == marker) {
+            return Err(format!(
+                "reviewer {} evidence is missing marker: {marker}",
+                approval.reviewer_subject
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn prod_ops_review_marker(request: &OperationRequestV1, approval: &ApprovalV1) -> String {
+    format!(
+        "prod-ops-review: reviewer-role={} decision=approve action-id={} task-id={} runbook={}@{} phase={} operation={}@{} runbook-context-sha256={} history-sha256={}",
+        approval.reviewer_role,
+        request.action_id,
+        request.task_id,
+        request.runbook.id,
+        request.runbook.version,
+        request.runbook.phase,
+        request.operation.id,
+        request.operation.version,
+        request.runbook_context_sha256,
+        request.history_sha256
+    )
 }
 
 fn validate_request(request: &OperationRequestV1) -> Result<(), String> {
@@ -850,6 +917,23 @@ fn required_env(name: &str) -> Result<String, String> {
         .ok_or_else(|| format!("{name} is required"))
 }
 
+fn read_key_values(path: &Path) -> Result<BTreeMap<String, String>, String> {
+    let content =
+        fs::read_to_string(path).map_err(|error| format!("read {}: {error}", path.display()))?;
+    let mut result = BTreeMap::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let (key, value) = trimmed
+            .split_once('=')
+            .ok_or_else(|| format!("invalid key-value line in {}", path.display()))?;
+        result.insert(key.to_string(), value.to_string());
+    }
+    Ok(result)
+}
+
 fn validate_id(label: &str, value: &str) -> Result<(), String> {
     let valid = !value.is_empty()
         && value.len() <= 128
@@ -893,7 +977,7 @@ fn json_error(error: serde_json::Error) -> String {
 mod tests {
     use super::*;
     use p256::pkcs8::EncodePrivateKey;
-    use sha2::{Digest, Sha256};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn request() -> OperationRequestV1 {
         let issued_at = Utc::now() - Duration::seconds(1);
@@ -961,6 +1045,57 @@ mod tests {
         assert!(validate_request(&candidate)
             .unwrap_err()
             .contains("not allowed"));
+    }
+
+    fn temporary_state() -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = env::temp_dir().join(format!("multiagent-prod-ops-test-{nonce}"));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn write_review_evidence(state: &Path, request: &mut OperationRequestV1) {
+        for index in 0..request.approvals.len() {
+            let marker = prod_ops_review_marker(request, &request.approvals[index]);
+            let message = format!("APPROVED\n{marker}\n");
+            let digest = Sha256::digest(message.as_bytes());
+            let digest = format!("{digest:x}");
+            request.approvals[index].evidence_sha256 = format!("sha256:{digest}");
+            let directory = state
+                .join("reviewer-evidence")
+                .join(&request.approvals[index].reviewer_subject);
+            fs::create_dir_all(&directory).unwrap();
+            fs::write(directory.join("last-message.txt"), message).unwrap();
+            fs::write(
+                directory.join("evidence.env"),
+                format!(
+                    "name={}\nrole=reviewer\naccess=read-only\nworkflow_id=prod-ops\nstate=completed\noutput_sha256={digest}\n",
+                    request.approvals[index].reviewer_subject
+                ),
+            )
+            .unwrap();
+        }
+    }
+
+    #[test]
+    fn supervisor_signing_requires_sealed_reviewer_evidence() {
+        let state = temporary_state();
+        let mut candidate = request();
+        assert!(validate_approval_evidence_at(&candidate, &state)
+            .unwrap_err()
+            .contains("read"));
+
+        write_review_evidence(&state, &mut candidate);
+        validate_approval_evidence_at(&candidate, &state).unwrap();
+
+        candidate.history_sha256 = format!("sha256:{}", "9".repeat(64));
+        assert!(validate_approval_evidence_at(&candidate, &state)
+            .unwrap_err()
+            .contains("missing marker"));
+        fs::remove_dir_all(state).unwrap();
     }
 
     #[test]
