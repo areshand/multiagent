@@ -564,7 +564,7 @@ fn validate_approval_evidence_at(request: &OperationRequestV1, state: &Path) -> 
                 approval.reviewer_subject
             ));
         }
-        let marker = prod_ops_review_marker(request, approval);
+        let marker = prod_ops_review_marker(request, approval)?;
         if !message.lines().any(|line| line.trim() == marker) {
             return Err(format!(
                 "reviewer {} evidence is missing marker: {marker}",
@@ -575,20 +575,34 @@ fn validate_approval_evidence_at(request: &OperationRequestV1, state: &Path) -> 
     Ok(())
 }
 
-fn prod_ops_review_marker(request: &OperationRequestV1, approval: &ApprovalV1) -> String {
-    format!(
-        "prod-ops-review: reviewer-role={} decision=approve action-id={} task-id={} runbook={}@{} phase={} operation={}@{} runbook-context-sha256={} history-sha256={}",
+fn prod_ops_review_marker(
+    request: &OperationRequestV1,
+    approval: &ApprovalV1,
+) -> Result<String, String> {
+    let parameters = canonical_json(&request.parameters)?;
+    let parameters_sha256 = format!("sha256:{:x}", Sha256::digest(parameters.as_bytes()));
+    Ok(format!(
+        "prod-ops-review: reviewer-role={} decision=approve action-id={} task-id={} delegated-subject={} delegated-role={} intent-sha256={} runbook={}@{} phase={} operation={}@{} target={}/{}/{}/{} parameters-sha256={} change-ticket={} runbook-context-sha256={} history-sha256={}",
         approval.reviewer_role,
         request.action_id,
         request.task_id,
+        request.delegated_subject,
+        request.delegated_role.as_str(),
+        request.intent_sha256,
         request.runbook.id,
         request.runbook.version,
         request.runbook.phase,
         request.operation.id,
         request.operation.version,
+        request.target.environment,
+        request.target.cluster,
+        request.target.namespace,
+        request.target.service,
+        parameters_sha256,
+        request.change_ticket.as_deref().unwrap_or("-"),
         request.runbook_context_sha256,
         request.history_sha256
-    )
+    ))
 }
 
 fn validate_request(request: &OperationRequestV1) -> Result<(), String> {
@@ -1059,7 +1073,7 @@ mod tests {
 
     fn write_review_evidence(state: &Path, request: &mut OperationRequestV1) {
         for index in 0..request.approvals.len() {
-            let marker = prod_ops_review_marker(request, &request.approvals[index]);
+            let marker = prod_ops_review_marker(request, &request.approvals[index]).unwrap();
             let message = format!("APPROVED\n{marker}\n");
             let digest = Sha256::digest(message.as_bytes());
             let digest = format!("{digest:x}");
@@ -1090,6 +1104,12 @@ mod tests {
 
         write_review_evidence(&state, &mut candidate);
         validate_approval_evidence_at(&candidate, &state).unwrap();
+
+        candidate.parameters = json!({ "expectedReplicaCount": 4, "reason": "readiness checks are failing", "waitForReadySeconds": 120 });
+        assert!(validate_approval_evidence_at(&candidate, &state)
+            .unwrap_err()
+            .contains("missing marker"));
+        candidate.parameters = json!({ "expectedReplicaCount": 3, "reason": "readiness checks are failing", "waitForReadySeconds": 120 });
 
         candidate.history_sha256 = format!("sha256:{}", "9".repeat(64));
         assert!(validate_approval_evidence_at(&candidate, &state)

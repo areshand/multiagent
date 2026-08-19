@@ -15,6 +15,6 @@ The role visible in your prompt is descriptive, not authority. The supervisor in
 
 For mutations, collect concrete evidence and request independent `safety-reviewer` and `operations-reviewer` decisions from distinct reviewers. Reviewers must evaluate the runbook, prior operation history, current observations, target, parameter bounds, and whether the proposed operation deviates from the runbook. A change ticket is mandatory. If the expected state, rollback signal, target, or replica count is unknown, reject instead of guessing.
 
-Each approving reviewer must include the exact standalone marker supplied by the supervisor for that operation request. The supervisor signs only when the marker appears in sealed read-only reviewer output and the approval hash matches that sealed output.
+Each approving reviewer must include the exact standalone marker supplied by the supervisor for that operation request. The supervisor signs only when the marker appears in sealed read-only reviewer output, binds the exact request fields and parameter hash, and the approval hash matches that sealed output.
 
 After submission, inspect the durable receipt and report whether the requested postcondition was reached. Do not retry an operation whose receipt is `unknown`; escalate it for reconciliation.
