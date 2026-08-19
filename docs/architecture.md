@@ -103,6 +103,14 @@ the tested base boundary. Cancellation waits for role teardown and ownership
 revocation, preventing detached or late worker output from modifying the
 workspace.
 
+macOS is also a supported deployment target for the authority supervisor's
+UID-isolation and peer-credential mechanisms: peer identification uses
+Darwin's `LOCAL_PEERCRED`/`xucred` in place of Linux's `SO_PEERCRED`/`ucred`,
+and privilege drop uses the same setuid transition. Landlock remains
+Linux-only; macOS relies on setuid-based identity separation plus POSIX file
+ownership as its write boundary, exactly the fallback already used on Linux
+kernels without Landlock support.
+
 The supervisor isolates connection failures. A disconnected client or broken
 pipe terminates that request, not the authority service.
 

@@ -253,11 +253,13 @@ pub fn role_agent_exec(args: &[String]) -> Result<ExitCode, String> {
     )?;
     prepare_role_output_paths(&output, &trace_dir, role_uid)?;
     let write_roots = secure_agent_write_roots(&authorization.owned_paths, &output, &trace_dir);
+    // Landlock hardening is Linux-only by design; macOS relies on setuid +
+    // POSIX ownership isolation.
     let result = role_sandbox::run_supervised(
         role_uid,
         ROLE_GID,
         &write_roots,
-        true,
+        cfg!(target_os = "linux"),
         &executable.display().to_string(),
         &runner_args,
     );

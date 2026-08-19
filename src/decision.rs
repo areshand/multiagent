@@ -9,7 +9,7 @@ const USAGE: &str = r#"Usage:
   multiagent decision init DECISION_ID --title TEXT [--owner NAME]
   multiagent decision add-alternative DECISION_ID --plan-id PLAN_ID --summary TEXT --proposed-by AGENT [--branch BRANCH] [--assignment-name NAME] [--expected-outcome TEXT] [--risk TEXT]
   multiagent decision add-assumption DECISION_ID --assumption-id ID --statement TEXT [--confidence VALUE] [--validation-method TEXT] [--expected-signal TEXT]
-  multiagent decision commit DECISION_ID --selected-plan PLAN_ID --reason TEXT [--rollback-policy TEXT] [--reflection-due TEXT]
+  multiagent decision commit DECISION_ID --selected-plan PLAN_ID --reason TEXT [--rollback-policy TEXT] [--reflection-due TEXT] [--owner-type user|orchestrator] [--bound-action-sha256 HASH]
   multiagent decision record-metric DECISION_ID --name NAME [--expected VALUE] [--actual VALUE]
   multiagent decision reflect DECISION_ID --recommendation continue|adjust|rollback|pivot --reason TEXT [--follow-up-assignment NAME]
   multiagent decision show DECISION_ID
@@ -252,17 +252,32 @@ fn commit(args: &[String]) -> Result<(), String> {
         "reason",
         "rollback-policy",
         "reflection-due",
+        "owner-type",
+        "bound-action-sha256",
     ];
     let (decision_id, options) = id_and_options("commit", args, &allowed)?;
     validate_id("decision ID", decision_id)?;
     let selected_plan = required(&options, "selected-plan", "commit requires --selected-plan")?;
     let reason = required(&options, "reason", "commit requires --reason")?;
     validate_id("plan ID", selected_plan)?;
+    let owner_type = match value(&options, "owner-type") {
+        "" => "orchestrator",
+        other => other,
+    };
+    if !matches!(owner_type, "user" | "orchestrator") {
+        return Err("--owner-type must be user or orchestrator".into());
+    }
+    let bound_action_sha256 = value(&options, "bound-action-sha256");
+    if !bound_action_sha256.is_empty() {
+        validate_digest("--bound-action-sha256", bound_action_sha256)?;
+    }
     for (label, current) in [
         ("--selected-plan", selected_plan),
         ("--reason", reason),
         ("--rollback-policy", value(&options, "rollback-policy")),
         ("--reflection-due", value(&options, "reflection-due")),
+        ("--owner-type", owner_type),
+        ("--bound-action-sha256", bound_action_sha256),
     ] {
         reject_newline(label, current)?;
     }
@@ -275,10 +290,15 @@ fn commit(args: &[String]) -> Result<(), String> {
         return Err(format!("selected plan does not exist: {selected_plan}"));
     }
     let stamp = timestamp();
-    rewrite_status(
-        &directory.join("decision.env"),
-        &["status=committed", &format!("committed_at={stamp}")],
-    )?;
+    let committed_at_line = format!("committed_at={stamp}");
+    let owner_type_line = format!("owner_type={owner_type}");
+    let bound_action_line = (!bound_action_sha256.is_empty())
+        .then(|| format!("bound_action_sha256={bound_action_sha256}"));
+    let mut committed_fields = vec!["status=committed", &committed_at_line, &owner_type_line];
+    if let Some(line) = &bound_action_line {
+        committed_fields.push(line);
+    }
+    rewrite_status(&directory.join("decision.env"), &committed_fields)?;
     atomic_write(
         &directory.join("outcome.env"),
         &format!(
@@ -518,6 +538,61 @@ fn validate_id(label: &str, current: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_digest(label: &str, current: &str) -> Result<(), String> {
+    let valid = current.len() == 71
+        && current.starts_with("sha256:")
+        && current[7..]
+            .chars()
+            .all(|character| character.is_ascii_hexdigit() && !character.is_ascii_uppercase());
+    if valid {
+        Ok(())
+    } else {
+        Err(format!(
+            "invalid {label}: expected sha256:<64 lowercase hex characters>"
+        ))
+    }
+}
+
+/// Scan committed decisions for the first user-owned decision bound to
+/// `action_sha256`. Used by `prod_ops::permit_issue` to require that a human
+/// operator has committed a decision before the supervisor signs a permit for
+/// a mutating operation.
+pub fn committed_user_owner_for(
+    action_sha256: &str,
+) -> Result<Option<BTreeMap<String, String>>, String> {
+    committed_user_owner_for_at(action_sha256, &config::state_dir()?.join("decisions"))
+}
+
+pub(crate) fn committed_user_owner_for_at(
+    action_sha256: &str,
+    base: &Path,
+) -> Result<Option<BTreeMap<String, String>>, String> {
+    if !base.is_dir() {
+        return Ok(None);
+    }
+    let mut directories: Vec<PathBuf> = fs::read_dir(base)
+        .map_err(io_error("list decisions"))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .collect();
+    directories.sort();
+    for directory in directories {
+        let path = directory.join("decision.env");
+        if !path.is_file() {
+            continue;
+        }
+        let values = read_env(&path)?;
+        if values.get("status").map(String::as_str) == Some("committed")
+            && values.get("owner_type").map(String::as_str) == Some("user")
+            && values.get("bound_action_sha256").map(String::as_str) == Some(action_sha256)
+        {
+            return Ok(Some(values));
+        }
+    }
+    Ok(None)
+}
+
 fn reject_newline(label: &str, current: &str) -> Result<(), String> {
     if current.contains('\n') || current.contains('\r') {
         return Err(format!("{label} may not contain newlines"));
@@ -606,6 +681,7 @@ fn io_error(context: &'static str) -> impl FnOnce(std::io::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
 
     #[test]
     fn ids_match_the_v1_contract() {
@@ -618,5 +694,81 @@ mod tests {
     fn newline_values_are_rejected() {
         assert!(reject_newline("--title", "one\ntwo").is_err());
         assert!(reject_newline("--title", "one line").is_ok());
+    }
+
+    #[test]
+    fn bound_action_digest_must_be_lowercase_sha256() {
+        assert!(validate_digest("digest", &format!("sha256:{}", "a".repeat(64))).is_ok());
+        assert!(validate_digest("digest", &format!("sha256:{}", "A".repeat(64))).is_err());
+        assert!(validate_digest("digest", "sha256:short").is_err());
+        assert!(validate_digest("digest", "not-a-digest").is_err());
+    }
+
+    fn write_decision_env(directory: &Path, fields: &[(&str, &str)]) {
+        fs::create_dir_all(directory).unwrap();
+        let mut text = String::new();
+        for (key, value) in fields {
+            text.push_str(&format!("{key}={value}\n"));
+        }
+        fs::write(directory.join("decision.env"), text).unwrap();
+    }
+
+    #[test]
+    fn committed_user_owner_lookup_matches_status_owner_and_hash() {
+        let base = env::temp_dir().join(format!(
+            "multiagent-decision-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&base).unwrap();
+        let hash = format!("sha256:{}", "7".repeat(64));
+
+        write_decision_env(
+            &base.join("dec-open"),
+            &[
+                ("status", "open"),
+                ("owner_type", "user"),
+                ("bound_action_sha256", &hash),
+            ],
+        );
+        assert_eq!(
+            committed_user_owner_for_at(&hash, &base).unwrap(),
+            None,
+            "an open decision must not satisfy the check"
+        );
+
+        write_decision_env(
+            &base.join("dec-orchestrator"),
+            &[
+                ("status", "committed"),
+                ("owner_type", "orchestrator"),
+                ("bound_action_sha256", &hash),
+            ],
+        );
+        assert_eq!(
+            committed_user_owner_for_at(&hash, &base).unwrap(),
+            None,
+            "an orchestrator-owned decision must not satisfy the check"
+        );
+
+        write_decision_env(
+            &base.join("dec-user"),
+            &[
+                ("status", "committed"),
+                ("owner_type", "user"),
+                ("bound_action_sha256", &hash),
+            ],
+        );
+        assert!(committed_user_owner_for_at(&hash, &base).unwrap().is_some());
+
+        let other_hash = format!("sha256:{}", "8".repeat(64));
+        assert_eq!(
+            committed_user_owner_for_at(&other_hash, &base).unwrap(),
+            None
+        );
+
+        fs::remove_dir_all(base).unwrap();
     }
 }

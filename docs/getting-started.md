@@ -479,6 +479,12 @@ On Linux, test the process and authority boundary:
 bash tests/malicious-orchestrator.sh
 ```
 
+macOS is a supported deployment target for the authority supervisor's
+UID-isolation and peer-credential mechanisms; Landlock filesystem-write
+hardening remains Linux-only, so on macOS the role write boundary falls back
+to setuid-based identity separation plus POSIX file ownership, the same
+fallback used on Linux kernels without Landlock support.
+
 The Qwen live smoke test is opt-in and requires operator authentication; normal
 tests use fake executables and do not require network access.
 

@@ -44,13 +44,37 @@ enum AuthorityOperation {
     ValidationLeaseShow,
     ValidationLeaseList,
     GateCheck,
+    ProdOpsRoleAssign,
+    ProdOpsRoleRevoke,
+    ProdOpsPermitIssue,
+    ProdOpsSubmit,
+    /// A `decision commit --owner-type user ...` request.
+    ///
+    /// Role UIDs (`ORCHESTRATOR_UID`, `WRITER_UID`, `READER_UID`,
+    /// `SUPERVISOR_UID`) are dedicated, fixed service accounts that no human
+    /// ever logs in as directly, so any peer UID that isn't one of those four
+    /// IS a real human/operator session by construction. This makes it
+    /// impossible for any agent role process to satisfy `authorized_for` for
+    /// this variant no matter what `--owner-type` value it claims, because its
+    /// peer UID is always one of the four fixed constants.
+    DecisionCommitUserOwned,
 }
 
 impl AuthorityRequest {
     pub fn from_cli(command: &str, args: &[String]) -> Option<Self> {
         let (operation, forwarded) = match command {
             "workflow" => (AuthorityOperation::Workflow, args),
-            "decision" => (AuthorityOperation::Decision, args),
+            "decision" => {
+                let owner_type_user = args.first().map(String::as_str) == Some("commit")
+                    && args
+                        .windows(2)
+                        .any(|pair| pair[0] == "--owner-type" && pair[1] == "user");
+                if owner_type_user {
+                    (AuthorityOperation::DecisionCommitUserOwned, args)
+                } else {
+                    (AuthorityOperation::Decision, args)
+                }
+            }
             "dag" => (AuthorityOperation::Dag, args),
             "orchestrator" if args == ["complete"] => {
                 (AuthorityOperation::OrchestratorComplete, &args[1..])
@@ -87,6 +111,16 @@ impl AuthorityRequest {
                     Some("validation-lease-show") => AuthorityOperation::ValidationLeaseShow,
                     Some("validation-lease-list") => AuthorityOperation::ValidationLeaseList,
                     Some("gate-check") => AuthorityOperation::GateCheck,
+                    _ => return None,
+                };
+                (operation, &args[1..])
+            }
+            "prod-ops" => {
+                let operation = match args.first().map(String::as_str) {
+                    Some("role-assign") => AuthorityOperation::ProdOpsRoleAssign,
+                    Some("role-revoke") => AuthorityOperation::ProdOpsRoleRevoke,
+                    Some("permit-issue") => AuthorityOperation::ProdOpsPermitIssue,
+                    Some("submit") => AuthorityOperation::ProdOpsSubmit,
                     _ => return None,
                 };
                 (operation, &args[1..])
@@ -154,6 +188,17 @@ impl AuthorityRequest {
             | AuthorityOperation::ValidationLeaseStatus => {
                 matches!(uid, config::WRITER_UID | config::READER_UID)
             }
+            AuthorityOperation::ProdOpsRoleAssign
+            | AuthorityOperation::ProdOpsRoleRevoke
+            | AuthorityOperation::ProdOpsPermitIssue
+            | AuthorityOperation::ProdOpsSubmit => matches!(uid, 0 | config::SUPERVISOR_UID),
+            AuthorityOperation::DecisionCommitUserOwned => !matches!(
+                uid,
+                config::ORCHESTRATOR_UID
+                    | config::WRITER_UID
+                    | config::READER_UID
+                    | config::SUPERVISOR_UID
+            ),
         }
     }
 
@@ -192,6 +237,11 @@ impl AuthorityRequest {
             AuthorityOperation::ValidationLeaseShow => ("subagent", Some("validation-lease-show")),
             AuthorityOperation::ValidationLeaseList => ("subagent", Some("validation-lease-list")),
             AuthorityOperation::GateCheck => ("subagent", Some("gate-check")),
+            AuthorityOperation::ProdOpsRoleAssign => ("prod-ops", Some("role-assign")),
+            AuthorityOperation::ProdOpsRoleRevoke => ("prod-ops", Some("role-revoke")),
+            AuthorityOperation::ProdOpsPermitIssue => ("prod-ops", Some("permit-issue")),
+            AuthorityOperation::ProdOpsSubmit => ("prod-ops", Some("submit")),
+            AuthorityOperation::DecisionCommitUserOwned => ("decision", None),
         };
         let mut args = self.args;
         if let Some(subcommand) = subcommand {
@@ -224,8 +274,9 @@ mod tests {
         assert!(AuthorityRequest::from_cli("workflow", &strings(&["status"])).is_some());
         assert!(AuthorityRequest::from_cli("subagent", &strings(&["assignment-create"])).is_some());
         assert!(AuthorityRequest::from_cli("agent", &strings(&["run"])).is_none());
-        assert!(AuthorityRequest::from_cli("prod-ops", &strings(&["permit-issue"])).is_none());
-        assert!(AuthorityRequest::from_cli("prod-ops", &strings(&["submit"])).is_none());
+        assert!(AuthorityRequest::from_cli("prod-ops", &strings(&["permit-issue"])).is_some());
+        assert!(AuthorityRequest::from_cli("prod-ops", &strings(&["submit"])).is_some());
+        assert!(AuthorityRequest::from_cli("prod-ops", &strings(&["validate"])).is_none());
         assert!(AuthorityRequest::from_cli("role-exec", &[]).is_none());
         assert!(AuthorityRequest::from_cli("subagent", &strings(&["spawn"])).is_none());
         assert!(AuthorityRequest::from_cli("subagent", &strings(&["worktree-create"])).is_none());
@@ -245,6 +296,64 @@ mod tests {
         assert!(finding.authorized_for(config::READER_UID));
         assert!(close.authorized_for(config::ORCHESTRATOR_UID));
         assert!(!workflow.authorized_for(config::WRITER_UID));
+    }
+
+    #[test]
+    fn prod_ops_mutations_are_supervisor_only() {
+        for request in [
+            AuthorityRequest::from_cli("prod-ops", &strings(&["permit-issue"]))
+                .expect("permit-issue request"),
+            AuthorityRequest::from_cli("prod-ops", &strings(&["submit"])).expect("submit request"),
+            AuthorityRequest::from_cli("prod-ops", &strings(&["role-assign"]))
+                .expect("role-assign request"),
+            AuthorityRequest::from_cli("prod-ops", &strings(&["role-revoke"]))
+                .expect("role-revoke request"),
+        ] {
+            assert!(!request.authorized_for(config::ORCHESTRATOR_UID));
+            assert!(!request.authorized_for(config::WRITER_UID));
+            assert!(!request.authorized_for(config::READER_UID));
+            assert!(request.authorized_for(config::SUPERVISOR_UID));
+            assert!(request.authorized_for(0));
+        }
+    }
+
+    #[test]
+    fn decision_commit_ownership_is_argument_sensitive() {
+        let user_owned = AuthorityRequest::from_cli(
+            "decision",
+            &strings(&[
+                "commit",
+                "DEC-1",
+                "--selected-plan",
+                "plan-1",
+                "--reason",
+                "because",
+                "--owner-type",
+                "user",
+                "--bound-action-sha256",
+                &format!("sha256:{}", "a".repeat(64)),
+            ]),
+        )
+        .expect("user-owned commit request");
+        assert!(!user_owned.authorized_for(config::ORCHESTRATOR_UID));
+        assert!(!user_owned.authorized_for(config::WRITER_UID));
+        assert!(!user_owned.authorized_for(config::READER_UID));
+        assert!(!user_owned.authorized_for(config::SUPERVISOR_UID));
+        assert!(user_owned.authorized_for(12345));
+
+        let orchestrator_owned = AuthorityRequest::from_cli(
+            "decision",
+            &strings(&[
+                "commit",
+                "DEC-1",
+                "--selected-plan",
+                "plan-1",
+                "--reason",
+                "because",
+            ]),
+        )
+        .expect("orchestrator-owned commit request");
+        assert!(orchestrator_owned.authorized_for(config::ORCHESTRATOR_UID));
     }
 
     #[test]

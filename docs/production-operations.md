@@ -15,6 +15,8 @@ The ephemeral operations agent owns the runbook workflow. Reviewers approve each
 
 An agent changing its JSON role does nothing: the supervisor refuses to sign a mismatch, and `prod-mcp` refuses any altered signed payload.
 
+For the two operations that mutate infrastructure (`k8s.restart-deployment` and `service.deploy-release`), agent-role reviewer approval is a pre-filter, not sufficient authority. A human operator must also run `multiagent decision init` followed by `multiagent decision commit --owner-type user --bound-action-sha256 <intent_sha256> ...` to record a real, human-owned decision bound to the exact `intentSha256` of the proposed operation request before the supervisor will issue a permit. `permit-issue` looks up that committed, user-owned, hash-bound decision and refuses to sign the permit when none exists.
+
 Reviewer approval is sealed evidence, not caller-supplied metadata. Before signing, the supervisor requires each approval hash to match `reviewer-evidence/<reviewer>/last-message.txt` and requires that sealed message to contain the exact `prod-ops-review:` marker for the action ID, task ID, delegated subject and role, intent hash, runbook, operation, target, parameter hash, change ticket, runbook context hash, and history hash.
 
 ## Supervisor commands
@@ -34,7 +36,13 @@ multiagent prod-ops permit-issue --request operation-request.json --output permi
 multiagent prod-ops submit --permit permit.jws
 ```
 
-The last three commands require root or the configured supervisor UID. Regular orchestrator and agent UIDs are denied mechanically.
+`role-assign`, `role-revoke`, `permit-issue`, and `submit` now route through the
+authority-supervisor Unix socket exactly like `decision`, `workflow`, and
+`dag`: `main.rs` proxies them to `AuthorityRequest` before its own match
+statement, so the authority-supervisor daemon (`multiagent supervisor serve`,
+started via `multiagent supervisor ...`) must be running for them to succeed.
+The socket-side check requires root or the configured supervisor UID; `prod_ops.rs`'s own `require_supervisor()` check remains as a defensive
+second gate. Regular orchestrator and agent UIDs are denied mechanically.
 
 ## Signing backends
 
@@ -61,3 +69,7 @@ MULTIAGENT_PROD_OPS_VAULT_TOKEN_FILE=/run/secrets/vault-token
 The token file must be readable only by the supervisor identity. The local file backend is compiled out by default; it requires the `insecure-dev-signer` feature plus `MULTIAGENT_PROD_OPS_DEVELOPMENT=1`.
 
 MCP submission requires `MULTIAGENT_PROD_MCP_URL` and a supervisor-only `MULTIAGENT_PROD_MCP_TOKEN_FILE`. Agents never receive this bearer token.
+
+## Platform support
+
+macOS is a supported deployment target for the authority supervisor's UID-isolation and peer-credential mechanisms (peer identification uses Darwin's `LOCAL_PEERCRED`/`xucred` instead of Linux's `SO_PEERCRED`/`ucred`). Landlock filesystem-write hardening remains Linux-only: on macOS and on Linux kernels too old for Landlock, the role write boundary falls back to setuid-based identity separation plus POSIX file ownership.

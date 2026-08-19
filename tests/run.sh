@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}"
 MULTIAGENT="$TARGET_DIR/debug/multiagent"
 HOST_KERNEL="$(uname -s)"

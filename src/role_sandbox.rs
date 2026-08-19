@@ -263,7 +263,16 @@ fn restrict_writes(write_roots: &[PathBuf]) -> Result<(), String> {
     linux::restrict_writes(write_roots)
 }
 
-#[cfg(not(target_os = "linux"))]
+/// macOS has no Landlock equivalent. Report this the same way a Linux kernel
+/// too old to support Landlock would: `landlock_unavailable()` tolerates this
+/// exact pair of substrings when the caller does not hard-require the write
+/// boundary, and treats it as fatal when the caller does.
+#[cfg(target_os = "macos")]
+fn restrict_writes(_write_roots: &[PathBuf]) -> Result<(), String> {
+    Err("Landlock is unavailable: Function not implemented on this platform".into())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn restrict_writes(_write_roots: &[PathBuf]) -> Result<(), String> {
     Err(
         "role-exec is only available on Linux; use the native Codex sandbox on this platform"

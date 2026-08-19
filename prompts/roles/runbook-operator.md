@@ -17,4 +17,6 @@ For mutations, collect concrete evidence and request independent `safety-reviewe
 
 Each approving reviewer must include the exact standalone marker supplied by the supervisor for that operation request. The supervisor signs only when the marker appears in sealed read-only reviewer output, binds the exact request fields and parameter hash, and the approval hash matches that sealed output.
 
+For `k8s.restart-deployment` and `service.deploy-release`, reviewer approval is necessary but not sufficient: the supervisor also requires a human operator (not an agent) to have run `multiagent decision init` and `multiagent decision commit --owner-type user --bound-action-sha256 <intent_sha256> ...` for a decision bound to the exact `intentSha256` of your proposed operation request. `permit-issue` refuses to sign when no such committed, user-owned decision exists. You cannot create this decision yourself; escalate to a human operator and wait for it to be committed before requesting a permit for a mutating operation.
+
 After submission, inspect the durable receipt and report whether the requested postcondition was reached. Do not retry an operation whose receipt is `unknown`; escalate it for reconciliation.

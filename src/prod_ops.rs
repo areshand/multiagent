@@ -1,4 +1,4 @@
-use crate::{config, state::atomic_write};
+use crate::{config, decision, state::atomic_write};
 use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, Duration, Utc};
 use p256::ecdsa::{signature::Signer as _, Signature, SigningKey};
@@ -340,6 +340,7 @@ fn permit_issue(args: &[String]) -> Result<ExitCode, String> {
     validate_request(&request)?;
     validate_assignment(&request)?;
     validate_approval_evidence(&request)?;
+    require_committed_user_decision(&request)?;
     let signer = signer_from_env()?;
     let permit = ActionPermitV1 {
         api_version: API_VERSION,
@@ -548,10 +549,7 @@ fn validate_approval_evidence_at(request: &OperationRequestV1, state: &Path) -> 
         }
         let message_path = directory.join("last-message.txt");
         let message = fs::read_to_string(&message_path).map_err(|error| {
-            format!(
-                "read reviewer evidence {}: {error}",
-                message_path.display()
-            )
+            format!("read reviewer evidence {}: {error}", message_path.display())
         })?;
         let actual = format!("sha256:{:x}", Sha256::digest(message.as_bytes()));
         let recorded = metadata
@@ -573,6 +571,42 @@ fn validate_approval_evidence_at(request: &OperationRequestV1, state: &Path) -> 
         }
     }
     Ok(())
+}
+
+/// Mutating operations (the two operation IDs for which `operation_contract`
+/// requires a change ticket) must also be bound to a decision that a human
+/// operator, not an agent, committed with `--owner-type user`. Read-only
+/// operations skip this check entirely.
+fn require_committed_user_decision(request: &OperationRequestV1) -> Result<(), String> {
+    let (_, _, _, mutating) = operation_contract(&request.runbook, &request.operation)?;
+    if !mutating {
+        return Ok(());
+    }
+    match decision::committed_user_owner_for(&request.intent_sha256)? {
+        Some(_) => Ok(()),
+        None => Err(
+            "mutating operation requires a committed user-owned decision bound to this intent hash"
+                .into(),
+        ),
+    }
+}
+
+#[cfg(test)]
+fn require_committed_user_decision_at(
+    request: &OperationRequestV1,
+    decisions: &Path,
+) -> Result<(), String> {
+    let (_, _, _, mutating) = operation_contract(&request.runbook, &request.operation)?;
+    if !mutating {
+        return Ok(());
+    }
+    match decision::committed_user_owner_for_at(&request.intent_sha256, decisions)? {
+        Some(_) => Ok(()),
+        None => Err(
+            "mutating operation requires a committed user-owned decision bound to this intent hash"
+                .into(),
+        ),
+    }
 }
 
 fn prod_ops_review_marker(
@@ -874,6 +908,10 @@ fn role_path(subject: &str) -> Result<PathBuf, String> {
         .join(format!("{subject}.json")))
 }
 
+/// Defensive second check: `authority.rs`'s `AuthorityRequest` routing (via
+/// `main.rs`'s `supervisor::proxy_if_required`) is the primary, canonical
+/// policy for these subcommands; this call only guards against the binary
+/// ever being invoked in a way that bypasses that normal dispatch.
 fn require_supervisor() -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
@@ -1119,6 +1157,44 @@ mod tests {
     }
 
     #[test]
+    fn mutating_operation_requires_committed_user_owned_decision() {
+        let state = temporary_state();
+        let candidate = request();
+        let decisions = state.join("decisions");
+        assert!(require_committed_user_decision_at(&candidate, &decisions)
+            .unwrap_err()
+            .contains("committed user-owned decision"));
+
+        let directory = decisions.join("dec-1");
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("decision.env"),
+            format!(
+                "decision_id=dec-1\nstatus=committed\nowner_type=user\nbound_action_sha256={}\n",
+                candidate.intent_sha256
+            ),
+        )
+        .unwrap();
+        require_committed_user_decision_at(&candidate, &decisions).unwrap();
+
+        fs::remove_dir_all(state).unwrap();
+    }
+
+    #[test]
+    fn read_only_operation_skips_the_committed_decision_requirement() {
+        let state = temporary_state();
+        let mut candidate = request();
+        candidate.operation = OperationReference {
+            id: "k8s.deployment-health".into(),
+            version: "1.0.0".into(),
+        };
+        candidate.delegated_role = OperationsRole::RunbookObserver;
+        candidate.parameters = json!({ "timeoutSeconds": 30 });
+        require_committed_user_decision_at(&candidate, &state.join("decisions")).unwrap();
+        fs::remove_dir_all(state).unwrap();
+    }
+
+    #[test]
     fn compact_file_signature_uses_jws_raw_es256_shape() {
         let key = SigningKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
         let pem = key.to_pkcs8_pem(Default::default()).unwrap();
@@ -1151,6 +1227,26 @@ mod tests {
             canonical_json(&json!({"z": 1, "a": {"y": 2, "b": 3}})).unwrap(),
             r#"{"a":{"b":3,"y":2},"z":1}"#
         );
+    }
+
+    #[test]
+    fn canonical_json_matches_shared_conformance_vectors() {
+        const VECTORS: &str = include_str!("../tests/canonical_json_vectors.json");
+        let vectors: Vec<Value> = serde_json::from_str(VECTORS).unwrap();
+        assert!(
+            !vectors.is_empty(),
+            "expected at least one conformance vector"
+        );
+        for vector in vectors {
+            let name = vector["name"].as_str().unwrap();
+            let value = vector["value"].clone();
+            let expected = vector["canonical"].as_str().unwrap();
+            assert_eq!(
+                canonical_json(&value).unwrap(),
+                expected,
+                "vector \"{name}\" did not canonicalize as expected"
+            );
+        }
     }
 
     #[test]
