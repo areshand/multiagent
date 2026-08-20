@@ -19,6 +19,8 @@ For the two operations that mutate infrastructure (`k8s.restart-deployment` and 
 
 Reviewer approval is sealed evidence, not caller-supplied metadata. Before signing, the supervisor requires each approval hash to match `reviewer-evidence/<reviewer>/last-message.txt` and requires that sealed message to contain the exact `prod-ops-review:` marker for the action ID, task ID, delegated subject and role, intent hash, runbook, operation, target, parameter hash, change ticket, runbook context hash, and history hash.
 
+The two named reviewer roles (`safety-reviewer`, `operations-reviewer`) get a dedicated prompt (`prompts/roles/safety-reviewer.md`, `prompts/roles/operations-reviewer.md`) and default to the Claude Sonnet 5 backend/model (`claude`/`claude-sonnet-5`, overridable via `PROD_OPS_REVIEWER_CLI`/`PROD_OPS_REVIEWER_MODEL`) instead of silently inheriting the generic `VERIFIER_CLI` default. Both are instructed to independently gather live evidence through their own read-only tool access rather than relying solely on the proposer-supplied `runbookContextSha256`/`historySha256` bundle, since that bundle's content is chosen by the same agent proposing the mutation.
+
 ## Supervisor commands
 
 ```bash

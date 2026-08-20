@@ -110,6 +110,10 @@ pub struct AgentRequest {
     pub access: RoleAccess,
     pub mode: InvocationMode,
     pub resume_session: Option<String>,
+    /// Optional explicit model override (e.g. the production-operations
+    /// safety-reviewer/operations-reviewer roles' `claude-sonnet-5` default).
+    /// Only `ClaudeBackend` currently renders this; other backends ignore it.
+    pub model: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -317,6 +321,10 @@ impl AgentBackend for ClaudeBackend {
                     args.push("--resume".into());
                     args.push(session.into());
                 }
+                if let Some(model) = &request.model {
+                    args.push("--model".into());
+                    args.push(model.into());
+                }
                 Ok(CommandSpec {
                     program: self.executable.clone(),
                     args,
@@ -325,13 +333,20 @@ impl AgentBackend for ClaudeBackend {
                     legacy_prompt_argument: None,
                 })
             }
-            InvocationMode::Interactive => Ok(CommandSpec {
-                program: self.executable.clone(),
-                args: vec!["--dangerously-skip-permissions".into()],
-                cwd: request.cwd.clone(),
-                stdin_file: None,
-                legacy_prompt_argument: request.prompt_file.clone(),
-            }),
+            InvocationMode::Interactive => {
+                args.push("--dangerously-skip-permissions".into());
+                if let Some(model) = &request.model {
+                    args.push("--model".into());
+                    args.push(model.into());
+                }
+                Ok(CommandSpec {
+                    program: self.executable.clone(),
+                    args,
+                    cwd: request.cwd.clone(),
+                    stdin_file: None,
+                    legacy_prompt_argument: request.prompt_file.clone(),
+                })
+            }
         }
     }
 }
@@ -425,7 +440,7 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
 
 fn print_usage() {
     println!(
-        "Usage:\n  multiagent agent backend-info BACKEND\n  multiagent agent run --backend BACKEND --cwd DIR --prompt-file FILE --final-output FILE --trace-dir DIR --access read-only|workspace-write [--resume-session ID]"
+        "Usage:\n  multiagent agent backend-info BACKEND\n  multiagent agent run --backend BACKEND --cwd DIR --prompt-file FILE --final-output FILE --trace-dir DIR --access read-only|workspace-write [--resume-session ID] [--model MODEL]"
     );
 }
 
@@ -456,7 +471,7 @@ fn run_backend(args: &[String]) -> Result<ExitCode, String> {
     while index < args.len() {
         let key = match args[index].as_str() {
             "--backend" | "--cwd" | "--prompt-file" | "--final-output" | "--trace-dir"
-            | "--access" | "--resume-session" => args[index].trim_start_matches("--"),
+            | "--access" | "--resume-session" | "--model" => args[index].trim_start_matches("--"),
             other => return Err(format!("unknown agent run argument: {other}")),
         };
         let value = args
@@ -501,6 +516,7 @@ fn run_backend(args: &[String]) -> Result<ExitCode, String> {
         access,
         mode: InvocationMode::Headless,
         resume_session: values.get("resume-session").cloned(),
+        model: values.get("model").cloned(),
     };
     let spec = selected.command(&request)?;
     let timeout = agent_timeout()?;
@@ -1115,6 +1131,7 @@ mod tests {
             access: RoleAccess::ReadOnly,
             mode,
             resume_session: None,
+            model: None,
         }
     }
 
@@ -1195,6 +1212,70 @@ mod tests {
             .iter()
             .any(|arg| arg == "--dangerously-skip-permissions"));
         assert!(selected.capabilities().native_resume);
+    }
+
+    #[test]
+    fn claude_command_appends_model_override_in_both_modes() {
+        let paths = BackendPaths {
+            codex: "codex".into(),
+            claude: "claude".into(),
+            qwen: "qwen".into(),
+        };
+        let selected = backend(BackendId::Claude, &paths);
+
+        let mut headless = request(InvocationMode::Headless);
+        headless.model = Some("claude-sonnet-5".into());
+        let headless_args = selected
+            .command(&headless)
+            .unwrap()
+            .args
+            .into_iter()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(headless_args
+            .windows(2)
+            .any(|pair| pair == ["--model", "claude-sonnet-5"]));
+
+        let mut interactive = request(InvocationMode::Interactive);
+        interactive.model = Some("claude-sonnet-5".into());
+        let interactive_args = selected
+            .command(&interactive)
+            .unwrap()
+            .args
+            .into_iter()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(interactive_args
+            .windows(2)
+            .any(|pair| pair == ["--model", "claude-sonnet-5"]));
+
+        // No override requested: the flag must not appear at all.
+        let plain = selected
+            .command(&request(InvocationMode::Headless))
+            .unwrap();
+        assert!(!plain.args.iter().any(|arg| arg == "--model"));
+    }
+
+    #[test]
+    fn non_claude_backends_ignore_a_model_override() {
+        let paths = BackendPaths {
+            codex: "codex".into(),
+            claude: "claude".into(),
+            qwen: "qwen".into(),
+        };
+        let mut codex_request = request(InvocationMode::Headless);
+        codex_request.model = Some("claude-sonnet-5".into());
+        let codex_command = backend(BackendId::Codex, &paths)
+            .command(&codex_request)
+            .unwrap();
+        assert!(!codex_command.args.iter().any(|arg| arg == "--model"));
+
+        let mut qwen_request = request(InvocationMode::Headless);
+        qwen_request.model = Some("claude-sonnet-5".into());
+        let qwen_command = backend(BackendId::Qwen, &paths)
+            .command(&qwen_request)
+            .unwrap();
+        assert!(!qwen_command.args.iter().any(|arg| arg == "--model"));
     }
 
     #[test]

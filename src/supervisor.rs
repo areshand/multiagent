@@ -100,6 +100,9 @@ pub struct LaunchAuthorization {
     pub cli_bin: String,
     pub instruction: PathBuf,
     pub owned_paths: Vec<PathBuf>,
+    /// Optional explicit model override, currently used only by the
+    /// production-operations safety-reviewer/operations-reviewer roles.
+    pub model: Option<String>,
 }
 
 fn register_launch(args: &[String], renew: bool) -> Result<(), String> {
@@ -111,6 +114,7 @@ fn register_launch(args: &[String], renew: bool) -> Result<(), String> {
     let role = required_option(&options, "--role")?;
     let cli = required_option(&options, "--cli")?;
     let cli_bin = required_option(&options, "--cli-bin")?;
+    let model = options.get("--model").filter(|value| !value.is_empty());
     let instruction_source = PathBuf::from(required_option(&options, "--instruction-file")?);
     if !matches!(role, "worker" | "verifier" | "reviewer" | "scout") {
         return Err("register-launch role must be worker, verifier, reviewer, or scout".into());
@@ -175,6 +179,8 @@ fn register_launch(args: &[String], renew: bool) -> Result<(), String> {
         if current.get("role").map(String::as_str) != Some(role)
             || current.get("cli").map(String::as_str) != Some(cli)
             || current.get("cli_bin").map(String::as_str) != Some(cli_bin)
+            || current.get("model").map(String::as_str).unwrap_or("")
+                != model.map(String::as_str).unwrap_or("")
         {
             return Err(format!(
                 "renewed launch cannot change role or coding-agent identity: {name}"
@@ -190,7 +196,8 @@ fn register_launch(args: &[String], renew: bool) -> Result<(), String> {
     let instruction_path = directory.join("instruction.txt");
     atomic_write_bytes(&instruction_path, &instruction)?;
     let metadata = format!(
-        "name={name}\nrole={role}\naccess={access}\nworkflow_id={workflow_id}\ncli={cli}\ncli_bin={cli_bin}\ninstruction_sha256={:x}\nstate=registered\n",
+        "name={name}\nrole={role}\naccess={access}\nworkflow_id={workflow_id}\ncli={cli}\ncli_bin={cli_bin}\nmodel={}\ninstruction_sha256={:x}\nstate=registered\n",
+        model.map(String::as_str).unwrap_or(""),
         Sha256::digest(&instruction)
     );
     atomic_write_bytes(&directory.join("launch.env"), metadata.as_bytes())?;
@@ -231,6 +238,10 @@ pub fn claim_launch(state: &Path, name: &str) -> Result<LaunchAuthorization, Str
         cli_bin: required_field(&metadata, "cli_bin")?.into(),
         instruction,
         owned_paths,
+        model: metadata
+            .get("model")
+            .filter(|value| !value.is_empty())
+            .cloned(),
     };
     write_launch_state(&directory, &metadata, "running")?;
     Ok(authorization)
@@ -360,6 +371,10 @@ fn write_launch_state(
             .map(String::as_str)
             .unwrap_or("")
     ));
+    text.push_str(&format!(
+        "model={}\n",
+        metadata.get("model").map(String::as_str).unwrap_or("")
+    ));
     text.push_str(&format!("state={state}\n"));
     atomic_write_bytes(&directory.join("launch.env"), text.as_bytes())
 }
@@ -400,7 +415,7 @@ fn parse_options(args: &[String]) -> Result<BTreeMap<String, String>, String> {
     for pair in args.chunks_exact(2) {
         if !matches!(
             pair[0].as_str(),
-            "--role" | "--cli" | "--cli-bin" | "--instruction-file"
+            "--role" | "--cli" | "--cli-bin" | "--instruction-file" | "--model"
         ) || pair[1].contains(['\n', '\r'])
         {
             return Err(format!("invalid register-launch option: {}", pair[0]));

@@ -31,6 +31,8 @@ struct RuntimeConfig {
     worker_cli: String,
     subagent_cli: String,
     verifier_cli: String,
+    prod_ops_reviewer_cli: String,
+    prod_ops_reviewer_model: String,
     codex_bin: String,
     claude_bin: String,
     qwen_bin: String,
@@ -100,6 +102,34 @@ const WRITER_UID: u32 = config::WRITER_UID;
 const READER_UID: u32 = config::READER_UID;
 const ROLE_GID: u32 = config::ROLE_GID;
 
+/// The two named production-operations reviewer roles required by
+/// `prod_ops.rs`'s `operation_contract` (`safety-reviewer`,
+/// `operations-reviewer`) get a dedicated prompt, backend, and model rather
+/// than falling through to the generic reviewer/verifier dispatch. Matching
+/// is a case-insensitive substring check on the spawned session name, mirroring
+/// the existing `lower.contains(...)` convention in `role_prompt_name`.
+fn is_prod_ops_reviewer_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.contains("safety-reviewer") || lower.contains("operations-reviewer")
+}
+
+/// Resolve the backend CLI and optional model override to spawn a named
+/// session under. Every other role keeps resolving through `cfg.subagent_cli`
+/// exactly as before (which the orchestrator prompt sets to `$VERIFIER_CLI`
+/// for verifier/reviewer/scout spawns; see `orchestrator_prompt.md`); only the
+/// two named production-operations reviewer roles get a dedicated,
+/// deliberately-chosen backend/model instead.
+fn spawn_backend_for_name(cfg: &RuntimeConfig, name: &str) -> (String, Option<String>) {
+    if is_prod_ops_reviewer_name(name) {
+        (
+            cfg.prod_ops_reviewer_cli.clone(),
+            Some(cfg.prod_ops_reviewer_model.clone()),
+        )
+    } else {
+        (cfg.subagent_cli.clone(), None)
+    }
+}
+
 impl RuntimeConfig {
     fn load() -> Result<Self, String> {
         let root = config::root()?;
@@ -111,7 +141,20 @@ impl RuntimeConfig {
         let worker_cli = env_nonempty("WORKER_CLI").unwrap_or_else(|| "claude".into());
         let subagent_cli = env_nonempty("SUBAGENT_CLI").unwrap_or_else(|| worker_cli.clone());
         let verifier_cli = env_nonempty("VERIFIER_CLI").unwrap_or_else(|| "codex".into());
-        for value in [&worker_cli, &subagent_cli, &verifier_cli] {
+        // The two named production-operations reviewer roles (safety-reviewer,
+        // operations-reviewer) deliberately default to a specific backend and
+        // model rather than silently inheriting the generic VERIFIER_CLI
+        // default; see `is_prod_ops_reviewer_name`.
+        let prod_ops_reviewer_cli =
+            env_nonempty("PROD_OPS_REVIEWER_CLI").unwrap_or_else(|| "claude".into());
+        let prod_ops_reviewer_model =
+            env_nonempty("PROD_OPS_REVIEWER_MODEL").unwrap_or_else(|| "claude-sonnet-5".into());
+        for value in [
+            &worker_cli,
+            &subagent_cli,
+            &verifier_cli,
+            &prod_ops_reviewer_cli,
+        ] {
             validate_cli(value)?;
         }
         Ok(Self {
@@ -124,6 +167,8 @@ impl RuntimeConfig {
             worker_cli,
             subagent_cli,
             verifier_cli,
+            prod_ops_reviewer_cli,
+            prod_ops_reviewer_model,
             codex_bin: env_nonempty("CODEX_BIN").unwrap_or_else(|| "codex".into()),
             claude_bin: env_nonempty("CLAUDE_BIN").unwrap_or_else(|| "claude".into()),
             qwen_bin: env_nonempty("QWEN_BIN").unwrap_or_else(|| "qwen".into()),
@@ -244,6 +289,7 @@ pub fn role_agent_exec(args: &[String]) -> Result<ExitCode, String> {
         &trace_dir,
         access,
         resume_session.as_deref(),
+        authorization.model.as_deref(),
     );
     let supervisor_pid = dir.join("supervisor.pid");
     atomic_write(
@@ -383,7 +429,17 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
     let subagent_cli = env_nonempty("SUBAGENT_CLI").unwrap_or_else(|| worker_cli.clone());
     let verifier_cli = env_nonempty("VERIFIER_CLI").unwrap_or_else(|| "codex".into());
     let orchestrator_cli = env_nonempty("ORCHESTRATOR_CLI").unwrap_or_else(|| "codex".into());
-    for value in [&worker_cli, &subagent_cli, &verifier_cli, &orchestrator_cli] {
+    let prod_ops_reviewer_cli =
+        env_nonempty("PROD_OPS_REVIEWER_CLI").unwrap_or_else(|| "claude".into());
+    let prod_ops_reviewer_model =
+        env_nonempty("PROD_OPS_REVIEWER_MODEL").unwrap_or_else(|| "claude-sonnet-5".into());
+    for value in [
+        &worker_cli,
+        &subagent_cli,
+        &verifier_cli,
+        &orchestrator_cli,
+        &prod_ops_reviewer_cli,
+    ] {
         validate_cli(value)?;
     }
     let codex_bin = env_nonempty("CODEX_BIN").unwrap_or_else(|| "codex".into());
@@ -427,7 +483,13 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
     };
     let mut backend_versions = Vec::new();
     let mut selected_backends = BTreeSet::new();
-    for name in [&orchestrator_cli, &worker_cli, &subagent_cli, &verifier_cli] {
+    for name in [
+        &orchestrator_cli,
+        &worker_cli,
+        &subagent_cli,
+        &verifier_cli,
+        &prod_ops_reviewer_cli,
+    ] {
         if selected_backends.insert(name.clone()) {
             let id = BackendId::parse(name)?;
             backend_versions.push(agent::backend(id, &backend_paths).preflight()?);
@@ -503,6 +565,8 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
         &worker_cli,
         &subagent_cli,
         &verifier_cli,
+        &prod_ops_reviewer_cli,
+        &prod_ops_reviewer_model,
         &codex_bin,
         &claude_bin,
         &qwen_bin,
@@ -641,6 +705,7 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
     println!("Worker CLI: {worker_cli}");
     println!("Subagent CLI: {subagent_cli}");
     println!("Verifier CLI: {verifier_cli}");
+    println!("Prod-ops reviewer CLI/model: {prod_ops_reviewer_cli}/{prod_ops_reviewer_model}");
     println!("Agent headless mode: {agent_headless}");
     println!("Write policy:");
     policy::run(&["show".into()])?;
@@ -675,6 +740,8 @@ fn launch_environment(
     worker_cli: &str,
     subagent_cli: &str,
     verifier_cli: &str,
+    prod_ops_reviewer_cli: &str,
+    prod_ops_reviewer_model: &str,
     codex_bin: &str,
     claude_bin: &str,
     qwen_bin: &str,
@@ -724,6 +791,11 @@ fn launch_environment(
         ("WORKER_CLI", worker_cli.to_string()),
         ("SUBAGENT_CLI", subagent_cli.to_string()),
         ("VERIFIER_CLI", verifier_cli.to_string()),
+        ("PROD_OPS_REVIEWER_CLI", prod_ops_reviewer_cli.to_string()),
+        (
+            "PROD_OPS_REVIEWER_MODEL",
+            prod_ops_reviewer_model.to_string(),
+        ),
         ("CODEX_BIN", codex_bin.to_string()),
         ("CLAUDE_BIN", claude_bin.to_string()),
         ("QWEN_BIN", qwen_bin.to_string()),
@@ -860,6 +932,7 @@ fn write_bootstrap(
             &trace_dir,
             CodexAccess::WorkspaceWrite,
             None,
+            None,
         )
     } else {
         build_cli_command(
@@ -873,6 +946,7 @@ fn write_bootstrap(
             codex_exec,
             agent_headless,
             CodexAccess::WorkspaceWrite,
+            None,
         )?
     };
     let command = if environment
@@ -1356,8 +1430,9 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         }
         instruction = fs::read_to_string(path).map_err(io_error("read instruction file"))?;
     }
-    if cfg.headless(&cfg.subagent_cli) && instruction.is_empty() {
-        let label = if cfg.subagent_cli == "codex" && cfg.code_exec {
+    let (cli, model) = spawn_backend_for_name(cfg, name);
+    if cfg.headless(&cli) && instruction.is_empty() {
+        let label = if cli == "codex" && cfg.code_exec {
             "codex exec"
         } else {
             "headless coding-agent"
@@ -1387,8 +1462,7 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         };
 
     require_command("tmux")?;
-    let cli = &cfg.subagent_cli;
-    let binary = cfg.cli_bin(cli)?;
+    let binary = cfg.cli_bin(&cli)?;
     require_command(binary)?;
     if !tmux_success(&["has-session", "-t", &cfg.session]) {
         return Err(format!("missing tmux session: {}", cfg.session));
@@ -1484,7 +1558,7 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
     fs::create_dir_all(&cfg.logs).map_err(io_error("create subagent log directory"))?;
     let executable = env::current_exe().map_err(io_error("resolve multiagent executable"))?;
     let metadata = format!(
-        "name={name}\nsession={}\nroot={}\nrole={}\naccess={}\ncodex_access={}\nworkflow_id={}\nwrite_policy={}\nlog_file={}\ntrace_dir={}\ncli={cli}\ncli_bin={binary}\nhelper={}\ncreated_at={}\n",
+        "name={name}\nsession={}\nroot={}\nrole={}\naccess={}\ncodex_access={}\nworkflow_id={}\nwrite_policy={}\nlog_file={}\ntrace_dir={}\ncli={cli}\ncli_bin={binary}\nmodel={}\nhelper={}\ncreated_at={}\n",
         cfg.session,
         cfg.root.display(),
         authority_role,
@@ -1494,6 +1568,7 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         cfg.policy.display(),
         cfg.logs.join(format!("{name}.log")).display(),
         trace_dir.display(),
+        model.as_deref().unwrap_or(""),
         executable.display(),
         timestamp()
     );
@@ -1502,7 +1577,7 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
 
     let mut prompt_file = None;
     let output_file = dir.join("last-message.txt");
-    if cfg.headless(cli) && !instruction.is_empty() {
+    if cfg.headless(&cli) && !instruction.is_empty() {
         let path = dir.join("instruction.txt");
         let prompt = if cli == "codex" {
             format!("{}{}\n", codex_exec_protocol_prelude(), instruction)
@@ -1520,22 +1595,27 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         let registered_prompt = prompt_file
             .as_deref()
             .ok_or_else(|| format!("secure subagent prompt is missing: {name}"))?;
-        run_self_quiet(&[
-            "supervisor",
-            "register-launch",
-            name,
-            "--role",
-            authority_role,
-            "--cli",
-            cli,
-            "--cli-bin",
-            binary,
-            "--instruction-file",
-            &registered_prompt.display().to_string(),
-        ])?;
+        let mut register_args = vec![
+            "supervisor".to_string(),
+            "register-launch".to_string(),
+            name.to_string(),
+            "--role".to_string(),
+            authority_role.to_string(),
+            "--cli".to_string(),
+            cli.clone(),
+            "--cli-bin".to_string(),
+            binary.to_string(),
+            "--instruction-file".to_string(),
+            registered_prompt.display().to_string(),
+        ];
+        if let Some(model) = &model {
+            register_args.push("--model".into());
+            register_args.push(model.clone());
+        }
+        run_self_quiet(&register_args.iter().map(String::as_str).collect::<Vec<_>>())?;
     }
     let cli_command = if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
-        if !cfg.headless(cli) {
+        if !cfg.headless(&cli) {
             return Err("UID role isolation requires a headless coding-agent backend".into());
         }
         format!(
@@ -1544,10 +1624,10 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
             shell_escape(name)
         )
     } else {
-        let command = if cfg.headless(cli) {
+        let command = if cfg.headless(&cli) {
             build_agent_runner_command(
                 &executable,
-                cli,
+                &cli,
                 &cfg.root,
                 prompt_file
                     .as_deref()
@@ -1556,10 +1636,11 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
                 &trace_dir,
                 access,
                 None,
+                model.as_deref(),
             )
         } else {
             build_cli_command(
-                cli,
+                &cli,
                 &cfg.root,
                 prompt_file.as_deref(),
                 Some(&output_file),
@@ -1569,6 +1650,7 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
                 cfg.code_exec,
                 cfg.agent_headless,
                 access,
+                model.as_deref(),
             )?
         };
         wrap_linux_role_sandbox(
@@ -1582,7 +1664,7 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
             },
         )
     };
-    let command = subagent_shell_command(cfg, name, cli, &executable, &cli_command, access, false);
+    let command = subagent_shell_command(cfg, name, &cli, &executable, &cli_command, access, false);
     tmux_checked(&["new-window", "-d", "-t", &cfg.session, "-n", name, &command])?;
     pipe_log(&cfg.session, name, &cfg.logs)?;
     set_subagent_status(cfg, name, "running")?;
@@ -1596,7 +1678,7 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         run_self_quiet(&["subagent", "assignment-status", name, "running"])?;
     }
     let _ = capture_subagent(cfg, name);
-    if !(instruction.is_empty() || cfg.headless(cli)) {
+    if !(instruction.is_empty() || cfg.headless(&cli)) {
         deliver_instruction(cfg, name, &instruction)?;
     }
     println!("spawned {name}");
@@ -1865,6 +1947,13 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         .cloned()
         .unwrap_or_else(|| cfg.subagent_cli.clone());
     validate_cli(&cli)?;
+    // Persisted from the original spawn so a restored prod-ops reviewer keeps
+    // its originally resolved model override even if the operator's
+    // PROD_OPS_REVIEWER_MODEL default has since changed.
+    let model = metadata
+        .get("model")
+        .filter(|value| !value.is_empty())
+        .cloned();
     let access = match metadata
         .get("access")
         .or_else(|| metadata.get("codex_access"))
@@ -1939,23 +2028,28 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
             Some("scout") => "scout",
             _ => "worker",
         };
-        run_self_quiet(&[
-            "supervisor",
-            "renew-launch",
-            name,
-            "--role",
-            role,
-            "--cli",
-            &cli,
-            "--cli-bin",
-            binary,
-            "--instruction-file",
-            &prompt_file
+        let mut renew_args = vec![
+            "supervisor".to_string(),
+            "renew-launch".to_string(),
+            name.to_string(),
+            "--role".to_string(),
+            role.to_string(),
+            "--cli".to_string(),
+            cli.clone(),
+            "--cli-bin".to_string(),
+            binary.to_string(),
+            "--instruction-file".to_string(),
+            prompt_file
                 .as_deref()
                 .ok_or_else(|| format!("secure restore prompt is missing: {name}"))?
                 .display()
                 .to_string(),
-        ])?;
+        ];
+        if let Some(model) = &model {
+            renew_args.push("--model".into());
+            renew_args.push(model.clone());
+        }
+        run_self_quiet(&renew_args.iter().map(String::as_str).collect::<Vec<_>>())?;
     }
     let trace_dir = cfg.logs.join("agents").join(name);
     let executable = env::current_exe().map_err(io_error("resolve multiagent executable"))?;
@@ -1982,6 +2076,7 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
                 &trace_dir,
                 access,
                 resume_session.as_deref(),
+                model.as_deref(),
             )
         } else {
             build_cli_command(
@@ -1995,6 +2090,7 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
                 cfg.code_exec,
                 cfg.agent_headless,
                 access,
+                model.as_deref(),
             )?
         };
         wrap_linux_role_sandbox(
@@ -2263,6 +2359,10 @@ fn role_prompt_name(name: &str, role: Option<SpawnRole>) -> Option<&'static str>
     let lower = name.to_ascii_lowercase();
     let relative = if lower.contains("decision-authority-reviewer") {
         "prompts/roles/decision-authority-reviewer.md"
+    } else if lower.contains("safety-reviewer") {
+        "prompts/roles/safety-reviewer.md"
+    } else if lower.contains("operations-reviewer") {
+        "prompts/roles/operations-reviewer.md"
     } else if role.is_some_and(SpawnRole::is_production_operations) {
         "prompts/roles/runbook-operator.md"
     } else if lower.contains("contract-scout") || role == Some(SpawnRole::Scout) {
@@ -2489,6 +2589,7 @@ fn build_cli_command(
     codex_exec: bool,
     agent_headless: bool,
     access: CodexAccess,
+    model: Option<&str>,
 ) -> Result<String, String> {
     let id = BackendId::parse(cli)?;
     let paths = BackendPaths {
@@ -2510,6 +2611,7 @@ fn build_cli_command(
             access,
             mode,
             resume_session: None,
+            model: model.map(str::to_string),
         })
         .map(|command| command.render_shell())
 }
@@ -2523,6 +2625,7 @@ fn build_agent_runner_args(
     trace_dir: &Path,
     access: CodexAccess,
     resume_session: Option<&str>,
+    model: Option<&str>,
 ) -> Vec<String> {
     let mut args = vec![
         "agent".into(),
@@ -2544,6 +2647,10 @@ fn build_agent_runner_args(
         args.push("--resume-session".into());
         args.push(session.into());
     }
+    if let Some(model) = model {
+        args.push("--model".into());
+        args.push(model.into());
+    }
     args
 }
 
@@ -2557,10 +2664,19 @@ fn build_agent_runner_command(
     trace_dir: &Path,
     access: CodexAccess,
     resume_session: Option<&str>,
+    model: Option<&str>,
 ) -> String {
     let mut command = shell_escape(&executable.display().to_string());
-    for arg in build_agent_runner_args(cli, cwd, prompt, output, trace_dir, access, resume_session)
-    {
+    for arg in build_agent_runner_args(
+        cli,
+        cwd,
+        prompt,
+        output,
+        trace_dir,
+        access,
+        resume_session,
+        model,
+    ) {
         command.push(' ');
         command.push_str(&shell_escape(&arg));
     }
@@ -2886,6 +3002,11 @@ fn subagent_shell_command(
         ("WORKER_CLI", cfg.worker_cli.clone()),
         ("SUBAGENT_CLI", cli.into()),
         ("VERIFIER_CLI", cfg.verifier_cli.clone()),
+        ("PROD_OPS_REVIEWER_CLI", cfg.prod_ops_reviewer_cli.clone()),
+        (
+            "PROD_OPS_REVIEWER_MODEL",
+            cfg.prod_ops_reviewer_model.clone(),
+        ),
         ("CODEX_BIN", cfg.codex_bin.clone()),
         ("CLAUDE_BIN", cfg.claude_bin.clone()),
         ("QWEN_BIN", cfg.qwen_bin.clone()),
@@ -3770,5 +3891,96 @@ review-record: type=decision-authority verdict=pass diff=-\n";
             SpawnRole::RunbookOperator
         );
         assert!("admin".parse::<SpawnRole>().is_err());
+    }
+
+    #[test]
+    fn named_prod_ops_reviewers_get_dedicated_prompts() {
+        assert_eq!(
+            role_prompt_name("safety-reviewer-1", Some(SpawnRole::Reviewer)),
+            Some("prompts/roles/safety-reviewer.md")
+        );
+        assert_eq!(
+            role_prompt_name("operations-reviewer-1", Some(SpawnRole::Reviewer)),
+            Some("prompts/roles/operations-reviewer.md")
+        );
+        // A generic reviewer/verifier name is unaffected and keeps the
+        // shared prompt.
+        assert_eq!(
+            role_prompt_name("code-reviewer-1", Some(SpawnRole::Reviewer)),
+            Some("prompts/verifier.md")
+        );
+        assert_eq!(
+            role_prompt_name("reviewer-1", Some(SpawnRole::Reviewer)),
+            Some("prompts/verifier.md")
+        );
+    }
+
+    fn test_runtime_config(subagent_cli: &str, verifier_cli: &str) -> RuntimeConfig {
+        RuntimeConfig {
+            session: "test".into(),
+            root: PathBuf::from("."),
+            state: PathBuf::from("."),
+            logs: PathBuf::from("."),
+            policy: PathBuf::from("."),
+            prompt_root: PathBuf::from("."),
+            worker_cli: "claude".into(),
+            subagent_cli: subagent_cli.into(),
+            verifier_cli: verifier_cli.into(),
+            prod_ops_reviewer_cli: "claude".into(),
+            prod_ops_reviewer_model: "claude-sonnet-5".into(),
+            codex_bin: "codex".into(),
+            claude_bin: "claude".into(),
+            qwen_bin: "qwen".into(),
+            code_exec: false,
+            agent_headless: false,
+        }
+    }
+
+    #[test]
+    fn named_prod_ops_reviewers_default_to_claude_sonnet_5() {
+        // Simulate the orchestrator's documented convention of setting
+        // SUBAGENT_CLI=$VERIFIER_CLI before spawning a generic
+        // reviewer/verifier/scout session.
+        let cfg = test_runtime_config("codex", "codex");
+        assert_eq!(
+            spawn_backend_for_name(&cfg, "safety-reviewer-1"),
+            ("claude".to_string(), Some("claude-sonnet-5".to_string()))
+        );
+        assert_eq!(
+            spawn_backend_for_name(&cfg, "operations-reviewer-1"),
+            ("claude".to_string(), Some("claude-sonnet-5".to_string()))
+        );
+    }
+
+    #[test]
+    fn named_prod_ops_reviewers_honor_overridden_cli_and_model() {
+        let mut cfg = test_runtime_config("codex", "codex");
+        cfg.prod_ops_reviewer_cli = "qwen".into();
+        cfg.prod_ops_reviewer_model = "custom-model".into();
+        assert_eq!(
+            spawn_backend_for_name(&cfg, "safety-reviewer-1"),
+            ("qwen".to_string(), Some("custom-model".to_string()))
+        );
+        assert_eq!(
+            spawn_backend_for_name(&cfg, "operations-reviewer-1"),
+            ("qwen".to_string(), Some("custom-model".to_string()))
+        );
+    }
+
+    #[test]
+    fn other_reviewer_names_are_unaffected_and_keep_verifier_cli_default() {
+        // The orchestrator sets SUBAGENT_CLI=$VERIFIER_CLI for generic
+        // reviewer/verifier spawns; the named prod-ops override must not
+        // apply to them.
+        let cfg = test_runtime_config("codex", "codex");
+        assert_eq!(cfg.subagent_cli, cfg.verifier_cli);
+        assert_eq!(
+            spawn_backend_for_name(&cfg, "code-reviewer-1"),
+            (cfg.verifier_cli.clone(), None)
+        );
+        assert_eq!(
+            spawn_backend_for_name(&cfg, "reviewer-1"),
+            (cfg.verifier_cli.clone(), None)
+        );
     }
 }
