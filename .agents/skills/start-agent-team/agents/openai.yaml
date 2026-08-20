@@ -1,0 +1,4 @@
+interface:
+  display_name: "Start Agent Team"
+  short_description: "Launch teams with live orchestrator output"
+  default_prompt: "Use $start-agent-team to start an agent team and show its live orchestrator output in Codex."
