@@ -1,0 +1,10 @@
+.git
+.multiagent
+.worktrees
+InternalServices
+benchmarks
+evaluation
+prod-mcp
+patch.txt
+**/node_modules
+**/target

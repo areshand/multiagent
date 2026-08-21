@@ -5,6 +5,39 @@ does not implement another coding agent or model loop. It runs Codex, Claude
 Code, and Qwen Code in explicit roles, records durable workflow state, and
 accepts work only when reviewer evidence matches the exact final Git diff.
 
+## Stateful control server
+
+The container image runs a same-origin web UI and authenticated WebSocket gateway as PID 1. Each task owns an isolated tmux orchestrator session. Paused, completed, and archived tasks retain their workflow state and terminal transcript without retaining an active tmux process; resuming reconstructs the session from that state.
+
+Users are configured in a mounted JSON file. Passwords must be scrypt hashes, never plaintext:
+
+```bash
+node bin/hash-password.mjs operator
+```
+
+The mounted file has this shape:
+
+```json
+{
+  "sessionSecret": "at-least-32-random-characters",
+  "users": [
+    {"username": "operator", "passwordHash": "scrypt$16384$8$1$..."}
+  ]
+}
+```
+
+Task repositories must be provisioned as Git worktrees below `MULTIAGENT_REPOSITORY_ROOT`. Repository provisioning is owned by the deployment rather than the control server, so restarting the UI never fetches or mutates source checkouts.
+
+Important container variables:
+
+- `MULTIAGENT_USERS_FILE`: mounted login configuration, default `/run/secrets/multiagent/users.json`.
+- `MULTIAGENT_REPOSITORY_ROOT`: deployment-provisioned Git worktrees available for new tasks.
+- `MULTIAGENT_IDLE_TIMEOUT_SECONDS`: inactivity period after which a running task is checkpointed and paused.
+- `MULTIAGENT_STATE_S3_URI`: S3 prefix used for recovery snapshots.
+- `MULTIAGENT_PUBLIC_URL`: canonical HTTPS origin accepted for browser and WebSocket requests.
+
+The PVC mounted at `/var/lib/multiagent` is the primary store for repositories, CLI conversation history, checkpoints, and session metadata. Final reports, a bounded terminal tail, and the transcript index live under each task's existing `logs` trace root. They reference immutable agent event traces instead of duplicating full transcripts. S3 is the durable recovery and inspection copy.
+
 ## Requirements
 
 From a source checkout you need Rust 1.75+, Cargo, Bash, Git, and tmux. Install
