@@ -33,7 +33,15 @@ function selectSession(id) {
   $("#active-name").textContent = session?.id || "Select a session";
   $("#active-repo").textContent = session?.repository || "";
   $("#live-dot").classList.toggle("live", Boolean(session?.live));
-  for (const id of ["restart", "checkpoint", "stop", "message", "send"]) $("#" + id).disabled = !session;
+  const running = Boolean(session?.live);
+  $("#resume").disabled = !session || running;
+  $("#restart").disabled = !running;
+  $("#checkpoint").disabled = !running;
+  $("#pause").disabled = !running;
+  $("#complete").disabled = !running;
+  $("#archive").disabled = !session || running || session.status === "archived";
+  $("#message").disabled = !running;
+  $("#send").disabled = !running;
   if (!session) { $("#terminal").textContent = "No orchestrator selected."; return refreshSessions(); }
   $("#terminal").textContent = "Connecting to orchestrator…";
   const protocol = location.protocol === "https:" ? "wss" : "ws";
@@ -67,11 +75,11 @@ $("#message-form").onsubmit = (event) => {
   socket.send(JSON.stringify({ type: "input", text }));
   $("#message").value = "";
 };
-for (const action of ["restart", "checkpoint", "stop"]) $("#" + action).onclick = async () => {
+for (const action of ["restart", "resume", "checkpoint", "pause", "complete", "archive"]) $("#" + action).onclick = async () => {
   if (!active) return;
   await api(`/api/sessions/${active}/${action}`, { method: "POST" });
   await refreshSessions();
-  if (action === "restart") selectSession(active);
+  if (action === "restart" || action === "resume") selectSession(active);
 };
 $("#new-session").onclick = async () => {
   const repositories = (await api("/api/repositories")).repositories;

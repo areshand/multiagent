@@ -5,11 +5,8 @@ export CODEX_HOME="${CODEX_HOME:-/var/lib/multiagent/codex}"
 export CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-/var/lib/multiagent/claude}"
 export MULTIAGENT_STATE_DIR="${MULTIAGENT_STATE_DIR:-/var/lib/multiagent/state}"
 export MULTIAGENT_REPOSITORY_ROOT="${MULTIAGENT_REPOSITORY_ROOT:-/var/lib/multiagent/repositories}"
-export GIT_ASKPASS="${GIT_ASKPASS:-/opt/multiagent/bin/git-askpass.sh}"
-export GIT_TERMINAL_PROMPT=0
 mkdir -p "$HOME" "$CODEX_HOME" "$CLAUDE_CONFIG_DIR" "$MULTIAGENT_STATE_DIR" "$MULTIAGENT_REPOSITORY_ROOT"
 if [[ -n "${MULTIAGENT_STATE_S3_URI:-}" && ! -f "$MULTIAGENT_STATE_DIR/control-server/sessions.json" ]]; then
   aws s3 sync "$MULTIAGENT_STATE_S3_URI" "$MULTIAGENT_STATE_DIR" --only-show-errors || true
 fi
-node /opt/multiagent/bin/sync-repositories.mjs
 exec node /opt/multiagent/control-server/src/server.mjs

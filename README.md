@@ -7,7 +7,7 @@ accepts work only when reviewer evidence matches the exact final Git diff.
 
 ## Stateful control server
 
-The container image runs a same-origin web UI and authenticated WebSocket gateway as PID 1. The server bootstraps configured repositories, starts or resumes tmux orchestrator sessions, streams orchestrator pane output, accepts user messages, checkpoints session output, and mirrors durable state to S3.
+The container image runs a same-origin web UI and authenticated WebSocket gateway as PID 1. Each task owns an isolated tmux orchestrator session. Paused, completed, and archived tasks retain their workflow state and terminal transcript without retaining an active tmux process; resuming reconstructs the session from that state.
 
 Users are configured in a mounted JSON file. Passwords must be scrypt hashes, never plaintext:
 
@@ -26,22 +26,13 @@ The mounted file has this shape:
 }
 ```
 
-Repositories are allowlisted in `MULTIAGENT_REPOSITORIES_FILE`:
-
-```json
-{
-  "repositories": [
-    {"name": "example", "url": "https://github.com/example/repository.git", "ref": "main"}
-  ]
-}
-```
+Task repositories must be provisioned as Git worktrees below `MULTIAGENT_REPOSITORY_ROOT`. Repository provisioning is owned by the deployment rather than the control server, so restarting the UI never fetches or mutates source checkouts.
 
 Important container variables:
 
 - `MULTIAGENT_USERS_FILE`: mounted login configuration, default `/run/secrets/multiagent/users.json`.
-- `MULTIAGENT_REPOSITORIES_FILE`: mounted repository allowlist.
-- `MULTIAGENT_BOOTSTRAP_REPOSITORY`: repository used for the initial orchestrator session.
-- `MULTIAGENT_BOOTSTRAP_SESSION`: initial session name, default `orchestrator`.
+- `MULTIAGENT_REPOSITORY_ROOT`: deployment-provisioned Git worktrees available for new tasks.
+- `MULTIAGENT_IDLE_TIMEOUT_SECONDS`: inactivity period after which a running task is checkpointed and paused.
 - `MULTIAGENT_STATE_S3_URI`: S3 prefix used for recovery snapshots.
 - `MULTIAGENT_PUBLIC_URL`: canonical HTTPS origin accepted for browser and WebSocket requests.
 

@@ -2,9 +2,9 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { execFile, execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { WebSocketServer } from "ws";
+import { WebSocket, WebSocketServer } from "ws";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(here, "../public");
@@ -19,8 +19,7 @@ const sessionTtlSeconds = Number(process.env.MULTIAGENT_LOGIN_TTL_SECONDS || "43
 const captureLines = Math.min(Number(process.env.MULTIAGENT_CAPTURE_LINES || "1200"), 5000);
 const s3StateUri = (process.env.MULTIAGENT_STATE_S3_URI || "").replace(/\/$/, "");
 const snapshotIntervalMs = Math.max(Number(process.env.MULTIAGENT_SNAPSHOT_INTERVAL_SECONDS || "60"), 15) * 1000;
-const defaultSession = process.env.MULTIAGENT_BOOTSTRAP_SESSION || "orchestrator";
-const defaultRepository = process.env.MULTIAGENT_BOOTSTRAP_REPOSITORY || "";
+const idleTimeoutMs = Math.max(Number(process.env.MULTIAGENT_IDLE_TIMEOUT_SECONDS || "86400"), 300) * 1000;
 const idPattern = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const registryFile = path.join(stateRoot, "control-server", "sessions.json");
 
@@ -152,6 +151,9 @@ function sessionStateDir(id) {
 function launchSession(id, repository, resume, actor) {
   if (!idPattern.test(id)) throw new Error("invalid session id");
   if (tmuxAlive(id)) throw new Error("session already running");
+  const existing = registry.sessions[id];
+  if (resume && !existing) throw new Error("cannot resume an unknown task");
+  if (!resume && existing) throw new Error("task id already exists");
   const root = repositoryPath(repository);
   const persistent = sessionStateDir(id);
   fs.mkdirSync(persistent, { recursive: true });
@@ -166,10 +168,12 @@ function launchSession(id, repository, resume, actor) {
     MULTIAGENT_PROMPT: path.join(launcherRoot, "orchestrator_prompt.md"),
   };
   run("bash", args, { cwd: launcherRoot, env });
+  const now = new Date().toISOString();
   registry.sessions[id] = {
-    id, repository, status: "running", autoResume: true, createdBy: actor,
-    createdAt: registry.sessions[id]?.createdAt || new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    ...existing, id, repository, status: "running", autoResume: true,
+    createdBy: existing?.createdBy || actor, createdAt: existing?.createdAt || now,
+    resumedBy: resume ? actor : undefined, resumedAt: resume ? now : undefined,
+    updatedAt: now, lastActivityAt: now,
   };
   saveRegistry();
   return sessionView(id);
@@ -182,7 +186,9 @@ function sessionView(id) {
 }
 
 function capture(id) {
-  if (!tmuxAlive(id)) return "";
+  if (!tmuxAlive(id)) {
+    try { return fs.readFileSync(path.join(sessionStateDir(id), "control-server", "orchestrator.log"), "utf8"); } catch { return ""; }
+  }
   return run("tmux", ["capture-pane", "-p", "-J", "-S", `-${captureLines}`, "-t", `${id}:orchestrator`], { maxBuffer: 8 * 1024 * 1024 });
 }
 
@@ -193,6 +199,7 @@ function sendInput(id, text) {
   run("tmux", ["paste-buffer", "-d", "-t", `${id}:orchestrator`]);
   run("tmux", ["send-keys", "-t", `${id}:orchestrator`, "Enter"]);
   registry.sessions[id].updatedAt = new Date().toISOString();
+  registry.sessions[id].lastActivityAt = registry.sessions[id].updatedAt;
   saveRegistry();
 }
 
@@ -217,6 +224,22 @@ function checkpointAll() {
     try { checkpoint(id); } catch (error) { console.error(`checkpoint failed for ${id}`, error); }
   }
   syncS3();
+}
+
+async function retireSession(id, status, actor) {
+  const record = registry.sessions[id];
+  if (!record) throw new Error("unknown task");
+  checkpoint(id);
+  if (tmuxAlive(id)) run("tmux", ["kill-session", "-t", id]);
+  const now = new Date().toISOString();
+  record.status = status;
+  record.autoResume = false;
+  record.updatedAt = now;
+  record[`${status}At`] = now;
+  record[`${status}By`] = actor;
+  await saveRegistry();
+  syncS3();
+  return sessionView(id);
 }
 
 const loginAttempts = new Map();
@@ -279,17 +302,20 @@ const server = http.createServer(async (request, response) => {
       const body = await readBody(request);
       return json(response, 201, launchSession(String(body.id || ""), String(body.repository || ""), Boolean(body.resume), username));
     }
-    const match = url.pathname.match(/^\/api\/sessions\/([a-z0-9-]+)\/(restart|stop|checkpoint)$/);
+    const match = url.pathname.match(/^\/api\/sessions\/([a-z0-9-]+)\/(restart|resume|pause|complete|archive|checkpoint)$/);
     if (request.method === "POST" && match) {
       const [, id, action] = match;
       if (!registry.sessions[id]) return json(response, 404, { error: "unknown session" });
       if (action === "checkpoint") checkpoint(id);
-      if (action === "stop") {
-        checkpoint(id);
-        if (tmuxAlive(id)) run("tmux", ["kill-session", "-t", id]);
-        registry.sessions[id].status = "stopped";
-        registry.sessions[id].autoResume = false;
-        await saveRegistry();
+      if (action === "pause") return json(response, 200, await retireSession(id, "paused", username));
+      if (action === "complete") return json(response, 200, await retireSession(id, "completed", username));
+      if (action === "archive") {
+        if (tmuxAlive(id)) throw new Error("pause or complete the task before archiving");
+        return json(response, 200, await retireSession(id, "archived", username));
+      }
+      if (action === "resume") {
+        if (tmuxAlive(id)) throw new Error("task is already running");
+        return json(response, 200, launchSession(id, registry.sessions[id].repository, true, username));
       }
       if (action === "restart") {
         checkpoint(id);
@@ -323,12 +349,12 @@ sockets.on("connection", (socket, request) => {
   const publish = () => {
     try {
       const output = capture(id);
-      if (output !== previous && socket.readyState === socket.OPEN) {
+      if (output !== previous && socket.readyState === WebSocket.OPEN) {
         previous = output;
         socket.send(JSON.stringify({ type: "output", output, live: tmuxAlive(id), capturedAt: new Date().toISOString() }));
       }
     } catch (error) {
-      if (socket.readyState === socket.OPEN) socket.send(JSON.stringify({ type: "error", error: error.message }));
+      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "error", error: error.message }));
     }
   };
   publish();
@@ -345,15 +371,21 @@ sockets.on("connection", (socket, request) => {
 });
 
 for (const record of Object.values(registry.sessions)) {
-  if (record.autoResume && !tmuxAlive(record.id)) {
+  if (record.status === "running" && record.autoResume && !tmuxAlive(record.id)) {
     try { launchSession(record.id, record.repository, true, "system"); } catch (error) { console.error(`restore failed for ${record.id}`, error); }
   }
 }
-if (defaultRepository && !registry.sessions[defaultSession]) {
-  try { launchSession(defaultSession, defaultRepository, false, "system"); } catch (error) { console.error("bootstrap session failed", error); }
-}
 
 const snapshotTimer = setInterval(checkpointAll, snapshotIntervalMs);
+const retirementTimer = setInterval(() => {
+  const now = Date.now();
+  for (const record of Object.values(registry.sessions)) {
+    const lastActivity = Date.parse(record.lastActivityAt || record.updatedAt || record.createdAt);
+    if (record.status === "running" && tmuxAlive(record.id) && Number.isFinite(lastActivity) && now - lastActivity >= idleTimeoutMs) {
+      retireSession(record.id, "paused", "idle-timeout").catch((error) => console.error(`idle retirement failed for ${record.id}`, error));
+    }
+  }
+}, 60000);
 server.listen(port, host, () => console.log(`multiagent control server listening on ${host}:${port}`));
 
 let shuttingDown = false;
@@ -362,6 +394,7 @@ function shutdown(signal) {
   shuttingDown = true;
   console.log(`received ${signal}; checkpointing sessions`);
   clearInterval(snapshotTimer);
+  clearInterval(retirementTimer);
   checkpointAll();
   setTimeout(() => server.close(() => process.exit(0)), 1000).unref();
   setTimeout(() => process.exit(1), 25000).unref();

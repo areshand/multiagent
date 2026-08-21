@@ -1,3 +1,9 @@
+FROM rust:1-bookworm AS multiagent-builder
+
+WORKDIR /src
+COPY . .
+RUN cargo build --release --locked
+
 FROM node:22-bookworm-slim
 
 ARG CODEX_VERSION=0.145.0
@@ -10,10 +16,9 @@ RUN apt-get update \
 
 WORKDIR /opt/multiagent
 COPY control-server/package*.json control-server/
-RUN cd control-server && npm install --omit=dev
-COPY launch.sh orchestrator_prompt.md README.md ./
-COPY bin/ bin/
-COPY control-server/ control-server/
+RUN cd control-server && npm ci --omit=dev
+COPY . .
+COPY --from=multiagent-builder /src/target/release/multiagent /opt/multiagent/bin/multiagent
 RUN chmod +x launch.sh bin/*.sh bin/*.mjs \
  && useradd --create-home --home-dir /var/lib/multiagent --uid 10001 multiagent \
  && mkdir -p /var/lib/multiagent/state /var/lib/multiagent/repositories \
