@@ -5,6 +5,48 @@ does not implement another coding agent or model loop. It runs Codex, Claude
 Code, and Qwen Code in explicit roles, records durable workflow state, and
 accepts work only when reviewer evidence matches the exact final Git diff.
 
+## Stateful control server
+
+The container image runs a same-origin web UI and authenticated WebSocket gateway as PID 1. The server bootstraps configured repositories, starts or resumes tmux orchestrator sessions, streams orchestrator pane output, accepts user messages, checkpoints session output, and mirrors durable state to S3.
+
+Users are configured in a mounted JSON file. Passwords must be scrypt hashes, never plaintext:
+
+```bash
+node bin/hash-password.mjs operator
+```
+
+The mounted file has this shape:
+
+```json
+{
+  "sessionSecret": "at-least-32-random-characters",
+  "users": [
+    {"username": "operator", "passwordHash": "scrypt$16384$8$1$..."}
+  ]
+}
+```
+
+Repositories are allowlisted in `MULTIAGENT_REPOSITORIES_FILE`:
+
+```json
+{
+  "repositories": [
+    {"name": "example", "url": "https://github.com/example/repository.git", "ref": "main"}
+  ]
+}
+```
+
+Important container variables:
+
+- `MULTIAGENT_USERS_FILE`: mounted login configuration, default `/run/secrets/multiagent/users.json`.
+- `MULTIAGENT_REPOSITORIES_FILE`: mounted repository allowlist.
+- `MULTIAGENT_BOOTSTRAP_REPOSITORY`: repository used for the initial orchestrator session.
+- `MULTIAGENT_BOOTSTRAP_SESSION`: initial session name, default `orchestrator`.
+- `MULTIAGENT_STATE_S3_URI`: S3 prefix used for recovery snapshots.
+- `MULTIAGENT_PUBLIC_URL`: canonical HTTPS origin accepted for browser and WebSocket requests.
+
+The PVC mounted at `/var/lib/multiagent` is the primary store for repositories, CLI conversation history, checkpoints, and session metadata. S3 is the durable recovery and inspection copy.
+
 ## Requirements
 
 From a source checkout you need Rust 1.75+, Cargo, Bash, Git, and tmux. Install
