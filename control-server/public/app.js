@@ -42,7 +42,11 @@ function selectSession(id) {
   $("#archive").disabled = !session || running || session.status === "archived";
   $("#message").disabled = !running;
   $("#send").disabled = !running;
+  $("#report").textContent = "";
   if (!session) { $("#terminal").textContent = "No orchestrator selected."; return refreshSessions(); }
+  api(`/api/sessions/${id}/report`).then(({ report, transcript }) => {
+    $("#report").textContent = report || (transcript ? `Trace references\n${transcript.traceReferences.join("\n")}` : "");
+  }).catch(() => {});
   $("#terminal").textContent = "Connecting to orchestrator…";
   const protocol = location.protocol === "https:" ? "wss" : "ws";
   socket = new WebSocket(`${protocol}://${location.host}/api/sessions/${id}/terminal`);

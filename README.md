@@ -36,7 +36,7 @@ Important container variables:
 - `MULTIAGENT_STATE_S3_URI`: S3 prefix used for recovery snapshots.
 - `MULTIAGENT_PUBLIC_URL`: canonical HTTPS origin accepted for browser and WebSocket requests.
 
-The PVC mounted at `/var/lib/multiagent` is the primary store for repositories, CLI conversation history, checkpoints, and session metadata. S3 is the durable recovery and inspection copy.
+The PVC mounted at `/var/lib/multiagent` is the primary store for repositories, CLI conversation history, checkpoints, and session metadata. Final reports, a bounded terminal tail, and the transcript index live under each task's existing `logs` trace root. They reference immutable agent event traces instead of duplicating full transcripts. S3 is the durable recovery and inspection copy.
 
 ## Requirements
 

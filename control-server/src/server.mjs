@@ -148,6 +148,76 @@ function sessionStateDir(id) {
   return path.join(stateRoot, "sessions", id);
 }
 
+function traceRoot(id) {
+  return path.join(sessionStateDir(id), "logs");
+}
+
+function conciseTail(value, lines = 80, characters = 12000) {
+  return String(value || "").split("\n").slice(-lines).join("\n").slice(-characters);
+}
+
+function activeWorkflow(id) {
+  try { return fs.readFileSync(path.join(sessionStateDir(id), "runtime_state", "active-workflow-id"), "utf8").trim(); } catch { return ""; }
+}
+
+function workflowPhase(id) {
+  const workflow = activeWorkflow(id);
+  if (!workflow) return "";
+  try {
+    const lifecycle = fs.readFileSync(path.join(sessionStateDir(id), "workflows", workflow, "lifecycle", "lifecycle.env"), "utf8");
+    return lifecycle.split("\n").find((line) => line.startsWith("phase="))?.slice(6).trim() || "";
+  } catch { return ""; }
+}
+
+function traceReferences(id) {
+  const root = traceRoot(id);
+  const references = [];
+  const workflow = activeWorkflow(id);
+  if (workflow) references.push(`../workflows/${workflow}/lifecycle/events.log`);
+  const agents = path.join(root, "agents");
+  try {
+    for (const entry of fs.readdirSync(agents, { withFileTypes: true }).filter((item) => item.isDirectory())) {
+      const base = path.join(agents, entry.name);
+      let attempt = "";
+      try { attempt = fs.readFileSync(path.join(base, "latest"), "utf8").trim(); } catch {}
+      const events = path.join("agents", entry.name, attempt, "events.jsonl");
+      if (attempt && fs.existsSync(path.join(root, events))) references.push(events);
+    }
+  } catch {}
+  return references;
+}
+
+function writeTraceSummary(id, status) {
+  const root = traceRoot(id);
+  fs.mkdirSync(root, { recursive: true });
+  let finalMessage = "";
+  try { finalMessage = conciseTail(fs.readFileSync(path.join(sessionStateDir(id), "orchestrator-last-message.txt"), "utf8"), 40, 6000); } catch {}
+  const references = traceReferences(id);
+  const report = {
+    taskId: id,
+    workflowId: activeWorkflow(id) || null,
+    status,
+    completedAt: registry.sessions[id]?.completedAt || null,
+    finalMessage,
+    traceReferences: references,
+  };
+  const markdown = [
+    `# ${id}`,
+    "",
+    `Status: ${status}`,
+    report.workflowId ? `Workflow: ${report.workflowId}` : null,
+    "",
+    finalMessage ? "## Final agent message" : null,
+    finalMessage || null,
+    "",
+    "## Trace references",
+    ...references.map((reference) => `- ${reference}`),
+    "",
+  ].filter((line) => line !== null).join("\n");
+  fs.writeFileSync(path.join(root, "final-report.json"), JSON.stringify(report, null, 2) + "\n", { mode: 0o600 });
+  fs.writeFileSync(path.join(root, "final-report.md"), markdown, { mode: 0o600 });
+}
+
 function launchSession(id, repository, resume, actor) {
   if (!idPattern.test(id)) throw new Error("invalid session id");
   if (tmuxAlive(id)) throw new Error("session already running");
@@ -187,7 +257,7 @@ function sessionView(id) {
 
 function capture(id) {
   if (!tmuxAlive(id)) {
-    try { return fs.readFileSync(path.join(sessionStateDir(id), "control-server", "orchestrator.log"), "utf8"); } catch { return ""; }
+    try { return fs.readFileSync(path.join(traceRoot(id), "terminal-tail.log"), "utf8"); } catch { return ""; }
   }
   return run("tmux", ["capture-pane", "-p", "-J", "-S", `-${captureLines}`, "-t", `${id}:orchestrator`], { maxBuffer: 8 * 1024 * 1024 });
 }
@@ -205,11 +275,23 @@ function sendInput(id, text) {
 
 function checkpoint(id) {
   const destination = path.join(sessionStateDir(id), "control-server");
+  const traces = traceRoot(id);
   fs.mkdirSync(destination, { recursive: true });
+  fs.mkdirSync(traces, { recursive: true });
+  let terminalTail = "";
   if (tmuxAlive(id)) {
-    fs.writeFileSync(path.join(destination, "orchestrator.log"), capture(id), { mode: 0o600 });
+    terminalTail = conciseTail(capture(id));
+    fs.writeFileSync(path.join(traces, "terminal-tail.log"), terminalTail, { mode: 0o600 });
+    const digest = crypto.createHash("sha256").update(terminalTail).digest("hex");
+    if (registry.sessions[id]?.lastOutputSha256 !== digest) {
+      registry.sessions[id].lastOutputSha256 = digest;
+      registry.sessions[id].lastActivityAt = new Date().toISOString();
+      saveRegistry();
+    }
   }
-  fs.writeFileSync(path.join(destination, "checkpoint.json"), JSON.stringify({ capturedAt: new Date().toISOString(), live: tmuxAlive(id) }, null, 2) + "\n", { mode: 0o600 });
+  const references = traceReferences(id);
+  fs.writeFileSync(path.join(traces, "transcript-index.json"), JSON.stringify({ taskId: id, capturedAt: new Date().toISOString(), terminalTail: "terminal-tail.log", traceReferences: references }, null, 2) + "\n", { mode: 0o600 });
+  fs.writeFileSync(path.join(destination, "checkpoint.json"), JSON.stringify({ capturedAt: new Date().toISOString(), live: tmuxAlive(id), transcriptIndex: "../logs/transcript-index.json" }, null, 2) + "\n", { mode: 0o600 });
 }
 
 function syncS3() {
@@ -238,6 +320,7 @@ async function retireSession(id, status, actor) {
   record[`${status}At`] = now;
   record[`${status}By`] = actor;
   await saveRegistry();
+  writeTraceSummary(id, status);
   syncS3();
   return sessionView(id);
 }
@@ -297,6 +380,16 @@ const server = http.createServer(async (request, response) => {
     }
     if (request.method === "GET" && url.pathname === "/api/sessions") {
       return json(response, 200, { sessions: Object.keys(registry.sessions).sort().map(sessionView) });
+    }
+    const reportMatch = url.pathname.match(/^\/api\/sessions\/([a-z0-9-]+)\/report$/);
+    if (request.method === "GET" && reportMatch) {
+      const id = reportMatch[1];
+      if (!registry.sessions[id]) return json(response, 404, { error: "unknown session" });
+      try {
+        const report = fs.readFileSync(path.join(traceRoot(id), "final-report.md"), "utf8");
+        const transcript = JSON.parse(fs.readFileSync(path.join(traceRoot(id), "transcript-index.json"), "utf8"));
+        return json(response, 200, { report, transcript });
+      } catch { return json(response, 200, { report: "", transcript: null }); }
     }
     if (request.method === "POST" && url.pathname === "/api/sessions") {
       const body = await readBody(request);
@@ -371,7 +464,16 @@ sockets.on("connection", (socket, request) => {
 });
 
 for (const record of Object.values(registry.sessions)) {
-  if (record.status === "running" && record.autoResume && !tmuxAlive(record.id)) {
+  if (record.status === "running" && workflowPhase(record.id) === "complete") {
+    const now = new Date().toISOString();
+    record.status = "completed";
+    record.autoResume = false;
+    record.completedAt = now;
+    record.completedBy = "workflow-supervisor";
+    record.updatedAt = now;
+    writeTraceSummary(record.id, "completed");
+    saveRegistry();
+  } else if (record.status === "running" && record.autoResume && !tmuxAlive(record.id)) {
     try { launchSession(record.id, record.repository, true, "system"); } catch (error) { console.error(`restore failed for ${record.id}`, error); }
   }
 }
@@ -380,12 +482,20 @@ const snapshotTimer = setInterval(checkpointAll, snapshotIntervalMs);
 const retirementTimer = setInterval(() => {
   const now = Date.now();
   for (const record of Object.values(registry.sessions)) {
+    if (record.status === "running" && workflowPhase(record.id) === "complete") {
+      retireSession(record.id, "completed", "workflow-supervisor").catch((error) => console.error(`completion retirement failed for ${record.id}`, error));
+      continue;
+    }
+    if (record.status === "running" && !tmuxAlive(record.id)) {
+      retireSession(record.id, "failed", "process-exit").catch((error) => console.error(`failed retirement failed for ${record.id}`, error));
+      continue;
+    }
     const lastActivity = Date.parse(record.lastActivityAt || record.updatedAt || record.createdAt);
     if (record.status === "running" && tmuxAlive(record.id) && Number.isFinite(lastActivity) && now - lastActivity >= idleTimeoutMs) {
       retireSession(record.id, "paused", "idle-timeout").catch((error) => console.error(`idle retirement failed for ${record.id}`, error));
     }
   }
-}, 60000);
+}, 5000);
 server.listen(port, host, () => console.log(`multiagent control server listening on ${host}:${port}`));
 
 let shuttingDown = false;
