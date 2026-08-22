@@ -37,12 +37,11 @@ Important container variables:
 - `MULTIAGENT_USERS_FILE`: mounted login configuration, default `/run/secrets/multiagent/users.json`.
 - `MULTIAGENT_REPOSITORY_ROOT`: deployment-provisioned Git worktrees available for new tasks.
 - `MULTIAGENT_IDLE_TIMEOUT_SECONDS`: inactivity period after which a running task is checkpointed and paused.
-- `MULTIAGENT_STATE_S3_URI`: S3 prefix used for recovery snapshots.
 - `MULTIAGENT_PUBLIC_URL`: canonical HTTPS origin accepted for browser and WebSocket requests.
 - `PROD_MCP_URL`: internal MCP endpoint used only by the authority supervisor.
 - `MULTIAGENT_KMS_KEY_ID`: AWS KMS P-256 key alias or ARN used only by the authority supervisor.
 
-The PVC mounted at `/var/lib/multiagent` is the primary store for repositories, CLI conversation history, checkpoints, and session metadata. Final reports, a bounded terminal tail, and the transcript index live under each task's existing `logs` trace root. They reference immutable agent event traces instead of duplicating full transcripts. S3 is the durable recovery and inspection copy.
+The PVC mounted at `/var/lib/multiagent` is the primary store for repositories, CLI conversation history, checkpoints, and session metadata. Final reports, a bounded terminal tail, and the transcript index live under each task's existing `logs` trace root. They reference immutable agent event traces instead of duplicating full transcripts. Deployment infrastructure may export this state to durable storage without coupling the control server to a storage provider.
 
 ## Requirements
 
