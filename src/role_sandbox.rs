@@ -32,8 +32,7 @@ fn privileged_command_allowed(command: &str, real_uid: u32) -> bool {
         || matches!(
             command,
             "authority-supervisor-exec" | "container-bootstrap" | "launch"
-        )
-            && real_uid == crate::config::CONTROL_UID
+        ) && real_uid == crate::config::CONTROL_UID
 }
 
 #[cfg(not(unix))]
