@@ -44,6 +44,7 @@ enum AuthorityOperation {
     ValidationLeaseShow,
     ValidationLeaseList,
     GateCheck,
+    OpsExecute,
 }
 
 impl AuthorityRequest {
@@ -52,6 +53,9 @@ impl AuthorityRequest {
             "workflow" => (AuthorityOperation::Workflow, args),
             "decision" => (AuthorityOperation::Decision, args),
             "dag" => (AuthorityOperation::Dag, args),
+            "ops" if args.first().map(String::as_str) == Some("execute") => {
+                (AuthorityOperation::OpsExecute, &args[1..])
+            }
             "orchestrator" if args == ["complete"] => {
                 (AuthorityOperation::OrchestratorComplete, &args[1..])
             }
@@ -132,6 +136,7 @@ impl AuthorityRequest {
             | AuthorityOperation::TodoAssign
             | AuthorityOperation::TodoStatus
             | AuthorityOperation::GateCheck => uid == config::ORCHESTRATOR_UID,
+            AuthorityOperation::OpsExecute => uid == config::OPS_UID,
             AuthorityOperation::FindingCreate => uid == config::READER_UID,
             AuthorityOperation::FindingDismiss | AuthorityOperation::TodoClose => {
                 matches!(uid, config::ORCHESTRATOR_UID | config::READER_UID)
@@ -192,6 +197,7 @@ impl AuthorityRequest {
             AuthorityOperation::ValidationLeaseShow => ("subagent", Some("validation-lease-show")),
             AuthorityOperation::ValidationLeaseList => ("subagent", Some("validation-lease-list")),
             AuthorityOperation::GateCheck => ("subagent", Some("gate-check")),
+            AuthorityOperation::OpsExecute => ("ops", Some("execute")),
         };
         let mut args = self.args;
         if let Some(subcommand) = subcommand {
@@ -243,6 +249,13 @@ mod tests {
         assert!(finding.authorized_for(config::READER_UID));
         assert!(close.authorized_for(config::ORCHESTRATOR_UID));
         assert!(!workflow.authorized_for(config::WRITER_UID));
+        let ops = AuthorityRequest::from_cli(
+            "ops",
+            &strings(&["execute", "--request-file", "/tmp/request.json"]),
+        )
+        .expect("ops request");
+        assert!(ops.authorized_for(config::OPS_UID));
+        assert!(!ops.authorized_for(config::ORCHESTRATOR_UID));
     }
 
     #[test]

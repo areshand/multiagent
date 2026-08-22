@@ -9,6 +9,10 @@ accepts work only when reviewer evidence matches the exact final Git diff.
 
 The container image runs a same-origin web UI and authenticated WebSocket gateway as PID 1. Each task owns an isolated tmux orchestrator session. Paused, completed, and archived tasks retain their workflow state and terminal transcript without retaining an active tmux process; resuming reconstructs the session from that state.
 
+The production container runs its authenticated control server as trusted UID 10000. A root-owned setuid launcher accepts privileged bootstrap and session launch only from that UID. The orchestrator, writer, readers, authority supervisor, and operations agent run as fixed UIDs 10001 through 10005. Only the setuid-gated `role-agent-exec` path may launch a registered role process; Landlock and Unix ownership enforce its filesystem boundary. The tmux environment is allowlisted so KMS, prod-mcp, GitHub, and AWS workload credentials remain available only to the authority supervisor and trusted control process.
+
+Production operations are driven by authoritative Markdown runbooks rather than compiled into multiagent. The isolated operations agent materializes a generic JSON prod-mcp execution envelope from the selected `.md` runbook, and an independent read-only reviewer must bind an accepted verdict to the exact request, original goal, and runbook before the supervisor will sign it with KMS and forward it with the bearer token. The operations agent has logical authority to request any operation allowed by prod-mcp, but it never receives KMS, AWS, bearer-token, Grafana, or Kubernetes credentials. Prod-mcp remains the final operation and target policy boundary, and a separate post-execution reviewer inspects the persisted request and receipt.
+
 Users are configured in a mounted JSON file. Passwords must be scrypt hashes, never plaintext:
 
 ```bash
@@ -35,6 +39,8 @@ Important container variables:
 - `MULTIAGENT_IDLE_TIMEOUT_SECONDS`: inactivity period after which a running task is checkpointed and paused.
 - `MULTIAGENT_STATE_S3_URI`: S3 prefix used for recovery snapshots.
 - `MULTIAGENT_PUBLIC_URL`: canonical HTTPS origin accepted for browser and WebSocket requests.
+- `PROD_MCP_URL`: internal MCP endpoint used only by the authority supervisor.
+- `MULTIAGENT_KMS_KEY_ID`: AWS KMS P-256 key alias or ARN used only by the authority supervisor.
 
 The PVC mounted at `/var/lib/multiagent` is the primary store for repositories, CLI conversation history, checkpoints, and session metadata. Final reports, a bounded terminal tail, and the transcript index live under each task's existing `logs` trace root. They reference immutable agent event traces instead of duplicating full transcripts. S3 is the durable recovery and inspection copy.
 

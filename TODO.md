@@ -1,5 +1,17 @@
 # Project TODO
 
+## Production MCP Joint Test
+
+- [x] Activate the existing Linux UID and Landlock boundary in the production container.
+- [x] Prevent role processes from inheriting AWS, KMS, prod-mcp, and GitHub credentials.
+- [x] Add supervisor-owned KMS permit signing for generic runbook operations with a sealed independent reviewer gate.
+- [x] Configure the multiagent StatefulSet with the correct runtime variables and credential group.
+- [ ] Pin the immutable multiagent KMS public key in prod-mcp.
+- [ ] Persist multiagent traces to a scoped S3 prefix.
+- [ ] Provision an approved repository for task execution.
+- [x] Pass the local malicious-agent boundary and joint contract tests.
+- [ ] Pass the deployed testnet Grafana log-read joint test.
+
 ## OSS Positioning And Adoption
 
 Do not try to contribute the whole framework to another OSS project first. A

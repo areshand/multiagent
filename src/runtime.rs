@@ -92,6 +92,92 @@ impl RuntimeConfig {
     }
 }
 
+pub fn container_bootstrap() -> Result<ExitCode, String> {
+    #[cfg(not(target_os = "linux"))]
+    return Err("container bootstrap requires Linux".into());
+
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if unsafe { libc::getuid() } != config::CONTROL_UID || unsafe { libc::geteuid() } != 0 {
+            return Err(
+                "container bootstrap requires the trusted control UID through the setuid launcher"
+                    .into(),
+            );
+        }
+        let base = PathBuf::from("/var/lib/multiagent");
+        let directories = [
+            (
+                base.join("control-home"),
+                config::CONTROL_UID,
+                config::SUPERVISOR_CREDENTIAL_GID,
+                0o700,
+            ),
+            (
+                base.join("state"),
+                config::CONTROL_UID,
+                config::SUPERVISOR_CREDENTIAL_GID,
+                0o2770,
+            ),
+            (
+                base.join("repositories"),
+                config::CONTROL_UID,
+                config::ROLE_GID,
+                0o2770,
+            ),
+            (
+                base.join("role-homes/orchestrator"),
+                config::ORCHESTRATOR_UID,
+                config::ROLE_GID,
+                0o700,
+            ),
+            (
+                base.join("role-homes/orchestrator/codex"),
+                config::ORCHESTRATOR_UID,
+                config::ROLE_GID,
+                0o700,
+            ),
+            (
+                base.join("role-homes/orchestrator/claude"),
+                config::ORCHESTRATOR_UID,
+                config::ROLE_GID,
+                0o700,
+            ),
+            (
+                base.join("role-homes/writer"),
+                config::WRITER_UID,
+                config::ROLE_GID,
+                0o700,
+            ),
+            (
+                base.join("role-homes/reader"),
+                config::READER_UID,
+                config::ROLE_GID,
+                0o700,
+            ),
+            (
+                base.join("role-homes/supervisor"),
+                config::SUPERVISOR_UID,
+                config::ROLE_GID,
+                0o700,
+            ),
+            (
+                base.join("role-homes/ops"),
+                config::OPS_UID,
+                config::ROLE_GID,
+                0o700,
+            ),
+        ];
+        for (path, uid, gid, mode) in directories {
+            fs::create_dir_all(&path).map_err(io_error("create container role directory"))?;
+            chown_path(&path, uid, gid)?;
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode))
+                .map_err(io_error("protect container role directory"))?;
+        }
+        Ok(ExitCode::SUCCESS)
+    }
+}
+
 pub fn role_agent_exec(args: &[String]) -> Result<ExitCode, String> {
     let (name, restored) = match args {
         [name] => (name.as_str(), false),
@@ -171,11 +257,25 @@ pub fn role_agent_exec(args: &[String]) -> Result<ExitCode, String> {
         .then(|| native_resume_session(&trace_dir))
         .flatten();
     let executable = env::current_exe().map_err(io_error("resolve multiagent executable"))?;
-    let role_uid = if access == CodexAccess::WorkspaceWrite {
+    let role_uid = if authorization.role == "ops" {
+        config::OPS_UID
+    } else if access == CodexAccess::WorkspaceWrite {
         WRITER_UID
     } else {
         READER_UID
     };
+    if let Some(root) = env_nonempty("MULTIAGENT_CODEX_HOME_ROOT") {
+        let role_home = Path::new(&root).join(if authorization.role == "ops" {
+            "ops"
+        } else if access == CodexAccess::WorkspaceWrite {
+            "writer"
+        } else {
+            "reader"
+        });
+        env::set_var("HOME", &role_home);
+        env::set_var("CODEX_HOME", &role_home);
+        env::set_var("CLAUDE_CONFIG_DIR", role_home.join("claude"));
+    }
     if access == CodexAccess::WorkspaceWrite {
         prepare_workspace_write_boundary(&cfg.state, &cfg.root, &authorization.owned_paths)?;
     }
@@ -1253,8 +1353,13 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
             }
             "--role" => {
                 role = required_value(args, index, "spawn --role")?.to_string();
-                if !matches!(role.as_str(), "worker" | "verifier" | "reviewer" | "scout") {
-                    return Err("spawn --role must be worker, verifier, reviewer, or scout".into());
+                if !matches!(
+                    role.as_str(),
+                    "worker" | "verifier" | "reviewer" | "scout" | "ops"
+                ) {
+                    return Err(
+                        "spawn --role must be worker, verifier, reviewer, scout, or ops".into(),
+                    );
                 }
                 index += 2;
             }
@@ -1320,6 +1425,7 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         // label so prompt selection, finalization, and launch authorization all
         // enforce the same read-only contract-artifact role.
         "scout" => "scout",
+        "ops" => "ops",
         "verifier" if role == "reviewer" => "reviewer",
         "verifier" => "verifier",
         _ if role.is_empty() => "worker",
@@ -1883,6 +1989,7 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
             Some("reviewer") => "reviewer",
             Some("verifier") => "verifier",
             Some("scout") => "scout",
+            Some("ops") => "ops",
             _ => "worker",
         };
         run_self_quiet(&[
@@ -2209,6 +2316,10 @@ fn role_prompt_name(name: &str, role: &str) -> Option<&'static str> {
     let lower = name.to_ascii_lowercase();
     let relative = if lower.contains("decision-authority-reviewer") {
         "prompts/roles/decision-authority-reviewer.md"
+    } else if lower.contains("ops-reviewer") {
+        "prompts/roles/ops-reviewer.md"
+    } else if role == "ops" {
+        "prompts/roles/ops-agent.md"
     } else if lower.contains("contract-scout") || role == "scout" {
         "prompts/roles/contract-scout.md"
     } else if lower.contains("acceptance-scout") {
@@ -2234,6 +2345,7 @@ fn assignment_role_for_spawn<'a>(name: &str, role: &'a str) -> &'a str {
         _ => match role {
             "verifier" | "reviewer" => "verifier",
             "scout" => "scout",
+            "ops" => "ops",
             _ => match role_prompt_name(name, role) {
                 Some("prompts/verifier.md" | "prompts/roles/build-verifier.md") => "verifier",
                 _ => "exploitation",
@@ -2248,7 +2360,9 @@ fn codex_access_for_spawn(cfg: &RuntimeConfig, name: &str, role: &str) -> CodexA
         path.file_name()
             .map(|value| value.to_string_lossy().to_string())
     });
-    if role == "reviewer"
+    if role == "ops" {
+        CodexAccess::ReadOnly
+    } else if role == "reviewer"
         || role == "verifier"
         || role == "scout"
         || lower.contains("decision-authority-reviewer")
@@ -3278,6 +3392,7 @@ fn tmux_output(args: &[&str]) -> Result<Output, String> {
 
 fn tmux_command() -> Command {
     let mut command = Command::new("tmux");
+    scrub_role_environment(&mut command);
     if let Some(socket) = env_path("MULTIAGENT_TMUX_SOCKET") {
         command.arg("-S").arg(socket);
     }
@@ -3287,6 +3402,7 @@ fn tmux_command() -> Command {
 #[cfg(target_os = "linux")]
 fn tmux_checked_as_uid(args: &[&str], executable: &Path, uid: u32) -> Result<(), String> {
     let mut command = Command::new(executable);
+    scrub_role_environment(&mut command);
     command
         .arg("role-exec")
         .arg("--uid")
@@ -3310,6 +3426,43 @@ fn tmux_checked_as_uid(args: &[&str], executable: &Path, uid: u32) -> Result<(),
             args.join(" "),
             String::from_utf8_lossy(&output.stderr).trim()
         ))
+    }
+}
+
+fn scrub_role_environment(command: &mut Command) {
+    if env::var("MULTIAGENT_UID_SANDBOX").as_deref() != Ok("1") {
+        return;
+    }
+    command.env_clear();
+    for (key, value) in env::vars_os() {
+        let name = key.to_string_lossy();
+        let allowed = matches!(
+            name.as_ref(),
+            "HOME"
+                | "PATH"
+                | "TMPDIR"
+                | "TERM"
+                | "LANG"
+                | "LC_ALL"
+                | "CODEX_HOME"
+                | "CLAUDE_CONFIG_DIR"
+                | "OPENAI_API_KEY"
+                | "ANTHROPIC_API_KEY"
+                | "ORCHESTRATOR_CLI"
+                | "WORKER_CLI"
+                | "SUBAGENT_CLI"
+                | "VERIFIER_CLI"
+                | "CODEX_BIN"
+                | "CLAUDE_BIN"
+                | "QWEN_BIN"
+        ) || name.starts_with("MULTIAGENT_")
+            && !matches!(
+                name.as_ref(),
+                "MULTIAGENT_KMS_KEY_ID" | "MULTIAGENT_KMS_KEY_KID" | "MULTIAGENT_USERS_FILE"
+            );
+        if allowed {
+            command.env(key, value);
+        }
     }
 }
 

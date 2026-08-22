@@ -1,12 +1,16 @@
 use std::env;
 use std::path::PathBuf;
 
+pub const CONTROL_UID: u32 = 10000;
 pub const ORCHESTRATOR_UID: u32 = 10001;
 pub const WRITER_UID: u32 = 10002;
 pub const READER_UID: u32 = 10003;
 #[cfg(target_os = "linux")]
 pub const SUPERVISOR_UID: u32 = 10004;
+pub const OPS_UID: u32 = 10005;
 pub const ROLE_GID: u32 = 10001;
+#[cfg(target_os = "linux")]
+pub const SUPERVISOR_CREDENTIAL_GID: u32 = 10004;
 
 /// Return whether lifecycle gates are mandatory for the current process.
 ///

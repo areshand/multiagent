@@ -15,7 +15,7 @@ pub fn gate_setuid_invocation(command: &str) -> Result<(), String> {
     if effective_uid != 0 || real_uid == 0 {
         return Ok(());
     }
-    if privileged_command_allowed(command) {
+    if privileged_command_allowed(command, real_uid) {
         return Ok(());
     }
     if unsafe { libc::setuid(real_uid) } != 0 {
@@ -27,8 +27,10 @@ pub fn gate_setuid_invocation(command: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn privileged_command_allowed(command: &str) -> bool {
-    command == "role-agent-exec"
+fn privileged_command_allowed(command: &str, real_uid: u32) -> bool {
+    command == "role-agent-exec" && real_uid == crate::config::ORCHESTRATOR_UID
+        || matches!(command, "container-bootstrap" | "launch")
+            && real_uid == crate::config::CONTROL_UID
 }
 
 #[cfg(not(unix))]
@@ -40,6 +42,7 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
     let mut write_roots = BTreeSet::new();
     let mut uid = None;
     let mut gid = None;
+    let mut supplementary_gids = Vec::new();
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -61,6 +64,10 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
                 gid = Some(parse_id(args, index, "--gid")?);
                 index += 2;
             }
+            "--supplementary-gid" => {
+                supplementary_gids.push(parse_id(args, index, "--supplementary-gid")?);
+                index += 2;
+            }
             "--" => {
                 index += 1;
                 break;
@@ -78,6 +85,7 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
         drop_identity(
             uid,
             gid.ok_or_else(|| "role-exec --uid requires --gid".to_string())?,
+            &supplementary_gids,
         )?;
     } else {
         restrict_writes(&write_roots.into_iter().collect::<Vec<_>>())?;
@@ -124,7 +132,7 @@ pub fn run_supervised(
                 unsafe { libc::_exit(126) };
             }
         }
-        if let Err(error) = drop_identity(uid, gid) {
+        if let Err(error) = drop_identity(uid, gid, &[]) {
             eprintln!("role supervisor could not drop identity: {error}");
             unsafe { libc::_exit(126) };
         }
@@ -230,8 +238,11 @@ fn parse_id(args: &[String], index: usize, flag: &str) -> Result<u32, String> {
 }
 
 #[cfg(unix)]
-fn drop_identity(uid: u32, gid: u32) -> Result<(), String> {
-    let groups = [gid as libc::gid_t];
+fn drop_identity(uid: u32, gid: u32, supplementary_gids: &[u32]) -> Result<(), String> {
+    let mut groups = vec![gid as libc::gid_t];
+    groups.extend(supplementary_gids.iter().map(|value| *value as libc::gid_t));
+    groups.sort_unstable();
+    groups.dedup();
     if unsafe { libc::setgroups(1, groups.as_ptr()) } != 0 {
         return Err(format!(
             "set role supplementary groups: {}",
@@ -254,7 +265,7 @@ fn drop_identity(uid: u32, gid: u32) -> Result<(), String> {
 }
 
 #[cfg(not(unix))]
-fn drop_identity(_uid: u32, _gid: u32) -> Result<(), String> {
+fn drop_identity(_uid: u32, _gid: u32, _supplementary_gids: &[u32]) -> Result<(), String> {
     Err("role-exec uid isolation requires Unix".into())
 }
 
@@ -444,12 +455,23 @@ mod linux {
 #[cfg(test)]
 mod tests {
     use super::privileged_command_allowed;
+    use crate::config::{CONTROL_UID, ORCHESTRATOR_UID};
 
     #[test]
     fn setuid_gate_only_retains_privilege_for_fixed_agent_launch() {
-        assert!(privileged_command_allowed("role-agent-exec"));
-        for command in ["role-exec", "subagent", "launch", "snapshot", "workflow"] {
-            assert!(!privileged_command_allowed(command));
+        assert!(privileged_command_allowed(
+            "role-agent-exec",
+            ORCHESTRATOR_UID
+        ));
+        assert!(!privileged_command_allowed("role-agent-exec", CONTROL_UID));
+        assert!(privileged_command_allowed(
+            "container-bootstrap",
+            CONTROL_UID
+        ));
+        assert!(privileged_command_allowed("launch", CONTROL_UID));
+        assert!(!privileged_command_allowed("launch", ORCHESTRATOR_UID));
+        for command in ["role-exec", "subagent", "snapshot", "workflow"] {
+            assert!(!privileged_command_allowed(command, ORCHESTRATOR_UID));
         }
     }
 }

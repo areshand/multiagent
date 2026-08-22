@@ -4,6 +4,7 @@ mod config;
 mod dag;
 mod decision;
 mod policy;
+mod prod_ops;
 mod prompt_bundle;
 mod role_sandbox;
 mod runtime;
@@ -52,6 +53,9 @@ fn main() -> ExitCode {
         };
     }
     let result: Result<ExitCode, (&str, String)> = match command.as_str() {
+        "container-bootstrap" => {
+            runtime::container_bootstrap().map_err(|message| ("container-bootstrap", message))
+        }
         "agent" => agent::run(&args).map_err(|message| ("agent", message)),
         "launch" => runtime::launch(&args).map_err(|message| ("launch", message)),
         "orchestrator" => runtime::orchestrator(&args).map_err(|message| ("orchestrator", message)),
@@ -66,6 +70,7 @@ fn main() -> ExitCode {
         "policy" => policy::run(&args)
             .map(|_| ExitCode::SUCCESS)
             .map_err(|message| ("write-policy", message)),
+        "ops" => prod_ops::run(&args).map_err(|message| ("ops", message)),
         "prompt-bundle" => prompt_bundle::run(&args)
             .map(|_| ExitCode::SUCCESS)
             .map_err(|message| ("prompt-bundle", message)),
