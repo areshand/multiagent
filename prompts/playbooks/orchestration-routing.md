@@ -185,7 +185,7 @@ or launch a writer merely to rewrite its required commands.
 
 ## Production Operations Workflow
 
-For a production operation, spawn exactly one `--role ops` agent with the immutable original goal, the selected runbook, and the prod-mcp contract. The ops agent owns request construction but receives no KMS, bearer-token, AWS, Grafana, or Kubernetes credentials.
+For a production operation, spawn exactly one `--role ops` agent with the immutable original goal, the selected Markdown runbook, and the prod-mcp contract. The `.md` runbook is authoritative; the ops agent owns construction of the JSON execution envelope but receives no KMS, bearer-token, AWS, Grafana, or Kubernetes credentials.
 
 Before execution, spawn a separate read-only agent named with the `ops-reviewer` prefix against the exact request file. Finalize it so the supervisor seals its output. The ops agent may then call `multiagent ops execute --request-file PATH --reviewer NAME`; execution fails unless the first verdict is accepted and the sealed evidence contains hashes of the exact request, goal, and runbook. After execution, spawn a different read-only reviewer to inspect the persisted request and receipt. Never let the orchestrator, ops agent, or pre-execution reviewer self-approve or perform the post-execution review.
 

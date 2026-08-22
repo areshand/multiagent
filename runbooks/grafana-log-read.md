@@ -1,0 +1,40 @@
+# Grafana Log Read
+
+## Metadata
+
+- Runbook ID: `observability.investigation`
+- Version: `1.0.0`
+- Prod MCP operation: `grafana.read`
+- Operation version: `1.0.0`
+
+## Goal
+
+Read production logs through Grafana for a bounded investigation. This runbook
+does not authorize mutation of Grafana, Loki, Kubernetes, or the target service.
+
+## Procedure
+
+1. Identify the target environment, cluster, namespace, and service from the original goal.
+2. Construct the narrowest LogQL query that satisfies the original goal.
+3. Set `action` to `query-loki-logs`, `direction` to `backward`, and `datasourceUid` to the approved Loki datasource.
+4. Set `lookbackMinutes` no higher than 120 and `limit` no higher than 100.
+5. Materialize the generic prod-mcp request and submit it for independent pre-execution review.
+6. Execute only after the reviewer accepts the exact goal, runbook, target, operation, and parameters.
+7. Persist the action ID and receipt for independent post-execution review.
+
+## Required request parameters
+
+- `action`
+- `datasourceUid`
+- `direction`
+- `limit`
+- `logql`
+- `lookbackMinutes`
+
+## Stop conditions
+
+- The original goal does not identify a bounded investigation.
+- The requested target is broader than the original goal.
+- The query requires more than 120 minutes of history or more than 100 results.
+- The operation would write data or change service state.
+- The reviewer or prod-mcp rejects the request.
