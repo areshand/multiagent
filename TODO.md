@@ -4,7 +4,7 @@
 
 - [x] Activate the existing Linux UID and Landlock boundary in the production container.
 - [x] Prevent role processes from inheriting AWS, KMS, prod-mcp, and GitHub credentials.
-- [x] Add supervisor-owned KMS permit signing and authenticated `grafana.read` execution.
+- [x] Add supervisor-owned KMS permit signing for generic runbook operations with a sealed independent reviewer gate.
 - [x] Configure the multiagent StatefulSet with the correct runtime variables and credential group.
 - [ ] Pin the immutable multiagent KMS public key in prod-mcp.
 - [ ] Persist multiagent traces to a scoped S3 prefix.

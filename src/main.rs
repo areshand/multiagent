@@ -70,7 +70,7 @@ fn main() -> ExitCode {
         "policy" => policy::run(&args)
             .map(|_| ExitCode::SUCCESS)
             .map_err(|message| ("write-policy", message)),
-        "prod-ops" => prod_ops::run(&args).map_err(|message| ("prod-ops", message)),
+        "ops" => prod_ops::run(&args).map_err(|message| ("ops", message)),
         "prompt-bundle" => prompt_bundle::run(&args)
             .map(|_| ExitCode::SUCCESS)
             .map_err(|message| ("prompt-bundle", message)),

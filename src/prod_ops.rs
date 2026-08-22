@@ -9,60 +9,74 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn run(args: &[String]) -> Result<ExitCode, String> {
     match args.first().map(String::as_str) {
-        Some("grafana-read") => grafana_read(&args[1..]),
-        _ => Err("usage: multiagent prod-ops grafana-read --task-id ID --logql QUERY [--lookback-minutes N] [--limit N]".into()),
+        Some("execute") => execute(&args[1..]),
+        Some("review-bind") => review_bind(&args[1..]),
+        _ => Err("usage: multiagent ops execute --request-file PATH --reviewer NAME | multiagent ops review-bind --request-file PATH".into()),
     }
 }
 
-fn grafana_read(args: &[String]) -> Result<ExitCode, String> {
+fn review_bind(args: &[String]) -> Result<ExitCode, String> {
     let options = options(args)?;
-    let task_id = required(&options, "--task-id")?;
-    validate_id("task ID", task_id)?;
-    let logql = required(&options, "--logql")?;
-    if logql.len() > 4096 {
-        return Err("LogQL query exceeds 4096 characters".into());
+    let bytes = fs::read(required(&options, "--request-file")?)
+        .map_err(|error| format!("read ops request: {error}"))?;
+    let template: Value = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("decode ops request template: {error}"))?;
+    let object = template
+        .as_object()
+        .ok_or("ops request template must be an object")?;
+    println!("request-template-sha256={}", digest_json(&template)?);
+    println!(
+        "goal-sha256={}",
+        digest_json(
+            object
+                .get("goal")
+                .ok_or("ops request template requires goal")?
+        )?
+    );
+    println!(
+        "runbook-sha256={}",
+        digest_json(
+            object
+                .get("runbook")
+                .ok_or("ops request template requires runbook")?
+        )?
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+fn execute(args: &[String]) -> Result<ExitCode, String> {
+    let options = options(args)?;
+    let reviewer = required(&options, "--reviewer")?;
+    validate_id("reviewer name", reviewer)?;
+    let request_file = PathBuf::from(required(&options, "--request-file")?);
+    let state = fs::canonicalize(required_env("MULTIAGENT_STATE_DIR")?)
+        .map_err(|error| format!("resolve multiagent state: {error}"))?;
+    let request_file = fs::canonicalize(&request_file)
+        .map_err(|error| format!("resolve ops request file: {error}"))?;
+    if !request_file.starts_with(&state) {
+        return Err("ops request file must be inside MULTIAGENT_STATE_DIR".into());
     }
-    let lookback = number(&options, "--lookback-minutes", 30, 1, 120)?;
-    let limit = number(&options, "--limit", 100, 1, 100)?;
-    let now = Utc::now();
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|error| error.to_string())?
-        .as_millis();
-    let action_id = format!("grafana-{unique}-{}", std::process::id());
-    let parameters = json!({
-        "action": "query-loki-logs",
-        "datasourceUid": env_default("PROD_MCP_GRAFANA_DATASOURCE_UID", "mi-loki"),
-        "direction": "backward",
-        "limit": limit,
-        "logql": logql,
-        "lookbackMinutes": lookback
-    });
-    let runbook = json!({"id":"observability.investigation","phase":"read-logs","version":"1.0.0"});
-    let request = json!({
-        "actionId": action_id,
-        "apiVersion": "prod.moveindustries.io/v1",
-        "approvals": [],
-        "delegatedRole": "runbook-observer",
-        "delegatedSubject": "multiagent-supervisor",
-        "expiresAt": (now + Duration::minutes(4)).to_rfc3339_opts(SecondsFormat::Millis, true),
-        "historySha256": history_digest(),
-        "intentSha256": digest_json(&parameters)?,
-        "issuedAt": now.to_rfc3339_opts(SecondsFormat::Millis, true),
-        "kind": "OperationRequest",
-        "nonce": format!("nonce-{unique}-{}", std::process::id()),
-        "operation": {"id":"grafana.read","version":"1.0.0"},
-        "parameters": parameters,
-        "runbook": runbook,
-        "runbookContextSha256": digest_json(&runbook)?,
-        "target": {
-            "cluster": env_default("PROD_MCP_GRAFANA_CLUSTER", "internal-tools"),
-            "environment": "production",
-            "namespace": env_default("PROD_MCP_GRAFANA_NAMESPACE", "grafana"),
-            "service": env_default("PROD_MCP_GRAFANA_SERVICE", "grafana")
-        },
-        "taskId": task_id
-    });
+    let bytes = fs::read(&request_file).map_err(|error| format!("read ops request: {error}"))?;
+    if bytes.is_empty() || bytes.len() > 65_536 {
+        return Err("ops request must contain between 1 and 65536 bytes".into());
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let metadata =
+            fs::metadata(&request_file).map_err(|error| format!("inspect ops request: {error}"))?;
+        if metadata.uid() != crate::config::OPS_UID || metadata.permissions().mode() & 0o022 != 0 {
+            return Err("ops request must be owned by the ops UID and not group-writable".into());
+        }
+    }
+    let template: Value = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("decode ops request template: {error}"))?;
+    verify_reviewer(&state, reviewer, &template)?;
+    let request = build_request(&template)?;
+    let action_id = request["actionId"]
+        .as_str()
+        .ok_or("generated operation has no action ID")?
+        .to_string();
     let payload = canonical(&json!({
         "apiVersion":"prod.moveindustries.io/v1",
         "kind":"ActionPermit",
@@ -70,11 +84,152 @@ fn grafana_read(args: &[String]) -> Result<ExitCode, String> {
     }))?;
     let permit = sign_permit(&payload)?;
     let result = call_prod_mcp(&permit)?;
+    let operation_dir = state.join("operations").join(&action_id);
+    fs::create_dir_all(&operation_dir)
+        .map_err(|error| format!("create operation receipt directory: {error}"))?;
+    fs::write(
+        operation_dir.join("request.json"),
+        serde_json::to_vec_pretty(&template).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("persist operation request: {error}"))?;
+    fs::write(
+        operation_dir.join("receipt.json"),
+        serde_json::to_vec_pretty(&result).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("persist operation receipt: {error}"))?;
     println!(
         "{}",
         serde_json::to_string_pretty(&result).map_err(|error| error.to_string())?
     );
     Ok(ExitCode::SUCCESS)
+}
+
+fn build_request(template: &Value) -> Result<Value, String> {
+    let object = template
+        .as_object()
+        .ok_or("ops request template must be a JSON object")?;
+    let task_id = object
+        .get("taskId")
+        .and_then(Value::as_str)
+        .ok_or("ops request template requires taskId")?;
+    validate_id("task ID", task_id)?;
+    let operation = required_object(object, "operation")?;
+    let operation_id = operation
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or("ops request operation requires id")?;
+    validate_id("operation ID", operation_id)?;
+    if operation.get("version").and_then(Value::as_str).is_none() {
+        return Err("ops request operation requires version".into());
+    }
+    let target = required_object(object, "target")?;
+    let parameters = required_object(object, "parameters")?;
+    let runbook = required_object(object, "runbook")?;
+    let runbook_value = Value::Object(runbook.clone());
+    let goal = object
+        .get("goal")
+        .ok_or("ops request template requires goal")?;
+    let approvals = object
+        .get("approvals")
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+    if !approvals.is_array() {
+        return Err("ops request approvals must be an array".into());
+    }
+    let history = object.get("history").unwrap_or(&Value::Null);
+    let now = Utc::now();
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_millis();
+    Ok(json!({
+        "actionId": format!("ops-{unique}-{}", std::process::id()),
+        "apiVersion": "prod.moveindustries.io/v1",
+        "approvals": approvals,
+        "delegatedRole": "runbook-operator",
+        "delegatedSubject": "multiagent-supervisor",
+        "expiresAt": (now + Duration::minutes(4)).to_rfc3339_opts(SecondsFormat::Millis, true),
+        "historySha256": digest_json(history)?,
+        "intentSha256": digest_json(goal)?,
+        "issuedAt": now.to_rfc3339_opts(SecondsFormat::Millis, true),
+        "kind": "OperationRequest",
+        "nonce": format!("nonce-{unique}-{}", std::process::id()),
+        "operation": operation,
+        "parameters": parameters,
+        "runbook": runbook,
+        "runbookContextSha256": digest_json(&runbook_value)?,
+        "target": target,
+        "taskId": task_id
+    }))
+}
+
+fn verify_reviewer(state: &Path, reviewer: &str, template: &Value) -> Result<(), String> {
+    let directory = state.join("reviewer-evidence").join(reviewer);
+    let metadata = crate::state::read_env(&directory.join("evidence.env"))?;
+    if metadata.get("role").map(String::as_str) != Some("reviewer")
+        || metadata.get("access").map(String::as_str) != Some("read-only")
+        || metadata.get("state").map(String::as_str) != Some("completed")
+    {
+        return Err("ops execution requires completed supervisor-sealed reviewer evidence".into());
+    }
+    let workflow = env::var("MULTIAGENT_WORKFLOW_ID").unwrap_or_default();
+    if !workflow.is_empty() && metadata.get("workflow_id") != Some(&workflow) {
+        return Err("ops reviewer evidence belongs to a different workflow".into());
+    }
+    let evidence_path = directory.join("last-message.txt");
+    let evidence = fs::read_to_string(&evidence_path)
+        .map_err(|error| format!("read ops reviewer evidence: {error}"))?;
+    let expected_output = metadata
+        .get("output_sha256")
+        .ok_or("ops reviewer evidence has no supervisor seal")?;
+    let actual_output = format!("{:x}", Sha256::digest(evidence.as_bytes()));
+    if !actual_output.eq_ignore_ascii_case(expected_output) {
+        return Err("ops reviewer evidence failed its supervisor seal".into());
+    }
+    let accepted = evidence
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .is_some_and(|line| line.eq_ignore_ascii_case("verdict: accepted"));
+    if !accepted {
+        return Err("ops reviewer did not accept the operation".into());
+    }
+    let object = template
+        .as_object()
+        .ok_or("ops request template must be an object")?;
+    let markers = [
+        format!("request-template-sha256={}", digest_json(template)?),
+        format!(
+            "goal-sha256={}",
+            digest_json(
+                object
+                    .get("goal")
+                    .ok_or("ops request template requires goal")?
+            )?
+        ),
+        format!(
+            "runbook-sha256={}",
+            digest_json(
+                object
+                    .get("runbook")
+                    .ok_or("ops request template requires runbook")?
+            )?
+        ),
+    ];
+    if markers.iter().any(|marker| !evidence.contains(marker)) {
+        return Err("ops reviewer evidence is not bound to the request, goal, and runbook".into());
+    }
+    Ok(())
+}
+
+fn required_object<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<&'a serde_json::Map<String, Value>, String> {
+    object
+        .get(key)
+        .and_then(Value::as_object)
+        .ok_or_else(|| format!("ops request template requires object field {key}"))
 }
 
 fn sign_permit(payload: &[u8]) -> Result<String, String> {
@@ -325,25 +480,6 @@ fn required<'a>(
         .ok_or_else(|| format!("{key} is required"))
 }
 
-fn number(
-    options: &std::collections::BTreeMap<String, String>,
-    key: &str,
-    default: u32,
-    min: u32,
-    max: u32,
-) -> Result<u32, String> {
-    let value = options
-        .get(key)
-        .map(|value| value.parse::<u32>())
-        .transpose()
-        .map_err(|_| format!("{key} must be an integer"))?
-        .unwrap_or(default);
-    if !(min..=max).contains(&value) {
-        return Err(format!("{key} must be between {min} and {max}"));
-    }
-    Ok(value)
-}
-
 fn validate_id(label: &str, value: &str) -> Result<(), String> {
     if value.is_empty()
         || value.len() > 128
@@ -363,12 +499,6 @@ fn required_env(name: &str) -> Result<String, String> {
         .ok_or_else(|| format!("{name} is required"))
 }
 
-fn env_default(name: &str, default: &str) -> String {
-    env::var(name)
-        .ok()
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| default.into())
-}
 fn canonical(value: &Value) -> Result<Vec<u8>, String> {
     serde_json::to_vec(value).map_err(|error| error.to_string())
 }
@@ -380,21 +510,6 @@ fn digest_json(value: &Value) -> Result<String, String> {
 }
 fn digest(bytes: &[u8]) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
-}
-
-fn history_digest() -> String {
-    let path = env::var("MULTIAGENT_STATE_DIR")
-        .ok()
-        .zip(env::var("MULTIAGENT_WORKFLOW_ID").ok())
-        .map(|(state, workflow)| {
-            PathBuf::from(state)
-                .join("workflows")
-                .join(workflow)
-                .join("lifecycle/events.log")
-        });
-    path.and_then(|path| fs::read(path).ok())
-        .map(|bytes| digest(&bytes))
-        .unwrap_or_else(|| digest(&[]))
 }
 
 fn base64url_encode(bytes: &[u8]) -> String {
@@ -456,7 +571,8 @@ fn base64_decode(value: &str) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{base64_decode, base64url_encode, ecdsa_der_to_raw, parse_mcp_body};
+    use super::{base64_decode, base64url_encode, build_request, ecdsa_der_to_raw, parse_mcp_body};
+    use serde_json::json;
     #[test]
     fn converts_p256_der_to_jose_signature() {
         let mut der = vec![0x30, 0x44, 0x02, 0x20];
@@ -478,5 +594,19 @@ mod tests {
     fn base64_round_trip_fixture() {
         assert_eq!(base64_decode("AQIDBA==").unwrap(), [1, 2, 3, 4]);
         assert_eq!(base64url_encode(&[251, 255]), "-_8");
+    }
+    #[test]
+    fn operation_and_target_come_from_runbook_request_data() {
+        let request = build_request(&json!({
+            "taskId":"task-1",
+            "goal":{"summary":"follow the supplied runbook"},
+            "operation":{"id":"service.custom-operation","version":"7.0.0"},
+            "target":{"environment":"production","cluster":"cluster-a","namespace":"service-a","service":"api"},
+            "parameters":{"custom":true},
+            "runbook":{"id":"custom.runbook","version":"3.0.0"}
+        })).unwrap();
+        assert_eq!(request["operation"]["id"], "service.custom-operation");
+        assert_eq!(request["target"]["service"], "api");
+        assert_eq!(request["parameters"]["custom"], true);
     }
 }

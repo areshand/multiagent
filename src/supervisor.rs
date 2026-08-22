@@ -29,6 +29,7 @@ const CONTROL_DIRECTORIES: &[&str] = &[
     "decisions",
     "findings",
     "launch-authorizations",
+    "operations",
     "reviewer-evidence",
     "role-io",
     "todos",
@@ -111,8 +112,10 @@ fn register_launch(args: &[String], renew: bool) -> Result<(), String> {
     let cli = required_option(&options, "--cli")?;
     let cli_bin = required_option(&options, "--cli-bin")?;
     let instruction_source = PathBuf::from(required_option(&options, "--instruction-file")?);
-    if !matches!(role, "worker" | "verifier" | "reviewer" | "scout") {
-        return Err("register-launch role must be worker, verifier, reviewer, or scout".into());
+    if !matches!(role, "worker" | "verifier" | "reviewer" | "scout" | "ops") {
+        return Err(
+            "register-launch role must be worker, verifier, reviewer, scout, or ops".into(),
+        );
     }
     if !matches!(cli, "codex" | "claude" | "qwen") {
         return Err("register-launch backend must be codex, claude, or qwen".into());
@@ -474,7 +477,7 @@ fn server_child() -> bool {
 fn authority_client_uid() -> bool {
     matches!(
         unsafe { libc::getuid() },
-        config::ORCHESTRATOR_UID | config::WRITER_UID | config::READER_UID
+        config::ORCHESTRATOR_UID | config::WRITER_UID | config::READER_UID | config::OPS_UID
     )
 }
 
@@ -637,7 +640,7 @@ fn serve_connection(stream: &mut UnixStream) -> Result<bool, String> {
     };
     if !matches!(
         peer_uid,
-        0 | config::ORCHESTRATOR_UID | config::WRITER_UID | config::READER_UID
+        0 | config::ORCHESTRATOR_UID | config::WRITER_UID | config::READER_UID | config::OPS_UID
     ) {
         let _ = write_response(
             stream,

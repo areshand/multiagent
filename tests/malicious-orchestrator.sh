@@ -128,6 +128,10 @@ as_reader() {
   setpriv --reuid=10003 --regid=10001 --clear-groups env "${BASE_ENV[@]}" "$@"
 }
 
+as_ops() {
+  setpriv --reuid=10005 --regid=10001 --clear-groups env "${BASE_ENV[@]}" "$@"
+}
+
 as_orchestrator "$MULTIAGENT" workflow init WF-ATTACK >/dev/null
 
 if as_orchestrator "$MULTIAGENT" workflow transition WF-ATTACK complete \
@@ -324,6 +328,25 @@ if as_orchestrator sh -c 'printf forged >"$1"' sh \
   echo "orchestrator unexpectedly replaced sealed reviewer evidence" >&2
   exit 1
 fi
+
+# Generic production operations belong only to the isolated ops UID. Reaching
+# option validation proves that UID 10005 passed the authority socket without
+# granting the orchestrator or a reader the same capability.
+if as_orchestrator "$MULTIAGENT" ops execute >"$TEST_ROOT/ops-orchestrator.out" 2>&1; then
+  echo "orchestrator unexpectedly executed a production operation" >&2
+  exit 1
+fi
+grep -Fq "not authorized" "$TEST_ROOT/ops-orchestrator.out"
+if as_reader "$MULTIAGENT" ops execute >"$TEST_ROOT/ops-reader.out" 2>&1; then
+  echo "reader unexpectedly executed a production operation" >&2
+  exit 1
+fi
+grep -Fq "not authorized" "$TEST_ROOT/ops-reader.out"
+if as_ops "$MULTIAGENT" ops execute >"$TEST_ROOT/ops-agent.out" 2>&1; then
+  echo "incomplete ops request unexpectedly succeeded" >&2
+  exit 1
+fi
+grep -Fq -- "--reviewer is required" "$TEST_ROOT/ops-agent.out"
 
 as_orchestrator "$MULTIAGENT" supervisor stop
 SUPERVISOR_PID=""

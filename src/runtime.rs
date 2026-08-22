@@ -161,6 +161,12 @@ pub fn container_bootstrap() -> Result<ExitCode, String> {
                 config::ROLE_GID,
                 0o700,
             ),
+            (
+                base.join("role-homes/ops"),
+                config::OPS_UID,
+                config::ROLE_GID,
+                0o700,
+            ),
         ];
         for (path, uid, gid, mode) in directories {
             fs::create_dir_all(&path).map_err(io_error("create container role directory"))?;
@@ -251,11 +257,25 @@ pub fn role_agent_exec(args: &[String]) -> Result<ExitCode, String> {
         .then(|| native_resume_session(&trace_dir))
         .flatten();
     let executable = env::current_exe().map_err(io_error("resolve multiagent executable"))?;
-    let role_uid = if access == CodexAccess::WorkspaceWrite {
+    let role_uid = if authorization.role == "ops" {
+        config::OPS_UID
+    } else if access == CodexAccess::WorkspaceWrite {
         WRITER_UID
     } else {
         READER_UID
     };
+    if let Some(root) = env_nonempty("MULTIAGENT_CODEX_HOME_ROOT") {
+        let role_home = Path::new(&root).join(if authorization.role == "ops" {
+            "ops"
+        } else if access == CodexAccess::WorkspaceWrite {
+            "writer"
+        } else {
+            "reader"
+        });
+        env::set_var("HOME", &role_home);
+        env::set_var("CODEX_HOME", &role_home);
+        env::set_var("CLAUDE_CONFIG_DIR", role_home.join("claude"));
+    }
     if access == CodexAccess::WorkspaceWrite {
         prepare_workspace_write_boundary(&cfg.state, &cfg.root, &authorization.owned_paths)?;
     }
@@ -1333,8 +1353,13 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
             }
             "--role" => {
                 role = required_value(args, index, "spawn --role")?.to_string();
-                if !matches!(role.as_str(), "worker" | "verifier" | "reviewer" | "scout") {
-                    return Err("spawn --role must be worker, verifier, reviewer, or scout".into());
+                if !matches!(
+                    role.as_str(),
+                    "worker" | "verifier" | "reviewer" | "scout" | "ops"
+                ) {
+                    return Err(
+                        "spawn --role must be worker, verifier, reviewer, scout, or ops".into(),
+                    );
                 }
                 index += 2;
             }
@@ -1400,6 +1425,7 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         // label so prompt selection, finalization, and launch authorization all
         // enforce the same read-only contract-artifact role.
         "scout" => "scout",
+        "ops" => "ops",
         "verifier" if role == "reviewer" => "reviewer",
         "verifier" => "verifier",
         _ if role.is_empty() => "worker",
@@ -1963,6 +1989,7 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
             Some("reviewer") => "reviewer",
             Some("verifier") => "verifier",
             Some("scout") => "scout",
+            Some("ops") => "ops",
             _ => "worker",
         };
         run_self_quiet(&[
@@ -2289,6 +2316,10 @@ fn role_prompt_name(name: &str, role: &str) -> Option<&'static str> {
     let lower = name.to_ascii_lowercase();
     let relative = if lower.contains("decision-authority-reviewer") {
         "prompts/roles/decision-authority-reviewer.md"
+    } else if lower.contains("ops-reviewer") {
+        "prompts/roles/ops-reviewer.md"
+    } else if role == "ops" {
+        "prompts/roles/ops-agent.md"
     } else if lower.contains("contract-scout") || role == "scout" {
         "prompts/roles/contract-scout.md"
     } else if lower.contains("acceptance-scout") {
@@ -2314,6 +2345,7 @@ fn assignment_role_for_spawn<'a>(name: &str, role: &'a str) -> &'a str {
         _ => match role {
             "verifier" | "reviewer" => "verifier",
             "scout" => "scout",
+            "ops" => "ops",
             _ => match role_prompt_name(name, role) {
                 Some("prompts/verifier.md" | "prompts/roles/build-verifier.md") => "verifier",
                 _ => "exploitation",
@@ -2328,7 +2360,9 @@ fn codex_access_for_spawn(cfg: &RuntimeConfig, name: &str, role: &str) -> CodexA
         path.file_name()
             .map(|value| value.to_string_lossy().to_string())
     });
-    if role == "reviewer"
+    if role == "ops" {
+        CodexAccess::ReadOnly
+    } else if role == "reviewer"
         || role == "verifier"
         || role == "scout"
         || lower.contains("decision-authority-reviewer")

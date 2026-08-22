@@ -1,0 +1,21 @@
+{
+  "id": "observability.investigation",
+  "version": "1.0.0",
+  "operation": {
+    "id": "grafana.read",
+    "version": "1.0.0"
+  },
+  "constraints": {
+    "readOnly": true,
+    "maximumLookbackMinutes": 120,
+    "maximumResultLimit": 100
+  },
+  "requiredParameters": [
+    "action",
+    "datasourceUid",
+    "direction",
+    "limit",
+    "logql",
+    "lookbackMinutes"
+  ]
+}
