@@ -92,6 +92,86 @@ impl RuntimeConfig {
     }
 }
 
+pub fn container_bootstrap() -> Result<ExitCode, String> {
+    #[cfg(not(target_os = "linux"))]
+    return Err("container bootstrap requires Linux".into());
+
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if unsafe { libc::getuid() } != config::CONTROL_UID || unsafe { libc::geteuid() } != 0 {
+            return Err(
+                "container bootstrap requires the trusted control UID through the setuid launcher"
+                    .into(),
+            );
+        }
+        let base = PathBuf::from("/var/lib/multiagent");
+        let directories = [
+            (
+                base.join("control-home"),
+                config::CONTROL_UID,
+                config::SUPERVISOR_CREDENTIAL_GID,
+                0o700,
+            ),
+            (
+                base.join("state"),
+                config::CONTROL_UID,
+                config::SUPERVISOR_CREDENTIAL_GID,
+                0o2770,
+            ),
+            (
+                base.join("repositories"),
+                config::CONTROL_UID,
+                config::ROLE_GID,
+                0o2770,
+            ),
+            (
+                base.join("role-homes/orchestrator"),
+                config::ORCHESTRATOR_UID,
+                config::ROLE_GID,
+                0o700,
+            ),
+            (
+                base.join("role-homes/orchestrator/codex"),
+                config::ORCHESTRATOR_UID,
+                config::ROLE_GID,
+                0o700,
+            ),
+            (
+                base.join("role-homes/orchestrator/claude"),
+                config::ORCHESTRATOR_UID,
+                config::ROLE_GID,
+                0o700,
+            ),
+            (
+                base.join("role-homes/writer"),
+                config::WRITER_UID,
+                config::ROLE_GID,
+                0o700,
+            ),
+            (
+                base.join("role-homes/reader"),
+                config::READER_UID,
+                config::ROLE_GID,
+                0o700,
+            ),
+            (
+                base.join("role-homes/supervisor"),
+                config::SUPERVISOR_UID,
+                config::ROLE_GID,
+                0o700,
+            ),
+        ];
+        for (path, uid, gid, mode) in directories {
+            fs::create_dir_all(&path).map_err(io_error("create container role directory"))?;
+            chown_path(&path, uid, gid)?;
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode))
+                .map_err(io_error("protect container role directory"))?;
+        }
+        Ok(ExitCode::SUCCESS)
+    }
+}
+
 pub fn role_agent_exec(args: &[String]) -> Result<ExitCode, String> {
     let (name, restored) = match args {
         [name] => (name.as_str(), false),
@@ -3278,6 +3358,7 @@ fn tmux_output(args: &[&str]) -> Result<Output, String> {
 
 fn tmux_command() -> Command {
     let mut command = Command::new("tmux");
+    scrub_role_environment(&mut command);
     if let Some(socket) = env_path("MULTIAGENT_TMUX_SOCKET") {
         command.arg("-S").arg(socket);
     }
@@ -3287,6 +3368,7 @@ fn tmux_command() -> Command {
 #[cfg(target_os = "linux")]
 fn tmux_checked_as_uid(args: &[&str], executable: &Path, uid: u32) -> Result<(), String> {
     let mut command = Command::new(executable);
+    scrub_role_environment(&mut command);
     command
         .arg("role-exec")
         .arg("--uid")
@@ -3310,6 +3392,40 @@ fn tmux_checked_as_uid(args: &[&str], executable: &Path, uid: u32) -> Result<(),
             args.join(" "),
             String::from_utf8_lossy(&output.stderr).trim()
         ))
+    }
+}
+
+fn scrub_role_environment(command: &mut Command) {
+    command.env_clear();
+    for (key, value) in env::vars_os() {
+        let name = key.to_string_lossy();
+        let allowed = matches!(
+            name.as_ref(),
+            "HOME"
+                | "PATH"
+                | "TMPDIR"
+                | "TERM"
+                | "LANG"
+                | "LC_ALL"
+                | "CODEX_HOME"
+                | "CLAUDE_CONFIG_DIR"
+                | "OPENAI_API_KEY"
+                | "ANTHROPIC_API_KEY"
+                | "ORCHESTRATOR_CLI"
+                | "WORKER_CLI"
+                | "SUBAGENT_CLI"
+                | "VERIFIER_CLI"
+                | "CODEX_BIN"
+                | "CLAUDE_BIN"
+                | "QWEN_BIN"
+        ) || name.starts_with("MULTIAGENT_")
+            && !matches!(
+                name.as_ref(),
+                "MULTIAGENT_KMS_KEY_ID" | "MULTIAGENT_KMS_KEY_KID" | "MULTIAGENT_USERS_FILE"
+            );
+        if allowed {
+            command.env(key, value);
+        }
     }
 }
 

@@ -8,7 +8,7 @@ fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}"
-SOURCE_BIN="$TARGET_DIR/debug/multiagent"
+SOURCE_BIN="${MULTIAGENT_TEST_BIN:-$TARGET_DIR/debug/multiagent}"
 [[ -x "$SOURCE_BIN" ]] || cargo build --offline --locked --manifest-path "$ROOT/Cargo.toml" >/dev/null
 
 TEST_ROOT="$(mktemp -d /tmp/multiagent-malicious.XXXXXX)"

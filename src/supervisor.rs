@@ -911,6 +911,8 @@ pub fn start(state: &Path, executable: &Path) -> Result<u32, String> {
         .arg(config::SUPERVISOR_UID.to_string())
         .arg("--gid")
         .arg(config::ROLE_GID.to_string())
+        .arg("--supplementary-gid")
+        .arg(config::SUPERVISOR_CREDENTIAL_GID.to_string())
         .arg("--")
         .arg(executable)
         .arg("supervisor")

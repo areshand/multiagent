@@ -44,6 +44,7 @@ enum AuthorityOperation {
     ValidationLeaseShow,
     ValidationLeaseList,
     GateCheck,
+    ProdOpsGrafanaRead,
 }
 
 impl AuthorityRequest {
@@ -52,6 +53,9 @@ impl AuthorityRequest {
             "workflow" => (AuthorityOperation::Workflow, args),
             "decision" => (AuthorityOperation::Decision, args),
             "dag" => (AuthorityOperation::Dag, args),
+            "prod-ops" if args.first().map(String::as_str) == Some("grafana-read") => {
+                (AuthorityOperation::ProdOpsGrafanaRead, &args[1..])
+            }
             "orchestrator" if args == ["complete"] => {
                 (AuthorityOperation::OrchestratorComplete, &args[1..])
             }
@@ -132,6 +136,7 @@ impl AuthorityRequest {
             | AuthorityOperation::TodoAssign
             | AuthorityOperation::TodoStatus
             | AuthorityOperation::GateCheck => uid == config::ORCHESTRATOR_UID,
+            AuthorityOperation::ProdOpsGrafanaRead => uid == config::ORCHESTRATOR_UID,
             AuthorityOperation::FindingCreate => uid == config::READER_UID,
             AuthorityOperation::FindingDismiss | AuthorityOperation::TodoClose => {
                 matches!(uid, config::ORCHESTRATOR_UID | config::READER_UID)
@@ -192,6 +197,7 @@ impl AuthorityRequest {
             AuthorityOperation::ValidationLeaseShow => ("subagent", Some("validation-lease-show")),
             AuthorityOperation::ValidationLeaseList => ("subagent", Some("validation-lease-list")),
             AuthorityOperation::GateCheck => ("subagent", Some("gate-check")),
+            AuthorityOperation::ProdOpsGrafanaRead => ("prod-ops", Some("grafana-read")),
         };
         let mut args = self.args;
         if let Some(subcommand) = subcommand {
