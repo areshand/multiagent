@@ -649,7 +649,7 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
         ]
     };
     if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
-        tmux_checked_as_uid(&new_session, &executable, ORCHESTRATOR_UID)?;
+        tmux_checked_as_orchestrator(&new_session)?;
     } else {
         tmux_checked(&new_session)?;
     }
@@ -3398,19 +3398,24 @@ fn tmux_command() -> Command {
 }
 
 #[cfg(target_os = "linux")]
-fn tmux_checked_as_uid(args: &[&str], executable: &Path, uid: u32) -> Result<(), String> {
-    let mut command = Command::new(executable);
-    scrub_role_environment(&mut command);
-    command
-        .arg("role-exec")
-        .arg("--uid")
-        .arg(uid.to_string())
-        .arg("--gid")
-        .arg(ROLE_GID.to_string())
-        .arg("--")
-        .arg("tmux");
-    if let Some(socket) = env_path("MULTIAGENT_TMUX_SOCKET") {
-        command.arg("-S").arg(socket);
+fn tmux_checked_as_orchestrator(args: &[&str]) -> Result<(), String> {
+    use std::os::unix::process::CommandExt;
+
+    let mut command = tmux_command();
+    unsafe {
+        command.pre_exec(|| {
+            let groups = [ROLE_GID as libc::gid_t];
+            if libc::setgroups(groups.len(), groups.as_ptr()) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::setgid(ROLE_GID as libc::gid_t) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::setuid(ORCHESTRATOR_UID as libc::uid_t) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
     }
     let output = command
         .args(args)
@@ -3465,7 +3470,7 @@ fn scrub_role_environment(command: &mut Command) {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn tmux_checked_as_uid(_args: &[&str], _executable: &Path, _uid: u32) -> Result<(), String> {
+fn tmux_checked_as_orchestrator(_args: &[&str]) -> Result<(), String> {
     Err("MULTIAGENT_UID_SANDBOX is only supported on Linux".into())
 }
 
