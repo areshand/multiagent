@@ -3396,6 +3396,9 @@ fn tmux_checked_as_uid(args: &[&str], executable: &Path, uid: u32) -> Result<(),
 }
 
 fn scrub_role_environment(command: &mut Command) {
+    if env::var("MULTIAGENT_UID_SANDBOX").as_deref() != Ok("1") {
+        return;
+    }
     command.env_clear();
     for (key, value) in env::vars_os() {
         let name = key.to_string_lossy();
