@@ -3449,8 +3449,6 @@ fn scrub_role_environment(command: &mut Command) {
                 | "LC_ALL"
                 | "CODEX_HOME"
                 | "CLAUDE_CONFIG_DIR"
-                | "OPENAI_API_KEY"
-                | "ANTHROPIC_API_KEY"
                 | "ORCHESTRATOR_CLI"
                 | "WORKER_CLI"
                 | "SUBAGENT_CLI"

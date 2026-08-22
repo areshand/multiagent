@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { execFile, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { WebSocket, WebSocketServer } from "ws";
 import { findActiveSession, tmuxInvocation } from "./session-runtime.mjs";
@@ -18,7 +18,6 @@ const host = process.env.HOST || "0.0.0.0";
 const cookieSecure = process.env.MULTIAGENT_COOKIE_SECURE !== "false";
 const sessionTtlSeconds = Number(process.env.MULTIAGENT_LOGIN_TTL_SECONDS || "43200");
 const captureLines = Math.min(Number(process.env.MULTIAGENT_CAPTURE_LINES || "1200"), 5000);
-const s3StateUri = (process.env.MULTIAGENT_STATE_S3_URI || "").replace(/\/$/, "");
 const snapshotIntervalMs = Math.max(Number(process.env.MULTIAGENT_SNAPSHOT_INTERVAL_SECONDS || "60"), 15) * 1000;
 const idleTimeoutMs = Math.max(Number(process.env.MULTIAGENT_IDLE_TIMEOUT_SECONDS || "86400"), 300) * 1000;
 const uidSandbox = process.env.MULTIAGENT_UID_SANDBOX === "1";
@@ -308,23 +307,10 @@ function checkpoint(id) {
   fs.writeFileSync(path.join(destination, "checkpoint.json"), JSON.stringify({ capturedAt: new Date().toISOString(), live: tmuxAlive(id), transcriptIndex: "../logs/transcript-index.json" }, null, 2) + "\n", { mode: 0o600 });
 }
 
-let s3Sync = Promise.resolve();
-function syncS3() {
-  if (!s3StateUri) return Promise.resolve();
-  s3Sync = s3Sync.then(() => new Promise((resolve) => {
-    execFile("aws", ["s3", "sync", stateRoot, s3StateUri, "--only-show-errors", "--exclude", "worktrees/*/.git/objects/*"], { timeout: 20000, killSignal: "SIGKILL" }, (error) => {
-      if (error) console.error("S3 state sync failed", error.message);
-      resolve();
-    });
-  }));
-  return s3Sync;
-}
-
 async function checkpointAll() {
   for (const id of Object.keys(registry.sessions)) {
     try { checkpoint(id); } catch (error) { console.error(`checkpoint failed for ${id}`, error); }
   }
-  await syncS3();
 }
 
 async function retireSession(id, status, actor) {
@@ -340,7 +326,6 @@ async function retireSession(id, status, actor) {
   record[`${status}By`] = actor;
   await saveRegistry();
   writeTraceSummary(id, status);
-  await syncS3();
   return sessionView(id);
 }
 
