@@ -312,7 +312,7 @@ let s3Sync = Promise.resolve();
 function syncS3() {
   if (!s3StateUri) return Promise.resolve();
   s3Sync = s3Sync.then(() => new Promise((resolve) => {
-    execFile("aws", ["s3", "sync", stateRoot, s3StateUri, "--only-show-errors", "--exclude", "worktrees/*/.git/objects/*"], (error) => {
+    execFile("aws", ["s3", "sync", stateRoot, s3StateUri, "--only-show-errors", "--exclude", "worktrees/*/.git/objects/*"], { timeout: 20000, killSignal: "SIGKILL" }, (error) => {
       if (error) console.error("S3 state sync failed", error.message);
       resolve();
     });
@@ -524,9 +524,9 @@ async function shutdown(signal) {
   console.log(`received ${signal}; checkpointing sessions`);
   clearInterval(snapshotTimer);
   clearInterval(retirementTimer);
+  setTimeout(() => process.exit(1), 25000).unref();
   await checkpointAll();
   setTimeout(() => server.close(() => process.exit(0)), 1000).unref();
-  setTimeout(() => process.exit(1), 25000).unref();
 }
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 process.on("SIGINT", () => void shutdown("SIGINT"));
