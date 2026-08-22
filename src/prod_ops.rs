@@ -34,6 +34,7 @@ fn review_bind(args: &[String]) -> Result<ExitCode, String> {
     let object = template
         .as_object()
         .ok_or("ops request template must be an object")?;
+    let runbook_content_sha256 = verified_runbook_content(&template)?;
     println!("request-template-sha256={}", digest_json(&template)?);
     println!(
         "goal-sha256={}",
@@ -51,6 +52,7 @@ fn review_bind(args: &[String]) -> Result<ExitCode, String> {
                 .ok_or("ops request template requires runbook")?
         )?
     );
+    println!("runbook-content-sha256={runbook_content_sha256}");
     Ok(ExitCode::SUCCESS)
 }
 
@@ -81,7 +83,13 @@ fn execute(args: &[String]) -> Result<ExitCode, String> {
     }
     let template: Value = serde_json::from_slice(&bytes)
         .map_err(|error| format!("decode ops request template: {error}"))?;
-    let reviewer_approval = verify_reviewer(&state, reviewer, &template)?;
+    let runbook_content_sha256 = verified_runbook_content(&template)?;
+    let reviewer_approval = verify_reviewer(
+        &state,
+        reviewer,
+        &template,
+        &runbook_content_sha256,
+    )?;
     let now = Utc::now();
     let caller_subject = env::var("MULTIAGENT_CALLER_SUBJECT")
         .ok()
@@ -161,6 +169,10 @@ fn build_request(
     let parameters = required_object(object, "parameters")?;
     let runbook = required_object(object, "runbook")?;
     let runbook_value = Value::Object(runbook.clone());
+    let runbook_content_sha256 = object
+        .get("runbookContentSha256")
+        .and_then(Value::as_str)
+        .ok_or("ops request template requires runbookContentSha256")?;
     let goal = object
         .get("goal")
         .ok_or("ops request template requires goal")?;
@@ -213,6 +225,7 @@ fn build_request(
         "parameters": parameters,
         "runbook": runbook,
         "runbookContextSha256": digest_json(&runbook_value)?,
+        "runbookContentSha256": runbook_content_sha256,
         "target": target,
         "taskId": task_id
     });
@@ -229,6 +242,7 @@ fn verify_reviewer(
     state: &Path,
     reviewer: &str,
     template: &Value,
+    runbook_content_sha256: &str,
 ) -> Result<TrustedApproval, String> {
     let directory = state.join("reviewer-evidence").join(reviewer);
     let metadata = crate::state::read_env(&directory.join("evidence.env"))?;
@@ -281,6 +295,7 @@ fn verify_reviewer(
                     .ok_or("ops request template requires runbook")?
             )?
         ),
+        format!("runbook-content-sha256={runbook_content_sha256}"),
     ];
     if markers.iter().any(|marker| !evidence.contains(marker)) {
         return Err("ops reviewer evidence is not bound to the request, goal, and runbook".into());
@@ -305,6 +320,48 @@ fn required_object<'a>(
         .get(key)
         .and_then(Value::as_object)
         .ok_or_else(|| format!("ops request template requires object field {key}"))
+}
+
+fn verified_runbook_content(template: &Value) -> Result<String, String> {
+    let object = template
+        .as_object()
+        .ok_or("ops request template must be an object")?;
+    let relative = object
+        .get("runbookDocument")
+        .and_then(Value::as_str)
+        .ok_or("ops request template requires runbookDocument")?;
+    let relative_path = Path::new(relative);
+    if relative_path.is_absolute()
+        || relative_path
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err("runbookDocument must be a normalized relative path".into());
+    }
+    let framework_root = fs::canonicalize(required_env("MULTIAGENT_FRAMEWORK_ROOT")?)
+        .map_err(|error| format!("resolve multiagent framework root: {error}"))?;
+    let runbooks_root = fs::canonicalize(framework_root.join("runbooks"))
+        .map_err(|error| format!("resolve runbooks directory: {error}"))?;
+    let document = fs::canonicalize(framework_root.join(relative_path))
+        .map_err(|error| format!("resolve runbook document: {error}"))?;
+    if !document.starts_with(&runbooks_root) {
+        return Err("runbookDocument must resolve inside the framework runbooks directory".into());
+    }
+    let metadata = fs::metadata(&document)
+        .map_err(|error| format!("inspect runbook document: {error}"))?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > 1_048_576 {
+        return Err("runbook document must be a regular file between 1 byte and 1 MiB".into());
+    }
+    let bytes = fs::read(&document).map_err(|error| format!("read runbook document: {error}"))?;
+    let actual = format!("sha256:{:x}", Sha256::digest(&bytes));
+    let declared = object
+        .get("runbookContentSha256")
+        .and_then(Value::as_str)
+        .ok_or("ops request template requires runbookContentSha256")?;
+    if declared != actual {
+        return Err("runbookContentSha256 does not match the exact Markdown runbook bytes".into());
+    }
+    Ok(actual)
 }
 
 fn sign_permit(payload: &[u8]) -> Result<String, String> {
@@ -761,6 +818,8 @@ mod tests {
             "target":{"environment":"production","cluster":"cluster-a","namespace":"service-a","service":"api"},
             "parameters":{"custom":true},
             "runbook":{"id":"custom.runbook","version":"3.0.0","phase":"execute"},
+            "runbookDocument":"runbooks/custom-runbook.md",
+            "runbookContentSha256":format!("sha256:{}", "4".repeat(64)),
             "changeTicket":"OPS-123"
         }), &caller, &reviewer, now).unwrap();
         assert_eq!(request["operation"]["id"], "service.custom-operation");

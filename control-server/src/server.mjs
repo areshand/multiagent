@@ -13,6 +13,10 @@ const launcherRoot = path.resolve(process.env.MULTIAGENT_LAUNCHER_ROOT || path.j
 const stateRoot = path.resolve(process.env.MULTIAGENT_STATE_DIR || "/var/lib/multiagent/state");
 const repositoryRoot = path.resolve(process.env.MULTIAGENT_REPOSITORY_ROOT || "/var/lib/multiagent/repositories");
 const usersFile = path.resolve(process.env.MULTIAGENT_USERS_FILE || "/run/secrets/multiagent/users.json");
+const traceExportStatusFile = process.env.MULTIAGENT_TRACE_EXPORT_STATUS_FILE
+  ? path.resolve(process.env.MULTIAGENT_TRACE_EXPORT_STATUS_FILE)
+  : null;
+const traceExportMaxAgeSeconds = Math.max(Number(process.env.MULTIAGENT_TRACE_EXPORT_MAX_AGE_SECONDS || "120"), 30);
 const port = Number(process.env.PORT || "8080");
 const host = process.env.HOST || "0.0.0.0";
 const cookieSecure = process.env.MULTIAGENT_COOKIE_SECURE !== "false";
@@ -348,11 +352,34 @@ function staticFile(response, file, type) {
   response.end(body);
 }
 
+function traceExportStatus() {
+  if (!traceExportStatusFile) return { configured: false, ready: true };
+  try {
+    const value = JSON.parse(fs.readFileSync(traceExportStatusFile, "utf8"));
+    const ageSeconds = Math.max(0, (Date.now() - Date.parse(value.lastAttemptAt)) / 1000);
+    return {
+      configured: true,
+      ready: value.ok === true && Number.isFinite(ageSeconds) && ageSeconds <= traceExportMaxAgeSeconds,
+      ok: value.ok === true,
+      lastAttemptAt: value.lastAttemptAt,
+      lastSuccessAt: value.lastSuccessAt || null,
+      fileCount: Number(value.fileCount || 0),
+      ageSeconds: Number.isFinite(ageSeconds) ? Math.floor(ageSeconds) : null,
+    };
+  } catch {
+    return { configured: true, ready: false, ok: false, lastAttemptAt: null, lastSuccessAt: null, fileCount: 0, ageSeconds: null };
+  }
+}
+
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
   try {
     if (request.method === "GET" && url.pathname === "/healthz") return json(response, 200, { ok: true });
-    if (request.method === "GET" && url.pathname === "/readyz") return json(response, 200, { ready: fs.existsSync(usersFile) });
+    if (request.method === "GET" && url.pathname === "/readyz") {
+      const traceExport = traceExportStatus();
+      const ready = fs.existsSync(usersFile) && traceExport.ready;
+      return json(response, ready ? 200 : 503, { ready, traceExport });
+    }
     if (request.method === "GET" && url.pathname === "/") return staticFile(response, "index.html", "text/html; charset=utf-8");
     if (request.method === "GET" && url.pathname === "/app.js") return staticFile(response, "app.js", "text/javascript; charset=utf-8");
     if (request.method === "GET" && url.pathname === "/styles.css") return staticFile(response, "styles.css", "text/css; charset=utf-8");
@@ -378,6 +405,7 @@ const server = http.createServer(async (request, response) => {
       return json(response, 200, { ok: true }, { "set-cookie": "multiagent_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0" });
     }
     if (request.method === "GET" && url.pathname === "/api/me") return json(response, 200, { username });
+    if (request.method === "GET" && url.pathname === "/api/trace-export/status") return json(response, 200, traceExportStatus());
     if (request.method === "GET" && url.pathname === "/api/repositories") {
       const repositories = fs.readdirSync(repositoryRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory() && fs.existsSync(path.join(repositoryRoot, entry.name, ".git"))).map((entry) => entry.name).sort();
       return json(response, 200, { repositories });
