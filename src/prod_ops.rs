@@ -365,7 +365,9 @@ fn call_prod_mcp(permit: &str) -> Result<Value, String> {
     }
     let token = required_env("PROD_MCP_BEARER_TOKEN")?;
     let state = PathBuf::from(required_env("MULTIAGENT_STATE_DIR")?);
-    let headers = state.join("tmp").join(format!("prod-mcp-headers-{}.txt", std::process::id()));
+    let headers = state
+        .join("tmp")
+        .join(format!("prod-mcp-headers-{}.txt", std::process::id()));
     let call = json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"arguments":{"permit":permit},"name":"operations_execute"}});
     let result = curl_mcp(&url, &token, None, &call, &headers)?;
     let _ = fs::remove_file(headers);
@@ -373,7 +375,10 @@ fn call_prod_mcp(permit: &str) -> Result<Value, String> {
         return Err(format!("prod-mcp execution failed: {error}"));
     }
     if result.pointer("/result/isError").and_then(Value::as_bool) == Some(true) {
-        return Err(format!("prod-mcp rejected the operation: {}", result["result"]["structuredContent"]));
+        return Err(format!(
+            "prod-mcp rejected the operation: {}",
+            result["result"]["structuredContent"]
+        ));
     }
     Ok(result)
 }
@@ -638,7 +643,10 @@ fn base64_decode(value: &str) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{base64_decode, base64url_encode, build_request, ecdsa_der_to_raw, parse_mcp_body, TrustedApproval};
+    use super::{
+        base64_decode, base64url_encode, build_request, ecdsa_der_to_raw, parse_mcp_body,
+        TrustedApproval,
+    };
     use chrono::{TimeZone, Utc};
     use serde_json::json;
     #[test]
@@ -666,8 +674,18 @@ mod tests {
     #[test]
     fn operation_and_target_come_from_runbook_request_data() {
         let now = Utc.with_ymd_and_hms(2026, 8, 22, 12, 0, 0).unwrap();
-        let caller = TrustedApproval { subject: "caller-1".into(), role: "safety-reviewer", evidence_sha256: format!("sha256:{}", "1".repeat(64)), approved_at: now.to_rfc3339() };
-        let reviewer = TrustedApproval { subject: "reviewer-1".into(), role: "operations-reviewer", evidence_sha256: format!("sha256:{}", "2".repeat(64)), approved_at: now.to_rfc3339() };
+        let caller = TrustedApproval {
+            subject: "caller-1".into(),
+            role: "safety-reviewer",
+            evidence_sha256: format!("sha256:{}", "1".repeat(64)),
+            approved_at: now.to_rfc3339(),
+        };
+        let reviewer = TrustedApproval {
+            subject: "reviewer-1".into(),
+            role: "operations-reviewer",
+            evidence_sha256: format!("sha256:{}", "2".repeat(64)),
+            approved_at: now.to_rfc3339(),
+        };
         let request = build_request(&json!({
             "taskId":"task-1",
             "goal":{"summary":"follow the supplied runbook"},
