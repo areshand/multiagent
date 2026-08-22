@@ -78,6 +78,8 @@ fn main() -> ExitCode {
         "role-agent-exec" => {
             runtime::role_agent_exec(&args).map_err(|message| ("role-agent-exec", message))
         }
+        "authority-supervisor-exec" => supervisor::authority_supervisor_exec(&args)
+            .map_err(|message| ("authority-supervisor-exec", message)),
         "snapshot" => snapshot::run(&args)
             .map(|_| ExitCode::SUCCESS)
             .map_err(|message| ("snapshot", message)),

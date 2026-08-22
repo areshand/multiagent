@@ -62,6 +62,36 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
     }
 }
 
+#[cfg(target_os = "linux")]
+pub fn authority_supervisor_exec(args: &[String]) -> Result<ExitCode, String> {
+    if !args.is_empty() {
+        return Err("authority-supervisor-exec does not accept arguments".into());
+    }
+    if env::var("MULTIAGENT_UID_SANDBOX").as_deref() != Ok("1") {
+        return Err("authority-supervisor-exec requires MULTIAGENT_UID_SANDBOX=1".into());
+    }
+    let real_uid = unsafe { libc::getuid() };
+    if real_uid != 0 && real_uid != config::CONTROL_UID {
+        return Err("authority-supervisor-exec is reserved for root or the control UID".into());
+    }
+
+    let executable = env::current_exe()
+        .map_err(|error| format!("resolve authority supervisor executable: {error}"))?;
+    let command = executable.display().to_string();
+    crate::role_sandbox::exec_as_identity(
+        config::SUPERVISOR_UID,
+        config::ROLE_GID,
+        &[config::SUPERVISOR_CREDENTIAL_GID],
+        &command,
+        &["supervisor".into(), "serve".into()],
+    )
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn authority_supervisor_exec(_args: &[String]) -> Result<ExitCode, String> {
+    Err("authority-supervisor-exec requires Linux".into())
+}
+
 fn bootstrap_test() -> Result<ExitCode, String> {
     if env::var("MULTIAGENT_TEST_MODE").as_deref() != Ok("1") {
         return Err("supervisor bootstrap-test requires MULTIAGENT_TEST_MODE=1".into());
@@ -909,17 +939,7 @@ pub fn start(state: &Path, executable: &Path) -> Result<u32, String> {
         command.env("HOME", &home).env("CODEX_HOME", &home);
     }
     let child = command
-        .arg("role-exec")
-        .arg("--uid")
-        .arg(config::SUPERVISOR_UID.to_string())
-        .arg("--gid")
-        .arg(config::ROLE_GID.to_string())
-        .arg("--supplementary-gid")
-        .arg(config::SUPERVISOR_CREDENTIAL_GID.to_string())
-        .arg("--")
-        .arg(executable)
-        .arg("supervisor")
-        .arg("serve")
+        .arg("authority-supervisor-exec")
         .stdin(Stdio::null())
         .stdout(Stdio::from(log_stdout))
         .stderr(Stdio::from(log))

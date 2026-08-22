@@ -29,8 +29,10 @@ pub fn gate_setuid_invocation(command: &str) -> Result<(), String> {
 
 fn privileged_command_allowed(command: &str, real_uid: u32) -> bool {
     command == "role-agent-exec" && real_uid == crate::config::ORCHESTRATOR_UID
-        || matches!(command, "container-bootstrap" | "launch")
-            && real_uid == crate::config::CONTROL_UID
+        || matches!(
+            command,
+            "authority-supervisor-exec" | "container-bootstrap" | "launch"
+        ) && real_uid == crate::config::CONTROL_UID
 }
 
 #[cfg(not(unix))]
@@ -243,7 +245,7 @@ fn drop_identity(uid: u32, gid: u32, supplementary_gids: &[u32]) -> Result<(), S
     groups.extend(supplementary_gids.iter().map(|value| *value as libc::gid_t));
     groups.sort_unstable();
     groups.dedup();
-    if unsafe { libc::setgroups(1, groups.as_ptr()) } != 0 {
+    if unsafe { libc::setgroups(groups.len() as _, groups.as_ptr()) } != 0 {
         return Err(format!(
             "set role supplementary groups: {}",
             std::io::Error::last_os_error()
@@ -262,6 +264,17 @@ fn drop_identity(uid: u32, gid: u32, supplementary_gids: &[u32]) -> Result<(), S
         ));
     }
     Ok(())
+}
+
+pub(crate) fn exec_as_identity(
+    uid: u32,
+    gid: u32,
+    supplementary_gids: &[u32],
+    command: &str,
+    args: &[String],
+) -> Result<ExitCode, String> {
+    drop_identity(uid, gid, supplementary_gids)?;
+    exec(command, args)
 }
 
 #[cfg(not(unix))]
@@ -469,6 +482,14 @@ mod tests {
             CONTROL_UID
         ));
         assert!(privileged_command_allowed("launch", CONTROL_UID));
+        assert!(privileged_command_allowed(
+            "authority-supervisor-exec",
+            CONTROL_UID
+        ));
+        assert!(!privileged_command_allowed(
+            "authority-supervisor-exec",
+            ORCHESTRATOR_UID
+        ));
         assert!(!privileged_command_allowed("launch", ORCHESTRATOR_UID));
         for command in ["role-exec", "subagent", "snapshot", "workflow"] {
             assert!(!privileged_command_allowed(command, ORCHESTRATOR_UID));
