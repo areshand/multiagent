@@ -814,6 +814,11 @@ fn launch_environment(
     ] {
         values.insert(key.into(), value);
     }
+    for key in ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"] {
+        if let Some(value) = env_nonempty(key) {
+            values.insert(key.into(), value);
+        }
+    }
     if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
         if let Some(root) = env_nonempty("MULTIAGENT_CODEX_HOME_ROOT") {
             let home = Path::new(&root).join("orchestrator");
@@ -842,6 +847,9 @@ fn write_bootstrap(
         shell_escape(&root.display().to_string())
     );
     for (key, value) in environment {
+        if matches!(key.as_str(), "OPENAI_API_KEY" | "ANTHROPIC_API_KEY") {
+            continue;
+        }
         text.push_str(&format!("export {key}={}\n", shell_escape(value)));
     }
     // The bootstrap is also a convenient source of the canonical runtime

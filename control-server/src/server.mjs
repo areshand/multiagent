@@ -312,7 +312,14 @@ let s3Sync = Promise.resolve();
 function syncS3() {
   if (!s3StateUri) return Promise.resolve();
   s3Sync = s3Sync.then(() => new Promise((resolve) => {
-    execFile("aws", ["s3", "sync", stateRoot, s3StateUri, "--only-show-errors", "--exclude", "worktrees/*/.git/objects/*"], { timeout: 20000, killSignal: "SIGKILL" }, (error) => {
+    execFile("aws", [
+      "s3", "sync", stateRoot, s3StateUri,
+      "--only-show-errors",
+      "--exclude", "worktrees/*/.git/objects/*",
+      "--exclude", "*/orchestrator-bootstrap.sh",
+      "--exclude", "*/authority.sock",
+      "--exclude", "*/runtime_state/tmux.sock",
+    ], { timeout: 20000, killSignal: "SIGKILL" }, (error) => {
       if (error) console.error("S3 state sync failed", error.message);
       resolve();
     });
