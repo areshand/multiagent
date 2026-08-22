@@ -774,12 +774,18 @@ mod tests {
     #[test]
     fn prod_mcp_secrets_and_body_are_not_in_curl_arguments() {
         let directory = std::env::temp_dir();
-        let request_headers = private_temp_path(&directory, "multiagent-test-request", "txt").unwrap();
-        let response_headers = private_temp_path(&directory, "multiagent-test-response", "txt").unwrap();
+        let request_headers =
+            private_temp_path(&directory, "multiagent-test-request", "txt").unwrap();
+        let response_headers =
+            private_temp_path(&directory, "multiagent-test-response", "txt").unwrap();
         let token = "prod-mcp-secret-marker";
         write_mcp_headers(&request_headers, token, Some("session-secret-marker")).unwrap();
         fs::write(&response_headers, []).unwrap();
-        let command = curl_command("http://prod-mcp.test/mcp", &response_headers, &request_headers);
+        let command = curl_command(
+            "http://prod-mcp.test/mcp",
+            &response_headers,
+            &request_headers,
+        );
         let arguments = command
             .get_args()
             .map(|value| value.to_string_lossy())
