@@ -245,7 +245,7 @@ fn drop_identity(uid: u32, gid: u32, supplementary_gids: &[u32]) -> Result<(), S
     groups.extend(supplementary_gids.iter().map(|value| *value as libc::gid_t));
     groups.sort_unstable();
     groups.dedup();
-    if unsafe { libc::setgroups(groups.len(), groups.as_ptr()) } != 0 {
+    if unsafe { libc::setgroups(groups.len() as _, groups.as_ptr()) } != 0 {
         return Err(format!(
             "set role supplementary groups: {}",
             std::io::Error::last_os_error()

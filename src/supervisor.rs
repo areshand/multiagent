@@ -62,6 +62,7 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
     }
 }
 
+#[cfg(target_os = "linux")]
 pub fn authority_supervisor_exec(args: &[String]) -> Result<ExitCode, String> {
     if !args.is_empty() {
         return Err("authority-supervisor-exec does not accept arguments".into());
@@ -69,12 +70,10 @@ pub fn authority_supervisor_exec(args: &[String]) -> Result<ExitCode, String> {
     if env::var("MULTIAGENT_UID_SANDBOX").as_deref() != Ok("1") {
         return Err("authority-supervisor-exec requires MULTIAGENT_UID_SANDBOX=1".into());
     }
-    #[cfg(unix)]
-    if unsafe { libc::getuid() } != config::CONTROL_UID {
-        return Err("authority-supervisor-exec is reserved for the control UID".into());
+    let real_uid = unsafe { libc::getuid() };
+    if real_uid != 0 && real_uid != config::CONTROL_UID {
+        return Err("authority-supervisor-exec is reserved for root or the control UID".into());
     }
-    #[cfg(not(unix))]
-    return Err("authority-supervisor-exec requires Unix".into());
 
     let executable = env::current_exe()
         .map_err(|error| format!("resolve authority supervisor executable: {error}"))?;
@@ -86,6 +85,11 @@ pub fn authority_supervisor_exec(args: &[String]) -> Result<ExitCode, String> {
         &command,
         &["supervisor".into(), "serve".into()],
     )
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn authority_supervisor_exec(_args: &[String]) -> Result<ExitCode, String> {
+    Err("authority-supervisor-exec requires Linux".into())
 }
 
 fn bootstrap_test() -> Result<ExitCode, String> {
