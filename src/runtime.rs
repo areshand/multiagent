@@ -1,8 +1,8 @@
 use crate::{
     agent::{self, AgentRequest, BackendId, BackendPaths, InvocationMode, RoleAccess},
-    config, policy, role_sandbox,
+    config, policy, prompt_bundle, role_sandbox,
     state::{atomic_write as write_state, read_env, timestamp},
-    supervisor,
+    supervisor, workflow,
 };
 use chrono::{Local, Utc};
 use fs2::FileExt;
@@ -557,25 +557,23 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
 
     policy::run(&["init".into()])?;
     let prompt_bundle = state_dir.join("runtime_state/orchestrator-prompt-bundle.md");
-    run_self_quiet(&[
-        "prompt-bundle",
-        "--orchestrator",
-        &prompt.display().to_string(),
-        "--lifecycle",
-        &lifecycle_prompt.display().to_string(),
-        "--output",
-        &prompt_bundle.display().to_string(),
+    prompt_bundle::run(&[
+        "--orchestrator".into(),
+        prompt.display().to_string(),
+        "--lifecycle".into(),
+        lifecycle_prompt.display().to_string(),
+        "--output".into(),
+        prompt_bundle.display().to_string(),
     ])?;
     write_prompt_hashes(
         &state_dir.join("runtime_state/prompt-sha256.tsv"),
         [&prompt, &lifecycle_prompt, &prompt_bundle],
     )?;
-    run_self_quiet(&[
-        "workflow",
-        "init-or-resume",
-        &workflow_id,
-        "--resume",
-        if resume { "1" } else { "0" },
+    workflow::run(&[
+        "init-or-resume".into(),
+        workflow_id.clone(),
+        "--resume".into(),
+        if resume { "1".into() } else { "0".into() },
     ])?;
     atomic_write(
         &active_workflow_file,
