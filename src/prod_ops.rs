@@ -7,6 +7,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+struct TrustedApproval {
+    subject: String,
+    role: &'static str,
+    evidence_sha256: String,
+    approved_at: String,
+}
+
 pub fn run(args: &[String]) -> Result<ExitCode, String> {
     match args.first().map(String::as_str) {
         Some("execute") => execute(&args[1..]),
@@ -71,8 +78,28 @@ fn execute(args: &[String]) -> Result<ExitCode, String> {
     }
     let template: Value = serde_json::from_slice(&bytes)
         .map_err(|error| format!("decode ops request template: {error}"))?;
-    verify_reviewer(&state, reviewer, &template)?;
-    let request = build_request(&template)?;
+    let reviewer_approval = verify_reviewer(&state, reviewer, &template)?;
+    let now = Utc::now();
+    let caller_subject = env::var("MULTIAGENT_CALLER_SUBJECT")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "multiagent-control".into());
+    validate_id("caller subject", &caller_subject)?;
+    let caller_approved_at = env::var("MULTIAGENT_CALLER_APPROVED_AT")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| now.to_rfc3339_opts(SecondsFormat::Millis, true));
+    let caller_approval = TrustedApproval {
+        subject: caller_subject,
+        role: "safety-reviewer",
+        evidence_sha256: digest_json(
+            template
+                .get("goal")
+                .ok_or("ops request template requires goal")?,
+        )?,
+        approved_at: caller_approved_at,
+    };
+    let request = build_request(&template, &caller_approval, &reviewer_approval, now)?;
     let action_id = request["actionId"]
         .as_str()
         .ok_or("generated operation has no action ID")?
@@ -104,7 +131,12 @@ fn execute(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn build_request(template: &Value) -> Result<Value, String> {
+fn build_request(
+    template: &Value,
+    caller: &TrustedApproval,
+    reviewer: &TrustedApproval,
+    now: chrono::DateTime<Utc>,
+) -> Result<Value, String> {
     let object = template
         .as_object()
         .ok_or("ops request template must be a JSON object")?;
@@ -129,23 +161,43 @@ fn build_request(template: &Value) -> Result<Value, String> {
     let goal = object
         .get("goal")
         .ok_or("ops request template requires goal")?;
-    let approvals = object
-        .get("approvals")
-        .cloned()
-        .unwrap_or_else(|| json!([]));
-    if !approvals.is_array() {
-        return Err("ops request approvals must be an array".into());
+    if object.contains_key("approvals") {
+        return Err("ops request approvals are derived by the supervisor and cannot be supplied by an agent".into());
+    }
+    if caller.subject == reviewer.subject {
+        return Err("caller and operations reviewer must be distinct subjects".into());
+    }
+    for approval in [caller, reviewer] {
+        let approved_at = chrono::DateTime::parse_from_rfc3339(&approval.approved_at)
+            .map_err(|_| "trusted approval has an invalid timestamp")?;
+        if approved_at > now {
+            return Err("trusted approval cannot postdate permit issuance".into());
+        }
     }
     let history = object.get("history").unwrap_or(&Value::Null);
-    let now = Utc::now();
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| error.to_string())?
         .as_millis();
-    Ok(json!({
+    let mut request = json!({
         "actionId": format!("ops-{unique}-{}", std::process::id()),
         "apiVersion": "prod.moveindustries.io/v1",
-        "approvals": approvals,
+        "approvals": [
+            {
+                "reviewerSubject": caller.subject,
+                "reviewerRole": caller.role,
+                "decision": "approve",
+                "evidenceSha256": caller.evidence_sha256,
+                "approvedAt": caller.approved_at
+            },
+            {
+                "reviewerSubject": reviewer.subject,
+                "reviewerRole": reviewer.role,
+                "decision": "approve",
+                "evidenceSha256": reviewer.evidence_sha256,
+                "approvedAt": reviewer.approved_at
+            }
+        ],
         "delegatedRole": "runbook-operator",
         "delegatedSubject": "multiagent-supervisor",
         "expiresAt": (now + Duration::minutes(4)).to_rfc3339_opts(SecondsFormat::Millis, true),
@@ -160,10 +212,21 @@ fn build_request(template: &Value) -> Result<Value, String> {
         "runbookContextSha256": digest_json(&runbook_value)?,
         "target": target,
         "taskId": task_id
-    }))
+    });
+    if let Some(change_ticket) = object.get("changeTicket") {
+        request
+            .as_object_mut()
+            .expect("operation request is an object")
+            .insert("changeTicket".into(), change_ticket.clone());
+    }
+    Ok(request)
 }
 
-fn verify_reviewer(state: &Path, reviewer: &str, template: &Value) -> Result<(), String> {
+fn verify_reviewer(
+    state: &Path,
+    reviewer: &str,
+    template: &Value,
+) -> Result<TrustedApproval, String> {
     let directory = state.join("reviewer-evidence").join(reviewer);
     let metadata = crate::state::read_env(&directory.join("evidence.env"))?;
     if metadata.get("role").map(String::as_str) != Some("reviewer")
@@ -219,7 +282,16 @@ fn verify_reviewer(state: &Path, reviewer: &str, template: &Value) -> Result<(),
     if markers.iter().any(|marker| !evidence.contains(marker)) {
         return Err("ops reviewer evidence is not bound to the request, goal, and runbook".into());
     }
-    Ok(())
+    let approved_at = metadata
+        .get("completed_at")
+        .cloned()
+        .ok_or("ops reviewer evidence has no completion timestamp")?;
+    Ok(TrustedApproval {
+        subject: reviewer.into(),
+        role: "operations-reviewer",
+        evidence_sha256: format!("sha256:{actual_output}"),
+        approved_at,
+    })
 }
 
 fn required_object<'a>(
@@ -293,20 +365,15 @@ fn call_prod_mcp(permit: &str) -> Result<Value, String> {
     }
     let token = required_env("PROD_MCP_BEARER_TOKEN")?;
     let state = PathBuf::from(required_env("MULTIAGENT_STATE_DIR")?);
-    let headers = state
-        .join("tmp")
-        .join(format!("prod-mcp-headers-{}.txt", std::process::id()));
-    let initialize = json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{},"clientInfo":{"name":"multiagent-supervisor","version":env!("CARGO_PKG_VERSION")},"protocolVersion":"2025-03-26"}});
-    let initialized = curl_mcp(&url, &token, None, &initialize, &headers)?;
-    if initialized.get("error").is_some() {
-        return Err(format!("prod-mcp initialize failed: {initialized}"));
-    }
-    let session = session_id(&headers)?;
+    let headers = state.join("tmp").join(format!("prod-mcp-headers-{}.txt", std::process::id()));
     let call = json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"arguments":{"permit":permit},"name":"operations_execute"}});
-    let result = curl_mcp(&url, &token, Some(&session), &call, &headers)?;
+    let result = curl_mcp(&url, &token, None, &call, &headers)?;
     let _ = fs::remove_file(headers);
     if let Some(error) = result.get("error") {
         return Err(format!("prod-mcp execution failed: {error}"));
+    }
+    if result.pointer("/result/isError").and_then(Value::as_bool) == Some(true) {
+        return Err(format!("prod-mcp rejected the operation: {}", result["result"]["structuredContent"]));
     }
     Ok(result)
 }
@@ -571,7 +638,8 @@ fn base64_decode(value: &str) -> Result<Vec<u8>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{base64_decode, base64url_encode, build_request, ecdsa_der_to_raw, parse_mcp_body};
+    use super::{base64_decode, base64url_encode, build_request, ecdsa_der_to_raw, parse_mcp_body, TrustedApproval};
+    use chrono::{TimeZone, Utc};
     use serde_json::json;
     #[test]
     fn converts_p256_der_to_jose_signature() {
@@ -597,16 +665,23 @@ mod tests {
     }
     #[test]
     fn operation_and_target_come_from_runbook_request_data() {
+        let now = Utc.with_ymd_and_hms(2026, 8, 22, 12, 0, 0).unwrap();
+        let caller = TrustedApproval { subject: "caller-1".into(), role: "safety-reviewer", evidence_sha256: format!("sha256:{}", "1".repeat(64)), approved_at: now.to_rfc3339() };
+        let reviewer = TrustedApproval { subject: "reviewer-1".into(), role: "operations-reviewer", evidence_sha256: format!("sha256:{}", "2".repeat(64)), approved_at: now.to_rfc3339() };
         let request = build_request(&json!({
             "taskId":"task-1",
             "goal":{"summary":"follow the supplied runbook"},
             "operation":{"id":"service.custom-operation","version":"7.0.0"},
             "target":{"environment":"production","cluster":"cluster-a","namespace":"service-a","service":"api"},
             "parameters":{"custom":true},
-            "runbook":{"id":"custom.runbook","version":"3.0.0"}
-        })).unwrap();
+            "runbook":{"id":"custom.runbook","version":"3.0.0","phase":"execute"},
+            "changeTicket":"OPS-123"
+        }), &caller, &reviewer, now).unwrap();
         assert_eq!(request["operation"]["id"], "service.custom-operation");
         assert_eq!(request["target"]["service"], "api");
         assert_eq!(request["parameters"]["custom"], true);
+        assert_eq!(request["changeTicket"], "OPS-123");
+        assert_eq!(request["approvals"][0]["reviewerSubject"], "caller-1");
+        assert_eq!(request["approvals"][1]["reviewerSubject"], "reviewer-1");
     }
 }

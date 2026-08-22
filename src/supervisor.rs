@@ -1,4 +1,5 @@
 use crate::{authority::AuthorityRequest, config, state::read_env as read_env_file};
+use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -348,8 +349,9 @@ pub fn seal_role_output(
         fs::set_permissions(&directory, fs::Permissions::from_mode(0o2750))
             .map_err(|error| format!("protect reviewer evidence directory: {error}"))?;
         atomic_write_bytes(&directory.join("last-message.txt"), &bytes)?;
+        let completed_at = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
         let metadata = format!(
-            "name={name}\nrole={role}\naccess=read-only\nworkflow_id={workflow_id}\nstate=completed\noutput_sha256={:x}\n",
+            "name={name}\nrole={role}\naccess=read-only\nworkflow_id={workflow_id}\nstate=completed\ncompleted_at={completed_at}\noutput_sha256={:x}\n",
             Sha256::digest(&bytes)
         );
         atomic_write_bytes(&directory.join("evidence.env"), metadata.as_bytes())?;
