@@ -116,8 +116,8 @@ pub fn container_bootstrap() -> Result<ExitCode, String> {
             (
                 base.join("state"),
                 config::CONTROL_UID,
-                config::SUPERVISOR_CREDENTIAL_GID,
-                0o2770,
+                config::ROLE_GID,
+                0o2750,
             ),
             (
                 base.join("repositories"),

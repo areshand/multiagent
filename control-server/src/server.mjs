@@ -5,6 +5,7 @@ import path from "node:path";
 import { execFile, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { WebSocket, WebSocketServer } from "ws";
+import { findActiveSession, tmuxInvocation } from "./session-runtime.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(here, "../public");
@@ -20,6 +21,7 @@ const captureLines = Math.min(Number(process.env.MULTIAGENT_CAPTURE_LINES || "12
 const s3StateUri = (process.env.MULTIAGENT_STATE_S3_URI || "").replace(/\/$/, "");
 const snapshotIntervalMs = Math.max(Number(process.env.MULTIAGENT_SNAPSHOT_INTERVAL_SECONDS || "60"), 15) * 1000;
 const idleTimeoutMs = Math.max(Number(process.env.MULTIAGENT_IDLE_TIMEOUT_SECONDS || "86400"), 300) * 1000;
+const uidSandbox = process.env.MULTIAGENT_UID_SANDBOX === "1";
 const idPattern = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const registryFile = path.join(stateRoot, "control-server", "sessions.json");
 
@@ -114,8 +116,13 @@ function run(command, args, options = {}) {
   return execFileSync(command, args, { encoding: "utf8", timeout: 30000, ...options }).trim();
 }
 
+function runTmux(id, args, options = {}) {
+  const invocation = tmuxInvocation(stateRoot, id, args, uidSandbox);
+  return run("tmux", invocation.args, { ...invocation.options, ...options });
+}
+
 function tmuxAlive(id) {
-  try { run("tmux", ["has-session", "-t", id]); return true; } catch { return false; }
+  try { runTmux(id, ["has-session", "-t", id]); return true; } catch { return false; }
 }
 
 function loadRegistry() {
@@ -221,12 +228,17 @@ function writeTraceSummary(id, status) {
 function launchSession(id, repository, resume, actor) {
   if (!idPattern.test(id)) throw new Error("invalid session id");
   if (tmuxAlive(id)) throw new Error("session already running");
+  if (uidSandbox) {
+    const active = findActiveSession(Object.keys(registry.sessions), id, tmuxAlive);
+    if (active) throw new Error(`UID-isolated pods support one active session; pause ${active} first`);
+  }
   const existing = registry.sessions[id];
   if (resume && !existing) throw new Error("cannot resume an unknown task");
   if (!resume && existing) throw new Error("task id already exists");
   const root = repositoryPath(repository);
   const persistent = sessionStateDir(id);
   fs.mkdirSync(persistent, { recursive: true });
+  const now = new Date().toISOString();
   const args = [path.join(launcherRoot, "launch.sh"), "--session", id, "--root", root, "--no-attach"];
   if (resume) args.push("--resume");
   const env = {
@@ -236,9 +248,10 @@ function launchSession(id, repository, resume, actor) {
     MULTIAGENT_STATE_DIR: persistent,
     MULTIAGENT_WRITE_POLICY: path.join(persistent, "write-policy.paths"),
     MULTIAGENT_PROMPT: path.join(launcherRoot, "orchestrator_prompt.md"),
+    MULTIAGENT_CALLER_SUBJECT: `caller-${crypto.createHash("sha256").update(existing?.createdBy || actor).digest("hex").slice(0, 32)}`,
+    MULTIAGENT_CALLER_APPROVED_AT: existing?.createdAt || now,
   };
   run("bash", args, { cwd: launcherRoot, env });
-  const now = new Date().toISOString();
   registry.sessions[id] = {
     ...existing, id, repository, status: "running", autoResume: true,
     createdBy: existing?.createdBy || actor, createdAt: existing?.createdAt || now,
@@ -259,15 +272,16 @@ function capture(id) {
   if (!tmuxAlive(id)) {
     try { return fs.readFileSync(path.join(traceRoot(id), "terminal-tail.log"), "utf8"); } catch { return ""; }
   }
-  return run("tmux", ["capture-pane", "-p", "-J", "-S", `-${captureLines}`, "-t", `${id}:orchestrator`], { maxBuffer: 8 * 1024 * 1024 });
+  return runTmux(id, ["capture-pane", "-p", "-J", "-S", `-${captureLines}`, "-t", `${id}:orchestrator`], { maxBuffer: 8 * 1024 * 1024 });
 }
 
 function sendInput(id, text) {
   if (!tmuxAlive(id)) throw new Error("session is not running");
   if (typeof text !== "string" || !text.trim() || text.length > 32768) throw new Error("message must contain 1 to 32768 characters");
-  execFileSync("tmux", ["load-buffer", "-"], { input: text, timeout: 5000 });
-  run("tmux", ["paste-buffer", "-d", "-t", `${id}:orchestrator`]);
-  run("tmux", ["send-keys", "-t", `${id}:orchestrator`, "Enter"]);
+  const load = tmuxInvocation(stateRoot, id, ["load-buffer", "-"], uidSandbox);
+  execFileSync("tmux", load.args, { ...load.options, input: text, timeout: 5000 });
+  runTmux(id, ["paste-buffer", "-d", "-t", `${id}:orchestrator`]);
+  runTmux(id, ["send-keys", "-t", `${id}:orchestrator`, "Enter"]);
   registry.sessions[id].updatedAt = new Date().toISOString();
   registry.sessions[id].lastActivityAt = registry.sessions[id].updatedAt;
   saveRegistry();
@@ -294,25 +308,30 @@ function checkpoint(id) {
   fs.writeFileSync(path.join(destination, "checkpoint.json"), JSON.stringify({ capturedAt: new Date().toISOString(), live: tmuxAlive(id), transcriptIndex: "../logs/transcript-index.json" }, null, 2) + "\n", { mode: 0o600 });
 }
 
+let s3Sync = Promise.resolve();
 function syncS3() {
-  if (!s3StateUri) return;
-  execFile("aws", ["s3", "sync", stateRoot, s3StateUri, "--only-show-errors", "--exclude", "worktrees/*/.git/objects/*"], (error) => {
-    if (error) console.error("S3 state sync failed", error.message);
-  });
+  if (!s3StateUri) return Promise.resolve();
+  s3Sync = s3Sync.then(() => new Promise((resolve) => {
+    execFile("aws", ["s3", "sync", stateRoot, s3StateUri, "--only-show-errors", "--exclude", "worktrees/*/.git/objects/*"], { timeout: 20000, killSignal: "SIGKILL" }, (error) => {
+      if (error) console.error("S3 state sync failed", error.message);
+      resolve();
+    });
+  }));
+  return s3Sync;
 }
 
-function checkpointAll() {
+async function checkpointAll() {
   for (const id of Object.keys(registry.sessions)) {
     try { checkpoint(id); } catch (error) { console.error(`checkpoint failed for ${id}`, error); }
   }
-  syncS3();
+  await syncS3();
 }
 
 async function retireSession(id, status, actor) {
   const record = registry.sessions[id];
   if (!record) throw new Error("unknown task");
   checkpoint(id);
-  if (tmuxAlive(id)) run("tmux", ["kill-session", "-t", id]);
+  if (tmuxAlive(id)) runTmux(id, ["kill-session", "-t", id]);
   const now = new Date().toISOString();
   record.status = status;
   record.autoResume = false;
@@ -321,7 +340,7 @@ async function retireSession(id, status, actor) {
   record[`${status}By`] = actor;
   await saveRegistry();
   writeTraceSummary(id, status);
-  syncS3();
+  await syncS3();
   return sessionView(id);
 }
 
@@ -412,7 +431,7 @@ const server = http.createServer(async (request, response) => {
       }
       if (action === "restart") {
         checkpoint(id);
-        if (tmuxAlive(id)) run("tmux", ["kill-session", "-t", id]);
+        if (tmuxAlive(id)) runTmux(id, ["kill-session", "-t", id]);
         return json(response, 200, launchSession(id, registry.sessions[id].repository, true, username));
       }
       return json(response, 200, sessionView(id));
@@ -478,7 +497,7 @@ for (const record of Object.values(registry.sessions)) {
   }
 }
 
-const snapshotTimer = setInterval(checkpointAll, snapshotIntervalMs);
+const snapshotTimer = setInterval(() => checkpointAll().catch((error) => console.error("checkpoint cycle failed", error)), snapshotIntervalMs);
 const retirementTimer = setInterval(() => {
   const now = Date.now();
   for (const record of Object.values(registry.sessions)) {
@@ -499,15 +518,15 @@ const retirementTimer = setInterval(() => {
 server.listen(port, host, () => console.log(`multiagent control server listening on ${host}:${port}`));
 
 let shuttingDown = false;
-function shutdown(signal) {
+async function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`received ${signal}; checkpointing sessions`);
   clearInterval(snapshotTimer);
   clearInterval(retirementTimer);
-  checkpointAll();
-  setTimeout(() => server.close(() => process.exit(0)), 1000).unref();
   setTimeout(() => process.exit(1), 25000).unref();
+  await checkpointAll();
+  setTimeout(() => server.close(() => process.exit(0)), 1000).unref();
 }
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));
