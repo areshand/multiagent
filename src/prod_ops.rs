@@ -84,12 +84,7 @@ fn execute(args: &[String]) -> Result<ExitCode, String> {
     let template: Value = serde_json::from_slice(&bytes)
         .map_err(|error| format!("decode ops request template: {error}"))?;
     let runbook_content_sha256 = verified_runbook_content(&template)?;
-    let reviewer_approval = verify_reviewer(
-        &state,
-        reviewer,
-        &template,
-        &runbook_content_sha256,
-    )?;
+    let reviewer_approval = verify_reviewer(&state, reviewer, &template, &runbook_content_sha256)?;
     let now = Utc::now();
     let caller_subject = env::var("MULTIAGENT_CALLER_SUBJECT")
         .ok()
@@ -347,8 +342,8 @@ fn verified_runbook_content(template: &Value) -> Result<String, String> {
     if !document.starts_with(&runbooks_root) {
         return Err("runbookDocument must resolve inside the framework runbooks directory".into());
     }
-    let metadata = fs::metadata(&document)
-        .map_err(|error| format!("inspect runbook document: {error}"))?;
+    let metadata =
+        fs::metadata(&document).map_err(|error| format!("inspect runbook document: {error}"))?;
     if !metadata.is_file() || metadata.len() == 0 || metadata.len() > 1_048_576 {
         return Err("runbook document must be a regular file between 1 byte and 1 MiB".into());
     }
