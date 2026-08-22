@@ -2,9 +2,12 @@ use chrono::{Duration, SecondsFormat, Utc};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::env;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+#[cfg(target_os = "linux")]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::{Command, ExitCode, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 struct TrustedApproval {
@@ -313,12 +316,11 @@ fn sign_permit(payload: &[u8]) -> Result<String, String> {
         base64url_encode(payload)
     );
     let state = PathBuf::from(required_env("MULTIAGENT_STATE_DIR")?);
-    let temporary = state
-        .join("tmp")
-        .join(format!("kms-sign-{}.bin", std::process::id()));
-    fs::create_dir_all(temporary.parent().expect("temporary parent"))
+    let temporary_dir = state.join("tmp");
+    fs::create_dir_all(&temporary_dir)
         .map_err(|error| format!("create KMS temporary directory: {error}"))?;
-    fs::write(&temporary, signing_input.as_bytes())
+    let temporary = private_temp_path(&temporary_dir, "kms-sign", "bin")?;
+    write_private_file(&temporary, signing_input.as_bytes())
         .map_err(|error| format!("write KMS signing input: {error}"))?;
     let message = format!("fileb://{}", temporary.display());
     let output = Command::new("aws")
@@ -365,12 +367,20 @@ fn call_prod_mcp(permit: &str) -> Result<Value, String> {
     }
     let token = required_env("PROD_MCP_BEARER_TOKEN")?;
     let state = PathBuf::from(required_env("MULTIAGENT_STATE_DIR")?);
-    let headers = state
-        .join("tmp")
-        .join(format!("prod-mcp-headers-{}.txt", std::process::id()));
+    let temporary_dir = state.join("tmp");
+    fs::create_dir_all(&temporary_dir)
+        .map_err(|error| format!("create prod-mcp temporary directory: {error}"))?;
+    let request_headers = private_temp_path(&temporary_dir, "prod-mcp-request-headers", "txt")?;
+    let response_headers = private_temp_path(&temporary_dir, "prod-mcp-response-headers", "txt")?;
     let call = json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"arguments":{"permit":permit},"name":"operations_execute"}});
-    let result = curl_mcp(&url, &token, None, &call, &headers)?;
-    let _ = fs::remove_file(headers);
+    let result = (|| {
+        write_mcp_headers(&request_headers, &token, None)?;
+        write_private_file(&response_headers, b"")?;
+        curl_mcp(&url, &call, &response_headers, &request_headers)
+    })();
+    let _ = fs::remove_file(request_headers);
+    let _ = fs::remove_file(response_headers);
+    let result = result?;
     if let Some(error) = result.get("error") {
         return Err(format!("prod-mcp execution failed: {error}"));
     }
@@ -385,12 +395,47 @@ fn call_prod_mcp(permit: &str) -> Result<Value, String> {
 
 fn curl_mcp(
     url: &str,
-    token: &str,
-    session: Option<&str>,
     body: &Value,
-    headers: &Path,
+    response_headers: &Path,
+    request_headers: &Path,
 ) -> Result<Value, String> {
-    let authorization = format!("Authorization: Bearer {token}");
+    let mut command = curl_command(url, response_headers, request_headers);
+    let body = canonical_string(body)?;
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("execute prod-mcp request: {error}"))?;
+    let write_result = child
+        .stdin
+        .as_mut()
+        .ok_or_else(|| "open prod-mcp request stdin".to_string())
+        .and_then(|stdin| {
+            stdin
+                .write_all(body.as_bytes())
+                .map_err(|error| format!("write prod-mcp request body: {error}"))
+        });
+    drop(child.stdin.take());
+    if let Err(error) = write_result {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error);
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("wait for prod-mcp request: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "prod-mcp HTTP request failed: {}{}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout)
+        ));
+    }
+    parse_mcp_body(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn curl_command(url: &str, response_headers: &Path, request_headers: &Path) -> Command {
     let mut command = Command::new("curl");
     command
         .args([
@@ -401,30 +446,50 @@ fn curl_mcp(
             "40",
             "--dump-header",
         ])
-        .arg(headers)
+        .arg(response_headers)
+        .args(["--header"])
+        .arg(format!("@{}", request_headers.display()))
         .args([
-            "--header",
-            &authorization,
             "--header",
             "Content-Type: application/json",
             "--header",
             "Accept: application/json, text/event-stream",
+            "--data-binary",
+            "@-",
+            url,
         ]);
+    command
+}
+
+fn write_mcp_headers(path: &Path, token: &str, session: Option<&str>) -> Result<(), String> {
+    let mut contents = format!("Authorization: Bearer {token}\n");
     if let Some(session) = session {
-        command.args(["--header", &format!("Mcp-Session-Id: {session}")]);
+        contents.push_str(&format!("Mcp-Session-Id: {session}\n"));
     }
-    let output = command
-        .args(["--data-binary", &canonical_string(body)?, url])
-        .output()
-        .map_err(|error| format!("execute prod-mcp request: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "prod-mcp HTTP request failed: {}{}",
-            String::from_utf8_lossy(&output.stderr),
-            String::from_utf8_lossy(&output.stdout)
-        ));
-    }
-    parse_mcp_body(&String::from_utf8_lossy(&output.stdout))
+    write_private_file(path, contents.as_bytes())
+}
+
+fn private_temp_path(directory: &Path, prefix: &str, extension: &str) -> Result<PathBuf, String> {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    Ok(directory.join(format!(
+        "{prefix}-{}-{unique}.{extension}",
+        std::process::id()
+    )))
+}
+
+fn write_private_file(path: &Path, contents: &[u8]) -> Result<(), String> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(target_os = "linux")]
+    options.mode(0o600);
+    let mut file = options
+        .open(path)
+        .map_err(|error| format!("create private temporary file: {error}"))?;
+    file.write_all(contents)
+        .map_err(|error| format!("write private temporary file: {error}"))
 }
 
 fn parse_mcp_body(body: &str) -> Result<Value, String> {
@@ -644,11 +709,14 @@ fn base64_decode(value: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        base64_decode, base64url_encode, build_request, ecdsa_der_to_raw, parse_mcp_body,
-        TrustedApproval,
+        base64_decode, base64url_encode, build_request, curl_command, ecdsa_der_to_raw,
+        parse_mcp_body, private_temp_path, write_mcp_headers, TrustedApproval,
     };
     use chrono::{TimeZone, Utc};
     use serde_json::json;
+    use std::fs;
+    #[cfg(target_os = "linux")]
+    use std::os::unix::fs::PermissionsExt;
     #[test]
     fn converts_p256_der_to_jose_signature() {
         let mut der = vec![0x30, 0x44, 0x02, 0x20];
@@ -701,5 +769,35 @@ mod tests {
         assert_eq!(request["changeTicket"], "OPS-123");
         assert_eq!(request["approvals"][0]["reviewerSubject"], "caller-1");
         assert_eq!(request["approvals"][1]["reviewerSubject"], "reviewer-1");
+    }
+
+    #[test]
+    fn prod_mcp_secrets_and_body_are_not_in_curl_arguments() {
+        let directory = std::env::temp_dir();
+        let request_headers = private_temp_path(&directory, "multiagent-test-request", "txt").unwrap();
+        let response_headers = private_temp_path(&directory, "multiagent-test-response", "txt").unwrap();
+        let token = "prod-mcp-secret-marker";
+        write_mcp_headers(&request_headers, token, Some("session-secret-marker")).unwrap();
+        fs::write(&response_headers, []).unwrap();
+        let command = curl_command("http://prod-mcp.test/mcp", &response_headers, &request_headers);
+        let arguments = command
+            .get_args()
+            .map(|value| value.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(!arguments.contains(token));
+        assert!(!arguments.contains("session-secret-marker"));
+        assert_eq!(
+            arguments.matches("@-").count(),
+            1,
+            "the request body must be provided through stdin"
+        );
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            fs::metadata(&request_headers).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let _ = fs::remove_file(request_headers);
+        let _ = fs::remove_file(response_headers);
     }
 }
