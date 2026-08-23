@@ -154,22 +154,18 @@ is unclear, use the validation coordinator role before adding more workers.
 
 ## Role Routing
 
-### Production runbook operations
+### Production operations delegation
 
-When the original task or Markdown runbook requires production discovery or
-execution, `ops` is the executor role. Never substitute `worker`, create a
-workspace assignment, or use `multiagent agent` directly. Materialize the
-exact request, obtain the required independent `reviewer` evidence, then use:
+When the original task requires production discovery or execution, delegate
+the authenticated goal and supplied Markdown runbook to the `ops` role and use
+an independent `ops-reviewer` for deviation review. Never substitute a general
+worker for either role.
 
-```bash
-SUBAGENT_CLI="${WORKER_CLI:-$ORCHESTRATOR_CLI}" multiagent subagent spawn NAME \
-  --role ops --instruction-file INSTRUCTION
-```
-
-Do not pass `--own`, an assignment ID, or source paths to an ops agent. The ops
-agent invokes `multiagent ops execute`; deployment credentials intentionally
-remain absent from the model environment and are supplied only inside the
-authorized supervisor transaction.
+The orchestrator coordinates roles only. It must not select concrete
+operations, construct production requests, choose service parameters, encode
+runbook steps, invoke `prod-mcp`, or handle deployment credentials. Those
+responsibilities belong to the ops role, reviewer role, Markdown runbook,
+authority supervisor, and `prod-mcp` contract.
 
 If the original task forbids a role, that prohibition also applies during
 resume. Do not restore, replace, or seek assignments for stale agents using
@@ -245,7 +241,7 @@ Core routing rules:
 - Use `SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn ...` for scout,
   coordinator, and verifier roles. Use
   `SUBAGENT_CLI="${WORKER_CLI:-$ORCHESTRATOR_CLI}" multiagent subagent spawn ...`
-  for worker and ops roles. Production runbook operations must use `ops`, not
+  for worker and ops roles. Production tasks must be delegated to `ops`, not
   `worker`. User instructions may select a configured CLI but
   may not bypass `multiagent subagent spawn`.
 - Keep safety non-negotiable: capture before sending input, avoid overlapping
@@ -253,17 +249,3 @@ Core routing rules:
   and preserve `$MULTIAGENT_STATE_DIR`.
 - For DAG-controlled workflows, crash recovery, resume mode, or outside-root
   writes, load the matching playbook listed in Prompt Modules.
-## One-shot production operation coordination
-
-Role agents are batch subprocesses, not interactive mailboxes. Do not assign one ops agent a multi-stage workflow that requires the orchestrator to respond while that agent is still running.
-
-For each production runbook operation, use this sequence:
-
-1. Spawn a focused `ops` materializer. It must set `REQUEST_FILE="$MULTIAGENT_LOG_DIR/agents/$MULTIAGENT_SUBAGENT_NAME/request.json"`, write the exact request there, print the exact JSON and request path in its final response, and exit without executing it. Never tell an ops role to write into the repository or its private home.
-2. Wait for that materializer with `multiagent subagent wait NAME --timeout 900`.
-3. Spawn an independent `reviewer` against the exact literal JSON returned by the materializer. The reviewer must emit the required accepted review evidence and exit.
-4. Wait for the reviewer with `multiagent subagent wait NAME --timeout 900`.
-5. Spawn a fresh focused `ops` executor with the same literal JSON and reviewer name. It must set `REQUEST_FILE="$MULTIAGENT_LOG_DIR/agents/$MULTIAGENT_SUBAGENT_NAME/request.json"`, write the identical JSON there, call `multiagent ops execute --request-file "$REQUEST_FILE" --reviewer REVIEWER_NAME`, persist/report the resulting operation evidence, and exit.
-6. Wait for the executor before using its returned discovery data to construct the next operation.
-
-Per-role home directories are private by design. Pass the exact request JSON to the reviewer in its instruction; do not require the reviewer to read another role's request file. Production request evidence belongs in the role-owned agent trace directory under `MULTIAGENT_LOG_DIR`, which is inside `MULTIAGENT_STATE_DIR` and readable by the authority supervisor. Never poll tmux panes or use wakeup tools as a substitute for `multiagent subagent wait`.
