@@ -1,0 +1,51 @@
+{
+  "request": {
+    "actionId": "action-contract-1",
+    "approvals": [
+      {
+        "approvedAt": "2026-08-23T00:00:00.000Z",
+        "decision": "approve",
+        "evidenceSha256": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "reviewerRole": "operations-reviewer",
+        "reviewerSubject": "ops-reviewer-1"
+      }
+    ],
+    "authorityProxy": {
+      "credentialSource": "deployment",
+      "signingBackend": "aws-kms",
+      "subject": "multiagent-supervisor",
+      "transportAuth": "service-token"
+    },
+    "delegatedRole": "runbook-operator",
+    "delegatedSubject": "multiagent-supervisor",
+    "expiresAt": "2026-08-23T00:04:00.000Z",
+    "historySha256": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "intentSha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "issuedAt": "2026-08-23T00:00:00.000Z",
+    "operation": {
+      "id": "grafana.read",
+      "version": "1.1.0"
+    },
+    "parameters": {
+      "action": "list-loki-label-values",
+      "datasourceUid": "mi-loki",
+      "labelName": "namespace",
+      "limit": 50,
+      "lookbackMinutes": 60
+    },
+    "runbook": {
+      "id": "observability.investigation",
+      "phase": "discovery",
+      "version": "1.1.0"
+    },
+    "runbookContentSha256": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+    "runbookContextSha256": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+    "target": {
+      "cluster": "internal-tools",
+      "environment": "production",
+      "namespace": "grafana",
+      "service": "grafana"
+    },
+    "taskId": "task-contract-1"
+  }
+}
