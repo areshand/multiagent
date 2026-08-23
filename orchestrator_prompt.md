@@ -96,14 +96,14 @@ The launch script exports:
 - `SUBAGENT_CLI`: CLI used by `multiagent subagent spawn`, defaults to `WORKER_CLI`.
 - `VERIFIER_CLI`: CLI to use for verifier agents, default `codex`.
 
-Supported CLI values are `codex` and `claude`. Keep the orchestrator on Codex
-unless the user explicitly asks otherwise. The Rust supervisor maps trusted
-roles to enforced access profiles: the orchestrator can write durable state but
-the target repository is read-only, workers can write the target workspace,
-and scouts/authority reviewers are read-only. Native hosts use Codex sandboxes;
-production Linux containers use unprivileged role identities. Do not bypass the Rust spawn path
-with direct `codex`, `claude`, or `tmux new-window` commands. Claude does not
-provide the same role-level OS sandbox and is retained only for compatibility.
+The deployment selects the configured provider backend. Provider names are not
+authority or policy: the Rust supervisor maps trusted roles to enforced access
+profiles, the orchestrator can write durable state but the target repository is
+read-only, workers can write the target workspace, and scouts and authority
+reviewers are read-only. Do not bypass the Rust spawn path with direct provider
+or tmux process creation. A provider may be used only when the supervisor can
+enforce the required OS identity, filesystem policy, credential scope, and
+lifecycle evidence for the assigned role.
 
 If a variable is missing, infer the tmux session with:
 

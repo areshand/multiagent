@@ -25,7 +25,6 @@ const captureLines = Math.min(Number(process.env.MULTIAGENT_CAPTURE_LINES || "12
 const snapshotIntervalMs = Math.max(Number(process.env.MULTIAGENT_SNAPSHOT_INTERVAL_SECONDS || "60"), 15) * 1000;
 const idleTimeoutMs = Math.max(Number(process.env.MULTIAGENT_IDLE_TIMEOUT_SECONDS || "86400"), 300) * 1000;
 const uidSandbox = process.env.MULTIAGENT_UID_SANDBOX === "1";
-const agentHeadless = process.env.MULTIAGENT_AGENT_HEADLESS === "1";
 const idPattern = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const registryFile = path.join(stateRoot, "control-server", "sessions.json");
 
@@ -34,8 +33,8 @@ fs.mkdirSync(repositoryRoot, { recursive: true });
 
 function loadUsers() {
   const parsed = JSON.parse(fs.readFileSync(usersFile, "utf8"));
-  if (!Array.isArray(parsed.users) || typeof parsed.sessionSecret !== "string" || parsed.sessionSecret.length < 32) {
-    throw new Error("users file requires users[] and a sessionSecret of at least 32 characters");
+  if (!Array.isArray(parsed.users) || parsed.users.length === 0 || typeof parsed.sessionSecret !== "string" || parsed.sessionSecret.length < 32) {
+    throw new Error("users file requires at least one named user and a sessionSecret of at least 32 characters");
   }
   return parsed;
 }
@@ -261,6 +260,8 @@ function launchSession(id, repository, resume, actor, originalTask = "") {
     throw new Error("cannot resume a task without its bound original task");
   }
   const now = new Date().toISOString();
+  const authorityActor = actor === "system" ? (existing?.authorityActor || existing?.createdBy) : actor;
+  const authorityApprovedAt = actor === "system" ? (existing?.authorityApprovedAt || existing?.createdAt) : now;
   const args = [path.join(launcherRoot, "launch.sh"), "--session", id, "--root", root, "--no-attach"];
   if (resume) args.push("--resume");
   const env = {
@@ -274,13 +275,14 @@ function launchSession(id, repository, resume, actor, originalTask = "") {
     MULTIAGENT_USER_MESSAGE_FILE: fs.existsSync(path.join(controlState, "pending-user-message.md"))
       ? path.join(controlState, "pending-user-message.md")
       : "",
-    MULTIAGENT_CALLER_SUBJECT: `caller-${crypto.createHash("sha256").update(existing?.createdBy || actor).digest("hex").slice(0, 32)}`,
-    MULTIAGENT_CALLER_APPROVED_AT: existing?.createdAt || now,
+    MULTIAGENT_CALLER_SUBJECT: `caller-${crypto.createHash("sha256").update(authorityActor).digest("hex").slice(0, 32)}`,
+    MULTIAGENT_CALLER_APPROVED_AT: authorityApprovedAt,
   };
   run("bash", args, { cwd: launcherRoot, env });
   registry.sessions[id] = {
     ...existing, id, repository, status: "running", autoResume: true,
     createdBy: existing?.createdBy || actor, createdAt: existing?.createdAt || now,
+    authorityActor, authorityApprovedAt,
     resumedBy: resume ? actor : undefined, resumedAt: resume ? now : undefined,
     updatedAt: now, lastActivityAt: now,
   };
@@ -326,7 +328,7 @@ function restartWithUserMessage(id, text, actor) {
   const history = path.join(controlState, "user-messages");
   fs.mkdirSync(history, { recursive: true, mode: 0o750 });
   const submittedAt = new Date().toISOString();
-  const record = { actor, submittedAt, text };
+  const record = { actor, submittedAt, text, sha256: crypto.createHash("sha256").update(text).digest("hex") };
   const name = `${submittedAt.replace(/[^0-9]/g, "")}-${crypto.randomBytes(6).toString("hex")}.json`;
   fs.writeFileSync(path.join(history, name), JSON.stringify(record, null, 2) + "\n", { mode: 0o640 });
   fs.writeFileSync(path.join(controlState, "pending-user-message.md"), text.trim() + "\n", { mode: 0o640 });
@@ -514,6 +516,19 @@ const server = http.createServer(async (request, response) => {
 });
 
 const sockets = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
+const activeSubmissions = new Set();
+const submissionWindows = new Map();
+
+function admitSubmission(username, id) {
+  const key = `${username}:${id}`;
+  const now = Date.now();
+  const recent = (submissionWindows.get(key) || []).filter((timestamp) => now - timestamp < 60_000);
+  if (recent.length >= 10) throw new Error("session submission rate limit exceeded");
+  if (activeSubmissions.has(id)) throw new Error("a session submission is already being processed");
+  recent.push(now);
+  submissionWindows.set(key, recent);
+  activeSubmissions.add(id);
+}
 server.on("upgrade", (request, socket, head) => {
   const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
   const match = url.pathname.match(/^\/api\/sessions\/([a-z0-9-]+)\/terminal$/);
@@ -547,11 +562,12 @@ sockets.on("connection", (socket, request) => {
     try {
       const payload = JSON.parse(message.toString());
       if (payload.type !== "input") throw new Error("unsupported WebSocket message");
-      if (agentHeadless) {
+      admitSubmission(request.username, id);
+      try {
         const session = restartWithUserMessage(id, payload.text, request.username);
-        socket.send(JSON.stringify({ type: "accepted", mode: "headless-resume", session }));
-      } else {
-        sendInput(id, payload.text);
+        socket.send(JSON.stringify({ type: "accepted", mode: "supervisor-resume", session }));
+      } finally {
+        activeSubmissions.delete(id);
       }
       publish();
     } catch (error) { socket.send(JSON.stringify({ type: "error", error: error.message })); }

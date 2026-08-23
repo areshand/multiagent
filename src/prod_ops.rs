@@ -210,6 +210,12 @@ fn build_request(
         ],
         "delegatedRole": "runbook-operator",
         "delegatedSubject": "multiagent-supervisor",
+        "authorityProxy": {
+            "subject": "multiagent-supervisor",
+            "credentialSource": "deployment",
+            "signingBackend": "aws-kms",
+            "transportAuth": "service-token"
+        },
         "expiresAt": (now + Duration::minutes(4)).to_rfc3339_opts(SecondsFormat::Millis, true),
         "historySha256": digest_json(history)?,
         "intentSha256": digest_json(goal)?,
@@ -414,8 +420,8 @@ fn sign_permit(payload: &[u8]) -> Result<String, String> {
 
 fn call_prod_mcp(permit: &str) -> Result<Value, String> {
     let url = required_env("PROD_MCP_URL")?;
-    if !url.starts_with("http://") {
-        return Err("PROD_MCP_URL must use the internal http:// service endpoint".into());
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("PROD_MCP_URL must use HTTP or HTTPS".into());
     }
     let token = required_env("PROD_MCP_BEARER_TOKEN")?;
     let state = PathBuf::from(required_env("MULTIAGENT_STATE_DIR")?);
