@@ -82,10 +82,7 @@ pub fn authority_supervisor_exec(args: &[String]) -> Result<ExitCode, String> {
     crate::role_sandbox::exec_as_identity(
         config::SUPERVISOR_UID,
         config::ROLE_GID,
-        &[
-            config::SUPERVISOR_CREDENTIAL_GID,
-            config::TRACE_EXPORT_GID,
-        ],
+        &[config::SUPERVISOR_CREDENTIAL_GID, config::TRACE_EXPORT_GID],
         &command,
         &["supervisor".into(), "serve".into()],
     )

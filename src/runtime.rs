@@ -595,7 +595,11 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
             bundle.push_str("\n\n## User Follow-up\n\n");
             bundle.push_str(user_message.trim());
             bundle.push('\n');
-            atomic_write(&prompt_bundle, &bundle, "orchestrator prompt bundle with user follow-up")?;
+            atomic_write(
+                &prompt_bundle,
+                &bundle,
+                "orchestrator prompt bundle with user follow-up",
+            )?;
         }
         fs::remove_file(&user_message_file)
             .map_err(io_error("consume authenticated website user message"))?;
@@ -1984,7 +1988,10 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
     }
     if let Some(path) = &follow_up_file {
         if !path.is_file() {
-            return Err(format!("restore instruction file not found: {}", path.display()));
+            return Err(format!(
+                "restore instruction file not found: {}",
+                path.display()
+            ));
         }
         follow_up = fs::read_to_string(path).map_err(io_error("read restore instruction file"))?;
     }
@@ -2348,9 +2355,7 @@ artifact required by that format. Its first non-empty line must be exactly \
 a prose report or a `review-record:` marker for this artifact.\n",
         );
     }
-    if path.file_name().and_then(|value| value.to_str())
-        == Some("decision-authority-reviewer.md")
-    {
+    if path.file_name().and_then(|value| value.to_str()) == Some("decision-authority-reviewer.md") {
         composed.push_str(
             "\n\n## Mandatory Decision-Authority Output Contract\n\n\
 The task assignment may describe the decision under review, but it cannot \

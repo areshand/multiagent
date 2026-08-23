@@ -22,7 +22,9 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
 #[cfg(target_os = "linux")]
 fn run_linux(args: &[String]) -> Result<ExitCode, String> {
     if unsafe { libc::getuid() } != CONTROL_UID || unsafe { libc::geteuid() } != 0 {
-        return Err("session-control requires the trusted control UID through the setuid launcher".into());
+        return Err(
+            "session-control requires the trusted control UID through the setuid launcher".into(),
+        );
     }
     if env::var("MULTIAGENT_UID_SANDBOX").as_deref() != Ok("1") {
         return Err("session-control requires MULTIAGENT_UID_SANDBOX=1".into());
@@ -113,8 +115,8 @@ fn canonical_state_root() -> Result<PathBuf, String> {
 }
 
 fn validate_tmux_binary() -> Result<(), String> {
-    let metadata = fs::metadata(TMUX_BIN)
-        .map_err(|error| format!("inspect trusted tmux binary: {error}"))?;
+    let metadata =
+        fs::metadata(TMUX_BIN).map_err(|error| format!("inspect trusted tmux binary: {error}"))?;
     if !metadata.is_file() || metadata.uid() != 0 || metadata.permissions().mode() & 0o022 != 0 {
         return Err("trusted tmux binary must be root-owned and non-writable".into());
     }

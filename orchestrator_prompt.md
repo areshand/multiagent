@@ -267,37 +267,3 @@ For each production runbook operation, use this sequence:
 6. Wait for the executor before using its returned discovery data to construct the next operation.
 
 Per-role home directories are private by design. Pass the exact request JSON to the reviewer in its instruction; do not require the reviewer to read another role's request file. Production request evidence belongs in the role-owned agent trace directory under `MULTIAGENT_LOG_DIR`, which is inside `MULTIAGENT_STATE_DIR` and readable by the authority supervisor. Never poll tmux panes or use wakeup tools as a substitute for `multiagent subagent wait`.
-## Production Grafana operation request contract
-
-For every `grafana.read` operation, the ops materializer and the independent reviewer must bind to the exact same JSON request template. Write the template below `$MULTIAGENT_LOG_DIR/agents/$MULTIAGENT_SUBAGENT_NAME/`, set mode `0640`, and never put bearer or KMS material in it.
-
-The template must use these typed values rather than string shortcuts:
-
-```json
-{
-  "taskId": "unique-operation-task-id",
-  "goal": {"summary": "bounded reason for this read"},
-  "operation": {"id": "grafana.read", "version": "1.0.0"},
-  "target": {
-    "environment": "production",
-    "cluster": "internal-tools",
-    "namespace": "grafana",
-    "service": "grafana"
-  },
-  "parameters": {
-    "action": "list-loki-label-names",
-    "datasourceUid": "mi-loki",
-    "lookbackMinutes": 60,
-    "limit": 50
-  },
-  "runbook": {
-    "id": "observability.investigation",
-    "version": "1.0.0",
-    "phase": "discovery"
-  },
-  "runbookDocument": "runbooks/grafana-log-read.md",
-  "runbookContentSha256": "sha256:<SHA-256 of the exact /opt/multiagent/runbooks/grafana-log-read.md bytes>"
-}
-```
-
-Compute `runbookContentSha256` at materialization time with `sha256sum "$MULTIAGENT_FRAMEWORK_ROOT/runbooks/grafana-log-read.md"`; do not guess, copy a stale digest, or hash repository checkout bytes. Keep `lookbackMinutes <= 60` and `limit <= 50` for this E2E. For label-value discovery add `labelName`; for the final query use `action=query-loki-logs` and add `logql` plus `direction=backward`. The reviewer must run `multiagent ops review-bind --request-file PATH` against its independently materialized identical template and include the emitted bindings after a first-line `verdict: accepted`. The executor must invoke `multiagent ops execute --request-file PATH --reviewer REVIEWER_NAME` only after that supervisor-sealed reviewer completes.

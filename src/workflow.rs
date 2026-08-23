@@ -1357,14 +1357,9 @@ fn validate_contract_schema(text: &str, original_task: &str) -> Result<(), Strin
         || original.contains("must not embed")
         || original.contains("should not embed")
         || original.contains("without embedding");
-    let header = text
-        .lines()
-        .any(|line| {
-            line.trim()
-                .trim_start_matches('#')
-                .trim_start()
-                == "contract-artifact: version=1"
-        });
+    let header = text.lines().any(|line| {
+        line.trim().trim_start_matches('#').trim_start() == "contract-artifact: version=1"
+    });
     let rules = text
         .lines()
         .filter(|line| line.trim_start().starts_with("contract-rule:"))
