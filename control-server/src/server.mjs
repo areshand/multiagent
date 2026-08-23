@@ -5,7 +5,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { WebSocket, WebSocketServer } from "ws";
-import { findActiveSession, tmuxInvocation } from "./session-runtime.mjs";
+import { findActiveSession, sessionControlInvocation } from "./session-runtime.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(here, "../public");
@@ -33,8 +33,8 @@ fs.mkdirSync(repositoryRoot, { recursive: true });
 
 function loadUsers() {
   const parsed = JSON.parse(fs.readFileSync(usersFile, "utf8"));
-  if (!Array.isArray(parsed.users) || typeof parsed.sessionSecret !== "string" || parsed.sessionSecret.length < 32) {
-    throw new Error("users file requires users[] and a sessionSecret of at least 32 characters");
+  if (!Array.isArray(parsed.users) || parsed.users.length === 0 || typeof parsed.sessionSecret !== "string" || parsed.sessionSecret.length < 32) {
+    throw new Error("users file requires at least one named user and a sessionSecret of at least 32 characters");
   }
   return parsed;
 }
@@ -120,12 +120,20 @@ function run(command, args, options = {}) {
 }
 
 function runTmux(id, args, options = {}) {
-  const invocation = tmuxInvocation(stateRoot, id, args, uidSandbox);
-  return run("tmux", invocation.args, { ...invocation.options, ...options });
+  return run("tmux", args, options);
+}
+
+function runSessionControl(id, action, args = [], options = {}) {
+  const invocation = sessionControlInvocation(id, action, args);
+  return run(invocation.command, invocation.args, { ...invocation.options, ...options });
 }
 
 function tmuxAlive(id) {
-  try { runTmux(id, ["has-session", "-t", id]); return true; } catch { return false; }
+  try {
+    if (uidSandbox) runSessionControl(id, "status");
+    else runTmux(id, ["has-session", "-t", id]);
+    return true;
+  } catch { return false; }
 }
 
 function loadRegistry() {
@@ -228,7 +236,7 @@ function writeTraceSummary(id, status) {
   fs.writeFileSync(path.join(root, "final-report.md"), markdown, { mode: 0o600 });
 }
 
-function launchSession(id, repository, resume, actor) {
+function launchSession(id, repository, resume, actor, originalTask = "") {
   if (!idPattern.test(id)) throw new Error("invalid session id");
   if (tmuxAlive(id)) throw new Error("session already running");
   if (uidSandbox) {
@@ -241,7 +249,19 @@ function launchSession(id, repository, resume, actor) {
   const root = repositoryPath(repository);
   const persistent = sessionStateDir(id);
   fs.mkdirSync(persistent, { recursive: true });
+  const controlState = path.join(persistent, "control-server");
+  fs.mkdirSync(controlState, { recursive: true, mode: 0o750 });
+  const originalTaskFile = path.join(controlState, "original-task.md");
+  if (!resume) {
+    const task = String(originalTask || "").trim();
+    if (!task || task.length > 32768) throw new Error("task must contain 1 to 32768 characters");
+    fs.writeFileSync(originalTaskFile, task + "\n", { mode: 0o640 });
+  } else if (!fs.existsSync(originalTaskFile)) {
+    throw new Error("cannot resume a task without its bound original task");
+  }
   const now = new Date().toISOString();
+  const authorityActor = actor === "system" ? (existing?.authorityActor || existing?.createdBy) : actor;
+  const authorityApprovedAt = actor === "system" ? (existing?.authorityApprovedAt || existing?.createdAt) : now;
   const args = [path.join(launcherRoot, "launch.sh"), "--session", id, "--root", root, "--no-attach"];
   if (resume) args.push("--resume");
   const env = {
@@ -251,13 +271,18 @@ function launchSession(id, repository, resume, actor) {
     MULTIAGENT_STATE_DIR: persistent,
     MULTIAGENT_WRITE_POLICY: path.join(persistent, "write-policy.paths"),
     MULTIAGENT_PROMPT: path.join(launcherRoot, "orchestrator_prompt.md"),
-    MULTIAGENT_CALLER_SUBJECT: `caller-${crypto.createHash("sha256").update(existing?.createdBy || actor).digest("hex").slice(0, 32)}`,
-    MULTIAGENT_CALLER_APPROVED_AT: existing?.createdAt || now,
+    MULTIAGENT_ORIGINAL_TASK_FILE: originalTaskFile,
+    MULTIAGENT_USER_MESSAGE_FILE: fs.existsSync(path.join(controlState, "pending-user-message.md"))
+      ? path.join(controlState, "pending-user-message.md")
+      : "",
+    MULTIAGENT_CALLER_SUBJECT: `caller-${crypto.createHash("sha256").update(authorityActor).digest("hex").slice(0, 32)}`,
+    MULTIAGENT_CALLER_APPROVED_AT: authorityApprovedAt,
   };
   run("bash", args, { cwd: launcherRoot, env });
   registry.sessions[id] = {
     ...existing, id, repository, status: "running", autoResume: true,
     createdBy: existing?.createdBy || actor, createdAt: existing?.createdAt || now,
+    authorityActor, authorityApprovedAt,
     resumedBy: resume ? actor : undefined, resumedAt: resume ? now : undefined,
     updatedAt: now, lastActivityAt: now,
   };
@@ -275,19 +300,43 @@ function capture(id) {
   if (!tmuxAlive(id)) {
     try { return fs.readFileSync(path.join(traceRoot(id), "terminal-tail.log"), "utf8"); } catch { return ""; }
   }
+  if (uidSandbox) return runSessionControl(id, "capture", [String(captureLines)], { maxBuffer: 8 * 1024 * 1024 });
   return runTmux(id, ["capture-pane", "-p", "-J", "-S", `-${captureLines}`, "-t", `${id}:orchestrator`], { maxBuffer: 8 * 1024 * 1024 });
 }
 
 function sendInput(id, text) {
   if (!tmuxAlive(id)) throw new Error("session is not running");
   if (typeof text !== "string" || !text.trim() || text.length > 32768) throw new Error("message must contain 1 to 32768 characters");
-  const load = tmuxInvocation(stateRoot, id, ["load-buffer", "-"], uidSandbox);
-  execFileSync("tmux", load.args, { ...load.options, input: text, timeout: 5000 });
+  if (uidSandbox) {
+    runSessionControl(id, "submit", [], { input: text, timeout: 5000 });
+    registry.sessions[id].updatedAt = new Date().toISOString();
+    registry.sessions[id].lastActivityAt = registry.sessions[id].updatedAt;
+    saveRegistry();
+    return;
+  }
+  execFileSync("tmux", ["load-buffer", "-"], { input: text, timeout: 5000 });
   runTmux(id, ["paste-buffer", "-d", "-t", `${id}:orchestrator`]);
   runTmux(id, ["send-keys", "-t", `${id}:orchestrator`, "Enter"]);
   registry.sessions[id].updatedAt = new Date().toISOString();
   registry.sessions[id].lastActivityAt = registry.sessions[id].updatedAt;
   saveRegistry();
+}
+
+function restartWithUserMessage(id, text, actor) {
+  if (typeof text !== "string" || !text.trim() || text.length > 32768) throw new Error("message must contain 1 to 32768 characters");
+  const controlState = path.join(sessionStateDir(id), "control-server");
+  const history = path.join(controlState, "user-messages");
+  fs.mkdirSync(history, { recursive: true, mode: 0o750 });
+  const submittedAt = new Date().toISOString();
+  const record = { actor, submittedAt, text, sha256: crypto.createHash("sha256").update(text).digest("hex") };
+  const name = `${submittedAt.replace(/[^0-9]/g, "")}-${crypto.randomBytes(6).toString("hex")}.json`;
+  fs.writeFileSync(path.join(history, name), JSON.stringify(record, null, 2) + "\n", { mode: 0o640 });
+  fs.writeFileSync(path.join(controlState, "pending-user-message.md"), text.trim() + "\n", { mode: 0o640 });
+  if (tmuxAlive(id)) {
+    if (uidSandbox) runSessionControl(id, "stop");
+    else runTmux(id, ["kill-session", "-t", id]);
+  }
+  return launchSession(id, registry.sessions[id].repository, true, actor);
 }
 
 function checkpoint(id) {
@@ -297,13 +346,17 @@ function checkpoint(id) {
   fs.mkdirSync(traces, { recursive: true });
   let terminalTail = "";
   if (tmuxAlive(id)) {
-    terminalTail = conciseTail(capture(id));
-    fs.writeFileSync(path.join(traces, "terminal-tail.log"), terminalTail, { mode: 0o600 });
-    const digest = crypto.createHash("sha256").update(terminalTail).digest("hex");
-    if (registry.sessions[id]?.lastOutputSha256 !== digest) {
-      registry.sessions[id].lastOutputSha256 = digest;
-      registry.sessions[id].lastActivityAt = new Date().toISOString();
-      saveRegistry();
+    try {
+      terminalTail = conciseTail(capture(id));
+      fs.writeFileSync(path.join(traces, "terminal-tail.log"), terminalTail, { mode: 0o600 });
+      const digest = crypto.createHash("sha256").update(terminalTail).digest("hex");
+      if (registry.sessions[id]?.lastOutputSha256 !== digest) {
+        registry.sessions[id].lastOutputSha256 = digest;
+        registry.sessions[id].lastActivityAt = new Date().toISOString();
+        saveRegistry();
+      }
+    } catch (error) {
+      console.error(`checkpoint capture skipped for ${id}`, error);
     }
   }
   const references = traceReferences(id);
@@ -321,7 +374,10 @@ async function retireSession(id, status, actor) {
   const record = registry.sessions[id];
   if (!record) throw new Error("unknown task");
   checkpoint(id);
-  if (tmuxAlive(id)) runTmux(id, ["kill-session", "-t", id]);
+  if (tmuxAlive(id)) {
+    if (uidSandbox) runSessionControl(id, "stop");
+    else runTmux(id, ["kill-session", "-t", id]);
+  }
   const now = new Date().toISOString();
   record.status = status;
   record.autoResume = false;
@@ -425,7 +481,7 @@ const server = http.createServer(async (request, response) => {
     }
     if (request.method === "POST" && url.pathname === "/api/sessions") {
       const body = await readBody(request);
-      return json(response, 201, launchSession(String(body.id || ""), String(body.repository || ""), Boolean(body.resume), username));
+      return json(response, 201, launchSession(String(body.id || ""), String(body.repository || ""), Boolean(body.resume), username, String(body.task || "")));
     }
     const match = url.pathname.match(/^\/api\/sessions\/([a-z0-9-]+)\/(restart|resume|pause|complete|archive|checkpoint)$/);
     if (request.method === "POST" && match) {
@@ -444,7 +500,10 @@ const server = http.createServer(async (request, response) => {
       }
       if (action === "restart") {
         checkpoint(id);
-        if (tmuxAlive(id)) runTmux(id, ["kill-session", "-t", id]);
+        if (tmuxAlive(id)) {
+          if (uidSandbox) runSessionControl(id, "stop");
+          else runTmux(id, ["kill-session", "-t", id]);
+        }
         return json(response, 200, launchSession(id, registry.sessions[id].repository, true, username));
       }
       return json(response, 200, sessionView(id));
@@ -457,14 +516,29 @@ const server = http.createServer(async (request, response) => {
 });
 
 const sockets = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
+const activeSubmissions = new Set();
+const submissionWindows = new Map();
+
+function admitSubmission(username, id) {
+  const key = `${username}:${id}`;
+  const now = Date.now();
+  const recent = (submissionWindows.get(key) || []).filter((timestamp) => now - timestamp < 60_000);
+  if (recent.length >= 10) throw new Error("session submission rate limit exceeded");
+  if (activeSubmissions.has(id)) throw new Error("a session submission is already being processed");
+  recent.push(now);
+  submissionWindows.set(key, recent);
+  activeSubmissions.add(id);
+}
 server.on("upgrade", (request, socket, head) => {
   const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
   const match = url.pathname.match(/^\/api\/sessions\/([a-z0-9-]+)\/terminal$/);
-  if (!match || !validOrigin(request) || !currentUser(request) || !registry.sessions[match[1]]) {
+  const username = currentUser(request);
+  if (!match || !validOrigin(request) || !username || !registry.sessions[match[1]]) {
     socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
     return socket.destroy();
   }
   request.sessionId = match[1];
+  request.username = username;
   sockets.handleUpgrade(request, socket, head, (websocket) => sockets.emit("connection", websocket, request));
 });
 
@@ -488,7 +562,13 @@ sockets.on("connection", (socket, request) => {
     try {
       const payload = JSON.parse(message.toString());
       if (payload.type !== "input") throw new Error("unsupported WebSocket message");
-      sendInput(id, payload.text);
+      admitSubmission(request.username, id);
+      try {
+        const session = restartWithUserMessage(id, payload.text, request.username);
+        socket.send(JSON.stringify({ type: "accepted", mode: "supervisor-resume", session }));
+      } finally {
+        activeSubmissions.delete(id);
+      }
       publish();
     } catch (error) { socket.send(JSON.stringify({ type: "error", error: error.message })); }
   });

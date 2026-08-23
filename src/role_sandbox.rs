@@ -31,7 +31,7 @@ fn privileged_command_allowed(command: &str, real_uid: u32) -> bool {
     command == "role-agent-exec" && real_uid == crate::config::ORCHESTRATOR_UID
         || matches!(
             command,
-            "authority-supervisor-exec" | "container-bootstrap" | "launch"
+            "authority-supervisor-exec" | "container-bootstrap" | "launch" | "session-control"
         ) && real_uid == crate::config::CONTROL_UID
 }
 
@@ -482,6 +482,7 @@ mod tests {
             CONTROL_UID
         ));
         assert!(privileged_command_allowed("launch", CONTROL_UID));
+        assert!(privileged_command_allowed("session-control", CONTROL_UID));
         assert!(privileged_command_allowed(
             "authority-supervisor-exec",
             CONTROL_UID
@@ -491,6 +492,10 @@ mod tests {
             ORCHESTRATOR_UID
         ));
         assert!(!privileged_command_allowed("launch", ORCHESTRATOR_UID));
+        assert!(!privileged_command_allowed(
+            "session-control",
+            ORCHESTRATOR_UID
+        ));
         for command in ["role-exec", "subagent", "snapshot", "workflow"] {
             assert!(!privileged_command_allowed(command, ORCHESTRATOR_UID));
         }

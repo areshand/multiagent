@@ -49,6 +49,7 @@
       <p class="eyebrow">Bootstrap</p><h2>New task</h2>
       <label>Task ID<input name="id" pattern="[a-z0-9][a-z0-9-]{0,62}" required></label>
       <label>Repository<select name="repository" required></select></label>
+      <label>Original task<textarea name="task" rows="8" maxlength="32768" required></textarea></label>
       <div class="dialog-actions"><button type="button" id="cancel-create" class="quiet">Cancel</button><button type="submit">Start orchestrator</button></div>
       <p id="create-error" class="error"></p>
     </form>

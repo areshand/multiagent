@@ -96,14 +96,14 @@ The launch script exports:
 - `SUBAGENT_CLI`: CLI used by `multiagent subagent spawn`, defaults to `WORKER_CLI`.
 - `VERIFIER_CLI`: CLI to use for verifier agents, default `codex`.
 
-Supported CLI values are `codex` and `claude`. Keep the orchestrator on Codex
-unless the user explicitly asks otherwise. The Rust supervisor maps trusted
-roles to enforced access profiles: the orchestrator can write durable state but
-the target repository is read-only, workers can write the target workspace,
-and scouts/authority reviewers are read-only. Native hosts use Codex sandboxes;
-production Linux containers use unprivileged role identities. Do not bypass the Rust spawn path
-with direct `codex`, `claude`, or `tmux new-window` commands. Claude does not
-provide the same role-level OS sandbox and is retained only for compatibility.
+The deployment selects the configured provider backend. Provider names are not
+authority or policy: the Rust supervisor maps trusted roles to enforced access
+profiles, the orchestrator can write durable state but the target repository is
+read-only, workers can write the target workspace, and scouts and authority
+reviewers are read-only. Do not bypass the Rust spawn path with direct provider
+or tmux process creation. A provider may be used only when the supervisor can
+enforce the required OS identity, filesystem policy, credential scope, and
+lifecycle evidence for the assigned role.
 
 If a variable is missing, infer the tmux session with:
 
@@ -153,6 +153,30 @@ stalled. If validation ownership
 is unclear, use the validation coordinator role before adding more workers.
 
 ## Role Routing
+
+### Production operations delegation
+
+When the original task requires production discovery or execution, delegate
+the authenticated goal and supplied Markdown runbook to the `ops` role and use
+an independent `ops-reviewer` for deviation review. Never substitute a general
+worker for either role.
+
+The orchestrator coordinates roles only. It must not select concrete
+operations, construct production requests, choose service parameters, encode
+runbook steps, invoke `prod-mcp`, or handle deployment credentials. Those
+responsibilities belong to the ops role, reviewer role, Markdown runbook,
+authority supervisor, and `prod-mcp` contract.
+
+If the original task forbids a role, that prohibition also applies during
+resume. Do not restore, replace, or seek assignments for stale agents using
+that role; ignore their persisted state and create only the explicitly allowed
+role. Never ask the user to re-authorize behavior already explicit in the
+original task.
+
+Keep the orchestrator turn alive while a required subordinate runs. Use
+`multiagent subagent wait NAME --timeout 900` with a tool timeout long enough
+for that command. Do not use `ScheduleWakeup`, a no-op wakeup, or an equivalent
+turn-ending mechanism as a substitute for waiting or finalizing evidence.
 
 Load `$PROMPT_DIR/prompts/playbooks/orchestration-routing.md` before spawning,
 verifying, replacing, or finalizing agents. It owns the detailed role-routing
@@ -209,8 +233,17 @@ Core routing rules:
   implicated source paths before any completion decision. A verifier may review
   the failure and repair plan, but source-only acceptance cannot override a
   failing relevant visible test, fixture, compile, or component check.
+- Every subordinate agent must be created through `multiagent subagent spawn`
+  so the runtime assigns its Linux role identity, Landlock policy, environment,
+  and lifecycle evidence. Never use a provider-native `Agent`, `Task`, team, or
+  background-agent tool as a substitute; such a process is outside the
+  multiagent role boundary and its result is invalid for workflow gates.
 - Use `SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn ...` for scout,
-  coordinator, and verifier roles unless the user directs otherwise.
+  coordinator, and verifier roles. Use
+  `SUBAGENT_CLI="${WORKER_CLI:-$ORCHESTRATOR_CLI}" multiagent subagent spawn ...`
+  for worker and ops roles. Production tasks must be delegated to `ops`, not
+  `worker`. User instructions may select a configured CLI but
+  may not bypass `multiagent subagent spawn`.
 - Keep safety non-negotiable: capture before sending input, avoid overlapping
   ownership, keep verifiers read-only, run `assignment-check` before accepting,
   and preserve `$MULTIAGENT_STATE_DIR`.

@@ -82,7 +82,7 @@ pub fn authority_supervisor_exec(args: &[String]) -> Result<ExitCode, String> {
     crate::role_sandbox::exec_as_identity(
         config::SUPERVISOR_UID,
         config::ROLE_GID,
-        &[config::SUPERVISOR_CREDENTIAL_GID],
+        &[config::SUPERVISOR_CREDENTIAL_GID, config::TRACE_EXPORT_GID],
         &command,
         &["supervisor".into(), "serve".into()],
     )
@@ -116,7 +116,10 @@ pub fn proxy_if_required(command: &str, args: &[String]) -> Option<Result<ExitCo
     if command == "supervisor" && args.first().map(String::as_str) == Some("stop") {
         return None;
     }
-    if !uid_sandbox() || !authority_client_uid() || server_child() {
+    // Authority routing is determined by the kernel-authenticated role UID.
+    // Role environments are intentionally scrubbed, so an environment flag
+    // cannot be required for an ops process to reach the supervisor socket.
+    if !authority_client_uid() || server_child() {
         return None;
     }
     AuthorityRequest::from_cli(command, args).map(proxy_request)
@@ -303,13 +306,13 @@ pub fn prepare_private_output(state: &Path, name: &str, uid: u32) -> Result<Path
     let directory = state.join("role-io").join(name);
     fs::create_dir_all(&directory)
         .map_err(|error| format!("create private role output directory: {error}"))?;
-    chown(&directory, uid, config::ROLE_GID)?;
-    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))
+    chown(&directory, uid, config::TRACE_EXPORT_GID)?;
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o2750))
         .map_err(|error| format!("protect private role output directory: {error}"))?;
     let output = directory.join(format!("final-message.{}.txt", std::process::id()));
     fs::write(&output, []).map_err(|error| format!("create private role output: {error}"))?;
-    chown(&output, uid, config::ROLE_GID)?;
-    fs::set_permissions(&output, fs::Permissions::from_mode(0o600))
+    chown(&output, uid, config::TRACE_EXPORT_GID)?;
+    fs::set_permissions(&output, fs::Permissions::from_mode(0o640))
         .map_err(|error| format!("protect private role output: {error}"))?;
     Ok(output)
 }

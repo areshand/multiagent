@@ -10,6 +10,8 @@ pub const SUPERVISOR_UID: u32 = 10004;
 pub const OPS_UID: u32 = 10005;
 pub const ROLE_GID: u32 = 10001;
 #[cfg(target_os = "linux")]
+pub const TRACE_EXPORT_GID: u32 = 10006;
+#[cfg(target_os = "linux")]
 pub const SUPERVISOR_CREDENTIAL_GID: u32 = 10004;
 
 /// Return whether lifecycle gates are mandatory for the current process.

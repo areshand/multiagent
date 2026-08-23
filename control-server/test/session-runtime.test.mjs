@@ -1,17 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { findActiveSession, tmuxInvocation } from "../src/session-runtime.mjs";
+import { findActiveSession, sessionControlInvocation } from "../src/session-runtime.mjs";
 
-test("UID-isolated control uses the per-session socket and orchestrator identity", () => {
-  assert.deepEqual(tmuxInvocation("/var/lib/multiagent/state", "task-1", ["has-session", "-t", "task-1"], true), {
-    args: [
-      "-S",
-      "/var/lib/multiagent/state/sessions/task-1/runtime_state/tmux.sock",
-      "has-session",
-      "-t",
-      "task-1",
-    ],
-    options: { uid: 10001, gid: 10001 },
+test("UID-isolated control uses semantic setuid-gated session operations", () => {
+  assert.deepEqual(sessionControlInvocation("task-1", "capture", ["120"]), {
+    command: "/opt/multiagent/bin/multiagent",
+    args: ["session-control", "task-1", "capture", "120"],
+    options: {},
   });
 });
 

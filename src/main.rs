@@ -8,6 +8,7 @@ mod prod_ops;
 mod prompt_bundle;
 mod role_sandbox;
 mod runtime;
+mod session_control;
 mod snapshot;
 mod state;
 mod subagent;
@@ -25,6 +26,7 @@ const USAGE: &str = r#"Usage:
   multiagent prompt-bundle [ARGS...]
   multiagent subagent COMMAND [ARGS...]
   multiagent workflow COMMAND [ARGS...]
+  multiagent session-control SESSION status|capture|submit|stop [ARGS...]
   multiagent launch|orchestrator|status|watch [ARGS...]
   multiagent snapshot --root DIR [--base REV] [--format json|shell]
 
@@ -77,6 +79,9 @@ fn main() -> ExitCode {
         "role-exec" => role_sandbox::run(&args).map_err(|message| ("role-exec", message)),
         "role-agent-exec" => {
             runtime::role_agent_exec(&args).map_err(|message| ("role-agent-exec", message))
+        }
+        "session-control" => {
+            session_control::run(&args).map_err(|message| ("session-control", message))
         }
         "authority-supervisor-exec" => supervisor::authority_supervisor_exec(&args)
             .map_err(|message| ("authority-supervisor-exec", message)),
