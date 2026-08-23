@@ -65,13 +65,19 @@ For consequential or uncertain decisions, run the independent
 and whether the TODOs or proposed assignment contain omitted decisions. Ask the
 user before committing any user-owned decision.
 
-Spawn that review read-only through the normal subagent path, for example:
+Spawn that review read-only through the normal subagent path. This command path
+is mandatory, not an example: do not replace it with a provider-native `Agent`,
+`Task`, team, or background-agent tool.
 
 ```bash
 SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn decision-authority-reviewer \
   --role reviewer --instruction-file AUTHORITY_REVIEW_INPUT
 multiagent subagent wait decision-authority-reviewer --timeout 900
 ```
+
+Apply the same rule to contract scouts, workers, ops agents, and post-execution
+reviewers. Only `multiagent subagent spawn` establishes the required Linux role,
+Landlock policy, trusted runtime environment, and durable lifecycle evidence.
 
 Do not continue merely because an immediate poll still reports `running`.
 Inspect the completed or blocked result after the bounded wait and persist its
@@ -104,6 +110,12 @@ Spawn bounded exploitation workers only after the implementation gate passes.
 Every assignment must reference the active workflow, decision, and plan. The
 worker's first instruction must contain the complete current approved
 implementation context; a decision ID alone is insufficient.
+
+Production runbook operations are not workspace implementation. For a signed
+prod-mcp request, do not create a worker or assignment. Spawn the `ops` role
+after independent review of the exact request and have that role invoke
+`multiagent ops execute`. This special case remains subject to the active
+workflow, decision, plan, runbook, bounds, and post-execution review.
 
 Do not silently change the approved plan. A newly discovered choice or factual
 uncertainty becomes a TODO and returns through pre-implementation.

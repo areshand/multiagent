@@ -313,6 +313,10 @@ impl AgentBackend for ClaudeBackend {
                     "--verbose".into(),
                     "--dangerously-skip-permissions".into(),
                 ]);
+                if let Some(prompt) = env_nonempty("MULTIAGENT_CLAUDE_APPEND_SYSTEM_PROMPT") {
+                    args.push("--append-system-prompt".into());
+                    args.push(prompt.into());
+                }
                 if let Some(session) = &request.resume_session {
                     args.push("--resume".into());
                     args.push(session.into());

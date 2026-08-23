@@ -154,6 +154,34 @@ is unclear, use the validation coordinator role before adding more workers.
 
 ## Role Routing
 
+### Production runbook operations
+
+When the original task or Markdown runbook requires production discovery or
+execution, `ops` is the executor role. Never substitute `worker`, create a
+workspace assignment, or use `multiagent agent` directly. Materialize the
+exact request, obtain the required independent `reviewer` evidence, then use:
+
+```bash
+SUBAGENT_CLI="${WORKER_CLI:-$ORCHESTRATOR_CLI}" multiagent subagent spawn NAME \
+  --role ops --instruction-file INSTRUCTION
+```
+
+Do not pass `--own`, an assignment ID, or source paths to an ops agent. The ops
+agent invokes `multiagent ops execute`; deployment credentials intentionally
+remain absent from the model environment and are supplied only inside the
+authorized supervisor transaction.
+
+If the original task forbids a role, that prohibition also applies during
+resume. Do not restore, replace, or seek assignments for stale agents using
+that role; ignore their persisted state and create only the explicitly allowed
+role. Never ask the user to re-authorize behavior already explicit in the
+original task.
+
+Keep the orchestrator turn alive while a required subordinate runs. Use
+`multiagent subagent wait NAME --timeout 900` with a tool timeout long enough
+for that command. Do not use `ScheduleWakeup`, a no-op wakeup, or an equivalent
+turn-ending mechanism as a substitute for waiting or finalizing evidence.
+
 Load `$PROMPT_DIR/prompts/playbooks/orchestration-routing.md` before spawning,
 verifying, replacing, or finalizing agents. It owns the detailed role-routing
 workflow, progress/status procedure, safety rules, and optional playbook
@@ -209,10 +237,67 @@ Core routing rules:
   implicated source paths before any completion decision. A verifier may review
   the failure and repair plan, but source-only acceptance cannot override a
   failing relevant visible test, fixture, compile, or component check.
+- Every subordinate agent must be created through `multiagent subagent spawn`
+  so the runtime assigns its Linux role identity, Landlock policy, environment,
+  and lifecycle evidence. Never use a provider-native `Agent`, `Task`, team, or
+  background-agent tool as a substitute; such a process is outside the
+  multiagent role boundary and its result is invalid for workflow gates.
 - Use `SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn ...` for scout,
-  coordinator, and verifier roles unless the user directs otherwise.
+  coordinator, and verifier roles. Use
+  `SUBAGENT_CLI="${WORKER_CLI:-$ORCHESTRATOR_CLI}" multiagent subagent spawn ...`
+  for worker and ops roles. Production runbook operations must use `ops`, not
+  `worker`. User instructions may select a configured CLI but
+  may not bypass `multiagent subagent spawn`.
 - Keep safety non-negotiable: capture before sending input, avoid overlapping
   ownership, keep verifiers read-only, run `assignment-check` before accepting,
   and preserve `$MULTIAGENT_STATE_DIR`.
 - For DAG-controlled workflows, crash recovery, resume mode, or outside-root
   writes, load the matching playbook listed in Prompt Modules.
+## One-shot production operation coordination
+
+Role agents are batch subprocesses, not interactive mailboxes. Do not assign one ops agent a multi-stage workflow that requires the orchestrator to respond while that agent is still running.
+
+For each production runbook operation, use this sequence:
+
+1. Spawn a focused `ops` materializer. It must set `REQUEST_FILE="$MULTIAGENT_LOG_DIR/agents/$MULTIAGENT_SUBAGENT_NAME/request.json"`, write the exact request there, print the exact JSON and request path in its final response, and exit without executing it. Never tell an ops role to write into the repository or its private home.
+2. Wait for that materializer with `multiagent subagent wait NAME --timeout 900`.
+3. Spawn an independent `reviewer` against the exact literal JSON returned by the materializer. The reviewer must emit the required accepted review evidence and exit.
+4. Wait for the reviewer with `multiagent subagent wait NAME --timeout 900`.
+5. Spawn a fresh focused `ops` executor with the same literal JSON and reviewer name. It must set `REQUEST_FILE="$MULTIAGENT_LOG_DIR/agents/$MULTIAGENT_SUBAGENT_NAME/request.json"`, write the identical JSON there, call `multiagent ops execute --request-file "$REQUEST_FILE" --reviewer REVIEWER_NAME`, persist/report the resulting operation evidence, and exit.
+6. Wait for the executor before using its returned discovery data to construct the next operation.
+
+Per-role home directories are private by design. Pass the exact request JSON to the reviewer in its instruction; do not require the reviewer to read another role's request file. Production request evidence belongs in the role-owned agent trace directory under `MULTIAGENT_LOG_DIR`, which is inside `MULTIAGENT_STATE_DIR` and readable by the authority supervisor. Never poll tmux panes or use wakeup tools as a substitute for `multiagent subagent wait`.
+## Production Grafana operation request contract
+
+For every `grafana.read` operation, the ops materializer and the independent reviewer must bind to the exact same JSON request template. Write the template below `$MULTIAGENT_LOG_DIR/agents/$MULTIAGENT_SUBAGENT_NAME/`, set mode `0640`, and never put bearer or KMS material in it.
+
+The template must use these typed values rather than string shortcuts:
+
+```json
+{
+  "taskId": "unique-operation-task-id",
+  "goal": {"summary": "bounded reason for this read"},
+  "operation": {"id": "grafana.read", "version": "1.0.0"},
+  "target": {
+    "environment": "production",
+    "cluster": "internal-tools",
+    "namespace": "grafana",
+    "service": "grafana"
+  },
+  "parameters": {
+    "action": "list-loki-label-names",
+    "datasourceUid": "mi-loki",
+    "lookbackMinutes": 60,
+    "limit": 50
+  },
+  "runbook": {
+    "id": "observability.investigation",
+    "version": "1.0.0",
+    "phase": "discovery"
+  },
+  "runbookDocument": "runbooks/grafana-log-read.md",
+  "runbookContentSha256": "sha256:<SHA-256 of the exact /opt/multiagent/runbooks/grafana-log-read.md bytes>"
+}
+```
+
+Compute `runbookContentSha256` at materialization time with `sha256sum "$MULTIAGENT_FRAMEWORK_ROOT/runbooks/grafana-log-read.md"`; do not guess, copy a stale digest, or hash repository checkout bytes. Keep `lookbackMinutes <= 60` and `limit <= 50` for this E2E. For label-value discovery add `labelName`; for the final query use `action=query-loki-logs` and add `logql` plus `direction=backward`. The reviewer must run `multiagent ops review-bind --request-file PATH` against its independently materialized identical template and include the emitted bindings after a first-line `verdict: accepted`. The executor must invoke `multiagent ops execute --request-file PATH --reviewer REVIEWER_NAME` only after that supervisor-sealed reviewer completes.

@@ -1,13 +1,10 @@
 import path from "node:path";
 
-export const ORCHESTRATOR_UID = 10001;
-export const ROLE_GID = 10001;
-
-export function tmuxInvocation(stateRoot, sessionId, args, uidSandbox) {
-  if (!uidSandbox) return { args, options: {} };
+export function sessionControlInvocation(sessionId, action, args = []) {
   return {
-    args: ["-S", path.join(stateRoot, "sessions", sessionId, "runtime_state", "tmux.sock"), ...args],
-    options: { uid: ORCHESTRATOR_UID, gid: ROLE_GID },
+    command: process.env.MULTIAGENT_BIN || "/opt/multiagent/bin/multiagent",
+    args: ["session-control", sessionId, action, ...args],
+    options: {},
   };
 }
 

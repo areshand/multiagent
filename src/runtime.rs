@@ -565,9 +565,51 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
         "--output".into(),
         prompt_bundle.display().to_string(),
     ])?;
+    let orchestrator_trace_dir = log_dir.join("agents/orchestrator");
+    let orchestrator_resume_session = if resume
+        && (orchestrator_cli == "claude" || orchestrator_cli == "qwen")
+        && (agent_headless == "1" || orchestrator_cli == "qwen")
+    {
+        native_resume_session(&orchestrator_trace_dir)
+    } else {
+        None
+    };
+    let user_turn = state_dir.join("runtime_state/orchestrator-user-turn.md");
+    let mut agent_prompt = prompt_bundle.clone();
+    if let Some(user_message_file) = env_path("MULTIAGENT_USER_MESSAGE_FILE") {
+        let user_message = fs::read_to_string(&user_message_file)
+            .map_err(io_error("read authenticated website user message"))?;
+        if user_message.is_empty() || user_message.len() > 32_768 {
+            return Err("authenticated website user message must contain 1 to 32768 bytes".into());
+        }
+        if orchestrator_resume_session.is_some() {
+            atomic_write(
+                &user_turn,
+                &format!("{}\n", user_message.trim()),
+                "orchestrator user turn",
+            )?;
+            agent_prompt = user_turn.clone();
+        } else {
+            let mut bundle = fs::read_to_string(&prompt_bundle)
+                .map_err(io_error("read orchestrator prompt bundle"))?;
+            bundle.push_str("\n\n## User Follow-up\n\n");
+            bundle.push_str(user_message.trim());
+            bundle.push('\n');
+            atomic_write(&prompt_bundle, &bundle, "orchestrator prompt bundle with user follow-up")?;
+        }
+        fs::remove_file(&user_message_file)
+            .map_err(io_error("consume authenticated website user message"))?;
+    } else if orchestrator_resume_session.is_some() {
+        atomic_write(
+            &user_turn,
+            "Continue the existing task from its persisted conversation and runtime state.\n",
+            "orchestrator continuation turn",
+        )?;
+        agent_prompt = user_turn.clone();
+    }
     write_prompt_hashes(
         &state_dir.join("runtime_state/prompt-sha256.tsv"),
-        [&prompt, &lifecycle_prompt, &prompt_bundle],
+        [&prompt, &lifecycle_prompt, &prompt_bundle, &agent_prompt],
     )?;
     workflow::run(&[
         "init-or-resume".into(),
@@ -609,9 +651,10 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
         &codex_bin,
         &claude_bin,
         &qwen_bin,
-        &prompt_bundle,
+        &agent_prompt,
         &state_dir.join("orchestrator-last-message.txt"),
         resume,
+        orchestrator_resume_session.as_deref(),
     )?;
     if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
         supervisor::register_runtime_state(&state_dir)?;
@@ -747,6 +790,10 @@ fn launch_environment(
             "MULTIAGENT_ORIGINAL_TASK_FILE",
             env_nonempty("MULTIAGENT_ORIGINAL_TASK_FILE").unwrap_or_default(),
         ),
+        (
+            "MULTIAGENT_USER_MESSAGE_FILE",
+            env_nonempty("MULTIAGENT_USER_MESSAGE_FILE").unwrap_or_default(),
+        ),
         ("MULTIAGENT_STATE_DIR", state.display().to_string()),
         ("MULTIAGENT_LOG_DIR", logs.display().to_string()),
         ("MULTIAGENT_WRITE_POLICY", policy.display().to_string()),
@@ -771,6 +818,10 @@ fn launch_environment(
         (
             "MULTIAGENT_NATIVE_RESUME",
             env_nonempty("MULTIAGENT_NATIVE_RESUME").unwrap_or_else(|| "0".into()),
+        ),
+        (
+            "MULTIAGENT_CLAUDE_APPEND_SYSTEM_PROMPT",
+            env_nonempty("MULTIAGENT_CLAUDE_APPEND_SYSTEM_PROMPT").unwrap_or_default(),
         ),
         (
             "MULTIAGENT_AGENT_MAX_TURNS",
@@ -836,6 +887,7 @@ fn write_bootstrap(
     prompt: &Path,
     last_message: &Path,
     resume: bool,
+    resume_session: Option<&str>,
 ) -> Result<(), String> {
     let mut text = format!(
         "#!/usr/bin/env bash\ncd {}\n",
@@ -899,7 +951,7 @@ fn write_bootstrap(
             last_message,
             &trace_dir,
             CodexAccess::WorkspaceWrite,
-            None,
+            resume_session,
         )
     } else {
         build_cli_command(
@@ -1327,7 +1379,7 @@ pub fn subagent(args: &[String]) -> Result<ExitCode, String> {
 
 fn print_subagent_usage() {
     println!(
-        "Usage:\n  multiagent subagent spawn NAME [--own PATH[,PATH...] ...] [--assignment-id ID] [--workflow-id ID --decision-id ID --plan-id ID] [--branch BRANCH] [--start-commit COMMIT] [--role ROLE] [--instruction TEXT | --instruction-file PATH | -- TEXT]\n  multiagent subagent list|recover-plan|restore-all|gate-check\n  multiagent subagent poll|inspect|restore|finalize|kill NAME [OPTIONS]\n  multiagent subagent wait NAME [--timeout SECONDS] [--poll-interval SECONDS]\n\nAll durable state and tmux subprocess orchestration are implemented by the Rust CLI."
+        "Usage:\n  multiagent subagent spawn NAME [--own PATH[,PATH...] ...] [--assignment-id ID] [--workflow-id ID --decision-id ID --plan-id ID] [--branch BRANCH] [--start-commit COMMIT] [--role ROLE] [--instruction TEXT | --instruction-file PATH | -- TEXT]\n  multiagent subagent restore NAME [--force] [--instruction TEXT | --instruction-file PATH]\n  multiagent subagent list|recover-plan|restore-all|gate-check\n  multiagent subagent poll|inspect|finalize|kill NAME [OPTIONS]\n  multiagent subagent wait NAME [--timeout SECONDS] [--poll-interval SECONDS]\n\nAll durable state and tmux subprocess orchestration are implemented by the Rust CLI."
     );
 }
 
@@ -1898,11 +1950,44 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         .filter(|value| !value.is_empty())
         .ok_or_else(|| "restore requires NAME".to_string())?;
     validate_name(name)?;
-    let force = match &args[1..] {
-        [] => false,
-        [value] if value == "--force" => true,
-        [value, ..] => return Err(format!("unknown restore argument: {value}")),
-    };
+    let mut force = false;
+    let mut follow_up = String::new();
+    let mut follow_up_file = None::<PathBuf>;
+    let mut index = 1;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--force" => {
+                force = true;
+                index += 1;
+            }
+            "--instruction" => {
+                follow_up = required_value(args, index, "restore --instruction")?.to_string();
+                index += 2;
+            }
+            "--instruction-file" => {
+                follow_up_file = Some(PathBuf::from(required_value(
+                    args,
+                    index,
+                    "restore --instruction-file",
+                )?));
+                index += 2;
+            }
+            "-h" | "--help" => {
+                print_subagent_usage();
+                return Ok(());
+            }
+            other => return Err(format!("unknown restore argument: {other}")),
+        }
+    }
+    if !follow_up.is_empty() && follow_up_file.is_some() {
+        return Err("restore accepts only one of --instruction or --instruction-file".into());
+    }
+    if let Some(path) = &follow_up_file {
+        if !path.is_file() {
+            return Err(format!("restore instruction file not found: {}", path.display()));
+        }
+        follow_up = fs::read_to_string(path).map_err(io_error("read restore instruction file"))?;
+    }
     require_command("tmux")?;
     let dir = cfg.state.join("subagents").join(name);
     if !dir.is_dir() {
@@ -1952,6 +2037,11 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         instruction.push_str(
             &fs::read_to_string(context).map_err(io_error("read implementation context"))?,
         );
+    }
+    if !follow_up.trim().is_empty() {
+        instruction.push_str("\n## Supervisor Follow-up\n\n");
+        instruction.push_str(follow_up.trim());
+        instruction.push('\n');
     }
     append_file(
         &dir.join("restore_events.log"),
@@ -2246,7 +2336,35 @@ fn compose_role_instruction(
     if !heading.is_empty() && instruction.contains(heading) {
         return Ok(instruction.into());
     }
-    Ok(format!("{prompt}\n\n## Task Assignment\n\n{instruction}"))
+    let mut composed = format!("{prompt}\n\n## Task Assignment\n\n{instruction}");
+    if path.file_name().and_then(|value| value.to_str()) == Some("contract-scout.md") {
+        composed.push_str(
+            "\n\n## Mandatory Final Artifact Contract\n\n\
+The task assignment may narrow evidence collection, but it cannot replace or \
+relax the role's Output Format. Return only the machine-readable contract \
+artifact required by that format. Its first non-empty line must be exactly \
+`contract-artifact: version=1`, followed by one or more exact \
+`contract-rule:` lines and the remaining required sections. Do not substitute \
+a prose report or a `review-record:` marker for this artifact.\n",
+        );
+    }
+    if path.file_name().and_then(|value| value.to_str())
+        == Some("decision-authority-reviewer.md")
+    {
+        composed.push_str(
+            "\n\n## Mandatory Decision-Authority Output Contract\n\n\
+The task assignment may describe the decision under review, but it cannot \
+replace or relax the role's canonical output vocabulary. Return only the fields \
+required by the role prompt. Use `verdict: orchestrator-may-decide` when the \
+original user request already authorizes the proposed bounded action, and include \
+the exact standalone marker \
+`review-record: type=decision-authority verdict=pass diff=-`. Do not substitute \
+`approve`, `conditional`, or a supervisor-requested custom marker. When the \
+semantic envelope supplies a contract-review marker, reproduce that exact marker \
+after independently validating the registered contract.\n",
+        );
+    }
+    Ok(composed)
 }
 
 fn append_semantic_envelope(
@@ -2954,6 +3072,10 @@ fn subagent_shell_command(
         (
             "MULTIAGENT_NATIVE_RESUME",
             env_nonempty("MULTIAGENT_NATIVE_RESUME").unwrap_or_else(|| "0".into()),
+        ),
+        (
+            "MULTIAGENT_CLAUDE_APPEND_SYSTEM_PROMPT",
+            env_nonempty("MULTIAGENT_CLAUDE_APPEND_SYSTEM_PROMPT").unwrap_or_default(),
         ),
         (
             "MULTIAGENT_AGENT_MAX_TURNS",

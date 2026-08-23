@@ -477,9 +477,27 @@ fn prepare(args: &[String]) -> Result<(), String> {
             .map_err(io_error("read registered contract artifact"))?;
         let approved = fs::read_to_string(&context)
             .map_err(io_error("read approved implementation context"))?;
-        if !approved.contains(&contract) {
+        let normalize_contract_header = |value: &str| {
+            value
+                .lines()
+                .map(|line| {
+                    let trimmed = line.trim_start();
+                    if trimmed
+                        .trim_start_matches('#')
+                        .trim_start()
+                        .eq("contract-artifact: version=1")
+                    {
+                        "contract-artifact: version=1"
+                    } else {
+                        line
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        if !normalize_contract_header(&approved).contains(&normalize_contract_header(&contract)) {
             return Err(
-                "approved implementation context must contain the registered contract artifact verbatim"
+                "approved implementation context must contain the registered contract artifact; a Markdown heading prefix on the canonical header is ignored"
                     .into(),
             );
         }
@@ -1341,7 +1359,12 @@ fn validate_contract_schema(text: &str, original_task: &str) -> Result<(), Strin
         || original.contains("without embedding");
     let header = text
         .lines()
-        .any(|line| line.trim() == "contract-artifact: version=1");
+        .any(|line| {
+            line.trim()
+                .trim_start_matches('#')
+                .trim_start()
+                == "contract-artifact: version=1"
+        });
     let rules = text
         .lines()
         .filter(|line| line.trim_start().starts_with("contract-rule:"))
