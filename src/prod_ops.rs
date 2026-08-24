@@ -3,12 +3,40 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::env;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 #[cfg(target_os = "linux")]
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::MetadataExt;
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+const MAX_OPERATION_REQUEST_BYTES: u64 = 65_536;
+const MAX_RUNBOOK_BYTES: u64 = 1_048_576;
+
+pub(crate) struct PublishedRequest {
+    artifact_path: PathBuf,
+    sha256: String,
+    bytes: usize,
+}
+
+impl PublishedRequest {
+    pub(crate) fn path(&self) -> &Path {
+        &self.artifact_path
+    }
+
+    pub(crate) fn descriptor_json(&self) -> Result<String, String> {
+        serde_json::to_string(&json!({
+            "artifactPath": self.artifact_path,
+            "sha256": self.sha256,
+            "bytes": self.bytes,
+            "mediaType": "application/json",
+            "truncated": false
+        }))
+        .map_err(|error| format!("encode ops publication descriptor: {error}"))
+    }
+}
 
 struct TrustedApproval {
     subject: String,
@@ -20,9 +48,10 @@ struct TrustedApproval {
 pub fn run(args: &[String]) -> Result<ExitCode, String> {
     match args.first().map(String::as_str) {
         Some("bind-runbook") => bind_runbook(&args[1..]),
+        Some("publish") => publish(&args[1..]),
         Some("execute") => execute(&args[1..]),
         Some("review-bind") => review_bind(&args[1..]),
-        _ => Err("usage: multiagent ops bind-runbook --request-file PATH --runbook-document PATH | multiagent ops review-bind --request-file PATH | multiagent ops execute --request-file PATH --reviewer NAME".into()),
+        _ => Err("usage: multiagent ops bind-runbook --request-file PATH --runbook-document PATH | multiagent ops publish --draft-file PATH --runbook-document PATH | multiagent ops review-bind --request-file PATH | multiagent ops execute --request-file PATH --reviewer NAME".into()),
     }
 }
 
@@ -35,24 +64,9 @@ fn bind_runbook(args: &[String]) -> Result<ExitCode, String> {
     if !request_file.starts_with(&state) {
         return Err("ops request file must be inside MULTIAGENT_STATE_DIR".into());
     }
-    let bytes = fs::read(&request_file).map_err(|error| format!("read ops request: {error}"))?;
-    if bytes.is_empty() || bytes.len() > 65_536 {
-        return Err("ops request must contain between 1 and 65536 bytes".into());
-    }
-    let mut template: Value = serde_json::from_slice(&bytes)
-        .map_err(|error| format!("decode ops request template: {error}"))?;
+    let (bytes, _) = read_bounded_file(&request_file, MAX_OPERATION_REQUEST_BYTES, false)?;
     let relative = required(&options, "--runbook-document")?;
-    let digest = exact_runbook_content_sha256(relative)?;
-    let canonical_target = exact_runbook_target(relative)?;
-    let object = template
-        .as_object_mut()
-        .ok_or("ops request template must be an object")?;
-    if let Some(target) = canonical_target {
-        object.insert("target".into(), target);
-    }
-    object.insert("runbookDocument".into(), Value::String(relative.into()));
-    object.insert("runbookContentSha256".into(), Value::String(digest.clone()));
-    validate_request_template(&template)?;
+    let (template, digest) = bind_request_template(&bytes, relative, false)?;
     let encoded = serde_json::to_vec_pretty(&template)
         .map_err(|error| format!("encode bound ops request: {error}"))?;
     fs::write(&request_file, encoded)
@@ -60,6 +74,297 @@ fn bind_runbook(args: &[String]) -> Result<ExitCode, String> {
     println!("request-template-sha256={}", digest_json(&template)?);
     println!("runbook-content-sha256={digest}");
     Ok(ExitCode::SUCCESS)
+}
+
+fn publish(args: &[String]) -> Result<ExitCode, String> {
+    let options = options(args)?;
+    let state = fs::canonicalize(required_env("MULTIAGENT_STATE_DIR")?)
+        .map_err(|error| format!("resolve multiagent state: {error}"))?;
+    let draft_file = PathBuf::from(required(&options, "--draft-file")?);
+    let runbook_document = required(&options, "--runbook-document")?;
+    let draft = read_ops_draft(&draft_file)?;
+    let (template, _) = bind_request_template(&draft, runbook_document, true)?;
+    let encoded = serde_json::to_vec_pretty(&template)
+        .map_err(|error| format!("encode published ops request: {error}"))?;
+    let descriptor = publish_request_bytes(&state, &encoded)?;
+    println!("{}", descriptor.descriptor_json()?);
+    Ok(ExitCode::SUCCESS)
+}
+
+pub(crate) fn publish_bound_request(
+    state: &Path,
+    request_file: &Path,
+) -> Result<PublishedRequest, String> {
+    let state = fs::canonicalize(state)
+        .map_err(|error| format!("resolve multiagent state: {error}"))?;
+    let (_, bytes) = read_reviewable_request(&state, request_file)?;
+    let template: Value = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("decode bound ops request: {error}"))?;
+    validate_request_template(&template)?;
+    verified_runbook_content(&template)?;
+    publish_request_bytes(&state, &bytes)
+}
+
+fn bind_request_template(
+    bytes: &[u8],
+    runbook_document: &str,
+    require_canonical_target: bool,
+) -> Result<(Value, String), String> {
+    let mut template: Value = serde_json::from_slice(bytes)
+        .map_err(|error| format!("decode ops request template: {error}"))?;
+    validate_request_envelope(&template)?;
+    let runbook_bytes = exact_runbook_bytes(runbook_document)?;
+    let canonical_target = canonical_runbook_target(&runbook_bytes)?;
+    if require_canonical_target && canonical_target.is_none() {
+        return Err("published runbook must declare one canonical target".into());
+    }
+    let digest = runbook_content_digest(&runbook_bytes);
+    let object = template
+        .as_object_mut()
+        .ok_or("ops request template must be an object")?;
+    if let Some(target) = canonical_target {
+        object.insert("target".into(), target);
+    }
+    object.insert(
+        "runbookDocument".into(),
+        Value::String(runbook_document.into()),
+    );
+    object.insert(
+        "runbookContentSha256".into(),
+        Value::String(digest.clone()),
+    );
+    validate_request_template(&template)?;
+    Ok((template, digest))
+}
+
+fn publish_request_bytes(state: &Path, bytes: &[u8]) -> Result<PublishedRequest, String> {
+    if bytes.is_empty() || bytes.len() as u64 > MAX_OPERATION_REQUEST_BYTES {
+        return Err("ops request must contain between 1 and 65536 bytes".into());
+    }
+    let hex = format!("{:x}", Sha256::digest(bytes));
+    let directory = state
+        .join("operations")
+        .join("requests")
+        .join(&hex);
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("create operation request store: {error}"))?;
+    secure_publication_path(&directory, true)?;
+    let artifact_path = directory.join("request.json");
+    if artifact_path.exists() {
+        let (existing, metadata) =
+            read_bounded_file(&artifact_path, MAX_OPERATION_REQUEST_BYTES, true)?;
+        validate_published_metadata(&metadata)?;
+        if existing != bytes {
+            return Err("content-addressed operation request collision".into());
+        }
+    } else {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let temporary = directory.join(format!(
+            ".request.{}.{}.tmp",
+            std::process::id(),
+            unique
+        ));
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o440);
+        let mut file = options
+            .open(&temporary)
+            .map_err(|error| format!("create operation request artifact: {error}"))?;
+        secure_publication_file(&file)?;
+        file.write_all(bytes)
+            .and_then(|_| file.sync_all())
+            .map_err(|error| format!("persist operation request artifact: {error}"))?;
+        match fs::hard_link(&temporary, &artifact_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let (existing, metadata) =
+                    read_bounded_file(&artifact_path, MAX_OPERATION_REQUEST_BYTES, true)?;
+                validate_published_metadata(&metadata)?;
+                if existing != bytes {
+                    let _ = fs::remove_file(&temporary);
+                    return Err("content-addressed operation request collision".into());
+                }
+            }
+            Err(error) => {
+                let _ = fs::remove_file(&temporary);
+                return Err(format!("publish operation request artifact: {error}"));
+            }
+        }
+        let _ = fs::remove_file(&temporary);
+    }
+    Ok(PublishedRequest {
+        artifact_path,
+        sha256: format!("sha256:{hex}"),
+        bytes: bytes.len(),
+    })
+}
+
+fn read_ops_draft(path: &Path) -> Result<Vec<u8>, String> {
+    let agents = fs::canonicalize(PathBuf::from(required_env("MULTIAGENT_LOG_DIR")?).join("agents"))
+        .map_err(|error| format!("resolve ops agents log directory: {error}"))?;
+    let canonical = fs::canonicalize(path)
+        .map_err(|error| format!("resolve ops draft file: {error}"))?;
+    if !canonical.starts_with(&agents) {
+        return Err("ops draft file must be inside MULTIAGENT_LOG_DIR/agents".into());
+    }
+    let (bytes, _metadata) =
+        read_bounded_file(&canonical, MAX_OPERATION_REQUEST_BYTES, true)?;
+    if bytes.is_empty() {
+        return Err("ops request must contain between 1 and 65536 bytes".into());
+    }
+    #[cfg(target_os = "linux")]
+    if _metadata.uid() != crate::config::OPS_UID || _metadata.mode() & 0o022 != 0 {
+        return Err("ops draft must be owned by the ops UID and not group- or world-writable".into());
+    }
+    Ok(bytes)
+}
+
+fn read_reviewable_request(state: &Path, path: &Path) -> Result<(PathBuf, Vec<u8>), String> {
+    let canonical = fs::canonicalize(path)
+        .map_err(|error| format!("resolve ops request file: {error}"))?;
+    if !canonical.starts_with(state) {
+        return Err("ops request file must be inside MULTIAGENT_STATE_DIR".into());
+    }
+    let (bytes, _metadata) =
+        read_bounded_file(&canonical, MAX_OPERATION_REQUEST_BYTES, true)?;
+    if bytes.is_empty() {
+        return Err("ops request must contain between 1 and 65536 bytes".into());
+    }
+    #[cfg(target_os = "linux")]
+    if !matches!(
+        _metadata.uid(),
+        crate::config::OPS_UID | crate::config::SUPERVISOR_UID
+    ) || _metadata.mode() & 0o022 != 0
+    {
+        return Err("ops request must be safely owned by the ops or supervisor UID".into());
+    }
+    Ok((canonical, bytes))
+}
+
+fn read_bounded_file(
+    path: &Path,
+    limit: u64,
+    no_follow: bool,
+) -> Result<(Vec<u8>, fs::Metadata), String> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    if no_follow {
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let mut file = options
+        .open(path)
+        .map_err(|error| format!("open {}: {error}", path.display()))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("inspect {}: {error}", path.display()))?;
+    if !metadata.is_file() || metadata.len() > limit {
+        return Err(format!(
+            "{} must be a regular file no larger than {limit} bytes",
+            path.display()
+        ));
+    }
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    Read::take(&mut file, limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("read {}: {error}", path.display()))?;
+    if bytes.len() as u64 > limit {
+        return Err(format!("{} exceeds the configured byte limit", path.display()));
+    }
+    Ok((bytes, metadata))
+}
+
+#[cfg(target_os = "linux")]
+fn secure_publication_path(path: &Path, directory: bool) -> Result<(), String> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("inspect publication path {}: {error}", path.display()))?;
+    if metadata.file_type().is_symlink() || (directory && !metadata.is_dir()) {
+        return Err(format!("unsafe publication path: {}", path.display()));
+    }
+    if metadata.uid() != crate::config::SUPERVISOR_UID {
+        if unsafe { libc::geteuid() } != 0 {
+            return Err("operation request store must be supervisor-owned".into());
+        }
+        let raw = CString::new(path.as_os_str().as_bytes())
+            .map_err(|_| format!("publication path contains NUL: {}", path.display()))?;
+        if unsafe {
+            libc::lchown(
+                raw.as_ptr(),
+                crate::config::SUPERVISOR_UID,
+                crate::config::ROLE_GID,
+            )
+        } != 0
+        {
+            return Err(format!(
+                "set publication ownership {}: {}",
+                path.display(),
+                std::io::Error::last_os_error()
+            ));
+        }
+    }
+    fs::set_permissions(
+        path,
+        fs::Permissions::from_mode(if directory { 0o750 } else { 0o440 }),
+    )
+    .map_err(|error| format!("secure publication path {}: {error}", path.display()))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn secure_publication_path(path: &Path, directory: bool) -> Result<(), String> {
+    #[cfg(unix)]
+    fs::set_permissions(
+        path,
+        fs::Permissions::from_mode(if directory { 0o750 } else { 0o440 }),
+    )
+    .map_err(|error| format!("secure publication path {}: {error}", path.display()))?;
+    Ok(())
+}
+
+fn secure_publication_file(file: &fs::File) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsRawFd;
+        let metadata = file
+            .metadata()
+            .map_err(|error| format!("inspect operation request artifact: {error}"))?;
+        if metadata.uid() != crate::config::SUPERVISOR_UID {
+            if unsafe { libc::geteuid() } != 0 {
+                return Err("operation request artifact must be supervisor-owned".into());
+            }
+            if unsafe {
+                libc::fchown(
+                    file.as_raw_fd(),
+                    crate::config::SUPERVISOR_UID,
+                    crate::config::ROLE_GID,
+                )
+            } != 0
+            {
+                return Err(format!(
+                    "set operation request artifact ownership: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+        }
+    }
+    #[cfg(unix)]
+    file.set_permissions(fs::Permissions::from_mode(0o440))
+        .map_err(|error| format!("secure operation request artifact: {error}"))?;
+    Ok(())
+}
+
+fn validate_published_metadata(_metadata: &fs::Metadata) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    if _metadata.uid() != crate::config::SUPERVISOR_UID || _metadata.mode() & 0o227 != 0 {
+        return Err("published operation request has unsafe ownership or mode".into());
+    }
+    Ok(())
 }
 
 fn review_bind(args: &[String]) -> Result<ExitCode, String> {
@@ -118,24 +423,7 @@ fn load_reviewed_request(
     validate_id("reviewer name", reviewer)?;
     let state = fs::canonicalize(required_env("MULTIAGENT_STATE_DIR")?)
         .map_err(|error| format!("resolve multiagent state: {error}"))?;
-    let request_file = fs::canonicalize(request_file)
-        .map_err(|error| format!("resolve ops request file: {error}"))?;
-    if !request_file.starts_with(&state) {
-        return Err("ops request file must be inside MULTIAGENT_STATE_DIR".into());
-    }
-    let bytes = fs::read(&request_file).map_err(|error| format!("read ops request: {error}"))?;
-    if bytes.is_empty() || bytes.len() > 65_536 {
-        return Err("ops request must contain between 1 and 65536 bytes".into());
-    }
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
-        let metadata =
-            fs::metadata(&request_file).map_err(|error| format!("inspect ops request: {error}"))?;
-        if metadata.uid() != crate::config::OPS_UID || metadata.permissions().mode() & 0o022 != 0 {
-            return Err("ops request must be owned by the ops UID and not group-writable".into());
-        }
-    }
+    let (_, bytes) = read_reviewable_request(&state, request_file)?;
     let template: Value = serde_json::from_slice(&bytes)
         .map_err(|error| format!("decode ops request template: {error}"))?;
     let runbook_content_sha256 = verified_runbook_content(&template)?;
@@ -186,7 +474,26 @@ fn execute(args: &[String]) -> Result<ExitCode, String> {
         "request": request
     }))?;
     let permit = sign_permit(&payload)?;
-    let result = call_prod_mcp(&permit)?;
+    let result = call_prod_mcp(&permit).unwrap_or_else(|message| {
+        json!({
+            "jsonrpc":"2.0",
+            "id":2,
+            "result":{
+                "isError":true,
+                "structuredContent":{
+                    "code":"prod_mcp_transport_failure",
+                    "message":message,
+                    "outcome":{
+                        "disposition":"failed",
+                        "terminal":true,
+                        "retryable":true,
+                        "code":"prod_mcp_transport_failure",
+                        "requiredActor":"service-operator"
+                    }
+                }
+            }
+        })
+    });
     let operation_dir = state.join("operations").join(&action_id);
     fs::create_dir_all(&operation_dir)
         .map_err(|error| format!("create operation receipt directory: {error}"))?;
@@ -528,6 +835,44 @@ fn required_object<'a>(
 }
 
 fn validate_request_template(template: &Value) -> Result<(), String> {
+    validate_request_envelope(template)?;
+    let object = template
+        .as_object()
+        .ok_or("ops request template must be an object")?;
+
+    let target = required_object(object, "target")?;
+    if target.len() != 4 {
+        return Err(
+            "ops request target must contain environment, cluster, namespace, and service".into(),
+        );
+    }
+    let environment = required_template_string(target, "environment")?;
+    if !matches!(environment, "development" | "staging" | "production") {
+        return Err("ops request target environment is invalid".into());
+    }
+    for key in ["cluster", "namespace", "service"] {
+        validate_id(
+            &format!("target {key}"),
+            required_template_string(target, key)?,
+        )?;
+    }
+
+    required_template_string(object, "runbookDocument")?;
+    let digest = required_template_string(object, "runbookContentSha256")?;
+    let hex = digest
+        .strip_prefix("sha256:")
+        .ok_or("ops request runbookContentSha256 is invalid")?;
+    if hex.len() != 64
+        || !hex
+            .chars()
+            .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
+    {
+        return Err("ops request runbookContentSha256 is invalid".into());
+    }
+    Ok(())
+}
+
+fn validate_request_envelope(template: &Value) -> Result<(), String> {
     let object = template
         .as_object()
         .ok_or("ops request template must be an object")?;
@@ -550,23 +895,6 @@ fn validate_request_template(template: &Value) -> Result<(), String> {
         required_template_string(operation, "version")?,
     )?;
 
-    let target = required_object(object, "target")?;
-    if target.len() != 4 {
-        return Err(
-            "ops request target must contain environment, cluster, namespace, and service".into(),
-        );
-    }
-    let environment = required_template_string(target, "environment")?;
-    if !matches!(environment, "development" | "staging" | "production") {
-        return Err("ops request target environment is invalid".into());
-    }
-    for key in ["cluster", "namespace", "service"] {
-        validate_id(
-            &format!("target {key}"),
-            required_template_string(target, key)?,
-        )?;
-    }
-
     required_object(object, "parameters")?;
     let runbook = required_object(object, "runbook")?;
     if runbook.len() != 3 {
@@ -578,18 +906,6 @@ fn validate_request_template(template: &Value) -> Result<(), String> {
         required_template_string(runbook, "version")?,
     )?;
     validate_id("runbook phase", required_template_string(runbook, "phase")?)?;
-    required_template_string(object, "runbookDocument")?;
-    let digest = required_template_string(object, "runbookContentSha256")?;
-    let hex = digest
-        .strip_prefix("sha256:")
-        .ok_or("ops request runbookContentSha256 is invalid")?;
-    if hex.len() != 64
-        || !hex
-            .chars()
-            .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
-    {
-        return Err("ops request runbookContentSha256 is invalid".into());
-    }
     Ok(())
 }
 
@@ -624,7 +940,8 @@ fn verified_runbook_content(template: &Value) -> Result<String, String> {
         .get("runbookDocument")
         .and_then(Value::as_str)
         .ok_or("ops request template requires runbookDocument")?;
-    let actual = exact_runbook_content_sha256(relative)?;
+    let bytes = exact_runbook_bytes(relative)?;
+    let actual = runbook_content_digest(&bytes);
     let declared = object
         .get("runbookContentSha256")
         .and_then(Value::as_str)
@@ -632,16 +949,17 @@ fn verified_runbook_content(template: &Value) -> Result<String, String> {
     if declared != actual {
         return Err("runbookContentSha256 does not match the exact Markdown runbook bytes".into());
     }
+    if let Some(target) = canonical_runbook_target(&bytes)? {
+        if object.get("target") != Some(&target) {
+            return Err("ops request target does not match the exact Markdown runbook bytes".into());
+        }
+    }
     Ok(actual)
 }
 
 fn exact_runbook_content_sha256(relative: &str) -> Result<String, String> {
     let bytes = exact_runbook_bytes(relative)?;
     Ok(runbook_content_digest(&bytes))
-}
-
-fn exact_runbook_target(relative: &str) -> Result<Option<Value>, String> {
-    canonical_runbook_target(&exact_runbook_bytes(relative)?)
 }
 
 fn canonical_runbook_target(bytes: &[u8]) -> Result<Option<Value>, String> {
@@ -690,12 +1008,10 @@ fn exact_runbook_bytes(relative: &str) -> Result<Vec<u8>, String> {
     if !document.starts_with(&runbooks_root) {
         return Err("runbookDocument must resolve inside the framework runbooks directory".into());
     }
-    let metadata =
-        fs::metadata(&document).map_err(|error| format!("inspect runbook document: {error}"))?;
-    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > 1_048_576 {
+    let (bytes, metadata) = read_bounded_file(&document, MAX_RUNBOOK_BYTES, true)?;
+    if metadata.len() == 0 {
         return Err("runbook document must be a regular file between 1 byte and 1 MiB".into());
     }
-    let bytes = fs::read(&document).map_err(|error| format!("read runbook document: {error}"))?;
     Ok(bytes)
 }
 
@@ -779,12 +1095,6 @@ fn call_prod_mcp(permit: &str) -> Result<Value, String> {
     let result = result?;
     if let Some(error) = result.get("error") {
         return Err(format!("prod-mcp execution failed: {error}"));
-    }
-    if result.pointer("/result/isError").and_then(Value::as_bool) == Some(true) {
-        return Err(format!(
-            "prod-mcp rejected the operation: {}",
-            result["result"]["structuredContent"]
-        ));
     }
     Ok(result)
 }
@@ -1107,8 +1417,9 @@ mod tests {
     use super::{
         base64_decode, base64url_encode, build_request, canonical, curl_command, ecdsa_der_to_raw,
         parse_mcp_body, private_temp_path, review_binding_marker, review_binding_matches,
-        review_binding_value, review_evidence_is_bound, reviewer_accepted, runbook_content_digest,
-        validate_request_template, write_mcp_headers, TrustedApproval,
+        review_binding_value, review_evidence_is_bound,
+        reviewer_accepted, runbook_content_digest, validate_request_template,
+        write_mcp_headers, TrustedApproval,
     };
     use chrono::{TimeZone, Utc};
     use serde_json::json;
@@ -1316,4 +1627,5 @@ mod tests {
         let _ = fs::remove_file(request_headers);
         let _ = fs::remove_file(response_headers);
     }
+
 }

@@ -44,6 +44,7 @@ enum AuthorityOperation {
     ValidationLeaseShow,
     ValidationLeaseList,
     GateCheck,
+    OpsPublish,
     OpsExecute,
 }
 
@@ -53,6 +54,9 @@ impl AuthorityRequest {
             "workflow" => (AuthorityOperation::Workflow, args),
             "decision" => (AuthorityOperation::Decision, args),
             "dag" => (AuthorityOperation::Dag, args),
+            "ops" if args.first().map(String::as_str) == Some("publish") => {
+                (AuthorityOperation::OpsPublish, &args[1..])
+            }
             "ops" if args.first().map(String::as_str) == Some("execute") => {
                 (AuthorityOperation::OpsExecute, &args[1..])
             }
@@ -136,7 +140,9 @@ impl AuthorityRequest {
             | AuthorityOperation::TodoAssign
             | AuthorityOperation::TodoStatus
             | AuthorityOperation::GateCheck => uid == config::ORCHESTRATOR_UID,
-            AuthorityOperation::OpsExecute => uid == config::OPS_UID,
+            AuthorityOperation::OpsPublish | AuthorityOperation::OpsExecute => {
+                uid == config::OPS_UID
+            }
             AuthorityOperation::FindingCreate => uid == config::READER_UID,
             AuthorityOperation::FindingDismiss | AuthorityOperation::TodoClose => {
                 matches!(uid, config::ORCHESTRATOR_UID | config::READER_UID)
@@ -197,6 +203,7 @@ impl AuthorityRequest {
             AuthorityOperation::ValidationLeaseShow => ("subagent", Some("validation-lease-show")),
             AuthorityOperation::ValidationLeaseList => ("subagent", Some("validation-lease-list")),
             AuthorityOperation::GateCheck => ("subagent", Some("gate-check")),
+            AuthorityOperation::OpsPublish => ("ops", Some("publish")),
             AuthorityOperation::OpsExecute => ("ops", Some("execute")),
         };
         let mut args = self.args;

@@ -1,59 +1,43 @@
 # Reviewed Ops Cycle
 
-Use this playbook whenever an ops agent has materialized an immutable prod-mcp
-request. It centralizes the review and continuation mechanics; provider runbooks
-define what operations mean, not how agents are spawned.
+Use one logical ops identity for all operational work in a session. The ops
+agent chooses runbooks and request contents; the supervisor enforces publication,
+review, and execution boundaries.
 
-## Session invariant
-
-Use one persistent `ops` identity for the entire session. That agent may follow
-multiple runbooks and materialize multiple requests, but no second ops identity
-may be created. Agent judgment selects the runbook, operation, and parameters.
-`multiagent ops bind-runbook` copies canonical target metadata from the exact
-Markdown runbook when it is declared there. This playbook only makes the
-authorization lifecycle deterministic.
-
-## Start the ops identity
-
-Spawn exactly one ops identity for the session. The runtime composes the ops
-role module; do not load the general agent-spawning playbook or role prompt
-files to reconstruct it.
+## Start once
 
 ```bash
-multiagent subagent spawn OPS_NAME --role ops --instruction "Inspect the request, follow the applicable runbook, and prepare the reviewed operation."
+multiagent subagent spawn OPS_NAME --role ops \
+  --instruction "Follow the applicable runbook and prepare the reviewed operation."
 multiagent subagent wait OPS_NAME --timeout 900
 ```
 
-Keep this identity for every reviewed operation in the session. Do not spawn a
-replacement ops identity after review.
+Do not replace this identity after review.
 
-## Reviewed request
+## Review and continue
 
-After the ops agent writes and binds its request, run:
+After ops returns a published artifact descriptor:
 
 ```bash
 multiagent subagent reviewed-ops-cycle OPS_NAME \
-  --request-file "$MULTIAGENT_LOG_DIR/agents/OPS_NAME/request.json" \
+  --request-file "$PUBLISHED_REQUEST_PATH" \
   --reviewer ops-reviewer-NN \
   --timeout 900
 ```
 
-Use a fresh `ops-reviewer-NN` identity for every immutable request. The command:
+Use a fresh reviewer name for each immutable request. This command:
 
-1. verifies that the request belongs to the session's ops identity;
-2. computes the exact review binding;
-3. spawns an independent ops reviewer with the literal request and binding;
-4. waits for and finalizes the reviewer;
-5. rejects missing, negative, or incorrectly bound evidence before execution;
-6. restores the same ops identity with the exact execute command; and
-7. waits for that ops identity to inspect the receipt and continue its runbook.
+1. publishes a safe legacy request when necessary;
+2. binds the reviewer to the immutable request and exact runbook;
+3. passes only a bounded artifact descriptor to the reviewer;
+4. finalizes accepted review evidence before execution; and
+5. continues the same ops identity in a fresh provider context with the exact
+   execute command.
 
-Do not manually reconstruct these steps in prompts or shell commands.
+Do not reconstruct these mechanics manually. Prior panes, transcripts, final
+messages, and native provider resume state are intentionally excluded from the
+continuation boundary.
 
-## Failure behavior
-
-If review is rejected, binding preflight fails, restoration fails, or prod-mcp
-rejects execution, stop and report the exact blocker. If a corrected independent
-review is appropriate, use a fresh reviewer on the same immutable request. If
-the request bytes must change, the same ops identity materializes the new bytes
-and starts a new reviewed cycle. Never spawn a replacement ops identity.
+On rejection or preflight failure, report the blocker. A changed request needs a
+new publication and reviewer. A review correction may use a fresh reviewer on
+the same immutable request. Never create a second ops identity.
