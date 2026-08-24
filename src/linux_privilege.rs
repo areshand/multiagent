@@ -59,11 +59,7 @@ enum SetuidDisposition {
     DropToRealUid,
 }
 
-fn setuid_disposition(
-    real_uid: u32,
-    effective_uid: u32,
-    authorized: bool,
-) -> SetuidDisposition {
+fn setuid_disposition(real_uid: u32, effective_uid: u32, authorized: bool) -> SetuidDisposition {
     if effective_uid != 0 || real_uid == 0 {
         SetuidDisposition::NoTransition
     } else if authorized {
@@ -76,9 +72,7 @@ fn setuid_disposition(
 /// Retain setuid-root authority only when application policy accepts the real
 /// caller UID. All other setuid invocations permanently drop to the caller.
 #[cfg(unix)]
-pub fn guard_setuid_invocation(
-    authorized: impl FnOnce(u32) -> bool,
-) -> Result<(), String> {
+pub fn guard_setuid_invocation(authorized: impl FnOnce(u32) -> bool) -> Result<(), String> {
     let real_uid = unsafe { libc::getuid() };
     let effective_uid = unsafe { libc::geteuid() };
     let caller_authorized = effective_uid == 0 && real_uid != 0 && authorized(real_uid);
@@ -100,21 +94,15 @@ pub fn guard_setuid_invocation(
 }
 
 #[cfg(not(unix))]
-pub fn guard_setuid_invocation(
-    _authorized: impl FnOnce(u32) -> bool,
-) -> Result<(), String> {
+pub fn guard_setuid_invocation(_authorized: impl FnOnce(u32) -> bool) -> Result<(), String> {
     Ok(())
 }
 
 #[cfg(unix)]
 pub fn apply_identity(spec: &IdentitySpec) -> Result<(), String> {
     let prepared = spec.prepare();
-    apply_prepared_identity(&prepared).map_err(|error| {
-        format!(
-            "drop to uid {} gid {}: {error}",
-            spec.uid, spec.gid
-        )
-    })
+    apply_prepared_identity(&prepared)
+        .map_err(|error| format!("drop to uid {} gid {}: {error}", spec.uid, spec.gid))
 }
 
 #[cfg(not(unix))]
@@ -155,7 +143,13 @@ pub fn exec_as_identity(
 
 #[cfg(unix)]
 fn apply_prepared_identity(identity: &PreparedIdentity) -> io::Result<()> {
-    if unsafe { libc::setgroups(identity.groups.len(), identity.groups.as_ptr()) } != 0 {
+    let group_count = identity.groups.len().try_into().map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "supplementary group count exceeds platform limit",
+        )
+    })?;
+    if unsafe { libc::setgroups(group_count, identity.groups.as_ptr()) } != 0 {
         return Err(io::Error::last_os_error());
     }
     if unsafe { libc::setgid(identity.gid) } != 0 {
@@ -203,8 +197,8 @@ mod tests {
 
     #[test]
     fn identity_groups_include_primary_and_deduplicate_supplementary_groups() {
-        let identity = IdentitySpec::new(10004, 10001)
-            .with_supplementary_gids(&[10006, 10004, 10001, 10006]);
+        let identity =
+            IdentitySpec::new(10004, 10001).with_supplementary_gids(&[10006, 10004, 10001, 10006]);
         assert_eq!(identity.prepare().groups, [10001, 10004, 10006]);
     }
 

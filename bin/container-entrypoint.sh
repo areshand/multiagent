@@ -9,6 +9,10 @@ export CODEX_HOME="${CODEX_HOME:-/var/lib/multiagent/codex}"
 export CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-/var/lib/multiagent/claude}"
 export MULTIAGENT_STATE_DIR="${MULTIAGENT_STATE_DIR:-/var/lib/multiagent/state}"
 export MULTIAGENT_REPOSITORY_ROOT="${MULTIAGENT_REPOSITORY_ROOT:-/var/lib/multiagent/repositories}"
+if [[ "${MULTIAGENT_CONTROL_MODE:-local}" == "gateway" ]]; then
+  mkdir -p "$HOME" "$MULTIAGENT_STATE_DIR" "$MULTIAGENT_REPOSITORY_ROOT"
+  exec node /opt/multiagent/control-server/src/server.mjs
+fi
 /opt/multiagent/bin/multiagent container-bootstrap
 mkdir -p "$HOME"
 if [[ -n "${MULTIAGENT_STATE_S3_URI:-}" && ! -f "$MULTIAGENT_STATE_DIR/control-server/sessions.json" ]]; then

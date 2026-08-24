@@ -8,7 +8,7 @@
 
 These items are explicitly deferred while the production deployment is brought to functional end-to-end readiness.
 
-1. Separate the authenticated web gateway from the credential-bearing multiagent runtime pod. The web process is treated as a user-facing transport and should not share model-key mounts, AWS workload credentials, KMS authority, or the prod-mcp bearer token.
+1. Give the authenticated web gateway a dedicated AWS identity without model-provider, KMS-signing, S3, or prod-mcp authority. Session Jobs are now separate pods and receive a distinct Kubernetes service account, but the first deployment keeps the gateway and session service accounts on the same IRSA role while production functionality is proven.
 2. Add structured audit records for every `session-control` request, including caller subject, session, semantic action, request digest, timestamp, and result. Never record submitted task plaintext or credentials in the audit event.
 3. Replace the pod-lifetime authority registry with a supervisor-owned release protocol so a completed session can relinquish authority without restarting the pod.
 4. Harden session path resolution against all parent-directory replacement races. The current helper validates a fixed state root, session identifier, socket type, ownership, group, and mode before dropping privileges.

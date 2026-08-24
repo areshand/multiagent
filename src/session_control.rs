@@ -1,6 +1,8 @@
 use std::env;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Write;
+#[cfg(target_os = "linux")]
+use std::io::{self, Read};
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
@@ -93,8 +95,7 @@ fn usage() -> String {
 fn validate_session_id(session: &str) -> Result<(), String> {
     let valid = !session.is_empty()
         && session.len() <= 63
-        && (session.as_bytes()[0].is_ascii_lowercase()
-            || session.as_bytes()[0].is_ascii_digit())
+        && (session.as_bytes()[0].is_ascii_lowercase() || session.as_bytes()[0].is_ascii_digit())
         && session
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
@@ -211,10 +212,8 @@ mod tests {
 
     #[test]
     fn session_ids_match_the_shared_control_plane_contract() {
-        let vectors: serde_json::Value = serde_json::from_str(include_str!(
-            "../contracts/session-id-vectors.json"
-        ))
-        .unwrap();
+        let vectors: serde_json::Value =
+            serde_json::from_str(include_str!("../contracts/session-id-vectors.json")).unwrap();
         for value in vectors["valid"].as_array().unwrap() {
             assert!(validate_session_id(value.as_str().unwrap()).is_ok());
         }

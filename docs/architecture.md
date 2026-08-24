@@ -53,6 +53,13 @@ flowchart TD
 and execs `multiagent launch` so existing source-checkout callers remain
 compatible.
 
+The production control server has two deployment modes. A persistent gateway
+creates one bounded Kubernetes Job per authenticated session from a
+deployment-owned template. The Job runs a session worker that invokes the same
+`launch.sh --session ID --root PATH --no-attach` interface and remains alive to
+serve terminal, status, and completion traffic. The Rust session runtime does
+not call Kubernetes APIs; only the gateway receives session-Job RBAC.
+
 ### Tmux
 
 Tmux owns the PTY, session, window, and interactive terminal lifecycle. Rust

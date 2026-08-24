@@ -13,7 +13,7 @@ From the repository root:
 ./scripts/demo.sh
 ```
 
-Requirements are Rust 1.75/Cargo, Bash, and Git. Set
+Requirements are Rust 1.98/Cargo, Bash, and Git. Set
 `MULTIAGENT_DEMO_KEEP=1` to preserve the scratch target and state directory for
 inspection:
 

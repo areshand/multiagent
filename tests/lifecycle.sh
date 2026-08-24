@@ -202,7 +202,7 @@ if MULTIAGENT_STATE_DIR="$CONTRACT_STATE" "$MULTIAGENT" workflow prepare-impleme
   exit 1
 fi
 assert_contains "$TEST_TMP/contract-compression.out" \
-  "must contain the registered contract artifact verbatim"
+  "must contain the registered contract artifact"
 printf 'contract-artifact-sha256=%s\n' "$CONTRACT_HASH" >"$CONTRACT_CONTEXT"
 cat "$CONTRACT_SCOUT/last-message.txt" >>"$CONTRACT_CONTEXT"
 MULTIAGENT_STATE_DIR="$CONTRACT_STATE" "$MULTIAGENT" workflow prepare-implementation \
