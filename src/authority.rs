@@ -1,7 +1,7 @@
 use crate::config;
 use serde::{Deserialize, Serialize};
 
-/// The complete mutation surface accepted by the authority supervisor.
+/// The complete privileged surface accepted by the authority supervisor.
 ///
 /// CLI parsing happens before a request crosses the Unix socket. The server
 /// authorizes this enum instead of independently interpreting command strings,
@@ -44,6 +44,7 @@ enum AuthorityOperation {
     ValidationLeaseShow,
     ValidationLeaseList,
     GateCheck,
+    OpsDescribe,
     OpsPublish,
     OpsExecute,
 }
@@ -54,6 +55,9 @@ impl AuthorityRequest {
             "workflow" => (AuthorityOperation::Workflow, args),
             "decision" => (AuthorityOperation::Decision, args),
             "dag" => (AuthorityOperation::Dag, args),
+            "ops" if args.first().map(String::as_str) == Some("describe") => {
+                (AuthorityOperation::OpsDescribe, &args[1..])
+            }
             "ops" if args.first().map(String::as_str) == Some("publish") => {
                 (AuthorityOperation::OpsPublish, &args[1..])
             }
@@ -140,7 +144,9 @@ impl AuthorityRequest {
             | AuthorityOperation::TodoAssign
             | AuthorityOperation::TodoStatus
             | AuthorityOperation::GateCheck => uid == config::ORCHESTRATOR_UID,
-            AuthorityOperation::OpsPublish | AuthorityOperation::OpsExecute => {
+            AuthorityOperation::OpsDescribe
+            | AuthorityOperation::OpsPublish
+            | AuthorityOperation::OpsExecute => {
                 uid == config::OPS_UID
             }
             AuthorityOperation::FindingCreate => uid == config::READER_UID,
@@ -203,6 +209,7 @@ impl AuthorityRequest {
             AuthorityOperation::ValidationLeaseShow => ("subagent", Some("validation-lease-show")),
             AuthorityOperation::ValidationLeaseList => ("subagent", Some("validation-lease-list")),
             AuthorityOperation::GateCheck => ("subagent", Some("gate-check")),
+            AuthorityOperation::OpsDescribe => ("ops", Some("describe")),
             AuthorityOperation::OpsPublish => ("ops", Some("publish")),
             AuthorityOperation::OpsExecute => ("ops", Some("execute")),
         };
@@ -263,6 +270,14 @@ mod tests {
         .expect("ops request");
         assert!(ops.authorized_for(config::OPS_UID));
         assert!(!ops.authorized_for(config::ORCHESTRATOR_UID));
+        let describe = AuthorityRequest::from_cli("ops", &strings(&["describe", "github.read"]))
+            .expect("ops describe request");
+        assert!(describe.authorized_for(config::OPS_UID));
+        assert!(!describe.authorized_for(config::ORCHESTRATOR_UID));
+        assert_eq!(
+            describe.into_cli(),
+            ("ops".to_string(), strings(&["describe", "github.read"]))
+        );
     }
 
     #[test]
