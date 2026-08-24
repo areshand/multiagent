@@ -1242,8 +1242,13 @@ fn review_marker_matches(line: &str, marker: &str) -> bool {
             value = rest.trim_start();
         }
     }
-    if value.starts_with('`') && value.ends_with('`') && value.len() >= 2 {
-        value = &value[1..value.len() - 1];
+    for wrapper in ["`", "**", "__"] {
+        if value.starts_with(wrapper)
+            && value.ends_with(wrapper)
+            && value.len() >= wrapper.len() * 2
+        {
+            value = &value[wrapper.len()..value.len() - wrapper.len()];
+        }
     }
     value == marker
 }
@@ -1636,6 +1641,8 @@ mod tests {
         assert!(review_marker_matches(marker, marker));
         assert!(review_marker_matches(&format!("3. `{marker}`"), marker));
         assert!(review_marker_matches(&format!("- `{marker}`"), marker));
+        assert!(review_marker_matches(&format!("**{marker}**"), marker));
+        assert!(review_marker_matches(&format!("- __{marker}__"), marker));
         assert!(!review_marker_matches(
             &format!("evidence includes {marker}"),
             marker

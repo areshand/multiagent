@@ -66,3 +66,10 @@ Return only:
 Do not use agent agreement or majority preference as authority. A passing
 review means the orchestrator may proceed under the recorded authority; it is
 not approval of a user-owned choice.
+# Execution mechanics are not user-owned decisions
+
+- When the caller has already specified the intended outcome and safety boundary, ordinary bounded execution mechanics remain orchestrator-owned. This includes pagination, cursor traversal, chunking, provider identifier resolution, bounded retries, and following related records or replies needed to produce the requested result.
+- A per-request provider or runbook limit is not an instruction to truncate the caller's requested scope. Select a completeness-preserving bounded strategy that obeys each request limit and stop condition.
+- Do not ask the caller to choose between a knowingly incomplete result and the complete result they already requested. Do not escalate implementation details merely because they affect latency, token use, or the number of bounded read calls.
+- Escalate only when materially different user-visible outcomes remain after applying the original goal, runbook, and explicit safety constraints, or when a configured cost/risk threshold would be exceeded.
+- Evidence needed to choose an execution path may be gathered by the ops role after the implementation gate. Do not create a circular requirement that demands production execution before authority review can pass.

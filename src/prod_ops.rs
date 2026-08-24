@@ -299,11 +299,7 @@ fn verify_reviewer(
     if !actual_output.eq_ignore_ascii_case(expected_output) {
         return Err("ops reviewer evidence failed its supervisor seal".into());
     }
-    let accepted = evidence
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .is_some_and(|line| line.eq_ignore_ascii_case("verdict: accepted"));
+    let accepted = reviewer_accepted(&evidence);
     if !accepted {
         return Err("ops reviewer did not accept the operation".into());
     }
@@ -343,6 +339,25 @@ fn verify_reviewer(
         evidence_sha256: format!("sha256:{actual_output}"),
         approved_at,
     })
+}
+
+fn reviewer_accepted(evidence: &str) -> bool {
+    evidence
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .is_some_and(|line| {
+            let mut value = line;
+            for wrapper in ["`", "**", "__"] {
+                if value.starts_with(wrapper)
+                    && value.ends_with(wrapper)
+                    && value.len() >= wrapper.len() * 2
+                {
+                    value = &value[wrapper.len()..value.len() - wrapper.len()];
+                }
+            }
+            value.eq_ignore_ascii_case("verdict: accepted")
+        })
 }
 
 fn required_object<'a>(
@@ -809,8 +824,8 @@ fn base64_decode(value: &str) -> Result<Vec<u8>, String> {
 mod tests {
     use super::{
         base64_decode, base64url_encode, build_request, canonical, curl_command, ecdsa_der_to_raw,
-        parse_mcp_body, private_temp_path, runbook_content_digest, write_mcp_headers,
-        TrustedApproval,
+        parse_mcp_body, private_temp_path, reviewer_accepted, runbook_content_digest,
+        write_mcp_headers, TrustedApproval,
     };
     use chrono::{TimeZone, Utc};
     use serde_json::json;
@@ -846,6 +861,17 @@ mod tests {
             runbook_content_digest(b"# Runbook\n"),
             "sha256:a0bd8567ec5da5c4c78ef8370994af0b34e5c83c1ebdd28359d297096f8efa75"
         );
+    }
+
+    #[test]
+    fn reviewer_acceptance_allows_only_cosmetic_markdown_wrapping() {
+        assert!(reviewer_accepted("Verdict: ACCEPTED\n"));
+        assert!(reviewer_accepted(
+            "**Verdict: ACCEPTED**\n\nReview analysis"
+        ));
+        assert!(reviewer_accepted("`verdict: accepted`"));
+        assert!(!reviewer_accepted("Review result: verdict: accepted"));
+        assert!(!reviewer_accepted("**Verdict: REJECTED**"));
     }
     #[test]
     fn operation_and_target_come_from_runbook_request_data() {

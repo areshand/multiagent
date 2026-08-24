@@ -87,6 +87,25 @@ Create an approved implementation context document containing the selected
 plan, decision and plan IDs, authority and approval basis, intended outcome,
 rejected alternatives and reasons, must-do and must-not-do constraints, migration choice,
 responsibility boundary, affected paths, unresolved questions, and revision.
+When the workflow has a registered contract artifact, never retype, summarize,
+or reconstruct that artifact or its digest. Compose the approved context from
+the supervisor-owned values and the exact artifact file bytes:
+
+```bash
+contract_path="$(multiagent workflow value "$MULTIAGENT_WORKFLOW_ID" contract_artifact)"
+contract_hash="$(multiagent workflow value "$MULTIAGENT_WORKFLOW_ID" contract_artifact_sha256)"
+{
+  printf 'contract-artifact-sha256=%s\n' "$contract_hash"
+  cat "$contract_path"
+  cat APPROVED_CONTEXT_BODY_PATH
+} >CONTEXT_PATH
+```
+
+Write the selected plan and other implementation context to
+`APPROVED_CONTEXT_BODY_PATH` first. Do not edit the registered artifact file,
+copy its contents through model-generated text, or calculate a replacement
+digest. The exact composition above is required even when the artifact is
+already visible in conversation history.
 Commit the selected alternative with `multiagent decision commit`, then record the
 passed authority review and approved context with:
 
@@ -114,7 +133,9 @@ implementation context; a decision ID alone is insufficient.
 Production runbook operations are not workspace implementation. For a signed
 prod-mcp request, do not create a worker or assignment. Spawn the `ops` role
 after independent review of the exact request and have that role invoke
-`multiagent ops execute`. This special case remains subject to the active
+`multiagent ops execute --request-file PATH --reviewer REVIEWER_NAME`. The
+reviewer argument is mandatory and must name the finalized reviewer that
+inspected that unchanged request file. This special case remains subject to the active
 workflow, decision, plan, runbook, bounds, and post-execution review.
 
 Do not silently change the approved plan. A newly discovered choice or factual
@@ -200,3 +221,14 @@ if a shell command overrides `MULTIAGENT_LIFECYCLE_ENFORCEMENT`.
 `MULTIAGENT_VERIFIER_MAX_ITERATIONS` is an escalation threshold, not an
 acceptance condition. At the threshold, reconsider the route, surface a
 blocker, or ask the user. Never accept merely because the threshold was reached.
+# Workflow TODO command contract
+
+Use the CLI's exact TODO vocabulary; do not guess aliases such as `implementation` or `task`:
+
+```bash
+multiagent workflow add-todo "$MULTIAGENT_WORKFLOW_ID" TODO_ID \
+  --kind direct|decision \
+  --summary "SUMMARY"
+```
+
+Operational execution with an already stated caller goal is `--kind direct`. A TODO does not bypass contract registration, implementation-context binding, or authority review.
