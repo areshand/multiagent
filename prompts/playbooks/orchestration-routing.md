@@ -9,6 +9,28 @@ All implementation routing occurs inside the persisted lifecycle from
 review, bounded implementation, independent post-implementation reviews, then
 either completion or a TODO-driven return to pre-implementation.
 
+## Task-Adaptive Role DAG
+
+Start with the orchestrator and construct the smallest role DAG that can satisfy
+the goal. Spawn a node only when its dependencies are ready and only when its
+output can affect acceptance.
+
+- Use a contract scout only when the contract, target, or proxy/scaffold risk is
+  ambiguous.
+- Use a decision-authority reviewer only for consequential or uncertain choices.
+- After a candidate diff exists, query the supervisor's persisted obligations
+  and spawn exactly those reviewers.
+- Add scope review when the change surface is broad or boundary risk is found.
+- Reflection review is automatically required after repair or repeated
+  iteration.
+- Reuse accepted immutable artifacts; repair only the rejected node and its
+  dependents.
+- Never skip a pending supervisor obligation to reduce token use.
+
+Give each role only the goal, its role module, and the immutable artifacts it
+needs. Production procedures remain in Markdown runbooks and must not be copied
+into this routing prompt.
+
 Before implementation, load `prompts/playbooks/intent-contract.md` if the
 contract is ambiguous or proxy/scaffold risk is present. Before planning
 multi-worker waves or competing explorations, load

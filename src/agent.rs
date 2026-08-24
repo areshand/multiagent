@@ -598,14 +598,16 @@ fn run_spec(
     let raw_stderr = files.trace_dir.join("raw-stderr.log");
     let normalized = files.trace_dir.join("events.jsonl");
     let metadata = json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "backend": id,
         "executable": version.executable,
         "version": version.version,
         "capabilities": capabilities,
         "cwd": spec.cwd,
+        "prompt_bytes": prompt.len(),
         "prompt_file": files.prompt,
         "final_output": files.final_output,
+        "usage_file": files.trace_dir.join("usage.json"),
         "workflow_id": env::var("MULTIAGENT_WORKFLOW_ID").unwrap_or_default(),
         "role": env::var("MULTIAGENT_SUBAGENT_NAME").unwrap_or_else(|_| "orchestrator".into()),
     });
@@ -695,6 +697,12 @@ fn run_spec(
         event_bytes.push(b'\n');
     }
     write_private(&normalized, &event_bytes)?;
+    write_private(
+        &files.trace_dir.join("usage.json"),
+        serde_json::to_string_pretty(&summarize_usage(id, &decoded.events))
+            .map_err(|error| format!("serialize token usage summary: {error}"))?
+            .as_bytes(),
+    )?;
     if let Some(session_id) = decoded.session_id.as_deref() {
         write_private(
             &files.trace_dir.join("session-id"),
@@ -867,6 +875,30 @@ struct NormalizedEvent {
     raw: Value,
 }
 
+#[derive(Serialize)]
+struct UsageSummary {
+    schema_version: u8,
+    backend: BackendId,
+    input_tokens: u64,
+    cached_input_tokens: u64,
+    output_tokens: u64,
+    cache_creation_input_tokens: u64,
+    cache_read_input_tokens: u64,
+    total_tokens: u64,
+    observed_usage_events: usize,
+    aggregation: &'static str,
+}
+
+#[derive(Default)]
+struct TokenCounts {
+    input: u64,
+    cached_input: u64,
+    output: u64,
+    cache_creation: u64,
+    cache_read: u64,
+    total: Option<u64>,
+}
+
 struct DecodedOutput {
     events: Vec<NormalizedEvent>,
     final_message: Option<String>,
@@ -944,6 +976,122 @@ fn normalize_output(id: BackendId, bytes: &[u8]) -> DecodedOutput {
         events,
         final_message,
         session_id,
+    }
+}
+
+fn summarize_usage(id: BackendId, events: &[NormalizedEvent]) -> UsageSummary {
+    let observed = events.iter().filter(|event| event.usage.is_some()).count();
+    let turn_usage = events
+        .iter()
+        .filter(|event| {
+            matches!(event.raw_type.as_str(), "turn.completed" | "turn_completed")
+                && event.usage.is_some()
+        })
+        .filter_map(|event| event.usage.as_ref())
+        .collect::<Vec<_>>();
+    let terminal = events.iter().rev().find_map(|event| {
+        (matches!(
+            event.raw_type.as_str(),
+            "result" | "completed" | "complete" | "final" | "message.completed"
+        ))
+        .then_some(event.usage.as_ref())
+        .flatten()
+    });
+
+    let (selected, aggregation): (Vec<&Value>, &'static str) =
+        if id == BackendId::Codex && !turn_usage.is_empty() {
+            (turn_usage, "turn-sum")
+        } else if let Some(usage) = terminal {
+            (vec![usage], "terminal")
+        } else {
+            let mut seen = std::collections::BTreeSet::new();
+            let unique = events
+                .iter()
+                .filter_map(|event| event.usage.as_ref())
+                .filter(|usage| seen.insert(usage.to_string()))
+                .collect::<Vec<_>>();
+            let mode = if unique.is_empty() {
+                "unavailable"
+            } else {
+                "unique-event-sum"
+            };
+            (unique, mode)
+        };
+
+    let mut aggregate = TokenCounts::default();
+    let mut total_tokens = 0_u64;
+    for usage in selected {
+        let counts = token_counts(usage);
+        aggregate.input = aggregate.input.saturating_add(counts.input);
+        aggregate.cached_input = aggregate.cached_input.saturating_add(counts.cached_input);
+        aggregate.output = aggregate.output.saturating_add(counts.output);
+        aggregate.cache_creation = aggregate
+            .cache_creation
+            .saturating_add(counts.cache_creation);
+        aggregate.cache_read = aggregate.cache_read.saturating_add(counts.cache_read);
+        total_tokens = total_tokens.saturating_add(
+            counts
+                .total
+                .unwrap_or_else(|| counts.input.saturating_add(counts.output)),
+        );
+    }
+
+    UsageSummary {
+        schema_version: 1,
+        backend: id,
+        input_tokens: aggregate.input,
+        cached_input_tokens: aggregate.cached_input,
+        output_tokens: aggregate.output,
+        cache_creation_input_tokens: aggregate.cache_creation,
+        cache_read_input_tokens: aggregate.cache_read,
+        total_tokens,
+        observed_usage_events: observed,
+        aggregation,
+    }
+}
+
+fn token_counts(usage: &Value) -> TokenCounts {
+    TokenCounts {
+        input: token_value(
+            usage,
+            &["input_tokens", "inputTokens", "prompt_tokens", "promptTokens"],
+        ),
+        cached_input: token_value(usage, &["cached_input_tokens", "cachedInputTokens"]),
+        output: token_value(
+            usage,
+            &[
+                "output_tokens",
+                "outputTokens",
+                "completion_tokens",
+                "completionTokens",
+            ],
+        ),
+        cache_creation: token_value(usage, &["cache_creation_input_tokens"]),
+        cache_read: token_value(usage, &["cache_read_input_tokens"]),
+        total: token_value_optional(usage, &["total_tokens", "totalTokens"]),
+    }
+}
+
+fn token_value(value: &Value, names: &[&str]) -> u64 {
+    token_value_optional(value, names).unwrap_or(0)
+}
+
+fn token_value_optional(value: &Value, names: &[&str]) -> Option<u64> {
+    match value {
+        Value::Object(values) => {
+            for name in names {
+                if let Some(number) = values.get(*name).and_then(Value::as_u64) {
+                    return Some(number);
+                }
+            }
+            values
+                .values()
+                .find_map(|nested| token_value_optional(nested, names))
+        }
+        Value::Array(values) => values
+            .iter()
+            .find_map(|nested| token_value_optional(nested, names)),
+        _ => None,
     }
 }
 
@@ -1281,6 +1429,33 @@ mod tests {
         );
         assert_eq!(decoded.events[1].kind, "completed");
         assert_eq!(decoded.events[1].success, Some(true));
+    }
+
+    #[test]
+    fn summarizes_terminal_usage_without_double_counting_cached_tokens() {
+        let decoded = normalize_output(
+            BackendId::Claude,
+            b"{\"type\":\"assistant\",\"usage\":{\"input_tokens\":100,\"output_tokens\":10}}\n{\"type\":\"result\",\"usage\":{\"input_tokens\":120,\"cache_read_input_tokens\":80,\"output_tokens\":20,\"total_tokens\":140}}\n",
+        );
+        let usage = summarize_usage(BackendId::Claude, &decoded.events);
+        assert_eq!(usage.input_tokens, 120);
+        assert_eq!(usage.cache_read_input_tokens, 80);
+        assert_eq!(usage.output_tokens, 20);
+        assert_eq!(usage.total_tokens, 140);
+        assert_eq!(usage.aggregation, "terminal");
+    }
+
+    #[test]
+    fn sums_codex_turn_usage() {
+        let decoded = normalize_output(
+            BackendId::Codex,
+            b"{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":2}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":20,\"output_tokens\":3}}\n",
+        );
+        let usage = summarize_usage(BackendId::Codex, &decoded.events);
+        assert_eq!(usage.input_tokens, 30);
+        assert_eq!(usage.output_tokens, 5);
+        assert_eq!(usage.total_tokens, 35);
+        assert_eq!(usage.aggregation, "turn-sum");
     }
 
     #[test]

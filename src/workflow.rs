@@ -50,6 +50,7 @@ const ENV_ORDER: &[&str] = &[
 const TODO_HEADER: &str = "todo_id\tkind\tsummary\torigin\tstatus\tassignment_id\tresolution\treason_code\treason\tevidence\tauthority\tdestination\tresume_condition\titeration\tupdated_at";
 const REVIEW_HEADER: &str =
     "review_id\ttype\tverdict\tdiff_hash\tevidence\titeration\trecorded_at\treviewer";
+const REVIEW_OBLIGATION_HEADER: &str = "obligation_id\ttype\ttrigger\tartifact_digest\treason\titeration\tstatus\treview_id\tupdated_at";
 
 const USAGE: &str = r#"Usage:
   multiagent workflow init WORKFLOW_ID
@@ -61,6 +62,7 @@ const USAGE: &str = r#"Usage:
   multiagent workflow add-todo WORKFLOW_ID TODO_ID --kind KIND --summary TEXT [--origin TEXT]
   multiagent workflow todo-status WORKFLOW_ID TODO_ID STATUS [--assignment-id ID]
   multiagent workflow resolve-todo WORKFLOW_ID TODO_ID --resolution STATUS --evidence TEXT [OPTIONS]
+  multiagent workflow require-review WORKFLOW_ID OBLIGATION_ID --type TYPE --trigger TRIGGER --artifact-digest DIGEST --reason TEXT
   multiagent workflow record-review WORKFLOW_ID REVIEW_ID --type TYPE --verdict VERDICT [--diff-hash HASH] --evidence TEXT [--reviewer NAME]
   multiagent workflow gate WORKFLOW_ID implementation|completion [--decision-id ID] [--plan-id ID]
   multiagent workflow completion-check WORKFLOW_ID
@@ -85,6 +87,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         "add-todo" => add_todo(&args[1..]),
         "todo-status" => todo_status(&args[1..]),
         "resolve-todo" => resolve_todo(&args[1..]),
+        "require-review" => require_review(&args[1..]),
         "record-review" => record_review(&args[1..]),
         "gate" => gate(&args[1..]),
         "completion-check" => completion_ready(&args[1..]),
@@ -145,6 +148,7 @@ struct Paths {
     state: PathBuf,
     todos: PathBuf,
     reviews: PathBuf,
+    review_obligations: PathBuf,
     events: PathBuf,
     lock: PathBuf,
 }
@@ -162,6 +166,7 @@ impl Store {
             state: base.join("lifecycle.env"),
             todos: base.join("todos.tsv"),
             reviews: base.join("reviews.tsv"),
+            review_obligations: base.join("review-obligations.tsv"),
             events: base.join("events.log"),
             lock: base.join(".lock"),
             base,
@@ -220,6 +225,27 @@ impl Review {
     }
 }
 
+#[derive(Clone)]
+struct ReviewObligation {
+    fields: [String; 9],
+}
+impl ReviewObligation {
+    fn parse(line: &str) -> Self {
+        Self {
+            fields: parse_fields(line),
+        }
+    }
+    fn line(&self) -> String {
+        encode_fields(&self.fields)
+    }
+    fn get(&self, index: usize) -> &str {
+        &self.fields[index]
+    }
+    fn set(&mut self, index: usize, value: &str) {
+        self.fields[index] = value.to_string();
+    }
+}
+
 fn initialize(args: &[String], fixed_resume: bool) -> Result<(), String> {
     if args.len() != 1 {
         return Err("init requires WORKFLOW_ID".into());
@@ -262,6 +288,7 @@ fn initialize_id(id: &str, resume: bool) -> Result<(), String> {
         write_env(&p.state, &state)?;
         init_table(&p.todos, TODO_HEADER)?;
         init_table(&p.reviews, REVIEW_HEADER)?;
+        init_table(&p.review_obligations, REVIEW_OBLIGATION_HEADER)?;
         event(&p.events, "workflow_resumed", &format!("phase={phase}"))?;
         println!("workflow resumed\t{id}\t{phase}");
         return Ok(());
@@ -316,6 +343,7 @@ fn initialize_id(id: &str, resume: bool) -> Result<(), String> {
     write_env(&p.state, &state)?;
     init_table(&p.todos, TODO_HEADER)?;
     init_table(&p.reviews, REVIEW_HEADER)?;
+    init_table(&p.review_obligations, REVIEW_OBLIGATION_HEADER)?;
     event(
         &p.events,
         "workflow_initialized",
@@ -576,6 +604,38 @@ fn transition(args: &[String]) -> Result<(), String> {
         state.insert("phase".into(), "post-implementation".into());
         state.insert("candidate_diff_hash".into(), diff.into());
         state.insert("reviewed_diff_hash".into(), "".into());
+        let iteration = state_value(&state, "iteration");
+        let mut obligations = read_review_obligations(&p.review_obligations)?;
+        ensure_review_obligation(
+            &mut obligations,
+            &format!("auto-{iteration}-technical"),
+            "technical",
+            "candidate-diff",
+            diff,
+            "source diff requires independent technical validation",
+            iteration,
+        )?;
+        ensure_review_obligation(
+            &mut obligations,
+            &format!("auto-{iteration}-decision-drift"),
+            "decision-drift",
+            "candidate-diff",
+            diff,
+            "source diff must remain within the authorized implementation context",
+            iteration,
+        )?;
+        if iteration.parse::<u64>().unwrap_or(1) > 1 {
+            ensure_review_obligation(
+                &mut obligations,
+                &format!("auto-{iteration}-reflection"),
+                "reflection",
+                "repair-iteration",
+                diff,
+                "repair iterations require comparison of expected and actual outcomes",
+                iteration,
+            )?;
+        }
+        write_review_obligations(&p.review_obligations, &obligations)?;
     } else if target == "pre-implementation" {
         if !read_todos(&p.todos)?.iter().any(|r| active(r.get(4))) {
             return Err("post-implementation -> pre-implementation requires an active TODO".into());
@@ -830,12 +890,122 @@ fn record_review(args: &[String]) -> Result<(), String> {
         ],
     });
     write_reviews(&p.reviews, &rows)?;
+    if verdict == "pass" && kind != "decision-authority" {
+        let mut obligations = read_review_obligations(&p.review_obligations)?;
+        let mut changed = false;
+        for obligation in obligations.iter_mut().filter(|obligation| {
+            obligation.get(1) == kind
+                && obligation.get(3) == diff
+                && obligation.get(5) == state_value(&state, "iteration")
+                && obligation.get(6) == "pending"
+        }) {
+            obligation.set(6, "satisfied");
+            obligation.set(7, review_id);
+            obligation.set(8, &timestamp());
+            changed = true;
+        }
+        if changed {
+            write_review_obligations(&p.review_obligations, &obligations)?;
+        }
+    }
     event(
         &p.events,
         "review_recorded",
         &format!("review_id={review_id}\ttype={kind}\tverdict={verdict}\tdiff_hash={diff}"),
     )?;
     println!("review recorded\t{id}\t{review_id}\t{kind}\t{verdict}");
+    Ok(())
+}
+
+fn require_review(args: &[String]) -> Result<(), String> {
+    if args.len() < 2 {
+        return Err("require-review requires WORKFLOW_ID OBLIGATION_ID".into());
+    }
+    let id = &args[0];
+    let obligation_id = &args[1];
+    valid_id("review obligation ID", obligation_id)?;
+    let o = options(&args[2..])?;
+    let kind = required(&o, "--type")?;
+    let trigger = required(&o, "--trigger")?;
+    let digest = required(&o, "--artifact-digest")?;
+    let reason = required(&o, "--reason")?;
+    if !POST_REVIEWS.contains(&kind) {
+        return Err(format!("invalid post-implementation review type: {kind}"));
+    }
+    for (name, value) in [
+        ("trigger", trigger),
+        ("artifact digest", digest),
+        ("reason", reason),
+    ] {
+        if value.is_empty()
+            || value
+                .chars()
+                .any(|character| matches!(character, '\t' | '\n' | '\r'))
+        {
+            return Err(format!("{name} must be a non-empty single-line value"));
+        }
+    }
+    let store = Store::configured()?;
+    let p = store.paths(id)?;
+    let _lock = store.lock(&p)?;
+    let state = read_env(&p.state, id)?;
+    if state_value(&state, "phase") == "complete" {
+        return Err("cannot add a review obligation to a completed workflow".into());
+    }
+    let iteration = state_value(&state, "iteration");
+    let mut obligations = read_review_obligations(&p.review_obligations)?;
+    ensure_review_obligation(
+        &mut obligations,
+        obligation_id,
+        kind,
+        trigger,
+        digest,
+        reason,
+        iteration,
+    )?;
+    write_review_obligations(&p.review_obligations, &obligations)?;
+    event(
+        &p.events,
+        "review_required",
+        &format!("obligation_id={obligation_id}\ttype={kind}\tartifact_digest={digest}"),
+    )?;
+    println!("review required\t{id}\t{obligation_id}\t{kind}");
+    Ok(())
+}
+
+fn ensure_review_obligation(
+    rows: &mut Vec<ReviewObligation>,
+    obligation_id: &str,
+    kind: &str,
+    trigger: &str,
+    digest: &str,
+    reason: &str,
+    iteration: &str,
+) -> Result<(), String> {
+    if let Some(existing) = rows.iter().find(|row| row.get(0) == obligation_id) {
+        if existing.get(1) == kind
+            && existing.get(2) == trigger
+            && existing.get(3) == digest
+            && existing.get(4) == reason
+            && existing.get(5) == iteration
+        {
+            return Ok(());
+        }
+        return Err(format!("conflicting review obligation: {obligation_id}"));
+    }
+    rows.push(ReviewObligation {
+        fields: [
+            obligation_id.into(),
+            kind.into(),
+            trigger.into(),
+            digest.into(),
+            reason.into(),
+            iteration.into(),
+            "pending".into(),
+            String::new(),
+            timestamp(),
+        ],
+    });
     Ok(())
 }
 
@@ -1032,7 +1202,31 @@ fn completion_state(store: &Store, id: &str) -> Result<BTreeMap<String, String>,
         .filter(|review| review.get(2) == "pass")
         .map(|review| review.get(1))
         .collect();
-    let missing: Vec<&str> = POST_REVIEWS
+    let obligations = read_review_obligations(&p.review_obligations)?;
+    let current_obligations = obligations
+        .iter()
+        .filter(|obligation| obligation.get(3) == diff && obligation.get(5) == iteration)
+        .collect::<Vec<_>>();
+    let pending = current_obligations
+        .iter()
+        .filter(|obligation| obligation.get(6) != "satisfied")
+        .map(|obligation| obligation.get(0))
+        .collect();
+    if !pending.is_empty() {
+        return Err(format!(
+            "completion blocked by pending review obligations: {}",
+            pending.join(",")
+        ));
+    }
+    let required_types: BTreeSet<&str> = if current_obligations.is_empty() {
+        POST_REVIEWS.iter().copied().collect()
+    } else {
+        current_obligations
+            .iter()
+            .map(|obligation| obligation.get(1))
+            .collect()
+    };
+    let missing: Vec<&str> = required_types
         .iter()
         .copied()
         .filter(|kind| !passed.contains(kind))
@@ -1060,7 +1254,7 @@ fn completion_state(store: &Store, id: &str) -> Result<BTreeMap<String, String>,
         }
         for review in latest
             .values()
-            .filter(|row| row.get(2) == "pass" && POST_REVIEWS.contains(&row.get(1)))
+            .filter(|row| row.get(2) == "pass" && required_types.contains(row.get(1)))
         {
             let reviewer = review.get(7);
             if reviewer.is_empty() {
@@ -1495,6 +1689,13 @@ fn read_todos(path: &Path) -> Result<Vec<Todo>, String> {
 fn read_reviews(path: &Path) -> Result<Vec<Review>, String> {
     read_lines(path).map(|rows| rows.into_iter().map(|line| Review::parse(&line)).collect())
 }
+fn read_review_obligations(path: &Path) -> Result<Vec<ReviewObligation>, String> {
+    read_lines(path).map(|rows| {
+        rows.into_iter()
+            .map(|line| ReviewObligation::parse(&line))
+            .collect()
+    })
+}
 fn read_lines(path: &Path) -> Result<Vec<String>, String> {
     if !path.exists() {
         return Ok(Vec::new());
@@ -1512,6 +1713,13 @@ fn write_todos(path: &Path, rows: &[Todo]) -> Result<(), String> {
 }
 fn write_reviews(path: &Path, rows: &[Review]) -> Result<(), String> {
     write_rows(path, REVIEW_HEADER, rows.iter().map(Review::line))
+}
+fn write_review_obligations(path: &Path, rows: &[ReviewObligation]) -> Result<(), String> {
+    write_rows(
+        path,
+        REVIEW_OBLIGATION_HEADER,
+        rows.iter().map(ReviewObligation::line),
+    )
 }
 fn write_rows(path: &Path, header: &str, rows: impl Iterator<Item = String>) -> Result<(), String> {
     let mut text = format!("{header}\n");

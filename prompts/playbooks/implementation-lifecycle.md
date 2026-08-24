@@ -1,9 +1,22 @@
 # Implementation Lifecycle Playbook
 
-This playbook is mandatory for every orchestrated task. The launcher includes
-it in the orchestrator's initial prompt. It is the canonical authority for task
-phases, transitions, TODO convergence, and completion; role and routing
-playbooks must not weaken its gates.
+This playbook is mandatory for source implementation tasks. The launcher
+includes it in the orchestrator's initial prompt. It is the canonical authority
+for task phases, transitions, TODO convergence, and completion; role and routing
+playbooks must not weaken its gates. Production operations use their versioned
+Markdown runbook and production-operation review path instead of manufacturing
+source-code roles.
+
+## Task-Adaptive Role Plan
+
+Build the smallest dependency graph that can produce and independently validate
+the requested artifact. Spawn a role only when its inputs are available. Do not
+start scouts, verifiers, or reviewers speculatively.
+
+The supervisor's persisted review obligations are authoritative. Cost or
+latency is never a reason to skip a pending obligation. The orchestrator may
+request an additional obligation when risk is discovered, but it cannot waive
+one.
 
 ## Durable State
 
@@ -151,7 +164,11 @@ multiagent workflow transition "$MULTIAGENT_WORKFLOW_ID" post-implementation \
 
 ## Post-Implementation
 
-Run independent reviews against the frozen candidate diff:
+Query the supervisor for obligations bound to the frozen candidate diff and run
+exactly the pending independent reviews. The supervisor automatically requires
+`technical` and `decision-drift` for a source diff, requires `reflection` after
+a repair iteration, and accepts an additional `scope` obligation when the
+change surface or discovered risk warrants it.
 
 - `decision-drift`: compare the diff to the authorized implementation context;
 - `scope`: check scope, simplicity, ownership, and unnecessary complexity;
@@ -201,8 +218,8 @@ This increments the iteration and invalidates the prior implementation permit.
 ## Completion
 
 Complete only when every TODO is completed or validly skipped, no user-owned
-decision is unanswered, and all four required reviews pass against the current
-candidate diff hash:
+decision is unanswered, and every supervisor-created review obligation passes
+against the current candidate diff hash:
 
 ```bash
 multiagent orchestrator complete

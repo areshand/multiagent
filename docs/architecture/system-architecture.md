@@ -208,6 +208,12 @@ The agent harness writes structured traces to its normal local trace path. A
 deployment-managed sidecar exports those traces to an S3 bucket for later
 inspection and self-improvement.
 
+Each invocation also includes a provider-neutral `usage.json` with observed
+input, cached-input, output, and total token counts. The sidecar exports this
+file with the rest of the trace. Model pricing and cost calculation remain
+deployment concerns because prices and model mappings change independently of
+the harness.
+
 Agents do not need S3 credentials or S3-specific code. The sidecar owns upload,
 retry, object naming, and status reporting. Trace export failures must be
 observable without preventing the session from retaining local evidence until
@@ -235,6 +241,24 @@ The Rust permit producer and TypeScript permit consumer must share conformance
 fixtures. In the longer term, a canonical machine-readable schema should be
 owned by `prod-mcp` and used to generate or validate clients so the contract is
 not maintained independently in two languages.
+
+### AD-014: Role selection is task-adaptive; review obligations are mechanical
+
+The orchestrator constructs the smallest role dependency graph needed for the
+current goal and spawns a role only when its inputs are ready. Optional roles
+such as contract scouts, scope reviewers, and reflection reviewers are selected
+only when their documented trigger applies. This avoids paying for agents whose
+work cannot affect the result.
+
+Quality gates are not optional routing hints. The supervisor derives and stores
+review obligations from the artifacts and actions actually produced. The
+orchestrator may request additional review but cannot remove a pending
+obligation, and completion is denied until every applicable obligation has
+passing evidence bound to the exact artifact. Reviewers receive only the goal,
+their role instructions, and the immutable artifacts needed for their review.
+
+Provider and model selection remain deployment-owned. The orchestrator chooses
+roles and dependencies, not provider credentials, model names, or prices.
 
 ## End-to-end request flow
 
