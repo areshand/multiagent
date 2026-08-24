@@ -866,7 +866,9 @@ mod tests {
     #[test]
     fn reviewer_acceptance_allows_only_cosmetic_markdown_wrapping() {
         assert!(reviewer_accepted("Verdict: ACCEPTED\n"));
-        assert!(reviewer_accepted("**Verdict: ACCEPTED**\n\nReview analysis"));
+        assert!(reviewer_accepted(
+            "**Verdict: ACCEPTED**\n\nReview analysis"
+        ));
         assert!(reviewer_accepted("`verdict: accepted`"));
         assert!(!reviewer_accepted("Review result: verdict: accepted"));
         assert!(!reviewer_accepted("**Verdict: REJECTED**"));
