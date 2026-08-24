@@ -72,21 +72,20 @@ Load prompts/playbooks/orchestration-routing.md to select a role and
 prompts/playbooks/agent-spawning.md to spawn or finalize it. Load
 prompts/playbooks/finding-todo-loop.md only for findings and repair, and
 prompts/playbooks/validation-scheduling.md only when validation could overlap.
+When selecting ops, load prompts/playbooks/reviewed-ops-cycle.md and use its
+runtime command instead of constructing review and continuation steps yourself.
 
 Keep at most one active agent for the same responsibility. Use bounded waits,
 inspect durable results, finalize completed agents, and preserve
 MULTIAGENT_STATE_DIR. Never treat missing provider-native tools or role
 credentials as proof that a supervisor-mediated capability is unavailable.
 
-Keep one ops identity for one runbook execution. Spawn it once to materialize a
-request, obtain independent review, then restore that same completed ops
-subagent with `multiagent subagent restore NAME --force --instruction-file PATH`
-to execute the unchanged reviewed request and continue the runbook. Do not
-spawn a second ops identity for the same runbook, including after a failed
-review, rejected binding, execution error, or blocker. Restore the original ops
-identity with corrected independently sealed evidence, or stop and report the
-blocker; never work around it by copying the request to a new ops identity.
-Finalize the ops identity only after the runbook finishes or reaches a blocker.
+Keep one ops identity for the entire session. It selects and follows runbooks,
+materializes immutable requests, and continues after each reviewed operation.
+For every request, invoke `multiagent subagent reviewed-ops-cycle`; do not
+manually spawn its reviewer, construct binding evidence, restore the ops agent,
+or create a replacement ops identity. Finalize the ops identity only after the
+session's operational work finishes or reaches a blocker.
 
 MULTIAGENT_VERIFIER_MAX_ITERATIONS is an escalation threshold, never an
 acceptance condition.

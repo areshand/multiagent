@@ -98,14 +98,23 @@ fn review_bind(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn execute(args: &[String]) -> Result<ExitCode, String> {
-    let options = options(args)?;
-    let reviewer = required(&options, "--reviewer")?;
+pub(crate) fn review_binding_for_request(request_file: &Path) -> Result<String, String> {
+    let bytes = fs::read(request_file).map_err(|error| format!("read ops request: {error}"))?;
+    let template: Value = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("decode ops request template: {error}"))?;
+    validate_request_template(&template)?;
+    let runbook_content_sha256 = verified_runbook_content(&template)?;
+    review_binding_marker(&template, &runbook_content_sha256)
+}
+
+fn load_reviewed_request(
+    request_file: &Path,
+    reviewer: &str,
+) -> Result<(PathBuf, Value, TrustedApproval), String> {
     validate_id("reviewer name", reviewer)?;
-    let request_file = PathBuf::from(required(&options, "--request-file")?);
     let state = fs::canonicalize(required_env("MULTIAGENT_STATE_DIR")?)
         .map_err(|error| format!("resolve multiagent state: {error}"))?;
-    let request_file = fs::canonicalize(&request_file)
+    let request_file = fs::canonicalize(request_file)
         .map_err(|error| format!("resolve ops request file: {error}"))?;
     if !request_file.starts_with(&state) {
         return Err("ops request file must be inside MULTIAGENT_STATE_DIR".into());
@@ -127,6 +136,21 @@ fn execute(args: &[String]) -> Result<ExitCode, String> {
         .map_err(|error| format!("decode ops request template: {error}"))?;
     let runbook_content_sha256 = verified_runbook_content(&template)?;
     let reviewer_approval = verify_reviewer(&state, reviewer, &template, &runbook_content_sha256)?;
+    Ok((state, template, reviewer_approval))
+}
+
+pub(crate) fn preflight_reviewed_request(
+    request_file: &Path,
+    reviewer: &str,
+) -> Result<(), String> {
+    load_reviewed_request(request_file, reviewer).map(|_| ())
+}
+
+fn execute(args: &[String]) -> Result<ExitCode, String> {
+    let options = options(args)?;
+    let reviewer = required(&options, "--reviewer")?;
+    let request_file = PathBuf::from(required(&options, "--request-file")?);
+    let (state, template, reviewer_approval) = load_reviewed_request(&request_file, reviewer)?;
     let now = Utc::now();
     let caller_subject = env::var("MULTIAGENT_CALLER_SUBJECT")
         .ok()

@@ -1375,6 +1375,7 @@ pub fn subagent(args: &[String]) -> Result<ExitCode, String> {
         "recover-plan" => recover_plan(&cfg, &args[1..])?,
         "restore" => restore(&cfg, &args[1..])?,
         "restore-all" => restore_all(&cfg, &args[1..])?,
+        "reviewed-ops-cycle" => reviewed_ops_cycle(&cfg, &args[1..])?,
         "finalize" => finalize(&cfg, &args[1..])?,
         "kill" => kill(&cfg, &args[1..])?,
         command => return Err(format!("unknown command: {command}")),
@@ -1384,7 +1385,7 @@ pub fn subagent(args: &[String]) -> Result<ExitCode, String> {
 
 fn print_subagent_usage() {
     println!(
-        "Usage:\n  multiagent subagent spawn NAME [--own PATH[,PATH...] ...] [--assignment-id ID] [--workflow-id ID --decision-id ID --plan-id ID] [--branch BRANCH] [--start-commit COMMIT] [--role ROLE] [--instruction TEXT | --instruction-file PATH | -- TEXT]\n  multiagent subagent restore NAME [--force] [--instruction TEXT | --instruction-file PATH]\n  multiagent subagent list|recover-plan|restore-all|gate-check\n  multiagent subagent poll|inspect|finalize|kill NAME [OPTIONS]\n  multiagent subagent wait NAME [--timeout SECONDS] [--poll-interval SECONDS]\n\nAll durable state and tmux subprocess orchestration are implemented by the Rust CLI."
+        "Usage:\n  multiagent subagent spawn NAME [--own PATH[,PATH...] ...] [--assignment-id ID] [--workflow-id ID --decision-id ID --plan-id ID] [--branch BRANCH] [--start-commit COMMIT] [--role ROLE] [--instruction TEXT | --instruction-file PATH | -- TEXT]\n  multiagent subagent restore NAME [--force] [--instruction TEXT | --instruction-file PATH]\n  multiagent subagent reviewed-ops-cycle OPS_NAME --request-file PATH --reviewer NAME [--timeout SECONDS]\n  multiagent subagent list|recover-plan|restore-all|gate-check\n  multiagent subagent poll|inspect|finalize|kill NAME [OPTIONS]\n  multiagent subagent wait NAME [--timeout SECONDS] [--poll-interval SECONDS]\n\nAll durable state and tmux subprocess orchestration are implemented by the Rust CLI."
     );
 }
 
@@ -1743,6 +1744,128 @@ fn reject_additional_ops_identity(state: &Path, name: &str, role: &str) -> Resul
             ));
         }
     }
+    Ok(())
+}
+
+fn reviewed_ops_reviewer_instruction(
+    request_file: &Path,
+    request: &str,
+    binding: &str,
+) -> String {
+    format!(
+        "Independently review the immutable ops request below against its stated goal, operation, target, parameters, and certified runbook. Do not modify or execute it. If and only if it is acceptable, end with an accepted verdict and reproduce the binding marker exactly. Otherwise reject it with concrete findings.\n\nrequest-path: {}\n{}\n\nimmutable-request:\n{}",
+        request_file.display(),
+        binding,
+        request
+    )
+}
+
+fn reviewed_ops_execute_instruction(request_file: &Path, reviewer: &str) -> String {
+    format!(
+        "Continue the same runbook with the independently reviewed immutable request. Execute exactly:\n\nmultiagent ops execute --request-file {} --reviewer {}\n\nInspect the persisted receipt, continue the runbook if more operations are needed, and report the result or exact blocker. Do not create a replacement ops identity.",
+        shell_escape(&request_file.display().to_string()),
+        shell_escape(reviewer)
+    )
+}
+
+fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
+    let ops_name = args
+        .first()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "reviewed-ops-cycle requires OPS_NAME".to_string())?;
+    validate_name(ops_name)?;
+    let mut request_file = None::<PathBuf>;
+    let mut reviewer = None::<String>;
+    let mut timeout = "900".to_string();
+    let mut index = 1;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--request-file" => {
+                request_file = Some(PathBuf::from(required_value(
+                    args,
+                    index,
+                    "reviewed-ops-cycle --request-file",
+                )?));
+                index += 2;
+            }
+            "--reviewer" => {
+                reviewer = Some(
+                    required_value(args, index, "reviewed-ops-cycle --reviewer")?.to_string(),
+                );
+                index += 2;
+            }
+            "--timeout" => {
+                timeout = required_value(args, index, "reviewed-ops-cycle --timeout")?.to_string();
+                timeout
+                    .parse::<f64>()
+                    .map_err(|_| "reviewed-ops-cycle --timeout must be a non-negative number".to_string())?;
+                index += 2;
+            }
+            other => return Err(format!("unknown reviewed-ops-cycle argument: {other}")),
+        }
+    }
+    let request_file = request_file.ok_or("reviewed-ops-cycle requires --request-file PATH")?;
+    let reviewer = reviewer.ok_or("reviewed-ops-cycle requires --reviewer NAME")?;
+    validate_name(&reviewer)?;
+    if !reviewer.starts_with("ops-reviewer-") {
+        return Err("reviewed-ops-cycle reviewer name must start with ops-reviewer-".into());
+    }
+
+    let ops_dir = cfg.state.join("subagents").join(ops_name);
+    let metadata = read_env(&ops_dir.join("meta.env"))?;
+    if metadata.get("role").map(String::as_str) != Some("ops") {
+        return Err(format!("reviewed-ops-cycle requires an existing ops identity: {ops_name}"));
+    }
+    let request_file = fs::canonicalize(&request_file)
+        .map_err(io_error("resolve reviewed ops request"))?;
+    let ops_logs = fs::canonicalize(cfg.logs.join("agents").join(ops_name))
+        .map_err(io_error("resolve ops agent log directory"))?;
+    if !request_file.starts_with(&ops_logs) {
+        return Err(format!(
+            "reviewed ops request must belong to ops identity {ops_name}"
+        ));
+    }
+    let request = fs::read_to_string(&request_file).map_err(io_error("read reviewed ops request"))?;
+    let binding = crate::prod_ops::review_binding_for_request(&request_file)?;
+    let reviewer_instruction =
+        reviewed_ops_reviewer_instruction(&request_file, &request, &binding);
+    spawn(
+        cfg,
+        &[
+            reviewer.clone(),
+            "--role".into(),
+            "ops-reviewer".into(),
+            "--instruction".into(),
+            reviewer_instruction,
+        ],
+    )?;
+    wait(cfg, &[reviewer.clone(), "--timeout".into(), timeout.clone()])?;
+    let reviewer_status = read_trimmed(
+        &cfg.state.join("subagents").join(&reviewer).join("status"),
+    )
+    .unwrap_or_else(|| "unknown".into());
+    if !matches!(reviewer_status.as_str(), "done" | "exited") {
+        return Err(format!(
+            "ops reviewer {reviewer} did not complete successfully: {reviewer_status}"
+        ));
+    }
+    finalize(cfg, std::slice::from_ref(&reviewer))?;
+    crate::prod_ops::preflight_reviewed_request(&request_file, &reviewer)?;
+
+    let execute_instruction = reviewed_ops_execute_instruction(&request_file, &reviewer);
+    restore(
+        cfg,
+        &[
+            ops_name.to_string(),
+            "--force".into(),
+            "--instruction".into(),
+            execute_instruction,
+        ],
+    )?;
+    wait(
+        cfg,
+        &[ops_name.to_string(), "--timeout".into(), timeout],
+    )?;
     Ok(())
 }
 
@@ -4003,6 +4126,25 @@ mod tests {
         assert!(error.contains("restore that identity"));
 
         fs::remove_dir_all(state).unwrap();
+    }
+
+    #[test]
+    fn reviewed_ops_cycle_instructions_are_provider_neutral_and_exact() {
+        let request = Path::new("/state/logs/agents/ops-primary/request.json");
+        let review = reviewed_ops_reviewer_instruction(
+            request,
+            "{\"operation\":{\"id\":\"provider.read\"}}",
+            "review-binding-sha256=abc",
+        );
+        assert!(review.contains("review-binding-sha256=abc"));
+        assert!(review.contains("provider.read"));
+        assert!(!review.contains("Slack"));
+        assert!(!review.contains("Grafana"));
+
+        let execute = reviewed_ops_execute_instruction(request, "ops-reviewer-01");
+        assert!(execute.contains(
+            "multiagent ops execute --request-file /state/logs/agents/ops-primary/request.json --reviewer ops-reviewer-01"
+        ));
     }
 
     #[cfg(unix)]

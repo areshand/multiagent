@@ -43,10 +43,7 @@ Label discovery additionally requires `action`, `datasourceUid`, `lookbackMinute
 - The reviewer or prod-mcp rejects the request.
 ## Reviewed role continuation
 
-Run each discovery or query operation with one persistent ops identity and one independent reviewer:
-
-1. An `ops` materializer writes the exact request to `$MULTIAGENT_LOG_DIR/agents/$MULTIAGENT_SUBAGENT_NAME/request.json`, returns the literal JSON and path, and exits without execution.
-2. An independent `reviewer` reviews that literal JSON and exits with accepted evidence.
-3. Restore the same `ops` identity with the unchanged request path and finalized reviewer name. It invokes `multiagent ops execute --request-file "$MULTIAGENT_LOG_DIR/agents/$MULTIAGENT_SUBAGENT_NAME/request.json" --reviewer REVIEWER_NAME` and continues the runbook from the persisted receipt.
-
-The ops role is intentionally unable to write into the repository. `$HOME` is its deployment-provided private scratch directory. Reviewers must receive the literal request in their instruction because role homes are isolated from one another.
+Use the provider-neutral lifecycle in
+`prompts/playbooks/reviewed-ops-cycle.md` for every immutable request. This
+runbook defines Grafana operations and limits; it does not redefine agent
+spawning, independent review, binding, restoration, or receipt handling.
