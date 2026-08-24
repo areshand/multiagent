@@ -16,8 +16,8 @@ pull request. GitHub credentials remain inside prod-mcp.
 ## Read phase
 
 1. Set the phase to `read` and operation to `github.read`.
-2. Identify the exact `owner/repository` and choose `get-repository`, `get-file`, `get-pull-request`, or `list-pull-requests`.
-3. Bound file paths, refs, pull-request numbers, state, and result limits to the original goal.
+2. Identify the exact `owner/repository` and choose `get-repository`, `get-file`, `get-pull-request`, `list-pull-requests`, or `list-pull-request-reviews`.
+3. Bound file paths, refs, pull-request numbers, state, and result limits to the original goal. Compose multiple read requests when the goal requires correlating pull requests with their submitted reviews.
 4. Persist the signed action ID and receipt.
 
 ## Materialize phase
