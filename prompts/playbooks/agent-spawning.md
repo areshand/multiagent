@@ -185,6 +185,13 @@ continue indefinitely: the next state must be a source diff,
 `required-path-outside-owned: RELATIVE_PATH`, `validation-repair-needed:`, or
 blocked status with a source-visible reason.
 
+## Ops Review Continuation
+
+Use one ops identity per session. Load
+`prompts/playbooks/reviewed-ops-cycle.md` and invoke its supervisor-owned command
+for each immutable request. Do not manually reproduce the reviewer, binding,
+restore, or wait sequence, and never create a replacement ops identity.
+
 After `multiagent subagent kill NAME` or `multiagent subagent finalize NAME`, ensure the
 assignment no longer owns paths before reusing them. If needed, run
 `multiagent subagent assignment-status NAME failed` for killed workers or

@@ -332,8 +332,9 @@ pub fn seal_role_output(
     workflow_id: &str,
     private_output: &Path,
     public_output: &Path,
+    trace_dir: &Path,
 ) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     let bytes =
         fs::read(private_output).map_err(|error| format!("read private role output: {error}"))?;
@@ -355,8 +356,29 @@ pub fn seal_role_output(
             .map_err(|error| format!("protect reviewer evidence directory: {error}"))?;
         atomic_write_bytes(&directory.join("last-message.txt"), &bytes)?;
         let completed_at = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+        let mut binding_metadata = String::new();
+        if role == "reviewer" {
+            let binding_path = trace_dir.join("review-binding.json");
+            if binding_path.exists() {
+                let binding_file_metadata = fs::symlink_metadata(&binding_path)
+                    .map_err(|error| format!("inspect ops review binding: {error}"))?;
+                if !binding_file_metadata.is_file()
+                    || binding_file_metadata.file_type().is_symlink()
+                    || binding_file_metadata.uid() != config::READER_UID
+                    || binding_file_metadata.permissions().mode() & 0o077 != 0
+                {
+                    return Err(
+                        "ops review binding must be a private reviewer-owned regular file".into(),
+                    );
+                }
+                let binding = fs::read(&binding_path)
+                    .map_err(|error| format!("read ops review binding: {error}"))?;
+                atomic_write_bytes(&directory.join("review-binding.json"), &binding)?;
+                binding_metadata = format!("binding_sha256={:x}\n", Sha256::digest(&binding));
+            }
+        }
         let metadata = format!(
-            "name={name}\nrole={role}\naccess=read-only\nworkflow_id={workflow_id}\nstate=completed\ncompleted_at={completed_at}\noutput_sha256={:x}\n",
+            "name={name}\nrole={role}\naccess=read-only\nworkflow_id={workflow_id}\nstate=completed\ncompleted_at={completed_at}\noutput_sha256={:x}\n{binding_metadata}",
             Sha256::digest(&bytes)
         );
         atomic_write_bytes(&directory.join("evidence.env"), metadata.as_bytes())?;
@@ -372,6 +394,7 @@ pub fn seal_role_output(
     _workflow_id: &str,
     _private_output: &Path,
     _public_output: &Path,
+    _trace_dir: &Path,
 ) -> Result<(), String> {
     Err("sealed role output requires Linux UID isolation".into())
 }

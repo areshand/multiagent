@@ -41,12 +41,9 @@ Label discovery additionally requires `action`, `datasourceUid`, `lookbackMinute
 - The query requires more than 120 minutes of history or more than 100 results.
 - The operation would write data or change service state.
 - The reviewer or prod-mcp rejects the request.
-## One-shot role handoff
+## Reviewed role continuation
 
-Run each discovery or query operation as three bounded subprocesses rather than one interactive ops process:
-
-1. An `ops` materializer writes the exact request to `$MULTIAGENT_LOG_DIR/agents/$MULTIAGENT_SUBAGENT_NAME/request.json`, returns the literal JSON and path, and exits without execution.
-2. An independent `reviewer` reviews that literal JSON and exits with accepted evidence.
-3. A fresh `ops` executor writes the identical JSON to `$MULTIAGENT_LOG_DIR/agents/$MULTIAGENT_SUBAGENT_NAME/request.json` and invokes `multiagent ops execute --request-file "$MULTIAGENT_LOG_DIR/agents/$MULTIAGENT_SUBAGENT_NAME/request.json" --reviewer REVIEWER_NAME`.
-
-The ops role is intentionally unable to write into the repository. `$HOME` is its deployment-provided private scratch directory. Reviewers must receive the literal request in their instruction because role homes are isolated from one another.
+Use the provider-neutral lifecycle in
+`prompts/playbooks/reviewed-ops-cycle.md` for every immutable request. This
+runbook defines Grafana operations and limits; it does not redefine agent
+spawning, independent review, binding, restoration, or receipt handling.

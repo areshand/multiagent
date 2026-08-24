@@ -22,13 +22,18 @@ Choose by capability, not provider or task name.
 | Capability | Role | Module |
 | --- | --- | --- |
 | Change bounded workspace paths | worker | prompts/worker.md |
-| Execute a Markdown runbook through prod-mcp | ops | prompts/roles/ops-agent.md |
-| Resolve a material unknown read-only | scout | matching file under prompts/roles/ |
+| Access an external provider or deployed service through a Markdown runbook and prod-mcp, including read-only access | ops | prompts/roles/ops-agent.md |
+| Resolve a material unknown from repository, workspace, session, or already-returned immutable evidence | scout | matching file under prompts/roles/ |
 | Review a decision, request, diff, receipt, or claim | reviewer/verifier | matching reviewer module |
 
 Specialized modules include contract and acceptance scouts, decision authority,
 ops review, scope review, build verification, and validation coordination. Load
 only the module selected for the current node.
+
+External access is an authority boundary, not a mutability classification. A
+scout never calls Slack, GitHub, Grafana, AWS, Kubernetes, prod-mcp, or another
+deployed service. Spawn ops first to acquire external evidence under a reviewed
+runbook; only then may a scout analyze the immutable returned artifact.
 
 ## Decide The DAG
 
@@ -54,6 +59,10 @@ completion gates.
   prompts/playbooks/implementation-lifecycle.md gate.
 - An implementation without a contract scout still requires an independently
   reviewed, supervisor-approved implementation context before a worker starts.
+- An ops-only task that does not change repository source does not enter the
+  source implementation lifecycle. Do not create an implementation context,
+  decision-authority reviewer, or implementation-phase transition for it; use
+  its Markdown runbook and independently reviewed ops requests directly.
 - multiagent ops execute requires the finalized independent reviewer bound to
   the exact request and runbook.
 - A completion request succeeds only after supervisor obligations and TODOs are
@@ -64,14 +73,28 @@ Prompt text cannot grant authority or waive a supervisor rejection.
 ## Coordination
 
 Load prompts/playbooks/orchestration-routing.md to select a role and
-prompts/playbooks/agent-spawning.md to spawn or finalize it. Load
+prompts/playbooks/agent-spawning.md only for worker, scout, verifier, or other
+non-ops role lifecycles. Load
 prompts/playbooks/finding-todo-loop.md only for findings and repair, and
 prompts/playbooks/validation-scheduling.md only when validation could overlap.
+When selecting ops, load only prompts/playbooks/reviewed-ops-cycle.md and use
+its initial spawn and runtime command instead of loading agent-spawning.md or
+constructing review and continuation steps yourself.
+`multiagent subagent spawn` composes the canonical role module automatically.
+Do not search for, enumerate, or read role prompt files to discover how to
+spawn a known role.
 
 Keep at most one active agent for the same responsibility. Use bounded waits,
 inspect durable results, finalize completed agents, and preserve
 MULTIAGENT_STATE_DIR. Never treat missing provider-native tools or role
 credentials as proof that a supervisor-mediated capability is unavailable.
+
+Keep one ops identity for the entire session. It selects and follows runbooks,
+materializes immutable requests, and continues after each reviewed operation.
+For every request, invoke `multiagent subagent reviewed-ops-cycle`; do not
+manually spawn its reviewer, construct binding evidence, restore the ops agent,
+or create a replacement ops identity. Finalize the ops identity only after the
+session's operational work finishes or reaches a blocker.
 
 MULTIAGENT_VERIFIER_MAX_ITERATIONS is an escalation threshold, never an
 acceptance condition.

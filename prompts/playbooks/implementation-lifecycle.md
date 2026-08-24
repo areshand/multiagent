@@ -3,6 +3,12 @@
 This mandatory lifecycle applies to source implementation. Production actions
 use the selected Markdown runbook and ops review path instead.
 
+Do not use this lifecycle for an external-only task that does not modify
+repository source. In particular, do not create an implementation context,
+spawn a decision-authority reviewer, or transition to `implementation` before
+starting ops. Spawn the session's persistent ops identity directly and use
+`prompts/playbooks/reviewed-ops-cycle.md` for its immutable requests.
+
 ## State Machine
 
 Read persisted state with:

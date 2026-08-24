@@ -43,11 +43,16 @@ fn bind_runbook(args: &[String]) -> Result<ExitCode, String> {
         .map_err(|error| format!("decode ops request template: {error}"))?;
     let relative = required(&options, "--runbook-document")?;
     let digest = exact_runbook_content_sha256(relative)?;
+    let canonical_target = exact_runbook_target(relative)?;
     let object = template
         .as_object_mut()
         .ok_or("ops request template must be an object")?;
+    if let Some(target) = canonical_target {
+        object.insert("target".into(), target);
+    }
     object.insert("runbookDocument".into(), Value::String(relative.into()));
     object.insert("runbookContentSha256".into(), Value::String(digest.clone()));
+    validate_request_template(&template)?;
     let encoded = serde_json::to_vec_pretty(&template)
         .map_err(|error| format!("encode bound ops request: {error}"))?;
     fs::write(&request_file, encoded)
@@ -63,10 +68,18 @@ fn review_bind(args: &[String]) -> Result<ExitCode, String> {
         .map_err(|error| format!("read ops request: {error}"))?;
     let template: Value = serde_json::from_slice(&bytes)
         .map_err(|error| format!("decode ops request template: {error}"))?;
+    validate_request_template(&template)?;
     let object = template
         .as_object()
         .ok_or("ops request template must be an object")?;
     let runbook_content_sha256 = verified_runbook_content(&template)?;
+    let binding = review_binding_value(&template, &runbook_content_sha256)?;
+    let binding_path = review_binding_artifact_path()?;
+    write_review_binding_artifact(
+        &binding_path,
+        &serde_json::to_vec_pretty(&binding)
+            .map_err(|error| format!("encode ops review binding: {error}"))?,
+    )?;
     println!("request-template-sha256={}", digest_json(&template)?);
     println!(
         "goal-sha256={}",
@@ -85,17 +98,27 @@ fn review_bind(args: &[String]) -> Result<ExitCode, String> {
         )?
     );
     println!("runbook-content-sha256={runbook_content_sha256}");
+    println!("review-binding-artifact={}", binding_path.display());
     Ok(ExitCode::SUCCESS)
 }
 
-fn execute(args: &[String]) -> Result<ExitCode, String> {
-    let options = options(args)?;
-    let reviewer = required(&options, "--reviewer")?;
+pub(crate) fn review_binding_for_request(request_file: &Path) -> Result<String, String> {
+    let bytes = fs::read(request_file).map_err(|error| format!("read ops request: {error}"))?;
+    let template: Value = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("decode ops request template: {error}"))?;
+    validate_request_template(&template)?;
+    let runbook_content_sha256 = verified_runbook_content(&template)?;
+    review_binding_marker(&template, &runbook_content_sha256)
+}
+
+fn load_reviewed_request(
+    request_file: &Path,
+    reviewer: &str,
+) -> Result<(PathBuf, Value, TrustedApproval), String> {
     validate_id("reviewer name", reviewer)?;
-    let request_file = PathBuf::from(required(&options, "--request-file")?);
     let state = fs::canonicalize(required_env("MULTIAGENT_STATE_DIR")?)
         .map_err(|error| format!("resolve multiagent state: {error}"))?;
-    let request_file = fs::canonicalize(&request_file)
+    let request_file = fs::canonicalize(request_file)
         .map_err(|error| format!("resolve ops request file: {error}"))?;
     if !request_file.starts_with(&state) {
         return Err("ops request file must be inside MULTIAGENT_STATE_DIR".into());
@@ -117,6 +140,21 @@ fn execute(args: &[String]) -> Result<ExitCode, String> {
         .map_err(|error| format!("decode ops request template: {error}"))?;
     let runbook_content_sha256 = verified_runbook_content(&template)?;
     let reviewer_approval = verify_reviewer(&state, reviewer, &template, &runbook_content_sha256)?;
+    Ok((state, template, reviewer_approval))
+}
+
+pub(crate) fn preflight_reviewed_request(
+    request_file: &Path,
+    reviewer: &str,
+) -> Result<(), String> {
+    load_reviewed_request(request_file, reviewer).map(|_| ())
+}
+
+fn execute(args: &[String]) -> Result<ExitCode, String> {
+    let options = options(args)?;
+    let reviewer = required(&options, "--reviewer")?;
+    let request_file = PathBuf::from(required(&options, "--request-file")?);
+    let (state, template, reviewer_approval) = load_reviewed_request(&request_file, reviewer)?;
     let now = Utc::now();
     let caller_subject = env::var("MULTIAGENT_CALLER_SUBJECT")
         .ok()
@@ -175,6 +213,7 @@ fn build_request(
     reviewer: &TrustedApproval,
     now: chrono::DateTime<Utc>,
 ) -> Result<Value, String> {
+    validate_request_template(template)?;
     let object = template
         .as_object()
         .ok_or("ops request template must be a JSON object")?;
@@ -303,10 +342,157 @@ fn verify_reviewer(
     if !accepted {
         return Err("ops reviewer did not accept the operation".into());
     }
+    let binding_path = directory.join("review-binding.json");
+    let evidence_sha256 = if binding_path.is_file() {
+        let binding_bytes = fs::read(&binding_path)
+            .map_err(|error| format!("read sealed ops review binding: {error}"))?;
+        let expected_binding = metadata
+            .get("binding_sha256")
+            .ok_or("ops review binding has no supervisor seal")?;
+        let actual_binding = format!("{:x}", Sha256::digest(&binding_bytes));
+        if !actual_binding.eq_ignore_ascii_case(expected_binding) {
+            return Err("ops review binding failed its supervisor seal".into());
+        }
+        let binding: Value = serde_json::from_slice(&binding_bytes)
+            .map_err(|error| format!("decode sealed ops review binding: {error}"))?;
+        if !review_binding_matches(&binding, template, runbook_content_sha256)? {
+            return Err("ops review binding does not match the request, goal, and runbook".into());
+        }
+        digest_json(&json!({
+            "reviewerOutputSha256": format!("sha256:{actual_output}"),
+            "reviewBindingSha256": format!("sha256:{actual_binding}"),
+        }))?
+    } else {
+        // Compatibility for evidence sealed by an already-running older
+        // session. New reviewers always use the supervisor-sealed artifact.
+        if !review_evidence_is_bound(&evidence, template, runbook_content_sha256)? {
+            return Err(
+                "ops reviewer evidence is not bound to the request, goal, and runbook".into(),
+            );
+        }
+        format!("sha256:{actual_output}")
+    };
+    let approved_at = metadata
+        .get("completed_at")
+        .cloned()
+        .ok_or("ops reviewer evidence has no completion timestamp")?;
+    Ok(TrustedApproval {
+        subject: reviewer.into(),
+        role: "operations-reviewer",
+        evidence_sha256,
+        approved_at,
+    })
+}
+
+fn reviewer_accepted(evidence: &str) -> bool {
+    let mut accepted = false;
+    for line in evidence
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        let mut value = line;
+        for wrapper in ["`", "**", "__"] {
+            if value.starts_with(wrapper)
+                && value.ends_with(wrapper)
+                && value.len() >= wrapper.len() * 2
+            {
+                value = &value[wrapper.len()..value.len() - wrapper.len()];
+            }
+        }
+        let Some((label, verdict)) = value.split_once(':') else {
+            continue;
+        };
+        if !label.trim().eq_ignore_ascii_case("verdict") {
+            continue;
+        }
+        if verdict.trim().eq_ignore_ascii_case("accepted") {
+            accepted = true;
+        } else {
+            return false;
+        }
+    }
+    accepted
+}
+
+fn review_binding_value(template: &Value, runbook_content_sha256: &str) -> Result<Value, String> {
     let object = template
         .as_object()
         .ok_or("ops request template must be an object")?;
-    let markers = [
+    Ok(json!({
+        "apiVersion": "multiagent.moveindustries.io/v1",
+        "kind": "OpsReviewBinding",
+        "requestTemplateSha256": digest_json(template)?,
+        "goalSha256": digest_json(
+            object
+                .get("goal")
+                .ok_or("ops request template requires goal")?
+        )?,
+        "runbookSha256": digest_json(
+            object
+                .get("runbook")
+                .ok_or("ops request template requires runbook")?
+        )?,
+        "runbookContentSha256": runbook_content_sha256,
+    }))
+}
+
+fn review_binding_marker(template: &Value, runbook_content_sha256: &str) -> Result<String, String> {
+    let binding = review_binding_value(template, runbook_content_sha256)?;
+    Ok(format!("review-binding-sha256={}", digest_json(&binding)?))
+}
+
+fn review_binding_matches(
+    binding: &Value,
+    template: &Value,
+    runbook_content_sha256: &str,
+) -> Result<bool, String> {
+    Ok(binding == &review_binding_value(template, runbook_content_sha256)?)
+}
+
+fn review_binding_artifact_path() -> Result<PathBuf, String> {
+    let reviewer = required_env("MULTIAGENT_SUBAGENT_NAME")?;
+    validate_id("reviewer name", &reviewer)?;
+    let logs = fs::canonicalize(required_env("MULTIAGENT_LOG_DIR")?)
+        .map_err(|error| format!("resolve multiagent log directory: {error}"))?;
+    let trace_dir = fs::canonicalize(logs.join("agents").join(&reviewer))
+        .map_err(|error| format!("resolve reviewer trace directory: {error}"))?;
+    if !trace_dir.starts_with(&logs) {
+        return Err("reviewer trace directory escaped MULTIAGENT_LOG_DIR".into());
+    }
+    Ok(trace_dir.join("review-binding.json"))
+}
+
+fn write_review_binding_artifact(path: &Path, contents: &[u8]) -> Result<(), String> {
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(target_os = "linux")]
+    options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    let mut file = options
+        .open(path)
+        .map_err(|error| format!("create ops review binding: {error}"))?;
+    file.write_all(contents)
+        .map_err(|error| format!("write ops review binding: {error}"))?;
+    file.sync_all()
+        .map_err(|error| format!("sync ops review binding: {error}"))
+}
+
+fn review_evidence_is_bound(
+    evidence: &str,
+    template: &Value,
+    runbook_content_sha256: &str,
+) -> Result<bool, String> {
+    let binding = review_binding_marker(template, runbook_content_sha256)?;
+    if evidence.lines().map(str::trim).any(|line| line == binding) {
+        return Ok(true);
+    }
+
+    // Keep accepting already-sealed evidence from reviewers launched by older
+    // images while new reviewers use the single deterministic binding marker.
+    let object = template
+        .as_object()
+        .ok_or("ops request template must be an object")?;
+    let legacy_markers = [
         format!("request-template-sha256={}", digest_json(template)?),
         format!(
             "goal-sha256={}",
@@ -326,38 +512,9 @@ fn verify_reviewer(
         ),
         format!("runbook-content-sha256={runbook_content_sha256}"),
     ];
-    if markers.iter().any(|marker| !evidence.contains(marker)) {
-        return Err("ops reviewer evidence is not bound to the request, goal, and runbook".into());
-    }
-    let approved_at = metadata
-        .get("completed_at")
-        .cloned()
-        .ok_or("ops reviewer evidence has no completion timestamp")?;
-    Ok(TrustedApproval {
-        subject: reviewer.into(),
-        role: "operations-reviewer",
-        evidence_sha256: format!("sha256:{actual_output}"),
-        approved_at,
-    })
-}
-
-fn reviewer_accepted(evidence: &str) -> bool {
-    evidence
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .is_some_and(|line| {
-            let mut value = line;
-            for wrapper in ["`", "**", "__"] {
-                if value.starts_with(wrapper)
-                    && value.ends_with(wrapper)
-                    && value.len() >= wrapper.len() * 2
-                {
-                    value = &value[wrapper.len()..value.len() - wrapper.len()];
-                }
-            }
-            value.eq_ignore_ascii_case("verdict: accepted")
-        })
+    Ok(legacy_markers
+        .iter()
+        .all(|marker| evidence.contains(marker)))
 }
 
 fn required_object<'a>(
@@ -368,6 +525,95 @@ fn required_object<'a>(
         .get(key)
         .and_then(Value::as_object)
         .ok_or_else(|| format!("ops request template requires object field {key}"))
+}
+
+fn validate_request_template(template: &Value) -> Result<(), String> {
+    let object = template
+        .as_object()
+        .ok_or("ops request template must be an object")?;
+    let task_id = required_template_string(object, "taskId")?;
+    validate_id("task ID", task_id)?;
+    if object.get("goal").is_none_or(Value::is_null) {
+        return Err("ops request template requires goal".into());
+    }
+    if object.contains_key("approvals") {
+        return Err("ops request approvals are derived by the supervisor and cannot be supplied by an agent".into());
+    }
+
+    let operation = required_object(object, "operation")?;
+    if operation.len() != 2 {
+        return Err("ops request operation must contain only id and version".into());
+    }
+    validate_id("operation ID", required_template_string(operation, "id")?)?;
+    validate_semver(
+        "operation version",
+        required_template_string(operation, "version")?,
+    )?;
+
+    let target = required_object(object, "target")?;
+    if target.len() != 4 {
+        return Err(
+            "ops request target must contain environment, cluster, namespace, and service".into(),
+        );
+    }
+    let environment = required_template_string(target, "environment")?;
+    if !matches!(environment, "development" | "staging" | "production") {
+        return Err("ops request target environment is invalid".into());
+    }
+    for key in ["cluster", "namespace", "service"] {
+        validate_id(
+            &format!("target {key}"),
+            required_template_string(target, key)?,
+        )?;
+    }
+
+    required_object(object, "parameters")?;
+    let runbook = required_object(object, "runbook")?;
+    if runbook.len() != 3 {
+        return Err("ops request runbook must contain id, version, and phase".into());
+    }
+    validate_id("runbook ID", required_template_string(runbook, "id")?)?;
+    validate_semver(
+        "runbook version",
+        required_template_string(runbook, "version")?,
+    )?;
+    validate_id("runbook phase", required_template_string(runbook, "phase")?)?;
+    required_template_string(object, "runbookDocument")?;
+    let digest = required_template_string(object, "runbookContentSha256")?;
+    let hex = digest
+        .strip_prefix("sha256:")
+        .ok_or("ops request runbookContentSha256 is invalid")?;
+    if hex.len() != 64
+        || !hex
+            .chars()
+            .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
+    {
+        return Err("ops request runbookContentSha256 is invalid".into());
+    }
+    Ok(())
+}
+
+fn required_template_string<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<&'a str, String> {
+    object
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("ops request template requires string field {key}"))
+}
+
+fn validate_semver(label: &str, value: &str) -> Result<(), String> {
+    let parts = value.split('.').collect::<Vec<_>>();
+    if parts.len() != 3
+        || parts
+            .iter()
+            .any(|part| part.is_empty() || !part.chars().all(|ch| ch.is_ascii_digit()))
+    {
+        return Err(format!("{label} is invalid"));
+    }
+    Ok(())
 }
 
 fn verified_runbook_content(template: &Value) -> Result<String, String> {
@@ -390,6 +636,43 @@ fn verified_runbook_content(template: &Value) -> Result<String, String> {
 }
 
 fn exact_runbook_content_sha256(relative: &str) -> Result<String, String> {
+    let bytes = exact_runbook_bytes(relative)?;
+    Ok(runbook_content_digest(&bytes))
+}
+
+fn exact_runbook_target(relative: &str) -> Result<Option<Value>, String> {
+    canonical_runbook_target(&exact_runbook_bytes(relative)?)
+}
+
+fn canonical_runbook_target(bytes: &[u8]) -> Result<Option<Value>, String> {
+    const PREFIX: &str = "- Set `target` to `";
+    const SUFFIX: &str = "`.";
+    let markdown = std::str::from_utf8(bytes)
+        .map_err(|error| format!("decode runbook document as UTF-8: {error}"))?;
+    let declarations = markdown
+        .lines()
+        .filter_map(|line| line.strip_prefix(PREFIX))
+        .collect::<Vec<_>>();
+    if declarations.len() > 1 {
+        return Err(
+            "runbook document must contain at most one canonical target declaration".into(),
+        );
+    }
+    let Some(declaration) = declarations.first() else {
+        return Ok(None);
+    };
+    let encoded = declaration
+        .strip_suffix(SUFFIX)
+        .ok_or("canonical runbook target declaration is malformed")?;
+    let target: Value = serde_json::from_str(encoded)
+        .map_err(|error| format!("decode canonical runbook target: {error}"))?;
+    if !target.is_object() {
+        return Err("canonical runbook target must be a JSON object".into());
+    }
+    Ok(Some(target))
+}
+
+fn exact_runbook_bytes(relative: &str) -> Result<Vec<u8>, String> {
     let relative_path = Path::new(relative);
     if relative_path.is_absolute()
         || relative_path
@@ -413,8 +696,7 @@ fn exact_runbook_content_sha256(relative: &str) -> Result<String, String> {
         return Err("runbook document must be a regular file between 1 byte and 1 MiB".into());
     }
     let bytes = fs::read(&document).map_err(|error| format!("read runbook document: {error}"))?;
-    let actual = runbook_content_digest(&bytes);
-    Ok(actual)
+    Ok(bytes)
 }
 
 fn runbook_content_digest(bytes: &[u8]) -> String {
@@ -824,8 +1106,9 @@ fn base64_decode(value: &str) -> Result<Vec<u8>, String> {
 mod tests {
     use super::{
         base64_decode, base64url_encode, build_request, canonical, curl_command, ecdsa_der_to_raw,
-        parse_mcp_body, private_temp_path, reviewer_accepted, runbook_content_digest,
-        write_mcp_headers, TrustedApproval,
+        parse_mcp_body, private_temp_path, review_binding_marker, review_binding_matches,
+        review_binding_value, review_evidence_is_bound, reviewer_accepted, runbook_content_digest,
+        validate_request_template, write_mcp_headers, TrustedApproval,
     };
     use chrono::{TimeZone, Utc};
     use serde_json::json;
@@ -869,9 +1152,52 @@ mod tests {
         assert!(reviewer_accepted(
             "**Verdict: ACCEPTED**\n\nReview analysis"
         ));
+        assert!(reviewer_accepted(
+            "# Operations review\n\n**Verdict: ACCEPTED**\n"
+        ));
         assert!(reviewer_accepted("`verdict: accepted`"));
         assert!(!reviewer_accepted("Review result: verdict: accepted"));
         assert!(!reviewer_accepted("**Verdict: REJECTED**"));
+        assert!(!reviewer_accepted(
+            "Verdict: ACCEPTED\n\nVerdict: REJECTED\n"
+        ));
+    }
+
+    #[test]
+    fn reviewer_binding_uses_one_exact_deterministic_marker() {
+        let template = json!({
+            "goal": "read Slack",
+            "runbook": {"id":"slack.workspace-access","version":"1.0.0","phase":"read"}
+        });
+        let runbook_digest = format!("sha256:{}", "4".repeat(64));
+        let marker = review_binding_marker(&template, &runbook_digest).unwrap();
+        assert!(review_evidence_is_bound(
+            &format!("Verdict: ACCEPTED\n{marker}\n"),
+            &template,
+            &runbook_digest
+        )
+        .unwrap());
+        assert!(!review_evidence_is_bound(
+            &format!("Verdict: ACCEPTED\n{}0\n", &marker[..marker.len() - 1]),
+            &template,
+            &runbook_digest
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn reviewer_binding_artifact_is_machine_verified_without_model_hash_text() {
+        let template = json!({
+            "goal": "read Slack",
+            "runbook": {"id":"slack.workspace-access","version":"1.0.0","phase":"read"}
+        });
+        let runbook_digest = format!("sha256:{}", "4".repeat(64));
+        let binding = review_binding_value(&template, &runbook_digest).unwrap();
+        assert!(review_binding_matches(&binding, &template, &runbook_digest).unwrap());
+
+        let mut mistyped = binding;
+        mistyped["runbookContentSha256"] = format!("sha256:{}", "5".repeat(64)).into();
+        assert!(!review_binding_matches(&mistyped, &template, &runbook_digest).unwrap());
     }
     #[test]
     fn operation_and_target_come_from_runbook_request_data() {
@@ -905,6 +1231,36 @@ mod tests {
         assert_eq!(request["changeTicket"], "OPS-123");
         assert_eq!(request["approvals"][0]["reviewerSubject"], "caller-1");
         assert_eq!(request["approvals"][1]["reviewerSubject"], "reviewer-1");
+    }
+
+    #[test]
+    fn request_template_validation_rejects_non_executable_envelopes() {
+        let digest = format!("sha256:{}", "4".repeat(64));
+        let valid = json!({
+            "taskId":"task-1",
+            "goal":"follow the supplied runbook",
+            "operation":{"id":"provider.read","version":"1.0.0"},
+            "target":{"environment":"production","cluster":"external-services","namespace":"provider","service":"configured-service"},
+            "parameters":{"action":"list"},
+            "runbook":{"id":"provider.access","version":"1.0.0","phase":"read"},
+            "runbookDocument":"runbooks/provider-access.md",
+            "runbookContentSha256":digest
+        });
+        validate_request_template(&valid).unwrap();
+
+        let mut invalid_operation = valid.clone();
+        invalid_operation["operation"] = json!("provider.read");
+        assert_eq!(
+            validate_request_template(&invalid_operation).unwrap_err(),
+            "ops request template requires object field operation"
+        );
+
+        let mut invalid_target = valid;
+        invalid_target["target"] = json!("list");
+        assert_eq!(
+            validate_request_template(&invalid_target).unwrap_err(),
+            "ops request template requires object field target"
+        );
     }
 
     #[test]

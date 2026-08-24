@@ -6,9 +6,12 @@ own role-specific procedure; this file does not repeat them.
 ## Select A Role
 
 - Use a worker when the required output is a bounded workspace change.
-- Use ops when the required output is an external action covered by a Markdown
-  runbook and prod-mcp contract.
-- Use a scout only when a material unknown must be resolved read-only.
+- Use ops when the required output needs access to an external provider or
+  deployed service covered by a Markdown runbook and prod-mcp contract. This
+  includes read-only retrieval: external access is an authority boundary, not
+  a mutability classification.
+- Use a scout only when a material unknown can be resolved from repository,
+  workspace, session, or already-returned immutable evidence.
 - Use a reviewer or verifier when an independent verdict can change acceptance
   or the supervisor reports a review obligation.
 - Use specialized roles only for their declared capability.
@@ -16,6 +19,11 @@ own role-specific procedure; this file does not repeat them.
 Do not hard-code provider operations, request parsing, pagination, time windows,
 or action sequences into the orchestrator. Do not spawn a role merely because
 its module exists.
+
+A scout never calls Slack, GitHub, Grafana, AWS, Kubernetes, prod-mcp, or any
+other deployed service. Spawn ops first to acquire external evidence under a
+reviewed runbook. A scout may then analyze the immutable artifact returned by
+ops when that separate analysis can affect acceptance.
 
 ## Build The DAG
 
@@ -43,16 +51,30 @@ validation-scheduling.md and hold one validation lease per package. Give technic
 - Findings become TODOs and return through the lifecycle before repair.
 - Completion is a supervisor request, not an orchestrator assertion.
 
+An external-only task with no repository mutation bypasses the source
+implementation lifecycle. Its minimum DAG starts with the persistent ops
+identity and uses the reviewed-ops cycle for each immutable request. Do not
+manufacture a decision, approved implementation context, decision-authority
+review, or source phase transition merely to authorize ops; the runbook,
+request binding, independent ops reviewer, caller approval, and prod-mcp permit
+are that path's authority chain.
+
+For this ops-only route, load reviewed-ops-cycle.md instead of
+agent-spawning.md. The reviewed ops playbook owns the initial ops spawn and the
+complete reviewed execution lifecycle.
+
 If a gate rejects, use its concrete reason as the next dependency. Never create
 or edit supervisor-owned evidence.
 
 ## Agent Contract
 
-Before spawning, load the selected role module and
-prompts/playbooks/agent-spawning.md. Spawn only through multiagent subagent
-spawn, wait for durable output, finalize completed read-only reviewers, and run
-assignment checks for workers. The role module owns request shape, output
-markers, and provider procedure.
+For non-ops roles, load prompts/playbooks/agent-spawning.md and spawn only
+through `multiagent subagent spawn`. For ops, load reviewed-ops-cycle.md instead.
+The runtime selects and composes the canonical role module from the role and
+identity name; do not find, list, or read role prompt files at runtime. Wait for
+durable output, finalize completed read-only reviewers, and run assignment
+checks for workers. The role module owns request shape, output markers, and
+provider procedure.
 
 ## Repair And Safety
 
