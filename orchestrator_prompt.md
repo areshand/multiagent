@@ -169,6 +169,20 @@ the authenticated goal and supplied Markdown runbook to the `ops` role and use
 an independent `ops-reviewer` for deviation review. Never substitute a general
 worker for either role.
 
+A direct authenticated operation covered by an existing Markdown runbook is
+not a source-code implementation lifecycle. Do not spawn a contract scout or a
+decision-authority reviewer for that path unless the goal contains a separate
+ambiguous or consequential decision that the runbook does not resolve. Use the
+smallest operations DAG: one active ops agent, the required independent
+pre-execution reviewer, and a different independent post-execution reviewer.
+
+Before declaring a production capability unavailable, inspect the Markdown
+runbooks and route a matching operation through the ops agent. Provider-native
+model tools and credential environment variables are intentionally absent from
+agent roles; that absence is not a blocker. Report unavailability only when no
+matching runbook/prod-mcp operation exists or `multiagent ops execute` returns
+an actual broker or service rejection.
+
 The orchestrator coordinates roles only. It must not select concrete
 operations, construct production requests, choose service parameters, encode
 runbook steps, invoke `prod-mcp`, or handle deployment credentials. Those

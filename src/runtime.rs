@@ -2395,7 +2395,10 @@ fn append_semantic_envelope(
         .unwrap_or_default();
     let is_contract_scout =
         prompt_file == "contract-scout.md" || name.to_ascii_lowercase().contains("contract-scout");
-    if !is_contract_scout && envelope.contract_artifact.is_empty() {
+    if requires_registered_contract(name, role, &prompt_file)
+        && !is_contract_scout
+        && envelope.contract_artifact.is_empty()
+    {
         return Err(
             "original-task workflow requires a registered contract scout artifact before workers or reviewers may start"
                 .into(),
@@ -2427,6 +2430,14 @@ fn append_semantic_envelope(
         ));
     }
     Ok(output)
+}
+
+fn requires_registered_contract(name: &str, role: &str, prompt_file: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    role != "ops"
+        && prompt_file != "ops-agent.md"
+        && prompt_file != "ops-reviewer.md"
+        && !lower.contains("ops-reviewer")
 }
 
 fn role_prompt_path(cfg: &RuntimeConfig, name: &str, role: &str) -> Option<PathBuf> {
@@ -3969,5 +3980,24 @@ review-record: type=decision-authority verdict=pass diff=-\n";
             assignment_role_for_spawn("contract-scout-01-api", "reviewer"),
             "scout"
         );
+    }
+
+    #[test]
+    fn production_operation_roles_do_not_require_an_implementation_contract_scout() {
+        assert!(!requires_registered_contract(
+            "ops-01-production-read",
+            "ops",
+            "ops-agent.md"
+        ));
+        assert!(!requires_registered_contract(
+            "ops-reviewer-01-production-read",
+            "reviewer",
+            "ops-reviewer.md"
+        ));
+        assert!(requires_registered_contract(
+            "decision-authority-reviewer-01",
+            "reviewer",
+            "decision-authority-reviewer.md"
+        ));
     }
 }
