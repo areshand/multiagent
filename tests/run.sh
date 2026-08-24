@@ -2463,3 +2463,4 @@ fi
 echo "DAG workflow tests passed"
 echo "organizational learning tests passed"
 "$ROOT/tests/lifecycle.sh"
+MULTIAGENT_BIN="$MULTIAGENT" "$ROOT/tests/mock_orchestration_e2e.sh"
