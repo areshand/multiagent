@@ -89,7 +89,7 @@ fn template(args: &[String]) -> Result<ExitCode, String> {
 fn print_ops_help() {
     println!("{OPS_USAGE}");
     println!(
-        "\nDraft schema:\n  taskId: non-empty stable string\n  goal: bounded goal copied from the authenticated task\n  operation: object with id and semantic version\n  parameters: provider operation parameters\n  runbook: object with id, phase, and semantic version\n\nGenerate a valid starting envelope with `multiagent ops template`. The publish command derives target, runbookDocument, and runbookContentSha256 from the exact Markdown runbook. Do not supply approvals."
+        "\nDraft schema:\n  taskId: non-empty stable string\n  goal: bounded goal copied from the authenticated task\n  operation: object with id and semantic version\n  parameters: provider operation parameters\n  runbook: object with id, phase, and semantic version\n\nGenerate a valid starting envelope with `multiagent ops template`. After editing, run `chmod 0640 DRAFT_FILE` so the ops-owned draft is supervisor-readable and not group-writable. The publish command derives target, runbookDocument, and runbookContentSha256 from the exact Markdown runbook. Do not supply approvals."
     );
 }
 

@@ -23,9 +23,11 @@ multiagent ops template > "$DRAFT_FILE"
    runbook. Add `changeTicket` only when required. Never add `approvals`,
    `runbookDocument`, or `runbookContentSha256`.
 3. If needed, run `multiagent ops --help`; do not infer a schema from
-   validation failures. Publish the completed draft with:
+   validation failures. Make the completed ops-owned draft readable by the
+   supervisor group and not group-writable, then publish it:
 
 ```bash
+chmod 0640 "$DRAFT_FILE"
 multiagent ops publish --draft-file "$DRAFT_FILE" \
   --runbook-document runbooks/SELECTED.md
 ```
