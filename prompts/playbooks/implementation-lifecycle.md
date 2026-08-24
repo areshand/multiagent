@@ -114,7 +114,9 @@ implementation context; a decision ID alone is insufficient.
 Production runbook operations are not workspace implementation. For a signed
 prod-mcp request, do not create a worker or assignment. Spawn the `ops` role
 after independent review of the exact request and have that role invoke
-`multiagent ops execute`. This special case remains subject to the active
+`multiagent ops execute --request-file PATH --reviewer REVIEWER_NAME`. The
+reviewer argument is mandatory and must name the finalized reviewer that
+inspected that unchanged request file. This special case remains subject to the active
 workflow, decision, plan, runbook, bounds, and post-execution review.
 
 Do not silently change the approved plan. A newly discovered choice or factual
