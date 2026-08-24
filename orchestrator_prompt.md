@@ -59,6 +59,10 @@ completion gates.
   prompts/playbooks/implementation-lifecycle.md gate.
 - An implementation without a contract scout still requires an independently
   reviewed, supervisor-approved implementation context before a worker starts.
+- An ops-only task that does not change repository source does not enter the
+  source implementation lifecycle. Do not create an implementation context,
+  decision-authority reviewer, or implementation-phase transition for it; use
+  its Markdown runbook and independently reviewed ops requests directly.
 - multiagent ops execute requires the finalized independent reviewer bound to
   the exact request and runbook.
 - A completion request succeeds only after supervisor obligations and TODOs are
@@ -74,6 +78,9 @@ prompts/playbooks/finding-todo-loop.md only for findings and repair, and
 prompts/playbooks/validation-scheduling.md only when validation could overlap.
 When selecting ops, load prompts/playbooks/reviewed-ops-cycle.md and use its
 runtime command instead of constructing review and continuation steps yourself.
+`multiagent subagent spawn` composes the canonical role module automatically.
+Do not search for, enumerate, or read role prompt files to discover how to
+spawn a known role.
 
 Keep at most one active agent for the same responsibility. Use bounded waits,
 inspect durable results, finalize completed agents, and preserve

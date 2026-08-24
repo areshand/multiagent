@@ -51,15 +51,24 @@ validation-scheduling.md and hold one validation lease per package. Give technic
 - Findings become TODOs and return through the lifecycle before repair.
 - Completion is a supervisor request, not an orchestrator assertion.
 
+An external-only task with no repository mutation bypasses the source
+implementation lifecycle. Its minimum DAG starts with the persistent ops
+identity and uses the reviewed-ops cycle for each immutable request. Do not
+manufacture a decision, approved implementation context, decision-authority
+review, or source phase transition merely to authorize ops; the runbook,
+request binding, independent ops reviewer, caller approval, and prod-mcp permit
+are that path's authority chain.
+
 If a gate rejects, use its concrete reason as the next dependency. Never create
 or edit supervisor-owned evidence.
 
 ## Agent Contract
 
-Before spawning, load the selected role module and
-prompts/playbooks/agent-spawning.md. Spawn only through multiagent subagent
-spawn, wait for durable output, finalize completed read-only reviewers, and run
-assignment checks for workers. The role module owns request shape, output
+Load prompts/playbooks/agent-spawning.md and spawn only through `multiagent
+subagent spawn`. The runtime selects and composes the canonical role module from
+the role and identity name; do not find, list, or read role prompt files at
+runtime. Wait for durable output, finalize completed read-only reviewers, and
+run assignment checks for workers. The role module owns request shape, output
 markers, and provider procedure.
 
 ## Repair And Safety

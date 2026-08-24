@@ -995,6 +995,9 @@ fi
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "todo-create"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "todo-close"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "gate-check"
+assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "An external-only task with no repository mutation bypasses the source"
+assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "do not find, list, or read role prompt files"
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "Do not use this lifecycle for an external-only task"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "required-path-outside-owned:"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "ownership blocker"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" 'SUBAGENT_CLI="$WORKER_CLI" multiagent subagent spawn'
