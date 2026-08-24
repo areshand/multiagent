@@ -269,3 +269,9 @@ verifier first instructions.
 - Do not wrap those records in Markdown bold, backticks, code fences, headings, bullets, block quotes, or any other prefix or suffix. Human-readable explanation must be outside the machine-readable records.
 - Treat any value that is not literal in the original goal or an inspected source as derived evidence. Compute and verify derived values with a bounded, read-only command and cite the command and relevant output in the contract evidence; otherwise record the value under `unknowns`.
 - Never perform calendar arithmetic or calendar-to-epoch conversion mentally. Use a bounded date/time command and preserve its output as evidence.
+
+# Production operations boundary
+
+- For operational access to an external provider or deployed service, inspect the applicable Markdown runbook and the prod-mcp operation contract. Provider-native MCP tools are neither required nor expected in the agent harness.
+- Never report missing Slack, GitHub, Grafana, AWS, Kubernetes, or other provider-native tools as a blocker when the runbook routes that capability through prod-mcp.
+- The contract scout remains read-only and does not call prod-mcp. Record the selected runbook, required prod-mcp operation, bounded parameters, expected receipt evidence, and any actual missing runbook or operation as the contract. The `--role ops` agent performs execution after review.

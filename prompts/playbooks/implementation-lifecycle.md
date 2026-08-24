@@ -221,3 +221,14 @@ if a shell command overrides `MULTIAGENT_LIFECYCLE_ENFORCEMENT`.
 `MULTIAGENT_VERIFIER_MAX_ITERATIONS` is an escalation threshold, not an
 acceptance condition. At the threshold, reconsider the route, surface a
 blocker, or ask the user. Never accept merely because the threshold was reached.
+# Workflow TODO command contract
+
+Use the CLI's exact TODO vocabulary; do not guess aliases such as `implementation` or `task`:
+
+```bash
+multiagent workflow add-todo "$MULTIAGENT_WORKFLOW_ID" TODO_ID \
+  --kind direct|decision \
+  --summary "SUMMARY"
+```
+
+Operational execution with an already stated caller goal is `--kind direct`. A TODO does not bypass contract registration, implementation-context binding, or authority review.
