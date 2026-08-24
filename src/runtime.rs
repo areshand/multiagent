@@ -1824,7 +1824,8 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
         .map_err(io_error("resolve ops agent log directory"))?;
     if !request_file.starts_with(&ops_logs) {
         return Err(format!(
-            "reviewed ops request must belong to ops identity {ops_name}"
+            "reviewed ops request must be the ops-owned bound request under {}; do not pass the supervisor-owned published artifact",
+            ops_logs.display()
         ));
     }
     let published = crate::prod_ops::publish_bound_request(&cfg.state, &request_file)?;

@@ -16,18 +16,21 @@ Do not replace this identity after review.
 
 ## Review and continue
 
-After ops returns a published artifact descriptor:
+After ops returns its bound request path and digest lines, pass that exact
+ops-owned file to the supervisor-owned cycle. For the standard role contract it
+is `$MULTIAGENT_LOG_DIR/agents/OPS_NAME/request.json`:
 
 ```bash
 multiagent subagent reviewed-ops-cycle OPS_NAME \
-  --request-file "$PUBLISHED_REQUEST_PATH" \
+  --request-file "$MULTIAGENT_LOG_DIR/agents/OPS_NAME/request.json" \
   --reviewer ops-reviewer-NN \
   --timeout 900
 ```
 
 Use a fresh reviewer name for each immutable request. This command:
 
-1. publishes a safe legacy request when necessary;
+1. validates that the bound request belongs to the named ops identity and
+   publishes it as a supervisor-owned immutable artifact;
 2. binds the reviewer to the immutable request and exact runbook;
 3. passes only a bounded artifact descriptor to the reviewer;
 4. finalizes accepted review evidence before execution; and
@@ -38,6 +41,8 @@ Do not reconstruct these mechanics manually. Prior panes, transcripts, final
 messages, and native provider resume state are intentionally excluded from the
 continuation boundary.
 
-On rejection or preflight failure, report the blocker. A changed request needs a
-new publication and reviewer. A review correction may use a fresh reviewer on
-the same immutable request. Never create a second ops identity.
+Never pass the supervisor-owned published artifact back as `--request-file`;
+that path is intentionally outside the ops identity directory. On rejection or
+preflight failure, report the blocker. A changed request needs a new publication
+and reviewer. A review correction may use a fresh reviewer on the same immutable
+request. Never create a second ops identity.

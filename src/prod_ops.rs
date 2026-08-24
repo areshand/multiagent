@@ -14,7 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_OPERATION_REQUEST_BYTES: u64 = 65_536;
 const MAX_RUNBOOK_BYTES: u64 = 1_048_576;
-const OPS_USAGE: &str = "usage:\n  multiagent ops template\n  multiagent ops publish --draft-file PATH --runbook-document PATH\n  multiagent ops bind-runbook --request-file PATH --runbook-document PATH\n  multiagent ops review-bind --request-file PATH\n  multiagent ops execute --request-file PATH --reviewer NAME";
+const OPS_USAGE: &str = "usage:\n  multiagent ops describe OPERATION_ID\n  multiagent ops template\n  multiagent ops bind-runbook --request-file PATH --runbook-document PATH\n  multiagent ops publish --draft-file PATH --runbook-document PATH\n  multiagent ops review-bind --request-file PATH\n  multiagent ops execute --request-file PATH --reviewer NAME";
 
 pub(crate) struct PublishedRequest {
     artifact_path: PathBuf,
@@ -48,6 +48,7 @@ struct TrustedApproval {
 
 pub fn run(args: &[String]) -> Result<ExitCode, String> {
     match args.first().map(String::as_str) {
+        Some("describe") => describe(&args[1..]),
         Some("template") => template(&args[1..]),
         Some("bind-runbook") => bind_runbook(&args[1..]),
         Some("publish") => publish(&args[1..]),
@@ -59,6 +60,39 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
         }
         _ => Err(OPS_USAGE.into()),
     }
+}
+
+fn describe(args: &[String]) -> Result<ExitCode, String> {
+    if args.len() != 1 || args[0].is_empty() {
+        return Err("usage: multiagent ops describe OPERATION_ID".into());
+    }
+    let response = call_prod_mcp_tool("operations_capabilities", json!({}))?;
+    let operation = operation_capability(&response, &args[0])?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(operation)
+            .map_err(|error| format!("encode prod-mcp operation capability: {error}"))?
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+fn operation_capability<'a>(response: &'a Value, operation_id: &str) -> Result<&'a Value, String> {
+    let result = response
+        .get("result")
+        .and_then(Value::as_object)
+        .ok_or("prod-mcp capabilities response has no result object")?;
+    if result.get("isError").and_then(Value::as_bool) == Some(true) {
+        return Err(format!("prod-mcp capabilities failed: {}", Value::Object(result.clone())));
+    }
+    let operations = result
+        .get("structuredContent")
+        .and_then(|value| value.get("operations"))
+        .and_then(Value::as_array)
+        .ok_or("prod-mcp capabilities response has no operations array")?;
+    operations
+        .iter()
+        .find(|operation| operation.get("id").and_then(Value::as_str) == Some(operation_id))
+        .ok_or_else(|| format!("prod-mcp does not advertise operation {operation_id}"))
 }
 
 fn template(args: &[String]) -> Result<ExitCode, String> {
@@ -89,7 +123,7 @@ fn template(args: &[String]) -> Result<ExitCode, String> {
 fn print_ops_help() {
     println!("{OPS_USAGE}");
     println!(
-        "\nDraft schema:\n  taskId: non-empty stable string\n  goal: bounded goal copied from the authenticated task\n  operation: object with id and semantic version\n  parameters: provider operation parameters\n  runbook: object with id, phase, and semantic version\n\nGenerate a valid starting envelope with `multiagent ops template`. After editing, run `chmod 0640 DRAFT_FILE` so the ops-owned draft is supervisor-readable and not group-writable. The publish command derives target, runbookDocument, and runbookContentSha256 from the exact Markdown runbook. Do not supply approvals."
+        "\nCall `multiagent ops describe OPERATION_ID` before constructing parameters; it returns prod-mcp's live description, JSON schema, examples, and authorization requirements.\n\nDraft schema:\n  taskId: non-empty stable string\n  goal: bounded goal copied from the authenticated task\n  operation: object with id and semantic version\n  parameters: exact provider operation parameters from `ops describe`\n  runbook: object with id, phase, and semantic version\n\nGenerate a valid starting envelope with `multiagent ops template`, then bind it with a normalized framework-relative runbook path such as `runbooks/name.md`. After binding, run `chmod 0640 DRAFT_FILE` so the ops-owned request is supervisor-readable and not group-writable. The reviewed-ops-cycle publishes the immutable request. Do not supply target, approvals, runbookDocument, or runbookContentSha256 yourself."
     );
 }
 
@@ -1035,7 +1069,7 @@ fn exact_runbook_bytes(relative: &str) -> Result<Vec<u8>, String> {
             .components()
             .any(|component| !matches!(component, std::path::Component::Normal(_)))
     {
-        return Err("runbookDocument must be a normalized relative path".into());
+        return Err("runbookDocument must be a normalized path relative to MULTIAGENT_FRAMEWORK_ROOT, for example runbooks/name.md".into());
     }
     let framework_root = fs::canonicalize(required_env("MULTIAGENT_FRAMEWORK_ROOT")?)
         .map_err(|error| format!("resolve multiagent framework root: {error}"))?;
@@ -1111,6 +1145,10 @@ fn sign_permit(payload: &[u8]) -> Result<String, String> {
 }
 
 fn call_prod_mcp(permit: &str) -> Result<Value, String> {
+    call_prod_mcp_tool("operations_execute", json!({"permit": permit}))
+}
+
+fn call_prod_mcp_tool(name: &str, arguments: Value) -> Result<Value, String> {
     let url = required_env("PROD_MCP_URL")?;
     if !(url.starts_with("http://") || url.starts_with("https://")) {
         return Err("PROD_MCP_URL must use HTTP or HTTPS".into());
@@ -1122,7 +1160,7 @@ fn call_prod_mcp(permit: &str) -> Result<Value, String> {
         .map_err(|error| format!("create prod-mcp temporary directory: {error}"))?;
     let request_headers = private_temp_path(&temporary_dir, "prod-mcp-request-headers", "txt")?;
     let response_headers = private_temp_path(&temporary_dir, "prod-mcp-response-headers", "txt")?;
-    let call = json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"arguments":{"permit":permit},"name":"operations_execute"}});
+    let call = json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"arguments":arguments,"name":name}});
     let result = (|| {
         write_mcp_headers(&request_headers, &token, None)?;
         write_private_file(&response_headers, b"")?;
@@ -1132,7 +1170,7 @@ fn call_prod_mcp(permit: &str) -> Result<Value, String> {
     let _ = fs::remove_file(response_headers);
     let result = result?;
     if let Some(error) = result.get("error") {
-        return Err(format!("prod-mcp execution failed: {error}"));
+        return Err(format!("prod-mcp tool {name} failed: {error}"));
     }
     Ok(result)
 }
@@ -1454,7 +1492,7 @@ fn base64_decode(value: &str) -> Result<Vec<u8>, String> {
 mod tests {
     use super::{
         base64_decode, base64url_encode, build_request, canonical, curl_command, ecdsa_der_to_raw,
-        parse_mcp_body, private_temp_path, review_binding_marker, review_binding_matches,
+        operation_capability, parse_mcp_body, private_temp_path, review_binding_marker, review_binding_matches,
         review_binding_value, review_evidence_is_bound,
         reviewer_accepted, runbook_content_digest, validate_request_template,
         write_mcp_headers, TrustedApproval,
@@ -1609,6 +1647,27 @@ mod tests {
         assert_eq!(
             validate_request_template(&invalid_target).unwrap_err(),
             "ops request template requires object field target"
+        );
+    }
+
+    #[test]
+    fn operation_capability_selects_the_exact_live_contract() {
+        let response = json!({
+            "result": {
+                "structuredContent": {
+                    "operations": [
+                        {"id":"github.read","parameterSchema":{"type":"object"}},
+                        {"id":"slack.read","parameterSchema":{"type":"object"}}
+                    ]
+                }
+            }
+        });
+        let operation = operation_capability(&response, "github.read").unwrap();
+        assert_eq!(operation["id"], "github.read");
+        assert_eq!(operation["parameterSchema"]["type"], "object");
+        assert_eq!(
+            operation_capability(&response, "github.write").unwrap_err(),
+            "prod-mcp does not advertise operation github.write"
         );
     }
 
