@@ -52,6 +52,27 @@ struct PreparedIdentity {
     groups: Vec<libc::gid_t>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SetuidDisposition {
+    NoTransition,
+    RetainPrivilegedIdentity,
+    DropToRealUid,
+}
+
+fn setuid_disposition(
+    real_uid: u32,
+    effective_uid: u32,
+    authorized: bool,
+) -> SetuidDisposition {
+    if effective_uid != 0 || real_uid == 0 {
+        SetuidDisposition::NoTransition
+    } else if authorized {
+        SetuidDisposition::RetainPrivilegedIdentity
+    } else {
+        SetuidDisposition::DropToRealUid
+    }
+}
+
 /// Retain setuid-root authority only when application policy accepts the real
 /// caller UID. All other setuid invocations permanently drop to the caller.
 #[cfg(unix)]
@@ -60,19 +81,22 @@ pub fn guard_setuid_invocation(
 ) -> Result<(), String> {
     let real_uid = unsafe { libc::getuid() };
     let effective_uid = unsafe { libc::geteuid() };
-    if effective_uid != 0 || real_uid == 0 {
-        return Ok(());
+    let caller_authorized = effective_uid == 0 && real_uid != 0 && authorized(real_uid);
+    match setuid_disposition(real_uid, effective_uid, caller_authorized) {
+        SetuidDisposition::NoTransition | SetuidDisposition::RetainPrivilegedIdentity => Ok(()),
+        SetuidDisposition::DropToRealUid => {
+            if unsafe { libc::setuid(real_uid) } != 0 {
+                return Err(format!(
+                    "drop setuid privilege: {}",
+                    io::Error::last_os_error()
+                ));
+            }
+            if unsafe { libc::geteuid() } != real_uid {
+                return Err("drop setuid privilege postcondition failed".into());
+            }
+            Ok(())
+        }
     }
-    if authorized(real_uid) {
-        return Ok(());
-    }
-    if unsafe { libc::setuid(real_uid) } != 0 || unsafe { libc::geteuid() } != real_uid {
-        return Err(format!(
-            "drop setuid privilege: {}",
-            io::Error::last_os_error()
-        ));
-    }
-    Ok(())
 }
 
 #[cfg(not(unix))]
@@ -155,12 +179,38 @@ fn apply_prepared_identity(identity: &PreparedIdentity) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::IdentitySpec;
+    use super::{setuid_disposition, IdentitySpec, SetuidDisposition};
+
+    #[test]
+    fn setuid_guard_disposition_is_fail_closed_for_untrusted_callers() {
+        assert_eq!(
+            setuid_disposition(10001, 0, true),
+            SetuidDisposition::RetainPrivilegedIdentity
+        );
+        assert_eq!(
+            setuid_disposition(10001, 0, false),
+            SetuidDisposition::DropToRealUid
+        );
+        assert_eq!(
+            setuid_disposition(10001, 10001, false),
+            SetuidDisposition::NoTransition
+        );
+        assert_eq!(
+            setuid_disposition(0, 0, false),
+            SetuidDisposition::NoTransition
+        );
+    }
 
     #[test]
     fn identity_groups_include_primary_and_deduplicate_supplementary_groups() {
         let identity = IdentitySpec::new(10004, 10001)
             .with_supplementary_gids(&[10006, 10004, 10001, 10006]);
         assert_eq!(identity.prepare().groups, [10001, 10004, 10006]);
+    }
+
+    #[test]
+    fn identity_without_explicit_authority_gets_only_the_role_group() {
+        let identity = IdentitySpec::new(10005, 10001);
+        assert_eq!(identity.prepare().groups, [10001]);
     }
 }
