@@ -1,285 +1,66 @@
 # Orchestration Routing Playbook
 
-Use this playbook when the orchestrator must decide which specialist role or
-workflow to run next. Keep the core orchestrator prompt focused on intent,
-ownership, and decisions; load these details only when routing work.
+Use this playbook to select and coordinate the smallest role DAG. Role modules
+own role-specific procedure; this file does not repeat them.
 
-All implementation routing occurs inside the persisted lifecycle from
-`prompts/playbooks/implementation-lifecycle.md`: pre-implementation authority
-review, bounded implementation, independent post-implementation reviews, then
-either completion or a TODO-driven return to pre-implementation.
+## Select A Role
 
-## Task-Adaptive Role DAG
+- Use a worker when the required output is a bounded workspace change.
+- Use ops when the required output is an external action covered by a Markdown
+  runbook and prod-mcp contract.
+- Use a scout only when a material unknown must be resolved read-only.
+- Use a reviewer or verifier when an independent verdict can change acceptance
+  or the supervisor reports a review obligation.
+- Use specialized roles only for their declared capability.
 
-Start with the orchestrator and construct the smallest role DAG that can satisfy
-the goal. Spawn a node only when its dependencies are ready and only when its
-output can affect acceptance.
+Do not hard-code provider operations, request parsing, pagination, time windows,
+or action sequences into the orchestrator. Do not spawn a role merely because
+its module exists.
 
-- Use a contract scout only when the contract, target, or proxy/scaffold risk is
-  ambiguous.
-- Use a decision-authority reviewer only for consequential or uncertain choices.
-- After a candidate diff exists, query the supervisor's persisted obligations
-  and spawn exactly those reviewers.
-- Add scope review when the change surface is broad or boundary risk is found.
-- Reflection review is automatically required after repair or repeated
-  iteration.
-- Reuse accepted immutable artifacts; repair only the rejected node and its
-  dependents.
-- Never skip a pending supervisor obligation to reduce token use.
+## Build The DAG
 
-Give each role only the goal, its role module, and the immutable artifacts it
-needs. Production procedures remain in Markdown runbooks and must not be copied
-into this routing prompt.
+1. List required outputs and dependencies.
+2. Query workflow status and pending supervisor obligations.
+3. Add the minimum nodes that produce those outputs and verdicts.
+4. Give each node only the authenticated goal, its role module, and immutable
+   inputs it needs.
+5. Spawn a node only when its dependencies are ready.
+6. Reuse accepted artifacts; replace only a rejected or blocked node and its
+   dependents.
 
-Before implementation, load `prompts/playbooks/intent-contract.md` if the
-contract is ambiguous or proxy/scaffold risk is present. Before planning
-multi-worker waves or competing explorations, load
-`prompts/playbooks/parallel-execution.md`. Before launching expensive compile
-or test commands in live packages, load
-`prompts/playbooks/validation-scheduling.md`.
-Before routing verifier failures or repair follow-ups, load
-`prompts/playbooks/finding-todo-loop.md`.
+For parallel work, load parallel-execution.md. For source ownership and spawn
+commands, load agent-spawning.md. For overlapping or expensive validation, load
+validation-scheduling.md and hold one validation lease per package. Give technical verification a validation lease for the narrowest visible behavior test that covers the changed path.
 
-## Contract Scout Workflow
+## Supervisor Gates
 
-When task risk justifies separating contract extraction from coding, load
-`prompts/roles/contract-scout.md` and spawn a read-only scout with the task,
-relevant files or benchmark metadata, known constraints, and any proxy/scaffold
-risk.
+- A source worker needs an approved implementation context and active
+  implementation permit.
+- Ops execution needs finalized reviewer evidence bound to the exact request,
+  goal, runbook metadata, and runbook bytes.
+- Post-implementation review types and diff bindings come from persisted
+  obligations, not a prompt checklist.
+- Findings become TODOs and return through the lifecycle before repair.
+- Completion is a supervisor request, not an orchestrator assertion.
 
-```bash
-SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn contract-scout-01-task --role scout --instruction "FIRST_INSTRUCTION_TEXT"
-```
+If a gate rejects, use its concrete reason as the next dependency. Never create
+or edit supervisor-owned evidence.
 
-Paste the scout's compact contract ledger, must-preserve list, validation plan,
-and mismatch risks into worker and verifier first instructions. If the scout
-finds a fundamental mismatch, surface it before spawning implementation.
-Finalize the scout and register its sealed output with `multiagent workflow
-contract-register "$MULTIAGENT_WORKFLOW_ID" --scout NAME`. The approved
-implementation context must contain that artifact verbatim plus its reported
-`contract-artifact-sha256=...` binding. Do not translate a negative structural
-rule into a compatibility preference.
-Wait at least 300 seconds for a live scout. At most one empty-artifact
-replacement is allowed, and the replacement may narrow source reads but not
-semantic scope. Never synthesize or patch a scout artifact from orchestrator
-notes; if the replacement also exits empty, record an infrastructure blocker.
-Copy any `historical-contract-ledger:` block verbatim, including all mutated
-outputs. A task-specific hypothesis may refine how those outputs are repaired,
-but it must not narrow, replace, or contradict the scout's historical ledger.
-If the proposed worker scope cannot address every output in that ledger, widen
-the bounded ownership to the actual transition owner or create explicit todos
-for the remaining outputs before implementation.
-Before spawning the edit-capable implementation worker, poll or inspect any
-active scout once, persist useful findings, then finalize or kill the scout if it
-is still running. Do not let an active generic scout block the implementation
-worker spawn; enable parallel workers only for explicit disjoint ownership.
-When a task may add, remove, rename, or move source symbols, the worker first
-instruction must include `source-owner-ledger:` with `selected-owner=...`, all
-plausible `candidate-owner=...`, rejected-owner reasons, and
-`validation-package=...`. If the orchestrator cannot fill this ledger from the
-generated source owner candidates and public source evidence, spawn the
-contract scout before implementation.
+## Agent Contract
 
-## Scope Guard Workflow
+Before spawning, load the selected role module and
+prompts/playbooks/agent-spawning.md. Spawn only through multiagent subagent
+spawn, wait for durable output, finalize completed read-only reviewers, and run
+assignment checks for workers. The role module owns request shape, output
+markers, and provider procedure.
 
-Use a scope guard after a worker produces a diff when the patch might satisfy a
-visible path while overreaching or missing the real contract. Load
-`prompts/roles/scope-guard.md` and include it with the task statement, contract
-ledger, worker summary, changed files, validation claims, and current diff
-summary.
+## Repair And Safety
 
-Prefer this role when the task is additive but the diff rewrites behavior, when
-UI/component interaction code changes, when helper-layer ownership is unclear,
-or when generated/test-only files appear.
+Load finding-todo-loop.md for accepted findings. Stop or finalize the current
+owner before replacement, release its ownership and validation lease, and give
+the replacement only the implicated paths and accepted evidence.
 
-Paste accepted `blocking-scope-findings`, `must-preserve`, and
-`validation-gaps` into the next verifier or follow-up worker instruction.
-
-## Validation Coordinator Workflow
-
-Use a validation coordinator when multiple live agents touch the same package,
-compile/test commands are expensive, or a replacement worker might duplicate a
-running validator. Load `prompts/playbooks/validation-scheduling.md` and
-`prompts/roles/validation-coordinator.md`, then include the active agent table,
-owned paths, process list, recent pane output, current validation leases, and
-intended validation commands.
-
-```bash
-SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn validation-coordinator-01-task --instruction "FIRST_INSTRUCTION_TEXT"
-```
-
-Use the coordinator's lease report to decide whether to wait, poll,
-kill/finalize stale panes, release a validation lease, or route a bounded
-follow-up worker.
-
-## Required Worker First Instruction
-
-Before spawning a worker, load `prompts/playbooks/agent-spawning.md` and
-`prompts/worker.md`. The spawning playbook owns durable assignment metadata,
-worktree creation, CLI-specific spawn commands, prompt-readiness checks, and
-checkpoint updates. The worker module owns shared worker rules and Ponytail
-implementation discipline.
-
-## Verifier Agent Workflow
-
-Spawn a verifier after a worker reports final status or is otherwise ready for
-acceptance review. Load `prompts/playbooks/agent-spawning.md` for the
-worker/verifier loop mechanics and `prompts/verifier.md` for the review role.
-The verifier module requires a verifier contract ledger, source-derived
-hidden-contract probes, assumption challenges, and an over-engineering pass.
-The launcher injects the immutable original task and registered scout artifact
-into technical and replacement reviewer prompts. Orchestrator-added checklists
-are supplemental and cannot narrow that semantic envelope.
-Give the verifier a validation lease for the narrowest visible behavior test
-that directly covers the changed path. When a scout or worker names such a test,
-the verifier must run it after the final diff or return a concrete environment
-blocker; compile-only or syntax-only evidence cannot satisfy behavior
-verification.
-
-Before behavior verification or submission, run the build-verifier workflow for
-any code diff. Load `prompts/roles/build-verifier.md` and require
-`build-verification-passed: final-diff-sha256=... compile_clean=true
-returncode=0` bound to the current `git diff`, plus per-language package markers
-such as `go-package-validation-passed:`. Do not treat behavior verifier prose as
-build evidence, and do not submit a patch until both build verification and
-behavior verification pass.
-Build verification failures are not eval-wrapper paperwork. Record them as
-blocking verifier findings, convert accepted findings into todos, and route
-repair workers from those todos. Behavior verifier hidden-contract failures use
-the same finding/todo/resolution/reverification path.
-
-Before spawning the verifier, load `prompts/playbooks/validation-scheduling.md`
-if the worker ran or is running expensive validation. Do not spawn the verifier
-until the worker's validation lease has a captured passed, failed, timed-out,
-stale, or released state. If the worker final message appears before its
-validation command exits, poll the worker/process list instead of starting a
-verifier that may duplicate the command.
-
-The orchestrator decides which findings become accepted follow-up; never pass
-raw verifier findings directly to the worker as orders. Accepted blocking
-findings become todo queue items with done criteria, and a todo is retired only
-through `multiagent subagent todo-close ...` after a verifier accepts the worker's
-resolution evidence.
-
-Mirror every accepted follow-up into the lifecycle TODO queue. If any active
-lifecycle TODO remains, return from post-implementation to pre-implementation
-before spawning another writable worker so evidence and decision ownership are
-re-evaluated.
-
-If a worker reports `required-path-outside-owned:` or otherwise names an exact
-source path needed outside its owned paths, treat that as a blocking finding/todo
-input. The next repair assignment must include those exact paths in `--owned`
-plus any still-needed prior owned paths. Do not respawn a worker with the same
-owned set after an ownership blocker.
-
-## Validation Failure Repair Workflow
-
-Use this workflow when a worker or verifier reports that a relevant visible
-test, fixture, compile, package, component, or source-derived probe failed after
-the patch. This is a repair signal, not acceptance evidence.
-
-1. Capture the exact failing command, return code, and output tail.
-2. Record or release the validation lease for the package/path before starting
-   replacement work.
-3. Derive the implicated source paths from the failing command, stack trace,
-   fixture name, changed files, and contract ledger.
-4. Spawn a fresh bounded repair worker with those paths in `--owned`; do not
-   send implementation instructions to a completed worker pane.
-5. Tell the repair worker to preserve the existing contract ledger and current
-   useful diff, fix the validation failure or prove it is stale from visible
-   source evidence, and rerun the same command or a narrower source-derived
-   equivalent.
-6. Only after the repair worker returns should a verifier decide acceptance,
-   residual risk, or a bounded second follow-up.
-
-Do not finalize on source review, compile-only checks, or synthetic helper
-probes while a relevant visible validation command is still failing. A stale
-visible expectation can be accepted only when the repair/verifier transcript
-contains both the source-visible reason and a replacement probe for the exact
-failing field/path.
-
-If that recheck disproves a previously persisted finding, pass the exact finding
-ID to the adjudication verifier and require `finding-dismiss` with accepted
-exact-hash evidence. A newer acceptance does not implicitly erase older finding
-state. When a finding already has a todo, successful reviewer-backed dismissal
-atomically supersedes that todo; never try to edit supervisor-owned todo metadata
-or launch a writer merely to rewrite its required commands.
-
-## Production Operations Workflow
-
-When a goal needs access to an external or production service, inspect the available Markdown files under `runbooks/` before searching for provider-native model tools or declaring the capability unavailable. Route a matching runbook through the generic `ops` and `ops-reviewer` roles and prod-mcp. Do not copy provider operations, request parsing, pagination, or time-window logic into the orchestrator prompt. A production runbook operation is not a source-code implementation lifecycle.
-
-For a production operation, spawn exactly one `--role ops` agent with the immutable original goal, the selected Markdown runbook, and the prod-mcp contract. The `.md` runbook is authoritative; the ops agent owns construction of the JSON execution envelope but receives no KMS, bearer-token, AWS, Grafana, or Kubernetes credentials.
-
-Before execution, require the ops agent to certify the request with `multiagent ops bind-runbook`, then spawn a separate read-only agent named with the `ops-reviewer` prefix against that exact request file. Finalize it so the supervisor seals its output. A failed `review-bind` is a rejection and cannot be replaced by manual review. The execution instruction must preserve both the exact reviewed request path and finalized reviewer name, and must give the ops agent the complete command `multiagent ops execute --request-file PATH --reviewer REVIEWER_NAME`; never omit `--reviewer` or replace it with workflow-ledger editing. Execution fails unless the first verdict is accepted and the sealed evidence contains hashes of the exact request, goal, runbook metadata, and runbook content. After execution, spawn a different read-only reviewer to inspect the persisted request and receipt. Never let the orchestrator, ops agent, or pre-execution reviewer self-approve or perform the post-execution review.
-
-## Progress And Status
-
-When the user asks for agent progress, load `prompts/playbooks/agent-spawning.md`
-and use its progress/status procedure.
-
-## Safety Rules
-
-- Always `capture-pane` before `send-keys`.
-- Always inspect captured output before sending input.
-- Never send input to a busy worker.
-- Never ask a worker to edit outside its assigned files.
-- Never ask a worker to write outside `$MULTIAGENT_ROOT` unless approved and recorded with `multiagent policy approve`.
-- Use `prompts/playbooks/write-policy.md` for outside-write decisions.
-- Never let two workers own the same files unless you explicitly coordinate the overlap.
-- If a worker over an owned path set produces no `/app` source diff, allow at
-  most one same-owned-path replacement with an explicit
-  `replacement-no-diff-attempt=1` edit-or-block instruction. If the replacement
-  also produces no diff and no exact source blocker, write blocked status rather
-  than spawning another same-scope worker.
-- If a live worker remains no-diff after a planning checkpoint, inspect it once
-  and force an edit-or-exact-blocker handoff. Do not allow indefinite read-only
-  source mapping: the next state must be a source diff,
-  `required-path-outside-owned: RELATIVE_PATH`, `validation-repair-needed:`, or
-  blocked status with a source-visible reason.
-- After killing or finalizing a worker, release its assignment ownership before
-  reusing paths: `multiagent subagent assignment-status NAME failed` for killed
-  workers or `multiagent subagent assignment-status NAME done` for finalized
-  workers, then create the replacement assignment.
-- Never let a verifier receive writable ownership for a worker's owned paths.
-- Before accepting completed worker or subagent work, run `multiagent subagent assignment-check NAME`.
-- Always capture final output before killing a worker.
-- Always poll or inspect a long-running subagent before finalizing it.
-- Do not delete `$MULTIAGENT_STATE_DIR`; it is durable context.
-- Prefer killing and respawning a stuck worker over manually untangling a confused one.
-- Keep a state table of active agents, owned files, branch names, status, and state directory.
-
-## Workflow
-
-1. Plan: understand intent, run a contract scout when risk justifies it, update the contract ledger, split work, assign owner/branch/scope.
-2. Spawn: create assignment metadata, load the right prompt module, start the agent, send the assignment.
-3. Monitor: use `multiagent status`, inspect busy/blocked/done states, update checkpoints.
-4. Coordinate: resolve blockers, prevent ownership conflicts, maintain validation leases, run scope guard when diff shape is risky, route verification, spawn independent follow-ups.
-5. Accept: run `assignment-check`, review verifier findings, close accepted todo resolutions with `multiagent subagent todo-close ...` after reverification or reopen them, run `multiagent subagent gate-check`, finalize agents.
-6. Report: summarize status, branches, commits, blockers, state paths, validation, and residual risk.
-
-## Optional Playbooks
-
-- For exploration/exploitation/reflection and role-specific guidance, load `prompts/roles/organizational-learning.md`.
-- For intent checks, contract ledgers, and proxy/scaffold mismatch prevention, load `prompts/playbooks/intent-contract.md`.
-- For parallel fan-out, blocked-subtree routing, and exploration/exploitation balance, load `prompts/playbooks/parallel-execution.md`.
-- For expensive compile/test ownership and duplicate-validator prevention, load `prompts/playbooks/validation-scheduling.md`.
-- For structured verifier findings, repair todos, worker resolution evidence, and final gates, load `prompts/playbooks/finding-todo-loop.md`.
-- For worker, subagent, verifier, status, or checkpoint mechanics, load `prompts/playbooks/agent-spawning.md`.
-- For pre-implementation contract extraction, load `prompts/roles/contract-scout.md`.
-- For post-diff scope and blast-radius audits, load `prompts/roles/scope-guard.md`.
-# Canonical operations instruction binding
-
-For production operations, the supervisor coordinates roles but does not author the provider procedure:
-
-- Discover and select the applicable Markdown file under `runbooks/`. The selected `.md` content is the authoritative procedure.
-- For an operational goal, mechanically compose the contract scout instruction from the exact bytes of `prompts/roles/contract-scout.md`, the immutable original goal, the available Markdown runbook paths, and the prod-mcp operation contract. Do not paraphrase the scout role or tell the scout to require a provider-native MCP tool.
-- The absence of provider-native Slack, GitHub, Grafana, AWS, Kubernetes, or similar tools in the agent harness is expected. It is not a blocker when the selected runbook and prod-mcp expose the required operation. Only a missing runbook, missing prod-mcp operation, or unavailable prod-mcp service is an execution blocker.
-- Discard any implementation context drafted before contract registration. After registration, mechanically create a fresh context from the exact registered contract artifact bytes and digest; never repair or reuse a speculative pre-contract context.
-- Treat bounded execution mechanics such as pagination, cursor traversal, chunking, identifier resolution, and related-record traversal as orchestrator-owned when they are necessary to fulfill the caller's explicit result. Do not ask the caller to choose a knowingly incomplete result.
-- Mechanically compose the preparation agent's first instruction from the exact bytes of `prompts/roles/ops-agent.md`, the immutable original goal, the exact selected Markdown runbook, and the prod-mcp request contract. Do not paraphrase or replace the canonical role or runbook.
-- Do not add provider-specific steps, operation parsing, hand-written request JSON, pagination policy, time-window calculations, or action sequencing to the supervisor prompt. The ops role constructs bounded requests from the goal, runbook, and prod-mcp contract.
-- Any date, time, numeric bound, digest, identifier, or other value not literal in the goal or inspected source must be computed and verified with a bounded read-only command. Calendar arithmetic and epoch conversion must never be performed mentally. Preserve the command and relevant output as evidence or leave the value unknown.
-- Mechanically compose each review instruction from the exact bytes of `prompts/roles/ops-reviewer.md`, the immutable original goal, the exact selected runbook, and the exact request-file path. Do not invent a reviewer checklist or output format. The canonical reviewer role owns `multiagent ops review-bind`, its four unchanged binding lines, and the first-line verdict format.
-- Keep at most one active `--role ops` process. A preparation process may finalize at the review boundary. After the reviewer is finalized, a fresh `--role ops` execution process may receive only the exact canonical ops role, immutable bound artifacts, and the exact `multiagent ops execute --request-file PATH --reviewer NAME` command for the sealed request.
-- The execution process must not reconstruct or broaden the reviewed request. Any follow-up operation requires a new request and a new canonical reviewer cycle.
+Never overlap writable ownership, mutate sealed artifacts, bypass role
+isolation, or infer success from prose when the supervisor gate has not passed.
+Preserve MULTIAGENT_STATE_DIR and keep a compact table of active nodes, owners,
+status, and durable outputs.
