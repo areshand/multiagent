@@ -421,33 +421,36 @@ mod tests {
     use crate::config::{CONTROL_UID, ORCHESTRATOR_UID};
 
     #[test]
-    fn setuid_gate_only_retains_privilege_for_fixed_agent_launch() {
+    fn setuid_gate_enforces_the_exact_command_caller_matrix() {
         assert!(privileged_command_allowed(
             "role-agent-exec",
             ORCHESTRATOR_UID
         ));
         assert!(!privileged_command_allowed("role-agent-exec", CONTROL_UID));
-        assert!(privileged_command_allowed(
+        assert!(!privileged_command_allowed("role-agent-exec", 65534));
+
+        for command in [
+            "authority-supervisor-exec",
             "container-bootstrap",
-            CONTROL_UID
-        ));
-        assert!(privileged_command_allowed("launch", CONTROL_UID));
-        assert!(privileged_command_allowed("session-control", CONTROL_UID));
-        assert!(privileged_command_allowed(
-            "authority-supervisor-exec",
-            CONTROL_UID
-        ));
-        assert!(!privileged_command_allowed(
-            "authority-supervisor-exec",
-            ORCHESTRATOR_UID
-        ));
-        assert!(!privileged_command_allowed("launch", ORCHESTRATOR_UID));
-        assert!(!privileged_command_allowed(
+            "launch",
             "session-control",
-            ORCHESTRATOR_UID
-        ));
-        for command in ["role-exec", "subagent", "snapshot", "workflow"] {
+        ] {
+            assert!(privileged_command_allowed(command, CONTROL_UID));
             assert!(!privileged_command_allowed(command, ORCHESTRATOR_UID));
+            assert!(!privileged_command_allowed(command, 65534));
+        }
+
+        for command in [
+            "role-exec",
+            "subagent",
+            "snapshot",
+            "workflow",
+            "agent",
+            "ops",
+        ] {
+            assert!(!privileged_command_allowed(command, CONTROL_UID));
+            assert!(!privileged_command_allowed(command, ORCHESTRATOR_UID));
+            assert!(!privileged_command_allowed(command, 65534));
         }
     }
 }

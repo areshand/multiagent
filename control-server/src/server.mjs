@@ -5,7 +5,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { WebSocket, WebSocketServer } from "ws";
-import { findActiveSession, sessionControlInvocation } from "./session-runtime.mjs";
+import { findActiveSession, sessionControlInvocation, validResourceId } from "./session-runtime.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(here, "../public");
@@ -25,7 +25,6 @@ const captureLines = Math.min(Number(process.env.MULTIAGENT_CAPTURE_LINES || "12
 const snapshotIntervalMs = Math.max(Number(process.env.MULTIAGENT_SNAPSHOT_INTERVAL_SECONDS || "60"), 15) * 1000;
 const idleTimeoutMs = Math.max(Number(process.env.MULTIAGENT_IDLE_TIMEOUT_SECONDS || "86400"), 300) * 1000;
 const uidSandbox = process.env.MULTIAGENT_UID_SANDBOX === "1";
-const idPattern = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const registryFile = path.join(stateRoot, "control-server", "sessions.json");
 
 fs.mkdirSync(path.dirname(registryFile), { recursive: true });
@@ -154,7 +153,7 @@ function saveRegistry() {
 }
 
 function repositoryPath(name) {
-  if (!idPattern.test(name)) throw new Error("invalid repository name");
+  if (!validResourceId(name)) throw new Error("invalid repository name");
   const candidate = path.resolve(repositoryRoot, name);
   if (!candidate.startsWith(`${repositoryRoot}${path.sep}`) || !fs.existsSync(path.join(candidate, ".git"))) {
     throw new Error(`repository is not bootstrapped: ${name}`);
@@ -237,7 +236,7 @@ function writeTraceSummary(id, status) {
 }
 
 function launchSession(id, repository, resume, actor, originalTask = "") {
-  if (!idPattern.test(id)) throw new Error("invalid session id");
+  if (!validResourceId(id)) throw new Error("invalid session id");
   if (tmuxAlive(id)) throw new Error("session already running");
   if (uidSandbox) {
     const active = findActiveSession(Object.keys(registry.sessions), id, tmuxAlive);

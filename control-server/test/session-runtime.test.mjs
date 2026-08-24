@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { findActiveSession, sessionControlInvocation } from "../src/session-runtime.mjs";
+import { findActiveSession, sessionControlInvocation, validResourceId } from "../src/session-runtime.mjs";
+
+test("control server session IDs match the shared Rust contract", async () => {
+  const vectors = JSON.parse(
+    await readFile(new URL("../../contracts/session-id-vectors.json", import.meta.url), "utf8"),
+  );
+  for (const value of vectors.valid) assert.equal(validResourceId(value), true, value);
+  for (const value of vectors.invalid) assert.equal(validResourceId(value), false, value);
+});
 
 test("UID-isolated control uses semantic setuid-gated session operations", () => {
   assert.deepEqual(sessionControlInvocation("task-1", "capture", ["120"]), {

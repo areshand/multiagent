@@ -93,7 +93,8 @@ fn usage() -> String {
 fn validate_session_id(session: &str) -> Result<(), String> {
     let valid = !session.is_empty()
         && session.len() <= 63
-        && session.as_bytes()[0].is_ascii_lowercase()
+        && (session.as_bytes()[0].is_ascii_lowercase()
+            || session.as_bytes()[0].is_ascii_digit())
         && session
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
@@ -209,12 +210,26 @@ mod tests {
     use super::{parse_capture_lines, validate_session_id};
 
     #[test]
-    fn session_ids_and_capture_bounds_are_strict() {
-        assert!(validate_session_id("grafana-e2e-1").is_ok());
-        assert!(validate_session_id("../root").is_err());
-        assert!(validate_session_id("Uppercase").is_err());
+    fn session_ids_match_the_shared_control_plane_contract() {
+        let vectors: serde_json::Value = serde_json::from_str(include_str!(
+            "../contracts/session-id-vectors.json"
+        ))
+        .unwrap();
+        for value in vectors["valid"].as_array().unwrap() {
+            assert!(validate_session_id(value.as_str().unwrap()).is_ok());
+        }
+        for value in vectors["invalid"].as_array().unwrap() {
+            assert!(validate_session_id(value.as_str().unwrap()).is_err());
+        }
+    }
+
+    #[test]
+    fn capture_bounds_are_strict() {
         assert_eq!(parse_capture_lines("120").unwrap(), 120);
+        assert_eq!(parse_capture_lines("1").unwrap(), 1);
+        assert_eq!(parse_capture_lines("5000").unwrap(), 5000);
         assert!(parse_capture_lines("0").is_err());
         assert!(parse_capture_lines("5001").is_err());
+        assert!(parse_capture_lines("not-a-number").is_err());
     }
 }
