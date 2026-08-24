@@ -1207,7 +1207,7 @@ fn completion_state(store: &Store, id: &str) -> Result<BTreeMap<String, String>,
         .iter()
         .filter(|obligation| obligation.get(3) == diff && obligation.get(5) == iteration)
         .collect::<Vec<_>>();
-    let pending = current_obligations
+    let pending: Vec<&str> = current_obligations
         .iter()
         .filter(|obligation| obligation.get(6) != "satisfied")
         .map(|obligation| obligation.get(0))
