@@ -1941,6 +1941,24 @@ printf 'Still active in tmux\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-open/
 printf 'subagent-open\n' >>"$MOCK_TMUX_WINDOWS"
 printf 'Open subagent prompt\n' >"$MOCK_TMUX_CAPTURES/subagent-open.txt"
 
+mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-completed-open"
+printf 'done\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-completed-open/status"
+printf 'Completed first phase and retained provider context\n' \
+  >"$MULTIAGENT_STATE_DIR/subagents/subagent-completed-open/current.txt"
+cat >"$MULTIAGENT_STATE_DIR/subagents/subagent-completed-open/meta.env" <<EOF
+name=subagent-completed-open
+session=$MULTIAGENT_SESSION
+root=$ROOT
+write_policy=$MULTIAGENT_WRITE_POLICY
+cli=claude
+cli_bin=true
+role=ops
+created_at=2026-01-01T00:00:00Z
+EOF
+printf 'subagent-completed-open\n' >>"$MOCK_TMUX_WINDOWS"
+printf 'Restored completed ops prompt ready\n' \
+  >"$MOCK_TMUX_CAPTURES/subagent-completed-open.txt"
+
 mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-unknown"
 
 recover_plan="$("$MULTIAGENT" subagent recover-plan)"
@@ -1961,6 +1979,17 @@ if "$MULTIAGENT" subagent restore subagent-blocked >"$blocked_restore_file" 2>&1
   exit 1
 fi
 assert_file_contains "$blocked_restore_file" "refusing to restore subagent-blocked: skip-blocked"
+
+completed_restore_output="$("$MULTIAGENT" subagent restore subagent-completed-open --force \
+  --instruction "Execute the independently reviewed request without changing it")"
+[[ "$completed_restore_output" == "restored subagent-completed-open" ]]
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-completed-open/status" "running"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-completed-open/restore_events.log" "prior_status=done"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-completed-open/restore_events.log" "force=1"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-completed-open/instruction.txt" \
+  "Execute the independently reviewed request without changing it"
+assert_file_contains "$MOCK_TMUX_LOG" "kill-window subagent-completed-open"
+[[ "$(grep -c '^subagent-completed-open$' "$MOCK_TMUX_WINDOWS")" -eq 1 ]]
 
 restore_output="$("$MULTIAGENT" subagent restore subagent-restore)"
 [[ "$restore_output" == "restored subagent-restore" ]]

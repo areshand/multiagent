@@ -2027,11 +2027,18 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
             plan.action, plan.reason
         ));
     }
-    if plan.window == "open" {
+    if plan.window == "open" && !force {
         return Err(format!("subagent window already exists: {name}"));
     }
     if !has_recovery_context(&dir) {
         return Err(format!("no captured context to restore: {name}"));
+    }
+    if plan.window == "open" {
+        tmux_checked(&[
+            "kill-window",
+            "-t",
+            &format!("{}:{name}", cfg.session),
+        ])?;
     }
     let mut instruction = format!(
         "You are a restored long-running subagent.\n\nRestoration details:\n- Subagent name: {name}\n- Prior persisted status: {}\n- Persisted state directory: {}\n- This is a fresh tmux window after an orchestrator/session recovery.\n- Do not delete, overwrite, or reset prior memory in the state directory.\n- Read the prior context below, continue only if the assignment is still valid, and report progress/final status in this tmux window.\n- If the prior state shows completion, intentional stop, stale instructions, or a blocker that needs orchestrator/user input, stop and state what you need instead of guessing.\n\nConcise prior context:\n{}\n",
