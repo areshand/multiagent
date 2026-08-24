@@ -318,6 +318,7 @@ pub fn role_agent_exec(args: &[String]) -> Result<ExitCode, String> {
         &authorization.workflow_id,
         &output,
         &public_output,
+        &trace_dir,
     );
     supervisor::finish_launch(&cfg.state, name)?;
     drop(writer_lock);
