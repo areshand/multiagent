@@ -140,6 +140,16 @@ pub fn semantic_envelope(workflow_id: &str) -> Result<SemanticEnvelope, String> 
     })
 }
 
+pub fn contract_or_approved_context(workflow_id: &str) -> Result<bool, String> {
+    let store = Store::configured()?;
+    let p = store.paths(workflow_id)?;
+    let state = read_env(&p.state, workflow_id)?;
+    validate_original_task(&state)?;
+    validate_contract(&state)?;
+    Ok(!state_value(&state, "contract_artifact").is_empty()
+        || state_value(&state, "preimplementation_gate") == "passed")
+}
+
 struct Store {
     state_dir: PathBuf,
 }
