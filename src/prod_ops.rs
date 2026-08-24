@@ -48,6 +48,7 @@ fn bind_runbook(args: &[String]) -> Result<ExitCode, String> {
         .ok_or("ops request template must be an object")?;
     object.insert("runbookDocument".into(), Value::String(relative.into()));
     object.insert("runbookContentSha256".into(), Value::String(digest.clone()));
+    validate_request_template(&template)?;
     let encoded = serde_json::to_vec_pretty(&template)
         .map_err(|error| format!("encode bound ops request: {error}"))?;
     fs::write(&request_file, encoded)
@@ -63,6 +64,7 @@ fn review_bind(args: &[String]) -> Result<ExitCode, String> {
         .map_err(|error| format!("read ops request: {error}"))?;
     let template: Value = serde_json::from_slice(&bytes)
         .map_err(|error| format!("decode ops request template: {error}"))?;
+    validate_request_template(&template)?;
     let object = template
         .as_object()
         .ok_or("ops request template must be an object")?;
@@ -175,6 +177,7 @@ fn build_request(
     reviewer: &TrustedApproval,
     now: chrono::DateTime<Utc>,
 ) -> Result<Value, String> {
+    validate_request_template(template)?;
     let object = template
         .as_object()
         .ok_or("ops request template must be a JSON object")?;
@@ -368,6 +371,102 @@ fn required_object<'a>(
         .get(key)
         .and_then(Value::as_object)
         .ok_or_else(|| format!("ops request template requires object field {key}"))
+}
+
+fn validate_request_template(template: &Value) -> Result<(), String> {
+    let object = template
+        .as_object()
+        .ok_or("ops request template must be an object")?;
+    let task_id = required_template_string(object, "taskId")?;
+    validate_id("task ID", task_id)?;
+    if object.get("goal").is_none_or(Value::is_null) {
+        return Err("ops request template requires goal".into());
+    }
+    if object.contains_key("approvals") {
+        return Err("ops request approvals are derived by the supervisor and cannot be supplied by an agent".into());
+    }
+
+    let operation = required_object(object, "operation")?;
+    if operation.len() != 2 {
+        return Err("ops request operation must contain only id and version".into());
+    }
+    validate_id(
+        "operation ID",
+        required_template_string(operation, "id")?,
+    )?;
+    validate_semver(
+        "operation version",
+        required_template_string(operation, "version")?,
+    )?;
+
+    let target = required_object(object, "target")?;
+    if target.len() != 4 {
+        return Err("ops request target must contain environment, cluster, namespace, and service".into());
+    }
+    let environment = required_template_string(target, "environment")?;
+    if !matches!(environment, "development" | "staging" | "production") {
+        return Err("ops request target environment is invalid".into());
+    }
+    for key in ["cluster", "namespace", "service"] {
+        validate_id(
+            &format!("target {key}"),
+            required_template_string(target, key)?,
+        )?;
+    }
+
+    required_object(object, "parameters")?;
+    let runbook = required_object(object, "runbook")?;
+    if runbook.len() != 3 {
+        return Err("ops request runbook must contain id, version, and phase".into());
+    }
+    validate_id(
+        "runbook ID",
+        required_template_string(runbook, "id")?,
+    )?;
+    validate_semver(
+        "runbook version",
+        required_template_string(runbook, "version")?,
+    )?;
+    validate_id(
+        "runbook phase",
+        required_template_string(runbook, "phase")?,
+    )?;
+    required_template_string(object, "runbookDocument")?;
+    let digest = required_template_string(object, "runbookContentSha256")?;
+    let hex = digest
+        .strip_prefix("sha256:")
+        .ok_or("ops request runbookContentSha256 is invalid")?;
+    if hex.len() != 64
+        || !hex
+            .chars()
+            .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
+    {
+        return Err("ops request runbookContentSha256 is invalid".into());
+    }
+    Ok(())
+}
+
+fn required_template_string<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<&'a str, String> {
+    object
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("ops request template requires string field {key}"))
+}
+
+fn validate_semver(label: &str, value: &str) -> Result<(), String> {
+    let parts = value.split('.').collect::<Vec<_>>();
+    if parts.len() != 3
+        || parts
+            .iter()
+            .any(|part| part.is_empty() || !part.chars().all(|ch| ch.is_ascii_digit()))
+    {
+        return Err(format!("{label} is invalid"));
+    }
+    Ok(())
 }
 
 fn verified_runbook_content(template: &Value) -> Result<String, String> {
@@ -825,7 +924,7 @@ mod tests {
     use super::{
         base64_decode, base64url_encode, build_request, canonical, curl_command, ecdsa_der_to_raw,
         parse_mcp_body, private_temp_path, reviewer_accepted, runbook_content_digest,
-        write_mcp_headers, TrustedApproval,
+        validate_request_template, write_mcp_headers, TrustedApproval,
     };
     use chrono::{TimeZone, Utc};
     use serde_json::json;
@@ -905,6 +1004,36 @@ mod tests {
         assert_eq!(request["changeTicket"], "OPS-123");
         assert_eq!(request["approvals"][0]["reviewerSubject"], "caller-1");
         assert_eq!(request["approvals"][1]["reviewerSubject"], "reviewer-1");
+    }
+
+    #[test]
+    fn request_template_validation_rejects_non_executable_envelopes() {
+        let digest = format!("sha256:{}", "4".repeat(64));
+        let valid = json!({
+            "taskId":"task-1",
+            "goal":"follow the supplied runbook",
+            "operation":{"id":"provider.read","version":"1.0.0"},
+            "target":{"environment":"production","cluster":"external-services","namespace":"provider","service":"configured-service"},
+            "parameters":{"action":"list"},
+            "runbook":{"id":"provider.access","version":"1.0.0","phase":"read"},
+            "runbookDocument":"runbooks/provider-access.md",
+            "runbookContentSha256":digest
+        });
+        validate_request_template(&valid).unwrap();
+
+        let mut invalid_operation = valid.clone();
+        invalid_operation["operation"] = json!("provider.read");
+        assert_eq!(
+            validate_request_template(&invalid_operation).unwrap_err(),
+            "ops request template requires object field operation"
+        );
+
+        let mut invalid_target = valid;
+        invalid_target["target"] = json!("list");
+        assert_eq!(
+            validate_request_template(&invalid_target).unwrap_err(),
+            "ops request template requires object field target"
+        );
     }
 
     #[test]

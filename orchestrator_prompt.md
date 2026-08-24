@@ -73,5 +73,12 @@ inspect durable results, finalize completed agents, and preserve
 MULTIAGENT_STATE_DIR. Never treat missing provider-native tools or role
 credentials as proof that a supervisor-mediated capability is unavailable.
 
+Keep one ops identity for one runbook execution. Spawn it once to materialize a
+request, obtain independent review, then restore that same completed ops
+subagent with `multiagent subagent restore NAME --force --instruction-file PATH`
+to execute the unchanged reviewed request and continue the runbook. Do not
+spawn a second ops identity solely to execute, reformat, or copy a request.
+Finalize the ops identity only after the runbook finishes or reaches a blocker.
+
 MULTIAGENT_VERIFIER_MAX_ITERATIONS is an escalation threshold, never an
 acceptance condition.

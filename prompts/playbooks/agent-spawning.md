@@ -185,6 +185,26 @@ continue indefinitely: the next state must be a source diff,
 `required-path-outside-owned: RELATIVE_PATH`, `validation-repair-needed:`, or
 blocked status with a source-visible reason.
 
+## Ops Review Continuation
+
+An ops agent exits after materializing and binding each request so an
+independent reviewer can inspect immutable bytes. Keep that ops subagent
+persisted. After the reviewer is finalized with an accepted verdict, resume the
+same ops identity and provider context:
+
+```bash
+multiagent subagent restore OPS_NAME --force \
+  --instruction-file EXECUTE_REVIEWED_REQUEST_INSTRUCTION
+multiagent subagent wait OPS_NAME --timeout 900
+```
+
+The follow-up must name the unchanged request path and finalized reviewer.
+`--force` records the orchestrator's explicit continuation decision; it does
+not waive review. Do not spawn a separate executor, copy the request into a new
+role directory, or finalize the ops identity until the runbook finishes or
+blocks. A replacement ops identity is allowed only when restoration fails, and
+the replacement must materialize a new request for a new independent review.
+
 After `multiagent subagent kill NAME` or `multiagent subagent finalize NAME`, ensure the
 assignment no longer owns paths before reusing them. If needed, run
 `multiagent subagent assignment-status NAME failed` for killed workers or
