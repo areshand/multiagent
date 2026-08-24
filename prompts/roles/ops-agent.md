@@ -7,12 +7,23 @@ operations or encode provider-specific behavior in policy or source code.
 
 1. Select the applicable runbook and derive the operation, target, parameters,
    and phase from it and the prod-mcp target contract.
-2. Write one bounded JSON draft under
-   `$MULTIAGENT_LOG_DIR/agents/$MULTIAGENT_SUBAGENT_NAME/` using the generic
-   envelope: `taskId`, `goal`, `operation`, `target`, `parameters`, and
-   `runbook`. Add `changeTicket` only when required. Never add `approvals` or
-   calculate `runbookContentSha256`.
-3. Publish it with:
+2. Generate, then edit, one bounded JSON draft under
+   `$MULTIAGENT_LOG_DIR/agents/$MULTIAGENT_SUBAGENT_NAME/`:
+
+```bash
+DRAFT_FILE="$MULTIAGENT_LOG_DIR/agents/$MULTIAGENT_SUBAGENT_NAME/request.json"
+multiagent ops template > "$DRAFT_FILE"
+```
+
+   Preserve the generated field shapes exactly. Set `taskId`, `goal`,
+   `operation.id`, `operation.version`, `parameters`, `runbook.id`,
+   `runbook.phase`, and `runbook.version` from the authenticated goal,
+   selected runbook, and prod-mcp tool contract. Do not add `target`;
+   publication derives the canonical four-field target from the Markdown
+   runbook. Add `changeTicket` only when required. Never add `approvals`,
+   `runbookDocument`, or `runbookContentSha256`.
+3. If needed, run `multiagent ops --help`; do not infer a schema from
+   validation failures. Publish the completed draft with:
 
 ```bash
 multiagent ops publish --draft-file "$DRAFT_FILE" \

@@ -14,6 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_OPERATION_REQUEST_BYTES: u64 = 65_536;
 const MAX_RUNBOOK_BYTES: u64 = 1_048_576;
+const OPS_USAGE: &str = "usage:\n  multiagent ops template\n  multiagent ops publish --draft-file PATH --runbook-document PATH\n  multiagent ops bind-runbook --request-file PATH --runbook-document PATH\n  multiagent ops review-bind --request-file PATH\n  multiagent ops execute --request-file PATH --reviewer NAME";
 
 pub(crate) struct PublishedRequest {
     artifact_path: PathBuf,
@@ -47,12 +48,49 @@ struct TrustedApproval {
 
 pub fn run(args: &[String]) -> Result<ExitCode, String> {
     match args.first().map(String::as_str) {
+        Some("template") => template(&args[1..]),
         Some("bind-runbook") => bind_runbook(&args[1..]),
         Some("publish") => publish(&args[1..]),
         Some("execute") => execute(&args[1..]),
         Some("review-bind") => review_bind(&args[1..]),
-        _ => Err("usage: multiagent ops bind-runbook --request-file PATH --runbook-document PATH | multiagent ops publish --draft-file PATH --runbook-document PATH | multiagent ops review-bind --request-file PATH | multiagent ops execute --request-file PATH --reviewer NAME".into()),
+        Some("help" | "--help" | "-h") => {
+            print_ops_help();
+            Ok(ExitCode::SUCCESS)
+        }
+        _ => Err(OPS_USAGE.into()),
     }
+}
+
+fn template(args: &[String]) -> Result<ExitCode, String> {
+    if !args.is_empty() {
+        return Err("usage: multiagent ops template".into());
+    }
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "taskId": "replace-with-stable-task-id",
+            "goal": "replace with the bounded operation goal",
+            "operation": {
+                "id": "replace.with.operation-id",
+                "version": "1.0.0"
+            },
+            "parameters": {},
+            "runbook": {
+                "id": "replace.with-runbook-id",
+                "phase": "replace-with-runbook-phase",
+                "version": "1.0.0"
+            }
+        }))
+        .map_err(|error| format!("encode ops request template: {error}"))?
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+fn print_ops_help() {
+    println!("{OPS_USAGE}");
+    println!(
+        "\nDraft schema:\n  taskId: non-empty stable string\n  goal: bounded goal copied from the authenticated task\n  operation: object with id and semantic version\n  parameters: provider operation parameters\n  runbook: object with id, phase, and semantic version\n\nGenerate a valid starting envelope with `multiagent ops template`. The publish command derives target, runbookDocument, and runbookContentSha256 from the exact Markdown runbook. Do not supply approvals."
+    );
 }
 
 fn bind_runbook(args: &[String]) -> Result<ExitCode, String> {
