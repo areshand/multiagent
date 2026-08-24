@@ -5,7 +5,8 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { WebSocket, WebSocketServer } from "ws";
-import { findActiveSession, sessionControlInvocation, validResourceId } from "./session-runtime.mjs";
+import { jobPhase, KubernetesSessionClient } from "./kubernetes-session.mjs";
+import { controlMode, findActiveSession, sessionControlInvocation, sessionLaunchInvocation, validResourceId } from "./session-runtime.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(here, "../public");
@@ -25,7 +26,14 @@ const captureLines = Math.min(Number(process.env.MULTIAGENT_CAPTURE_LINES || "12
 const snapshotIntervalMs = Math.max(Number(process.env.MULTIAGENT_SNAPSHOT_INTERVAL_SECONDS || "60"), 15) * 1000;
 const idleTimeoutMs = Math.max(Number(process.env.MULTIAGENT_IDLE_TIMEOUT_SECONDS || "86400"), 300) * 1000;
 const uidSandbox = process.env.MULTIAGENT_UID_SANDBOX === "1";
+const mode = controlMode();
+const gatewayMode = mode === "gateway";
+const workerMode = mode === "session-worker";
 const registryFile = path.join(stateRoot, "control-server", "sessions.json");
+const sessionJobTemplateFile = process.env.MULTIAGENT_SESSION_JOB_TEMPLATE_FILE || "/etc/multiagent-session/job-template.json";
+const repositoryCatalog = gatewayMode ? JSON.parse(process.env.MULTIAGENT_REPOSITORIES_JSON || "{}") : {};
+const kubernetes = gatewayMode ? new KubernetesSessionClient() : null;
+const sessionJobTemplate = gatewayMode ? JSON.parse(fs.readFileSync(sessionJobTemplateFile, "utf8")) : null;
 
 fs.mkdirSync(path.dirname(registryFile), { recursive: true });
 fs.mkdirSync(repositoryRoot, { recursive: true });
@@ -161,6 +169,13 @@ function repositoryPath(name) {
   return candidate;
 }
 
+function configuredRepository(name) {
+  if (!validResourceId(name) || typeof repositoryCatalog[name] !== "string" || !repositoryCatalog[name]) {
+    throw new Error(`repository is not configured: ${name}`);
+  }
+  return repositoryCatalog[name];
+}
+
 function sessionStateDir(id) {
   return path.join(stateRoot, "sessions", id);
 }
@@ -261,8 +276,7 @@ function launchSession(id, repository, resume, actor, originalTask = "") {
   const now = new Date().toISOString();
   const authorityActor = actor === "system" ? (existing?.authorityActor || existing?.createdBy) : actor;
   const authorityApprovedAt = actor === "system" ? (existing?.authorityApprovedAt || existing?.createdAt) : now;
-  const args = [path.join(launcherRoot, "launch.sh"), "--session", id, "--root", root, "--no-attach"];
-  if (resume) args.push("--resume");
+  const invocation = sessionLaunchInvocation(launcherRoot, id, root, resume);
   const env = {
     ...process.env,
     MULTIAGENT_SESSION: id,
@@ -277,7 +291,7 @@ function launchSession(id, repository, resume, actor, originalTask = "") {
     MULTIAGENT_CALLER_SUBJECT: `caller-${crypto.createHash("sha256").update(authorityActor).digest("hex").slice(0, 32)}`,
     MULTIAGENT_CALLER_APPROVED_AT: authorityApprovedAt,
   };
-  run("bash", args, { cwd: launcherRoot, env });
+  run(invocation.command, invocation.args, { cwd: launcherRoot, env });
   registry.sessions[id] = {
     ...existing, id, repository, status: "running", autoResume: true,
     createdBy: existing?.createdBy || actor, createdAt: existing?.createdAt || now,
@@ -287,6 +301,71 @@ function launchSession(id, repository, resume, actor, originalTask = "") {
   };
   saveRegistry();
   return sessionView(id);
+}
+
+async function launchGatewaySession(id, repository, resume, actor, originalTask = "") {
+  if (!validResourceId(id)) throw new Error("invalid session id");
+  if (registry.sessions[id]) throw new Error("task id already exists");
+  const task = String(originalTask || "").trim();
+  if (!task || task.length > 32768) throw new Error("task must contain 1 to 32768 characters");
+  const repositoryUrl = configuredRepository(repository);
+  const callerSubject = `caller-${crypto.createHash("sha256").update(actor).digest("hex").slice(0, 32)}`;
+  await kubernetes.createSession({
+    id,
+    task,
+    actor: callerSubject,
+    repositoryName: repository,
+    repositoryUrl,
+    resume,
+    template: sessionJobTemplate,
+  });
+  const now = new Date().toISOString();
+  registry.sessions[id] = {
+    id,
+    repository,
+    status: "pending",
+    live: false,
+    autoResume: true,
+    createdBy: actor,
+    createdAt: now,
+    updatedAt: now,
+    lastActivityAt: now,
+  };
+  await saveRegistry();
+  return registry.sessions[id];
+}
+
+async function reconcileGatewaySession(id) {
+  const record = registry.sessions[id];
+  if (!record) return null;
+  const [job, pod] = await Promise.all([kubernetes.getJob(id), kubernetes.getPod(id)]);
+  const status = jobPhase(job);
+  const live = status === "running" && Boolean(pod?.status?.podIP);
+  if (record.status !== status || record.live !== live || record.podIP !== pod?.status?.podIP) {
+    record.status = status;
+    record.live = live;
+    record.podIP = pod?.status?.podIP || null;
+    record.updatedAt = new Date().toISOString();
+    await saveRegistry();
+  }
+  return record;
+}
+
+async function workerEndpoint(id) {
+  const record = await reconcileGatewaySession(id);
+  if (!record?.podIP) throw new Error("session worker is not ready");
+  return `http://${record.podIP}:8080`;
+}
+
+function proxyHttp(request, response, endpoint) {
+  const target = new URL(request.url, endpoint);
+  const headers = { ...request.headers, host: target.host };
+  const proxy = http.request(target, { method: request.method, headers }, (upstream) => {
+    response.writeHead(upstream.statusCode || 502, upstream.headers);
+    upstream.pipe(response);
+  });
+  proxy.on("error", (error) => json(response, 502, { error: error.message }));
+  request.pipe(proxy);
 }
 
 function sessionView(id) {
@@ -462,16 +541,20 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/api/me") return json(response, 200, { username });
     if (request.method === "GET" && url.pathname === "/api/trace-export/status") return json(response, 200, traceExportStatus());
     if (request.method === "GET" && url.pathname === "/api/repositories") {
-      const repositories = fs.readdirSync(repositoryRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory() && fs.existsSync(path.join(repositoryRoot, entry.name, ".git"))).map((entry) => entry.name).sort();
+      const repositories = gatewayMode
+        ? Object.keys(repositoryCatalog).sort()
+        : fs.readdirSync(repositoryRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory() && fs.existsSync(path.join(repositoryRoot, entry.name, ".git"))).map((entry) => entry.name).sort();
       return json(response, 200, { repositories });
     }
     if (request.method === "GET" && url.pathname === "/api/sessions") {
-      return json(response, 200, { sessions: Object.keys(registry.sessions).sort().map(sessionView) });
+      if (gatewayMode) await Promise.all(Object.keys(registry.sessions).map(reconcileGatewaySession));
+      return json(response, 200, { sessions: Object.keys(registry.sessions).sort().map((id) => gatewayMode ? registry.sessions[id] : sessionView(id)) });
     }
     const reportMatch = url.pathname.match(/^\/api\/sessions\/([a-z0-9-]+)\/report$/);
     if (request.method === "GET" && reportMatch) {
       const id = reportMatch[1];
       if (!registry.sessions[id]) return json(response, 404, { error: "unknown session" });
+      if (gatewayMode) return proxyHttp(request, response, await workerEndpoint(id));
       try {
         const report = fs.readFileSync(path.join(traceRoot(id), "final-report.md"), "utf8");
         const transcript = JSON.parse(fs.readFileSync(path.join(traceRoot(id), "transcript-index.json"), "utf8"));
@@ -480,12 +563,17 @@ const server = http.createServer(async (request, response) => {
     }
     if (request.method === "POST" && url.pathname === "/api/sessions") {
       const body = await readBody(request);
-      return json(response, 201, launchSession(String(body.id || ""), String(body.repository || ""), Boolean(body.resume), username, String(body.task || "")));
+      if (workerMode) throw new Error("session workers cannot create additional sessions");
+      const session = gatewayMode
+        ? await launchGatewaySession(String(body.id || ""), String(body.repository || ""), Boolean(body.resume), username, String(body.task || ""))
+        : launchSession(String(body.id || ""), String(body.repository || ""), Boolean(body.resume), username, String(body.task || ""));
+      return json(response, 201, session);
     }
     const match = url.pathname.match(/^\/api\/sessions\/([a-z0-9-]+)\/(restart|resume|pause|complete|archive|checkpoint)$/);
     if (request.method === "POST" && match) {
       const [, id, action] = match;
       if (!registry.sessions[id]) return json(response, 404, { error: "unknown session" });
+      if (gatewayMode) return proxyHttp(request, response, await workerEndpoint(id));
       if (action === "checkpoint") checkpoint(id);
       if (action === "pause") return json(response, 200, await retireSession(id, "paused", username));
       if (action === "complete") return json(response, 200, await retireSession(id, "completed", username));
@@ -543,6 +631,21 @@ server.on("upgrade", (request, socket, head) => {
 
 sockets.on("connection", (socket, request) => {
   const id = request.sessionId;
+  if (gatewayMode) {
+    workerEndpoint(id).then((endpoint) => {
+      const target = new URL(request.url, endpoint.replace(/^http/, "ws"));
+      const upstream = new WebSocket(target, { headers: { cookie: request.headers.cookie || "", origin: request.headers.origin || "" } });
+      upstream.on("open", () => socket.on("message", (message) => upstream.send(message)));
+      upstream.on("message", (message) => { if (socket.readyState === WebSocket.OPEN) socket.send(message); });
+      upstream.on("close", () => socket.close());
+      upstream.on("error", (error) => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "error", error: error.message })); });
+      socket.on("close", () => upstream.close());
+    }).catch((error) => {
+      socket.send(JSON.stringify({ type: "error", error: error.message }));
+      socket.close();
+    });
+    return;
+  }
   let previous = "";
   const publish = () => {
     try {
@@ -574,7 +677,17 @@ sockets.on("connection", (socket, request) => {
   socket.on("close", () => clearInterval(interval));
 });
 
-for (const record of Object.values(registry.sessions)) {
+if (workerMode) {
+  const id = String(process.env.MULTIAGENT_SESSION_ID || "");
+  const repository = String(process.env.MULTIAGENT_SESSION_REPOSITORY || "");
+  const taskFile = String(process.env.MULTIAGENT_SESSION_TASK_FILE || "");
+  const actor = String(process.env.MULTIAGENT_SESSION_CALLER || "deployment-gateway");
+  const resume = process.env.MULTIAGENT_SESSION_RESUME === "1";
+  if (!validResourceId(id) || !validResourceId(repository) || !taskFile) throw new Error("session-worker mode requires a valid session, repository, and task file");
+  if (!registry.sessions[id]) launchSession(id, repository, resume, actor, fs.readFileSync(taskFile, "utf8"));
+}
+
+for (const record of gatewayMode ? [] : Object.values(registry.sessions)) {
   if (record.status === "running" && workflowPhase(record.id) === "complete") {
     const now = new Date().toISOString();
     record.status = "completed";
@@ -589,16 +702,23 @@ for (const record of Object.values(registry.sessions)) {
   }
 }
 
-const snapshotTimer = setInterval(() => checkpointAll().catch((error) => console.error("checkpoint cycle failed", error)), snapshotIntervalMs);
+const snapshotTimer = gatewayMode
+  ? setInterval(() => Promise.all(Object.keys(registry.sessions).map(reconcileGatewaySession)).catch((error) => console.error("session reconciliation failed", error)), 5000)
+  : setInterval(() => checkpointAll().catch((error) => console.error("checkpoint cycle failed", error)), snapshotIntervalMs);
 const retirementTimer = setInterval(() => {
+  if (gatewayMode) return;
   const now = Date.now();
   for (const record of Object.values(registry.sessions)) {
     if (record.status === "running" && workflowPhase(record.id) === "complete") {
-      retireSession(record.id, "completed", "workflow-supervisor").catch((error) => console.error(`completion retirement failed for ${record.id}`, error));
+      retireSession(record.id, "completed", "workflow-supervisor").then(() => {
+        if (workerMode) setTimeout(() => process.exit(0), 1000);
+      }).catch((error) => console.error(`completion retirement failed for ${record.id}`, error));
       continue;
     }
     if (record.status === "running" && !tmuxAlive(record.id)) {
-      retireSession(record.id, "failed", "process-exit").catch((error) => console.error(`failed retirement failed for ${record.id}`, error));
+      retireSession(record.id, "failed", "process-exit").then(() => {
+        if (workerMode) setTimeout(() => process.exit(1), 1000);
+      }).catch((error) => console.error(`failed retirement failed for ${record.id}`, error));
       continue;
     }
     const lastActivity = Date.parse(record.lastActivityAt || record.updatedAt || record.createdAt);

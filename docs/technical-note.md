@@ -38,7 +38,7 @@ infrastructure operation. It does not prove task correctness.
 ### Prerequisites
 
 - A Git checkout of the target task repository.
-- Rust 1.75/Cargo, `tmux`, and Python 3.8 or newer.
+- Rust 1.98/Cargo, `tmux`, and Python 3.8 or newer.
 - Installed and authenticated Codex and Claude CLIs.
 - An isolated environment for benchmark tasks, preferably a disposable
   container or VM with network and credential exposure explicitly controlled.

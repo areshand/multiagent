@@ -1,4 +1,4 @@
-FROM rust:1-bookworm AS multiagent-builder
+FROM rust:1.98-bookworm AS multiagent-builder
 
 WORKDIR /src
 COPY . .

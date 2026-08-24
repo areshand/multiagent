@@ -45,7 +45,7 @@ The PVC mounted at `/var/lib/multiagent` is the primary store for repositories, 
 
 ## Requirements
 
-From a source checkout you need Rust 1.75+, Cargo, Bash, Git, and tmux. Install
+From a source checkout you need Rust 1.98+, Cargo, Bash, Git, and tmux. Install
 and authenticate at least one supported coding-agent CLI. Python 3.8+ is used
 only by evaluation and evidence-analysis tools, not the production control
 plane.

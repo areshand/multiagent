@@ -767,8 +767,8 @@ fn base64_decode(value: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        base64_decode, base64url_encode, build_request, canonical, curl_command,
-        ecdsa_der_to_raw, parse_mcp_body, private_temp_path, write_mcp_headers, TrustedApproval,
+        base64_decode, base64url_encode, build_request, canonical, curl_command, ecdsa_der_to_raw,
+        parse_mcp_body, private_temp_path, write_mcp_headers, TrustedApproval,
     };
     use chrono::{TimeZone, Utc};
     use serde_json::json;
@@ -833,10 +833,9 @@ mod tests {
 
     #[test]
     fn shared_action_permit_fixture_matches_the_rust_contract() {
-        let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../contracts/prod-mcp-action-permit-v1.json"
-        ))
-        .unwrap();
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../contracts/prod-mcp-action-permit-v1.json"))
+                .unwrap();
         let request = fixture.get("request").unwrap();
 
         assert_eq!(

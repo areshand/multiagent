@@ -8,7 +8,7 @@ system boundary and [Decisions](decisions.md) for its rationale.
 
 Source-checkout operation requires:
 
-- Rust 1.75 or newer and Cargo;
+- Rust 1.98 or newer and Cargo;
 - Bash and Git;
 - tmux;
 - at least one authenticated coding-agent CLI: Codex, Claude Code, or Qwen
