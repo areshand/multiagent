@@ -3342,8 +3342,13 @@ fn normalize_report_line(line: &str) -> &str {
             value = rest.trim_start();
         }
     }
-    if value.starts_with('`') && value.ends_with('`') && value.len() >= 2 {
-        value = &value[1..value.len() - 1];
+    for wrapper in ["`", "**", "__"] {
+        if value.starts_with(wrapper)
+            && value.ends_with(wrapper)
+            && value.len() >= wrapper.len() * 2
+        {
+            value = &value[wrapper.len()..value.len() - wrapper.len()];
+        }
     }
     value
 }
@@ -3948,6 +3953,9 @@ review-record: type=decision-authority verdict=pass diff=-\n";
         assert!(accepted_report(report));
         assert!(accepted_report(
             "3. `review-record: type=scope verdict=pass diff=abc`"
+        ));
+        assert!(accepted_report(
+            "**review-record: type=decision-authority verdict=pass diff=-**"
         ));
     }
 
