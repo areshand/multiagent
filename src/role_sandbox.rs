@@ -5,26 +5,17 @@ use std::process::{Command, ExitCode};
 #[cfg(unix)]
 use std::sync::atomic::{AtomicI32, Ordering};
 
+use crate::linux_privilege::{self, IdentitySpec};
+
 #[cfg(unix)]
 static SUPERVISED_CHILD: AtomicI32 = AtomicI32::new(0);
 
 #[cfg(unix)]
 pub fn gate_setuid_invocation(command: &str) -> Result<(), String> {
-    let real_uid = unsafe { libc::getuid() };
-    let effective_uid = unsafe { libc::geteuid() };
-    if effective_uid != 0 || real_uid == 0 {
-        return Ok(());
-    }
-    if privileged_command_allowed(command, real_uid) {
-        return Ok(());
-    }
-    if unsafe { libc::setuid(real_uid) } != 0 {
-        return Err(format!(
-            "drop setuid privilege for {command}: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
-    Ok(())
+    linux_privilege::guard_setuid_invocation(|real_uid| {
+        privileged_command_allowed(command, real_uid)
+    })
+    .map_err(|error| format!("{error} for {command}"))
 }
 
 fn privileged_command_allowed(command: &str, real_uid: u32) -> bool {
@@ -84,11 +75,12 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
     let command_args = &args[index + 1..];
 
     if let Some(uid) = uid {
-        drop_identity(
+        let identity = IdentitySpec::new(
             uid,
             gid.ok_or_else(|| "role-exec --uid requires --gid".to_string())?,
-            &supplementary_gids,
-        )?;
+        )
+        .with_supplementary_gids(&supplementary_gids);
+        linux_privilege::apply_identity(&identity)?;
     } else {
         restrict_writes(&write_roots.into_iter().collect::<Vec<_>>())?;
     }
@@ -134,7 +126,7 @@ pub fn run_supervised(
                 unsafe { libc::_exit(126) };
             }
         }
-        if let Err(error) = drop_identity(uid, gid, &[]) {
+        if let Err(error) = linux_privilege::apply_identity(&IdentitySpec::new(uid, gid)) {
             eprintln!("role supervisor could not drop identity: {error}");
             unsafe { libc::_exit(126) };
         }
@@ -240,48 +232,6 @@ fn parse_id(args: &[String], index: usize, flag: &str) -> Result<u32, String> {
 }
 
 #[cfg(unix)]
-fn drop_identity(uid: u32, gid: u32, supplementary_gids: &[u32]) -> Result<(), String> {
-    let mut groups = vec![gid as libc::gid_t];
-    groups.extend(supplementary_gids.iter().map(|value| *value as libc::gid_t));
-    groups.sort_unstable();
-    groups.dedup();
-    if unsafe { libc::setgroups(groups.len() as _, groups.as_ptr()) } != 0 {
-        return Err(format!(
-            "set role supplementary groups: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
-    if unsafe { libc::setgid(gid as libc::gid_t) } != 0 {
-        return Err(format!(
-            "set role gid {gid}: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
-    if unsafe { libc::setuid(uid as libc::uid_t) } != 0 {
-        return Err(format!(
-            "set role uid {uid}: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
-    Ok(())
-}
-
-pub(crate) fn exec_as_identity(
-    uid: u32,
-    gid: u32,
-    supplementary_gids: &[u32],
-    command: &str,
-    args: &[String],
-) -> Result<ExitCode, String> {
-    drop_identity(uid, gid, supplementary_gids)?;
-    exec(command, args)
-}
-
-#[cfg(not(unix))]
-fn drop_identity(_uid: u32, _gid: u32, _supplementary_gids: &[u32]) -> Result<(), String> {
-    Err("role-exec uid isolation requires Unix".into())
-}
-
 #[cfg(target_os = "linux")]
 fn restrict_writes(write_roots: &[PathBuf]) -> Result<(), String> {
     linux::restrict_writes(write_roots)

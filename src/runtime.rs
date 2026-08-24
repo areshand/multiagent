@@ -3526,24 +3526,11 @@ fn tmux_command() -> Command {
 
 #[cfg(target_os = "linux")]
 fn tmux_checked_as_orchestrator(args: &[&str]) -> Result<(), String> {
-    use std::os::unix::process::CommandExt;
-
     let mut command = tmux_command();
-    unsafe {
-        command.pre_exec(|| {
-            let groups = [ROLE_GID as libc::gid_t];
-            if libc::setgroups(groups.len(), groups.as_ptr()) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            if libc::setgid(ROLE_GID as libc::gid_t) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            if libc::setuid(ORCHESTRATOR_UID as libc::uid_t) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
+    crate::linux_privilege::configure_command_identity(
+        &mut command,
+        crate::linux_privilege::IdentitySpec::new(ORCHESTRATOR_UID, ROLE_GID),
+    );
     let output = command
         .args(args)
         .output()

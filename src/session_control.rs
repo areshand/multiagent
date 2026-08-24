@@ -1,11 +1,12 @@
 use std::env;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{Read, Write};
 use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
 use crate::config::{CONTROL_UID, ORCHESTRATOR_UID, ROLE_GID};
+use crate::linux_privilege::{self, IdentitySpec};
 
 const STATE_ROOT: &str = "/var/lib/multiagent/state";
 const TMUX_BIN: &str = "/usr/bin/tmux";
@@ -149,17 +150,8 @@ fn parse_capture_lines(value: &str) -> Result<usize, String> {
 
 #[cfg(target_os = "linux")]
 fn drop_to_orchestrator() -> Result<(), String> {
-    let groups = [ROLE_GID as libc::gid_t];
-    if unsafe { libc::setgroups(groups.len(), groups.as_ptr()) } != 0
-        || unsafe { libc::setgid(ROLE_GID as libc::gid_t) } != 0
-        || unsafe { libc::setuid(ORCHESTRATOR_UID as libc::uid_t) } != 0
-    {
-        return Err(format!(
-            "drop to orchestrator identity: {}",
-            io::Error::last_os_error()
-        ));
-    }
-    Ok(())
+    linux_privilege::apply_identity(&IdentitySpec::new(ORCHESTRATOR_UID, ROLE_GID))
+        .map_err(|error| format!("drop to orchestrator identity: {error}"))
 }
 
 fn run_tmux(socket: &Path, args: &[&str]) -> Result<ExitCode, String> {
