@@ -263,3 +263,9 @@ Return only:
 
 Keep the report short enough for the orchestrator to paste into worker and
 verifier first instructions.
+# Machine-readable contract output
+
+- Emit every `contract-artifact: version=1` and `contract-rule:` record as plain ASCII text beginning in column one.
+- Do not wrap those records in Markdown bold, backticks, code fences, headings, bullets, block quotes, or any other prefix or suffix. Human-readable explanation must be outside the machine-readable records.
+- Treat any value that is not literal in the original goal or an inspected source as derived evidence. Compute and verify derived values with a bounded, read-only command and cite the command and relevant output in the contract evidence; otherwise record the value under `unknowns`.
+- Never perform calendar arithmetic or calendar-to-epoch conversion mentally. Use a bounded date/time command and preserve its output as evidence.

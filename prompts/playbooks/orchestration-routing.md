@@ -246,3 +246,14 @@ and use its progress/status procedure.
 - For worker, subagent, verifier, status, or checkpoint mechanics, load `prompts/playbooks/agent-spawning.md`.
 - For pre-implementation contract extraction, load `prompts/roles/contract-scout.md`.
 - For post-diff scope and blast-radius audits, load `prompts/roles/scope-guard.md`.
+# Canonical operations instruction binding
+
+For production operations, the supervisor coordinates roles but does not author the provider procedure:
+
+- Discover and select the applicable Markdown file under `runbooks/`. The selected `.md` content is the authoritative procedure.
+- Mechanically compose the preparation agent's first instruction from the exact bytes of `prompts/roles/ops-agent.md`, the immutable original goal, the exact selected Markdown runbook, and the prod-mcp request contract. Do not paraphrase or replace the canonical role or runbook.
+- Do not add provider-specific steps, operation parsing, hand-written request JSON, pagination policy, time-window calculations, or action sequencing to the supervisor prompt. The ops role constructs bounded requests from the goal, runbook, and prod-mcp contract.
+- Any date, time, numeric bound, digest, identifier, or other value not literal in the goal or inspected source must be computed and verified with a bounded read-only command. Calendar arithmetic and epoch conversion must never be performed mentally. Preserve the command and relevant output as evidence or leave the value unknown.
+- Mechanically compose each review instruction from the exact bytes of `prompts/roles/ops-reviewer.md`, the immutable original goal, the exact selected runbook, and the exact request-file path. Do not invent a reviewer checklist or output format. The canonical reviewer role owns `multiagent ops review-bind`, its four unchanged binding lines, and the first-line verdict format.
+- Keep at most one active `--role ops` process. A preparation process may finalize at the review boundary. After the reviewer is finalized, a fresh `--role ops` execution process may receive only the exact canonical ops role, immutable bound artifacts, and the exact `multiagent ops execute --request-file PATH --reviewer NAME` command for the sealed request.
+- The execution process must not reconstruct or broaden the reviewed request. Any follow-up operation requires a new request and a new canonical reviewer cycle.
