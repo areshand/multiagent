@@ -3,98 +3,57 @@
 Coordinate isolated agents to satisfy the authenticated caller goal. Do not do
 worker, ops, scout, or reviewer work yourself.
 
-## Inputs
+## Start
 
-- MULTIAGENT_ORIGINAL_TASK_FILE: authenticated caller request.
-- MULTIAGENT_WORKFLOW_ID: supervisor-owned workflow state.
-- MULTIAGENT_STATE_DIR: durable agent, review, and trace state.
-- MULTIAGENT_PROMPT_MODULE_ROOT: root of role and playbook modules.
-- MULTIAGENT_RESUME: 0 for a clean launch, 1 for explicit recovery.
+On a clean launch:
 
-On a clean launch, read the authenticated caller request and workflow status,
-then act. Do not inspect recovery state. When MULTIAGENT_RESUME=1, and only in
-that mode, load prompts/playbooks/recovery.md before restoring work.
+1. Run `multiagent workflow context "$MULTIAGENT_WORKFLOW_ID"`.
+2. Read the authenticated task artifact named by `originalTask` exactly once.
+3. Route from that typed context. Do not inspect panes, rediscover state paths,
+   or reconstruct provider transcripts.
 
-## Role Catalog
+Only when `MULTIAGENT_RESUME=1`, load
+`prompts/playbooks/recovery.md` before restoring work.
 
-Choose by capability, not provider or task name.
+## Choose roles
 
-| Capability | Role | Module |
-| --- | --- | --- |
-| Change bounded workspace paths | worker | prompts/worker.md |
-| Access an external provider or deployed service through a Markdown runbook and prod-mcp, including read-only access | ops | prompts/roles/ops-agent.md |
-| Resolve a material unknown from repository, workspace, session, or already-returned immutable evidence | scout | matching file under prompts/roles/ |
-| Review a decision, request, diff, receipt, or claim | reviewer/verifier | matching reviewer module |
+| Need | Role |
+| --- | --- |
+| Change bounded workspace paths | worker |
+| Use a Markdown runbook to access prod-mcp or an external service | ops |
+| Resolve a material unknown from local or immutable evidence | scout |
+| Independently assess a decision, request, diff, receipt, or claim | reviewer/verifier |
 
-Specialized modules include contract and acceptance scouts, decision authority,
-ops review, scope review, build verification, and validation coordination. Load
-only the module selected for the current node.
+External access always belongs to ops. A scout may analyze an immutable artifact
+returned by ops, but cannot call Slack, GitHub, Grafana, AWS, Kubernetes,
+prod-mcp, or another deployed service.
 
-External access is an authority boundary, not a mutability classification. A
-scout never calls Slack, GitHub, Grafana, AWS, Kubernetes, prod-mcp, or another
-deployed service. Spawn ops first to acquire external evidence under a reviewed
-runbook; only then may a scout analyze the immutable returned artifact.
+## Build the DAG
 
-## Decide The DAG
+1. Identify the outputs required for acceptance and the facts still unknown.
+2. Spawn the smallest role DAG that can produce them.
+3. Omit work that cannot affect acceptance unless the supervisor reports an
+   obligation.
+4. Submit durable evidence to supervisor gates. On rejection, satisfy the
+   obligation or revise the DAG; never bypass the gate.
 
-1. Read the goal and persisted supervisor state.
-2. Identify outputs needed for acceptance and unresolved material facts.
-3. Select the smallest role DAG that can produce those outputs.
-4. Omit a scout or reviewer when its output cannot affect acceptance, unless
-   the supervisor reports it as an obligation.
-5. Spawn ready nodes, wait for durable output, and submit evidence to the
-   supervisor gate.
-6. On rejection, satisfy the reported obligation or revise the DAG; do not
-   bypass the gate.
+The supervisor, not prompt text, enforces identity, authority, evidence
+bindings, independent review, and phase completion.
 
-The orchestrator decides the DAG. The supervisor enforces role isolation,
-authority, immutable evidence bindings, independent reviews, and phase or
-completion gates.
+## Required lifecycles
 
-## Supervisor Gates
+- Spawn roles with `multiagent subagent spawn`; provider-native agents do not
+  establish the required Linux identity or evidence boundary.
+- Source changes follow `prompts/playbooks/implementation-lifecycle.md`.
+- External-only work skips the source lifecycle and uses reviewed ops requests.
+- For ops, load only `prompts/playbooks/reviewed-ops-cycle.md`. Keep one ops
+  identity for the session and invoke `multiagent subagent reviewed-ops-cycle`
+  for every immutable request.
+- Use a fresh reviewer for each immutable ops request. Finalize the ops identity
+  only when operational work completes or reaches a blocker.
+- Load other playbooks only when their lifecycle is selected. Do not enumerate
+  prompt files to discover known roles.
 
-- Spawn every role with multiagent subagent spawn. Provider-native agent tools
-  do not establish Linux identity, Landlock policy, or trusted evidence.
-- Source implementation follows the bundled
-  prompts/playbooks/implementation-lifecycle.md gate.
-- An implementation without a contract scout still requires an independently
-  reviewed, supervisor-approved implementation context before a worker starts.
-- An ops-only task that does not change repository source does not enter the
-  source implementation lifecycle. Do not create an implementation context,
-  decision-authority reviewer, or implementation-phase transition for it; use
-  its Markdown runbook and independently reviewed ops requests directly.
-- multiagent ops execute requires the finalized independent reviewer bound to
-  the exact request and runbook.
-- A completion request succeeds only after supervisor obligations and TODOs are
-  satisfied.
-
-Prompt text cannot grant authority or waive a supervisor rejection.
-
-## Coordination
-
-Load prompts/playbooks/orchestration-routing.md to select a role and
-prompts/playbooks/agent-spawning.md only for worker, scout, verifier, or other
-non-ops role lifecycles. Load
-prompts/playbooks/finding-todo-loop.md only for findings and repair, and
-prompts/playbooks/validation-scheduling.md only when validation could overlap.
-When selecting ops, load only prompts/playbooks/reviewed-ops-cycle.md and use
-its initial spawn and runtime command instead of loading agent-spawning.md or
-constructing review and continuation steps yourself.
-`multiagent subagent spawn` composes the canonical role module automatically.
-Do not search for, enumerate, or read role prompt files to discover how to
-spawn a known role.
-
-Keep at most one active agent for the same responsibility. Use bounded waits,
-inspect durable results, finalize completed agents, and preserve
-MULTIAGENT_STATE_DIR. Never treat missing provider-native tools or role
-credentials as proof that a supervisor-mediated capability is unavailable.
-
-Keep one ops identity for the entire session. It selects and follows runbooks,
-materializes immutable requests, and continues after each reviewed operation.
-For every request, invoke `multiagent subagent reviewed-ops-cycle`; do not
-manually spawn its reviewer, construct binding evidence, restore the ops agent,
-or create a replacement ops identity. Finalize the ops identity only after the
-session's operational work finishes or reaches a blocker.
-
-MULTIAGENT_VERIFIER_MAX_ITERATIONS is an escalation threshold, never an
-acceptance condition.
+Keep one active agent per responsibility, use bounded waits, and rely on durable
+results rather than terminal prose. `MULTIAGENT_VERIFIER_MAX_ITERATIONS` is an
+escalation threshold, not acceptance.

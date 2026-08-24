@@ -1,4 +1,5 @@
 use crate::{authority::AuthorityRequest, config, state::read_env as read_env_file};
+#[cfg(target_os = "linux")]
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -21,6 +22,10 @@ use std::os::unix::net::UnixListener;
 use std::os::unix::net::UnixStream;
 
 const SERVER_CHILD_ENV: &str = "MULTIAGENT_AUTHORITY_SERVER_CHILD";
+#[cfg(target_os = "linux")]
+const MAX_AUTHORITY_REQUEST_BYTES: u64 = 128 * 1024;
+#[cfg(target_os = "linux")]
+const MAX_AUTHORITY_OUTPUT_BYTES: usize = 64 * 1024;
 #[cfg(target_os = "linux")]
 const AUTHORITY_REGISTRY: &str = "/run/multiagent/authority-state-10001";
 #[cfg(target_os = "linux")]
@@ -713,8 +718,22 @@ fn serve_connection(stream: &mut UnixStream) -> Result<bool, String> {
         return Ok(false);
     }
     let mut bytes = Vec::new();
-    if let Err(error) = stream.read_to_end(&mut bytes) {
+    if let Err(error) = Read::take(&mut *stream, MAX_AUTHORITY_REQUEST_BYTES + 1)
+        .read_to_end(&mut bytes)
+    {
         eprintln!("authority supervisor: read request: {error}");
+        return Ok(false);
+    }
+    if bytes.len() as u64 > MAX_AUTHORITY_REQUEST_BYTES {
+        let _ = write_response(
+            stream,
+            &Response {
+                code: 1,
+                stdout: String::new(),
+                stderr: "authority supervisor: request exceeds the configured byte limit\n"
+                    .into(),
+            },
+        );
         return Ok(false);
     }
     let request: AuthorityRequest = match serde_json::from_slice(&bytes) {
@@ -756,7 +775,7 @@ fn serve_connection(stream: &mut UnixStream) -> Result<bool, String> {
         );
         return Ok(false);
     }
-    let response = execute(request)?;
+    let response = execute(request, peer_uid)?;
     if let Err(error) = write_response(stream, &response) {
         eprintln!("authority supervisor: {error}");
     }
@@ -764,22 +783,72 @@ fn serve_connection(stream: &mut UnixStream) -> Result<bool, String> {
 }
 
 #[cfg(target_os = "linux")]
-fn execute(request: AuthorityRequest) -> Result<Response, String> {
+fn execute(request: AuthorityRequest, peer_uid: u32) -> Result<Response, String> {
     let executable =
         env::current_exe().map_err(|error| format!("resolve authority executable: {error}"))?;
     let (command, args) = request.into_cli();
-    let output = Command::new(executable)
+    let mut child = Command::new(executable)
         .arg(command)
         .args(args)
         .env(SERVER_CHILD_ENV, "1")
+        .env("MULTIAGENT_AUTHORITY_CALLER_UID", peer_uid.to_string())
         .stdin(Stdio::null())
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|error| format!("execute authority transaction: {error}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or("authority transaction stdout was not piped")?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or("authority transaction stderr was not piped")?;
+    let stdout_reader = thread::spawn(move || read_bounded_output(stdout));
+    let stderr_reader = thread::spawn(move || read_bounded_output(stderr));
+    let status = child
+        .wait()
+        .map_err(|error| format!("wait for authority transaction: {error}"))?;
+    let (stdout, stdout_truncated) = stdout_reader
+        .join()
+        .map_err(|_| "authority stdout reader panicked".to_string())??;
+    let (stderr, stderr_truncated) = stderr_reader
+        .join()
+        .map_err(|_| "authority stderr reader panicked".to_string())??;
+    if stdout_truncated || stderr_truncated {
+        return Ok(Response {
+            code: 1,
+            stdout: String::new(),
+            stderr: "authority supervisor: transaction output exceeds the configured byte limit\n"
+                .into(),
+        });
+    }
     Ok(Response {
-        code: output.status.code().unwrap_or(1),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        code: status.code().unwrap_or(1),
+        stdout: String::from_utf8_lossy(&stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&stderr).into_owned(),
     })
+}
+
+#[cfg(target_os = "linux")]
+fn read_bounded_output(mut stream: impl Read) -> Result<(Vec<u8>, bool), String> {
+    let mut retained = Vec::with_capacity(MAX_AUTHORITY_OUTPUT_BYTES);
+    let mut buffer = [0_u8; 8192];
+    let mut truncated = false;
+    loop {
+        let count = stream
+            .read(&mut buffer)
+            .map_err(|error| format!("read authority transaction output: {error}"))?;
+        if count == 0 {
+            break;
+        }
+        let remaining = MAX_AUTHORITY_OUTPUT_BYTES.saturating_sub(retained.len());
+        let keep = remaining.min(count);
+        retained.extend_from_slice(&buffer[..keep]);
+        truncated |= keep < count;
+    }
+    Ok((retained, truncated))
 }
 
 #[cfg(target_os = "linux")]

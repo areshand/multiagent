@@ -253,7 +253,8 @@ pub fn role_agent_exec(args: &[String]) -> Result<ExitCode, String> {
     }
     let public_output = dir.join("last-message.txt");
     let trace_dir = cfg.logs.join("agents").join(name);
-    let resume_session = restored
+    let resume_session = (restored
+        && env::var("MULTIAGENT_FORCE_FRESH_CONTEXT").as_deref() != Ok("1"))
         .then(|| native_resume_session(&trace_dir))
         .flatten();
     let executable = env::current_exe().map_err(io_error("resolve multiagent executable"))?;
@@ -1747,18 +1748,22 @@ fn reject_additional_ops_identity(state: &Path, name: &str, role: &str) -> Resul
     Ok(())
 }
 
-fn reviewed_ops_reviewer_instruction(request_file: &Path, request: &str, binding: &str) -> String {
+fn reviewed_ops_reviewer_instruction(
+    request_file: &Path,
+    descriptor: &str,
+    binding: &str,
+) -> String {
     format!(
-        "Independently review the immutable ops request below against its stated goal, operation, target, parameters, and certified runbook. Do not modify or execute it. If and only if it is acceptable, end with an accepted verdict and reproduce the binding marker exactly. Otherwise reject it with concrete findings.\n\nrequest-path: {}\n{}\n\nimmutable-request:\n{}",
+        "Independently review the supervisor-owned immutable ops request identified by the bounded artifact descriptor below. Read that exact artifact, compare it with its stated goal, operation, target, parameters, and certified runbook, and do not modify or execute it. If and only if it is acceptable, end with an accepted verdict and reproduce the binding marker exactly. Otherwise reject it with concrete findings.\n\nrequest-path: {}\n{}\n\nimmutable-request-descriptor:\n{}",
         request_file.display(),
         binding,
-        request
+        descriptor
     )
 }
 
 fn reviewed_ops_execute_instruction(request_file: &Path, reviewer: &str) -> String {
     format!(
-        "Continue the same runbook with the independently reviewed immutable request. Execute exactly:\n\nmultiagent ops execute --request-file {} --reviewer {}\n\nInspect the persisted receipt, continue the runbook if more operations are needed, and report the result or exact blocker. Do not create a replacement ops identity.",
+        "Continue the same runbook with the independently reviewed immutable request. Execute exactly:\n\nmultiagent ops execute --request-file {} --reviewer {}\n\nInspect the persisted structured outcome and decide from the runbook whether to stop, escalate, or propose another distinct reviewed operation. Never execute the same immutable request twice. Report the result or exact blocker. Do not create a replacement ops identity.",
         shell_escape(&request_file.display().to_string()),
         shell_escape(reviewer)
     )
@@ -1822,10 +1827,12 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
             "reviewed ops request must belong to ops identity {ops_name}"
         ));
     }
-    let request =
-        fs::read_to_string(&request_file).map_err(io_error("read reviewed ops request"))?;
-    let binding = crate::prod_ops::review_binding_for_request(&request_file)?;
-    let reviewer_instruction = reviewed_ops_reviewer_instruction(&request_file, &request, &binding);
+    let published = crate::prod_ops::publish_bound_request(&cfg.state, &request_file)?;
+    let request_file = published.path();
+    let descriptor = published.descriptor_json()?;
+    let binding = crate::prod_ops::review_binding_for_request(request_file)?;
+    let reviewer_instruction =
+        reviewed_ops_reviewer_instruction(&request_file, &descriptor, &binding);
     spawn(
         cfg,
         &[
@@ -1848,14 +1855,15 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
         ));
     }
     finalize(cfg, std::slice::from_ref(&reviewer))?;
-    crate::prod_ops::preflight_reviewed_request(&request_file, &reviewer)?;
+    crate::prod_ops::preflight_reviewed_request(request_file, &reviewer)?;
 
-    let execute_instruction = reviewed_ops_execute_instruction(&request_file, &reviewer);
+    let execute_instruction = reviewed_ops_execute_instruction(request_file, &reviewer);
     restore(
         cfg,
         &[
             ops_name.to_string(),
             "--force".into(),
+            "--fresh-context".into(),
             "--instruction".into(),
             execute_instruction,
         ],
@@ -2110,6 +2118,7 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         .ok_or_else(|| "restore requires NAME".to_string())?;
     validate_name(name)?;
     let mut force = false;
+    let mut fresh_context = false;
     let mut follow_up = String::new();
     let mut follow_up_file = None::<PathBuf>;
     let mut index = 1;
@@ -2117,6 +2126,10 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         match args[index].as_str() {
             "--force" => {
                 force = true;
+                index += 1;
+            }
+            "--fresh-context" => {
+                fresh_context = true;
                 index += 1;
             }
             "--instruction" => {
@@ -2185,23 +2198,31 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
     if plan.window == "open" && !force {
         return Err(format!("subagent window already exists: {name}"));
     }
-    if !has_recovery_context(&dir) {
+    if !fresh_context && !has_recovery_context(&dir) {
         return Err(format!("no captured context to restore: {name}"));
     }
     if plan.window == "open" {
         tmux_checked(&["kill-window", "-t", &format!("{}:{name}", cfg.session)])?;
     }
-    let mut instruction = format!(
-        "You are a restored long-running subagent.\n\nRestoration details:\n- Subagent name: {name}\n- Prior persisted status: {}\n- Persisted state directory: {}\n- This is a fresh tmux window after an orchestrator/session recovery.\n- Do not delete, overwrite, or reset prior memory in the state directory.\n- Read the prior context below, continue only if the assignment is still valid, and report progress/final status in this tmux window.\n- If the prior state shows completion, intentional stop, stale instructions, or a blocker that needs orchestrator/user input, stop and state what you need instead of guessing.\n\nConcise prior context:\n{}\n",
-        plan.status,
-        dir.display(),
-        recovery_text(&dir)
-    );
-    if let Some(context) = implementation_context(cfg, name)? {
-        instruction.push_str("\n## Approved Implementation Context\n\n");
-        instruction.push_str(
-            &fs::read_to_string(context).map_err(io_error("read implementation context"))?,
-        );
+    let mut instruction = if fresh_context {
+        format!(
+            "Continue as the existing logical subagent {name} with the same role, UID, and supervisor-mediated authority. This invocation intentionally starts with a fresh provider model context: do not reconstruct or request prior pane text, transcripts, final messages, or provider output. Use only the typed supervisor-owned state and immutable artifact descriptors supplied by the current instruction.\n"
+        )
+    } else {
+        format!(
+            "You are a restored long-running subagent.\n\nRestoration details:\n- Subagent name: {name}\n- Prior persisted status: {}\n- Persisted state directory: {}\n- This is a fresh tmux window after an orchestrator/session recovery.\n- Do not delete, overwrite, or reset prior memory in the state directory.\n- Read the prior context below, continue only if the assignment is still valid, and report progress/final status in this tmux window.\n- If the prior state shows completion, intentional stop, stale instructions, or a blocker that needs orchestrator/user input, stop and state what you need instead of guessing.\n\nConcise prior context:\n{}\n",
+            plan.status,
+            dir.display(),
+            recovery_text(&dir)
+        )
+    };
+    if !fresh_context {
+        if let Some(context) = implementation_context(cfg, name)? {
+            instruction.push_str("\n## Approved Implementation Context\n\n");
+            instruction.push_str(
+                &fs::read_to_string(context).map_err(io_error("read implementation context"))?,
+            );
+        }
     }
     if !follow_up.trim().is_empty() {
         instruction.push_str("\n## Supervisor Follow-up\n\n");
@@ -2269,13 +2290,20 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         if !cfg.headless(&cli) {
             return Err("UID role isolation requires a headless coding-agent backend".into());
         }
-        format!(
+        let command = format!(
             "{} role-agent-exec {} --restore",
             shell_escape(&executable.display().to_string()),
             shell_escape(name)
-        )
+        );
+        if fresh_context {
+            format!("MULTIAGENT_FORCE_FRESH_CONTEXT=1 {command}")
+        } else {
+            command
+        }
     } else {
-        let resume_session = native_resume_session(&trace_dir);
+        let resume_session = (!fresh_context)
+            .then(|| native_resume_session(&trace_dir))
+            .flatten();
         let command = if cfg.headless(&cli) {
             build_agent_runner_command(
                 &executable,
@@ -2924,6 +2952,9 @@ fn build_agent_runner_command(
 }
 
 fn native_resume_session(trace_dir: &Path) -> Option<String> {
+    if env::var("MULTIAGENT_FORCE_FRESH_CONTEXT").as_deref() == Ok("1") {
+        return None;
+    }
     if env::var("MULTIAGENT_NATIVE_RESUME").as_deref() != Ok("1") {
         return None;
     }
@@ -4128,11 +4159,12 @@ mod tests {
         let request = Path::new("/state/logs/agents/ops-primary/request.json");
         let review = reviewed_ops_reviewer_instruction(
             request,
-            "{\"operation\":{\"id\":\"provider.read\"}}",
+            "{\"path\":\"/state/request.json\",\"digest\":\"abc\",\"bytes\":42,\"mediaType\":\"application/json\",\"truncated\":false}",
             "review-binding-sha256=abc",
         );
         assert!(review.contains("review-binding-sha256=abc"));
-        assert!(review.contains("provider.read"));
+        assert!(review.contains("immutable-request-descriptor"));
+        assert!(!review.contains("provider.read"));
         assert!(!review.contains("Slack"));
         assert!(!review.contains("Grafana"));
 
@@ -4140,6 +4172,8 @@ mod tests {
         assert!(execute.contains(
             "multiagent ops execute --request-file /state/logs/agents/ops-primary/request.json --reviewer ops-reviewer-01"
         ));
+        assert!(execute.contains("decide from the runbook"));
+        assert!(execute.contains("Never execute the same immutable request twice"));
     }
 
     #[cfg(unix)]

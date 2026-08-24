@@ -56,6 +56,7 @@ const USAGE: &str = r#"Usage:
   multiagent workflow init WORKFLOW_ID
   multiagent workflow init-or-resume WORKFLOW_ID --resume 0|1
   multiagent workflow status WORKFLOW_ID
+  multiagent workflow context WORKFLOW_ID
   multiagent workflow contract-register WORKFLOW_ID --scout NAME
   multiagent workflow prepare-implementation WORKFLOW_ID --decision-id ID --plan-id ID --decision-revision REV --implementation-context PATH --authority-review ID
   multiagent workflow transition WORKFLOW_ID PHASE [--diff-hash HASH]
@@ -81,6 +82,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         "init" => initialize(&args[1..], false),
         "init-or-resume" => init_or_resume(&args[1..]),
         "status" => status(&args[1..]),
+        "context" => context(&args[1..]),
         "contract-register" => register_contract(&args[1..]),
         "prepare-implementation" => prepare(&args[1..]),
         "transition" => transition(&args[1..]),
@@ -451,6 +453,132 @@ fn status(args: &[String]) -> Result<(), String> {
     );
     println!("review_count={}", read_reviews(&p.reviews)?.len());
     Ok(())
+}
+
+fn context(args: &[String]) -> Result<(), String> {
+    const MAX_CONTEXT_BYTES: usize = 16 * 1024;
+    const MAX_IDENTITIES: usize = 64;
+
+    let id = one_id("context", args)?;
+    require_orchestrator_context_caller()?;
+    let store = Store::configured()?;
+    let p = store.paths(id)?;
+    let state = read_env(&p.state, id)?;
+    validate_original_task(&state)?;
+
+    let task_path = state_value(&state, "original_task");
+    if task_path.len() > 1024 {
+        return Err("original task artifact path exceeds context bound".into());
+    }
+    let task_bytes = fs::metadata(task_path)
+        .map_err(|error| format!("inspect original task artifact: {error}"))?
+        .len();
+    let identities = typed_identity_context(&store.state_dir, MAX_IDENTITIES)?;
+    let value = serde_json::json!({
+        "apiVersion": "multiagent.moveindustries.io/v1",
+        "kind": "WorkflowContext",
+        "workflowId": id,
+        "phase": bounded_state_label(state_value(&state, "phase"), "phase")?,
+        "iteration": bounded_state_label(state_value(&state, "iteration"), "iteration")?,
+        "stateRevision": bounded_state_label(state_value(&state, "decision_revision"), "state revision")?,
+        "originalTask": {
+            "path": task_path,
+            "sha256": state_value(&state, "original_task_sha256"),
+            "bytes": task_bytes,
+            "mediaType": "text/plain",
+            "truncated": false
+        },
+        "activeTodoCount": read_todos(&p.todos)?.iter().filter(|row| active(row.get(4))).count(),
+        "reviewCount": read_reviews(&p.reviews)?.len(),
+        "identities": identities
+    });
+    let encoded = serde_json::to_string(&value)
+        .map_err(|error| format!("encode workflow context: {error}"))?;
+    if encoded.len() > MAX_CONTEXT_BYTES {
+        return Err(format!(
+            "workflow context exceeds strict {MAX_CONTEXT_BYTES}-byte bound"
+        ));
+    }
+    println!("{encoded}");
+    Ok(())
+}
+
+fn require_orchestrator_context_caller() -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        let effective_caller = unsafe { libc::geteuid() };
+        if effective_caller != config::ORCHESTRATOR_UID {
+            return Err("workflow context is available only to the orchestrator role".into());
+        }
+    }
+    Ok(())
+}
+
+fn typed_identity_context(
+    state_dir: &Path,
+    max_identities: usize,
+) -> Result<Vec<serde_json::Value>, String> {
+    let root = state_dir.join("subagents");
+    if !root.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut entries = fs::read_dir(&root)
+        .map_err(|error| format!("list supervisor identity metadata: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("read supervisor identity metadata: {error}"))?;
+    entries.sort_by_key(|entry| entry.file_name());
+    if entries.len() > max_identities {
+        return Err(format!(
+            "workflow has more than {max_identities} identities; refusing an incomplete context"
+        ));
+    }
+    let mut identities = Vec::with_capacity(entries.len());
+    for entry in entries {
+        if !entry
+            .file_type()
+            .map_err(|error| format!("inspect supervisor identity metadata: {error}"))?
+            .is_dir()
+        {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        valid_id("subagent identity", &name)?;
+        let metadata = read_env_optional(&entry.path().join("meta.env"))?;
+        let role = metadata.get("role").map(String::as_str).unwrap_or("unknown");
+        let role = bounded_identity_label(role, "identity role")?;
+        let raw_status = fs::read_to_string(entry.path().join("status"))
+            .unwrap_or_else(|_| "unknown".into());
+        let status = match raw_status.trim() {
+            "starting" | "running" | "restoring" | "exited" | "done" | "blocked"
+            | "stopped" | "killed" | "finalized" => raw_status.trim(),
+            _ => "unknown",
+        };
+        identities.push(serde_json::json!({
+            "name": name,
+            "role": role,
+            "status": status
+        }));
+    }
+    Ok(identities)
+}
+
+fn bounded_state_label<'a>(value: &'a str, label: &str) -> Result<&'a str, String> {
+    if value.len() > 128 || value.chars().any(char::is_control) {
+        return Err(format!("{label} exceeds workflow context bounds"));
+    }
+    Ok(value)
+}
+
+fn bounded_identity_label<'a>(value: &'a str, label: &str) -> Result<&'a str, String> {
+    if value.is_empty()
+        || value.len() > 64
+        || !value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+    {
+        return Err(format!("invalid {label} in supervisor metadata"));
+    }
+    Ok(value)
 }
 
 fn prepare(args: &[String]) -> Result<(), String> {
