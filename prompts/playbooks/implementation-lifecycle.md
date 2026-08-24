@@ -87,6 +87,25 @@ Create an approved implementation context document containing the selected
 plan, decision and plan IDs, authority and approval basis, intended outcome,
 rejected alternatives and reasons, must-do and must-not-do constraints, migration choice,
 responsibility boundary, affected paths, unresolved questions, and revision.
+When the workflow has a registered contract artifact, never retype, summarize,
+or reconstruct that artifact or its digest. Compose the approved context from
+the supervisor-owned values and the exact artifact file bytes:
+
+```bash
+contract_path="$(multiagent workflow value "$MULTIAGENT_WORKFLOW_ID" contract_artifact)"
+contract_hash="$(multiagent workflow value "$MULTIAGENT_WORKFLOW_ID" contract_artifact_sha256)"
+{
+  printf 'contract-artifact-sha256=%s\n' "$contract_hash"
+  cat "$contract_path"
+  cat APPROVED_CONTEXT_BODY_PATH
+} >CONTEXT_PATH
+```
+
+Write the selected plan and other implementation context to
+`APPROVED_CONTEXT_BODY_PATH` first. Do not edit the registered artifact file,
+copy its contents through model-generated text, or calculate a replacement
+digest. The exact composition above is required even when the artifact is
+already visible in conversation history.
 Commit the selected alternative with `multiagent decision commit`, then record the
 passed authority review and approved context with:
 
