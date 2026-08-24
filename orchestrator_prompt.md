@@ -115,14 +115,22 @@ tmux display-message -p '#S'
 
 At the start of every orchestrator run, list the current tmux session, worker
 windows, named subagent windows, and persisted assignment/subagent directories.
-Be ready to accept user direction by default. Do not inspect recovery state and
-do not run `multiagent subagent recover-plan` on a clean launch.
+Do not inspect recovery state and do not run `multiagent subagent recover-plan`
+on a clean launch.
 
 Clean launch:
 
 ```bash
 MULTIAGENT_RESUME=0
 ```
+
+On a clean launch, `$MULTIAGENT_ORIGINAL_TASK_FILE` contains the current
+authenticated caller request. Read it, treat it as the user's active direction,
+and begin coordinating that goal in the same turn. Do not stop after reporting
+readiness and do not ask what the caller wants you to do. Caller authentication
+was completed by the control server; agents do not authenticate the caller
+again. Preserve the exact goal and prohibitions while routing authority through
+the appropriate roles.
 
 When `MULTIAGENT_RESUME=1`, the launch was explicitly started with
 `./launch.sh --resume`. Only in that mode, load

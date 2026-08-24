@@ -890,6 +890,7 @@ fi
 assert_file_contains "$TMPDIR/validation-run-conflict.out" "validation lease conflict"
 
 assert_file_contains "$ROOT/orchestrator_prompt.md" "Do not inspect recovery state"
+assert_file_contains "$ROOT/orchestrator_prompt.md" 'authenticated caller request'
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'When `MULTIAGENT_RESUME=1`'
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'Only in that mode'
 assert_file_contains "$ROOT/orchestrator_prompt.md" 'MULTIAGENT_VERIFIER_MAX_ITERATIONS'
