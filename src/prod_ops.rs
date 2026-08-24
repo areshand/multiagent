@@ -345,22 +345,30 @@ fn verify_reviewer(
 }
 
 fn reviewer_accepted(evidence: &str) -> bool {
-    evidence
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .is_some_and(|line| {
-            let mut value = line;
-            for wrapper in ["`", "**", "__"] {
-                if value.starts_with(wrapper)
-                    && value.ends_with(wrapper)
-                    && value.len() >= wrapper.len() * 2
-                {
-                    value = &value[wrapper.len()..value.len() - wrapper.len()];
-                }
+    let mut accepted = false;
+    for line in evidence.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        let mut value = line;
+        for wrapper in ["`", "**", "__"] {
+            if value.starts_with(wrapper)
+                && value.ends_with(wrapper)
+                && value.len() >= wrapper.len() * 2
+            {
+                value = &value[wrapper.len()..value.len() - wrapper.len()];
             }
-            value.eq_ignore_ascii_case("verdict: accepted")
-        })
+        }
+        let Some((label, verdict)) = value.split_once(':') else {
+            continue;
+        };
+        if !label.trim().eq_ignore_ascii_case("verdict") {
+            continue;
+        }
+        if verdict.trim().eq_ignore_ascii_case("accepted") {
+            accepted = true;
+        } else {
+            return false;
+        }
+    }
+    accepted
 }
 
 fn required_object<'a>(
@@ -968,9 +976,15 @@ mod tests {
         assert!(reviewer_accepted(
             "**Verdict: ACCEPTED**\n\nReview analysis"
         ));
+        assert!(reviewer_accepted(
+            "# Operations review\n\n**Verdict: ACCEPTED**\n"
+        ));
         assert!(reviewer_accepted("`verdict: accepted`"));
         assert!(!reviewer_accepted("Review result: verdict: accepted"));
         assert!(!reviewer_accepted("**Verdict: REJECTED**"));
+        assert!(!reviewer_accepted(
+            "Verdict: ACCEPTED\n\nVerdict: REJECTED\n"
+        ));
     }
     #[test]
     fn operation_and_target_come_from_runbook_request_data() {
