@@ -19,10 +19,42 @@ struct TrustedApproval {
 
 pub fn run(args: &[String]) -> Result<ExitCode, String> {
     match args.first().map(String::as_str) {
+        Some("bind-runbook") => bind_runbook(&args[1..]),
         Some("execute") => execute(&args[1..]),
         Some("review-bind") => review_bind(&args[1..]),
-        _ => Err("usage: multiagent ops execute --request-file PATH --reviewer NAME | multiagent ops review-bind --request-file PATH".into()),
+        _ => Err("usage: multiagent ops bind-runbook --request-file PATH --runbook-document PATH | multiagent ops review-bind --request-file PATH | multiagent ops execute --request-file PATH --reviewer NAME".into()),
     }
+}
+
+fn bind_runbook(args: &[String]) -> Result<ExitCode, String> {
+    let options = options(args)?;
+    let state = fs::canonicalize(required_env("MULTIAGENT_STATE_DIR")?)
+        .map_err(|error| format!("resolve multiagent state: {error}"))?;
+    let request_file = fs::canonicalize(required(&options, "--request-file")?)
+        .map_err(|error| format!("resolve ops request file: {error}"))?;
+    if !request_file.starts_with(&state) {
+        return Err("ops request file must be inside MULTIAGENT_STATE_DIR".into());
+    }
+    let bytes = fs::read(&request_file).map_err(|error| format!("read ops request: {error}"))?;
+    if bytes.is_empty() || bytes.len() > 65_536 {
+        return Err("ops request must contain between 1 and 65536 bytes".into());
+    }
+    let mut template: Value = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("decode ops request template: {error}"))?;
+    let relative = required(&options, "--runbook-document")?;
+    let digest = exact_runbook_content_sha256(relative)?;
+    let object = template
+        .as_object_mut()
+        .ok_or("ops request template must be an object")?;
+    object.insert("runbookDocument".into(), Value::String(relative.into()));
+    object.insert("runbookContentSha256".into(), Value::String(digest.clone()));
+    let encoded = serde_json::to_vec_pretty(&template)
+        .map_err(|error| format!("encode bound ops request: {error}"))?;
+    fs::write(&request_file, encoded)
+        .map_err(|error| format!("write bound ops request: {error}"))?;
+    println!("request-template-sha256={}", digest_json(&template)?);
+    println!("runbook-content-sha256={digest}");
+    Ok(ExitCode::SUCCESS)
 }
 
 fn review_bind(args: &[String]) -> Result<ExitCode, String> {
@@ -331,6 +363,18 @@ fn verified_runbook_content(template: &Value) -> Result<String, String> {
         .get("runbookDocument")
         .and_then(Value::as_str)
         .ok_or("ops request template requires runbookDocument")?;
+    let actual = exact_runbook_content_sha256(relative)?;
+    let declared = object
+        .get("runbookContentSha256")
+        .and_then(Value::as_str)
+        .ok_or("ops request template requires runbookContentSha256")?;
+    if declared != actual {
+        return Err("runbookContentSha256 does not match the exact Markdown runbook bytes".into());
+    }
+    Ok(actual)
+}
+
+fn exact_runbook_content_sha256(relative: &str) -> Result<String, String> {
     let relative_path = Path::new(relative);
     if relative_path.is_absolute()
         || relative_path
@@ -354,15 +398,12 @@ fn verified_runbook_content(template: &Value) -> Result<String, String> {
         return Err("runbook document must be a regular file between 1 byte and 1 MiB".into());
     }
     let bytes = fs::read(&document).map_err(|error| format!("read runbook document: {error}"))?;
-    let actual = format!("sha256:{:x}", Sha256::digest(&bytes));
-    let declared = object
-        .get("runbookContentSha256")
-        .and_then(Value::as_str)
-        .ok_or("ops request template requires runbookContentSha256")?;
-    if declared != actual {
-        return Err("runbookContentSha256 does not match the exact Markdown runbook bytes".into());
-    }
+    let actual = runbook_content_digest(&bytes);
     Ok(actual)
+}
+
+fn runbook_content_digest(bytes: &[u8]) -> String {
+    format!("sha256:{:x}", Sha256::digest(bytes))
 }
 
 fn sign_permit(payload: &[u8]) -> Result<String, String> {
@@ -768,7 +809,8 @@ fn base64_decode(value: &str) -> Result<Vec<u8>, String> {
 mod tests {
     use super::{
         base64_decode, base64url_encode, build_request, canonical, curl_command, ecdsa_der_to_raw,
-        parse_mcp_body, private_temp_path, write_mcp_headers, TrustedApproval,
+        parse_mcp_body, private_temp_path, runbook_content_digest, write_mcp_headers,
+        TrustedApproval,
     };
     use chrono::{TimeZone, Utc};
     use serde_json::json;
@@ -796,6 +838,14 @@ mod tests {
     fn base64_round_trip_fixture() {
         assert_eq!(base64_decode("AQIDBA==").unwrap(), [1, 2, 3, 4]);
         assert_eq!(base64url_encode(&[251, 255]), "-_8");
+    }
+
+    #[test]
+    fn certified_runbook_digest_uses_prefixed_exact_bytes() {
+        assert_eq!(
+            runbook_content_digest(b"# Runbook\n"),
+            "sha256:a0bd8567ec5da5c4c78ef8370994af0b34e5c83c1ebdd28359d297096f8efa75"
+        );
     }
     #[test]
     fn operation_and_target_come_from_runbook_request_data() {
