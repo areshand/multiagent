@@ -6,6 +6,7 @@
 - Version: `1.0.0`
 - Prod MCP operations: `github.read`, `github.clone`, `github.create-pr`
 - Operation version: `1.0.0`
+- Set `target` to `{"cluster":"external-services","environment":"production","namespace":"github","service":"installation"}`.
 
 ## Goal
 
