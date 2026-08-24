@@ -1503,6 +1503,7 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         return Err(format!("subagent window already exists: {name}"));
     }
     reject_parallel_generic_worker_spawn(cfg, name)?;
+    reject_additional_ops_identity(&cfg.state, name, authority_role)?;
     if owned.is_empty() && !assignment_values.is_empty() {
         return Err("spawn assignment metadata requires --own PATH".into());
     }
@@ -1706,6 +1707,41 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         deliver_instruction(cfg, name, &instruction)?;
     }
     println!("spawned {name}");
+    Ok(())
+}
+
+fn reject_additional_ops_identity(state: &Path, name: &str, role: &str) -> Result<(), String> {
+    if role != "ops" {
+        return Ok(());
+    }
+    let subagents = state.join("subagents");
+    if !subagents.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(&subagents).map_err(io_error("list subagent state"))? {
+        let entry = entry.map_err(io_error("read subagent state entry"))?;
+        if !entry
+            .file_type()
+            .map_err(io_error("inspect subagent state entry"))?
+            .is_dir()
+        {
+            continue;
+        }
+        let existing = entry.file_name().to_string_lossy().to_string();
+        if existing == name {
+            continue;
+        }
+        let metadata_path = entry.path().join("meta.env");
+        if !metadata_path.is_file() {
+            continue;
+        }
+        let metadata = read_env(&metadata_path)?;
+        if metadata.get("role").map(String::as_str) == Some("ops") {
+            return Err(format!(
+                "session already has ops identity {existing}; restore that identity instead of spawning {name}"
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -3948,6 +3984,28 @@ mod tests {
         assert_eq!(shell_escape("plain/path"), "plain/path");
         assert_eq!(shell_escape("two words"), "'two words'");
         assert_eq!(shell_escape("it's"), "'it'\\''s'");
+    }
+
+    #[test]
+    fn session_rejects_a_second_ops_identity() {
+        let state = std::env::temp_dir().join(format!(
+            "multiagent-ops-identity-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let existing = state.join("subagents/ops-primary");
+        fs::create_dir_all(&existing).unwrap();
+        fs::write(existing.join("meta.env"), "role=ops\n").unwrap();
+
+        assert!(reject_additional_ops_identity(&state, "ops-primary", "ops").is_ok());
+        assert!(reject_additional_ops_identity(&state, "reviewer-01", "reviewer").is_ok());
+        let error = reject_additional_ops_identity(&state, "ops-secondary", "ops").unwrap_err();
+        assert!(error.contains("restore that identity"));
+
+        fs::remove_dir_all(state).unwrap();
     }
 
     #[cfg(unix)]

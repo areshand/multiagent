@@ -87,6 +87,10 @@ fn review_bind(args: &[String]) -> Result<ExitCode, String> {
         )?
     );
     println!("runbook-content-sha256={runbook_content_sha256}");
+    println!(
+        "{}",
+        review_binding_marker(&template, &runbook_content_sha256)?
+    );
     Ok(ExitCode::SUCCESS)
 }
 
@@ -306,30 +310,7 @@ fn verify_reviewer(
     if !accepted {
         return Err("ops reviewer did not accept the operation".into());
     }
-    let object = template
-        .as_object()
-        .ok_or("ops request template must be an object")?;
-    let markers = [
-        format!("request-template-sha256={}", digest_json(template)?),
-        format!(
-            "goal-sha256={}",
-            digest_json(
-                object
-                    .get("goal")
-                    .ok_or("ops request template requires goal")?
-            )?
-        ),
-        format!(
-            "runbook-sha256={}",
-            digest_json(
-                object
-                    .get("runbook")
-                    .ok_or("ops request template requires runbook")?
-            )?
-        ),
-        format!("runbook-content-sha256={runbook_content_sha256}"),
-    ];
-    if markers.iter().any(|marker| !evidence.contains(marker)) {
+    if !review_evidence_is_bound(&evidence, template, runbook_content_sha256)? {
         return Err("ops reviewer evidence is not bound to the request, goal, and runbook".into());
     }
     let approved_at = metadata
@@ -369,6 +350,70 @@ fn reviewer_accepted(evidence: &str) -> bool {
         }
     }
     accepted
+}
+
+fn review_binding_marker(template: &Value, runbook_content_sha256: &str) -> Result<String, String> {
+    let object = template
+        .as_object()
+        .ok_or("ops request template must be an object")?;
+    let binding = json!({
+        "requestTemplateSha256": digest_json(template)?,
+        "goalSha256": digest_json(
+            object
+                .get("goal")
+                .ok_or("ops request template requires goal")?
+        )?,
+        "runbookSha256": digest_json(
+            object
+                .get("runbook")
+                .ok_or("ops request template requires runbook")?
+        )?,
+        "runbookContentSha256": runbook_content_sha256,
+    });
+    Ok(format!(
+        "review-binding-sha256={}",
+        digest_json(&binding)?
+    ))
+}
+
+fn review_evidence_is_bound(
+    evidence: &str,
+    template: &Value,
+    runbook_content_sha256: &str,
+) -> Result<bool, String> {
+    let binding = review_binding_marker(template, runbook_content_sha256)?;
+    if evidence.lines().map(str::trim).any(|line| line == binding) {
+        return Ok(true);
+    }
+
+    // Keep accepting already-sealed evidence from reviewers launched by older
+    // images while new reviewers use the single deterministic binding marker.
+    let object = template
+        .as_object()
+        .ok_or("ops request template must be an object")?;
+    let legacy_markers = [
+        format!("request-template-sha256={}", digest_json(template)?),
+        format!(
+            "goal-sha256={}",
+            digest_json(
+                object
+                    .get("goal")
+                    .ok_or("ops request template requires goal")?
+            )?
+        ),
+        format!(
+            "runbook-sha256={}",
+            digest_json(
+                object
+                    .get("runbook")
+                    .ok_or("ops request template requires runbook")?
+            )?
+        ),
+        format!("runbook-content-sha256={runbook_content_sha256}"),
+    ];
+    Ok(legacy_markers
+        .iter()
+        .all(|marker| evidence.contains(marker)))
 }
 
 fn required_object<'a>(
@@ -931,8 +976,9 @@ fn base64_decode(value: &str) -> Result<Vec<u8>, String> {
 mod tests {
     use super::{
         base64_decode, base64url_encode, build_request, canonical, curl_command, ecdsa_der_to_raw,
-        parse_mcp_body, private_temp_path, reviewer_accepted, runbook_content_digest,
-        validate_request_template, write_mcp_headers, TrustedApproval,
+        parse_mcp_body, private_temp_path, review_binding_marker, review_evidence_is_bound,
+        reviewer_accepted, runbook_content_digest, validate_request_template, write_mcp_headers,
+        TrustedApproval,
     };
     use chrono::{TimeZone, Utc};
     use serde_json::json;
@@ -985,6 +1031,28 @@ mod tests {
         assert!(!reviewer_accepted(
             "Verdict: ACCEPTED\n\nVerdict: REJECTED\n"
         ));
+    }
+
+    #[test]
+    fn reviewer_binding_uses_one_exact_deterministic_marker() {
+        let template = json!({
+            "goal": "read Slack",
+            "runbook": {"id":"slack.workspace-access","version":"1.0.0","phase":"read"}
+        });
+        let runbook_digest = format!("sha256:{}", "4".repeat(64));
+        let marker = review_binding_marker(&template, &runbook_digest).unwrap();
+        assert!(review_evidence_is_bound(
+            &format!("Verdict: ACCEPTED\n{marker}\n"),
+            &template,
+            &runbook_digest
+        )
+        .unwrap());
+        assert!(!review_evidence_is_bound(
+            &format!("Verdict: ACCEPTED\n{}0\n", &marker[..marker.len() - 1]),
+            &template,
+            &runbook_digest
+        )
+        .unwrap());
     }
     #[test]
     fn operation_and_target_come_from_runbook_request_data() {

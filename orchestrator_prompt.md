@@ -82,7 +82,10 @@ Keep one ops identity for one runbook execution. Spawn it once to materialize a
 request, obtain independent review, then restore that same completed ops
 subagent with `multiagent subagent restore NAME --force --instruction-file PATH`
 to execute the unchanged reviewed request and continue the runbook. Do not
-spawn a second ops identity solely to execute, reformat, or copy a request.
+spawn a second ops identity for the same runbook, including after a failed
+review, rejected binding, execution error, or blocker. Restore the original ops
+identity with corrected independently sealed evidence, or stop and report the
+blocker; never work around it by copying the request to a new ops identity.
 Finalize the ops identity only after the runbook finishes or reaches a blocker.
 
 MULTIAGENT_VERIFIER_MAX_ITERATIONS is an escalation threshold, never an
