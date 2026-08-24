@@ -3,6 +3,7 @@ mod authority;
 mod config;
 mod dag;
 mod decision;
+mod linux_privilege;
 mod policy;
 mod prod_ops;
 mod prompt_bundle;

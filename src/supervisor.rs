@@ -79,10 +79,12 @@ pub fn authority_supervisor_exec(args: &[String]) -> Result<ExitCode, String> {
     let executable = env::current_exe()
         .map_err(|error| format!("resolve authority supervisor executable: {error}"))?;
     let command = executable.display().to_string();
-    crate::role_sandbox::exec_as_identity(
-        config::SUPERVISOR_UID,
-        config::ROLE_GID,
-        &[config::SUPERVISOR_CREDENTIAL_GID, config::TRACE_EXPORT_GID],
+    crate::linux_privilege::exec_as_identity(
+        &crate::linux_privilege::IdentitySpec::new(config::SUPERVISOR_UID, config::ROLE_GID)
+            .with_supplementary_gids(&[
+                config::SUPERVISOR_CREDENTIAL_GID,
+                config::TRACE_EXPORT_GID,
+            ]),
         &command,
         &["supervisor".into(), "serve".into()],
     )
