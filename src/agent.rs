@@ -1054,7 +1054,12 @@ fn token_counts(usage: &Value) -> TokenCounts {
     TokenCounts {
         input: token_value(
             usage,
-            &["input_tokens", "inputTokens", "prompt_tokens", "promptTokens"],
+            &[
+                "input_tokens",
+                "inputTokens",
+                "prompt_tokens",
+                "promptTokens",
+            ],
         ),
         cached_input: token_value(usage, &["cached_input_tokens", "cachedInputTokens"]),
         output: token_value(

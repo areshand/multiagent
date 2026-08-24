@@ -367,7 +367,9 @@ pub fn seal_role_output(
                     || binding_file_metadata.uid() != config::READER_UID
                     || binding_file_metadata.permissions().mode() & 0o077 != 0
                 {
-                    return Err("ops review binding must be a private reviewer-owned regular file".into());
+                    return Err(
+                        "ops review binding must be a private reviewer-owned regular file".into(),
+                    );
                 }
                 let binding = fs::read(&binding_path)
                     .map_err(|error| format!("read ops review binding: {error}"))?;

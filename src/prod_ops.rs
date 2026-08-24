@@ -338,7 +338,9 @@ fn verify_reviewer(
         // Compatibility for evidence sealed by an already-running older
         // session. New reviewers always use the supervisor-sealed artifact.
         if !review_evidence_is_bound(&evidence, template, runbook_content_sha256)? {
-            return Err("ops reviewer evidence is not bound to the request, goal, and runbook".into());
+            return Err(
+                "ops reviewer evidence is not bound to the request, goal, and runbook".into(),
+            );
         }
         format!("sha256:{actual_output}")
     };
@@ -356,7 +358,11 @@ fn verify_reviewer(
 
 fn reviewer_accepted(evidence: &str) -> bool {
     let mut accepted = false;
-    for line in evidence.lines().map(str::trim).filter(|line| !line.is_empty()) {
+    for line in evidence
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
         let mut value = line;
         for wrapper in ["`", "**", "__"] {
             if value.starts_with(wrapper)
@@ -405,10 +411,7 @@ fn review_binding_value(template: &Value, runbook_content_sha256: &str) -> Resul
 
 fn review_binding_marker(template: &Value, runbook_content_sha256: &str) -> Result<String, String> {
     let binding = review_binding_value(template, runbook_content_sha256)?;
-    Ok(format!(
-        "review-binding-sha256={}",
-        digest_json(&binding)?
-    ))
+    Ok(format!("review-binding-sha256={}", digest_json(&binding)?))
 }
 
 fn review_binding_matches(
@@ -513,10 +516,7 @@ fn validate_request_template(template: &Value) -> Result<(), String> {
     if operation.len() != 2 {
         return Err("ops request operation must contain only id and version".into());
     }
-    validate_id(
-        "operation ID",
-        required_template_string(operation, "id")?,
-    )?;
+    validate_id("operation ID", required_template_string(operation, "id")?)?;
     validate_semver(
         "operation version",
         required_template_string(operation, "version")?,
@@ -524,7 +524,9 @@ fn validate_request_template(template: &Value) -> Result<(), String> {
 
     let target = required_object(object, "target")?;
     if target.len() != 4 {
-        return Err("ops request target must contain environment, cluster, namespace, and service".into());
+        return Err(
+            "ops request target must contain environment, cluster, namespace, and service".into(),
+        );
     }
     let environment = required_template_string(target, "environment")?;
     if !matches!(environment, "development" | "staging" | "production") {
@@ -542,18 +544,12 @@ fn validate_request_template(template: &Value) -> Result<(), String> {
     if runbook.len() != 3 {
         return Err("ops request runbook must contain id, version, and phase".into());
     }
-    validate_id(
-        "runbook ID",
-        required_template_string(runbook, "id")?,
-    )?;
+    validate_id("runbook ID", required_template_string(runbook, "id")?)?;
     validate_semver(
         "runbook version",
         required_template_string(runbook, "version")?,
     )?;
-    validate_id(
-        "runbook phase",
-        required_template_string(runbook, "phase")?,
-    )?;
+    validate_id("runbook phase", required_template_string(runbook, "phase")?)?;
     required_template_string(object, "runbookDocument")?;
     let digest = required_template_string(object, "runbookContentSha256")?;
     let hex = digest
