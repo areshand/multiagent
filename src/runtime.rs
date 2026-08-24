@@ -1747,11 +1747,7 @@ fn reject_additional_ops_identity(state: &Path, name: &str, role: &str) -> Resul
     Ok(())
 }
 
-fn reviewed_ops_reviewer_instruction(
-    request_file: &Path,
-    request: &str,
-    binding: &str,
-) -> String {
+fn reviewed_ops_reviewer_instruction(request_file: &Path, request: &str, binding: &str) -> String {
     format!(
         "Independently review the immutable ops request below against its stated goal, operation, target, parameters, and certified runbook. Do not modify or execute it. If and only if it is acceptable, end with an accepted verdict and reproduce the binding marker exactly. Otherwise reject it with concrete findings.\n\nrequest-path: {}\n{}\n\nimmutable-request:\n{}",
         request_file.display(),
@@ -1789,16 +1785,15 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
                 index += 2;
             }
             "--reviewer" => {
-                reviewer = Some(
-                    required_value(args, index, "reviewed-ops-cycle --reviewer")?.to_string(),
-                );
+                reviewer =
+                    Some(required_value(args, index, "reviewed-ops-cycle --reviewer")?.to_string());
                 index += 2;
             }
             "--timeout" => {
                 timeout = required_value(args, index, "reviewed-ops-cycle --timeout")?.to_string();
-                timeout
-                    .parse::<f64>()
-                    .map_err(|_| "reviewed-ops-cycle --timeout must be a non-negative number".to_string())?;
+                timeout.parse::<f64>().map_err(|_| {
+                    "reviewed-ops-cycle --timeout must be a non-negative number".to_string()
+                })?;
                 index += 2;
             }
             other => return Err(format!("unknown reviewed-ops-cycle argument: {other}")),
@@ -1814,10 +1809,12 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
     let ops_dir = cfg.state.join("subagents").join(ops_name);
     let metadata = read_env(&ops_dir.join("meta.env"))?;
     if metadata.get("role").map(String::as_str) != Some("ops") {
-        return Err(format!("reviewed-ops-cycle requires an existing ops identity: {ops_name}"));
+        return Err(format!(
+            "reviewed-ops-cycle requires an existing ops identity: {ops_name}"
+        ));
     }
-    let request_file = fs::canonicalize(&request_file)
-        .map_err(io_error("resolve reviewed ops request"))?;
+    let request_file =
+        fs::canonicalize(&request_file).map_err(io_error("resolve reviewed ops request"))?;
     let ops_logs = fs::canonicalize(cfg.logs.join("agents").join(ops_name))
         .map_err(io_error("resolve ops agent log directory"))?;
     if !request_file.starts_with(&ops_logs) {
@@ -1825,10 +1822,10 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
             "reviewed ops request must belong to ops identity {ops_name}"
         ));
     }
-    let request = fs::read_to_string(&request_file).map_err(io_error("read reviewed ops request"))?;
+    let request =
+        fs::read_to_string(&request_file).map_err(io_error("read reviewed ops request"))?;
     let binding = crate::prod_ops::review_binding_for_request(&request_file)?;
-    let reviewer_instruction =
-        reviewed_ops_reviewer_instruction(&request_file, &request, &binding);
+    let reviewer_instruction = reviewed_ops_reviewer_instruction(&request_file, &request, &binding);
     spawn(
         cfg,
         &[
@@ -1839,11 +1836,12 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
             reviewer_instruction,
         ],
     )?;
-    wait(cfg, &[reviewer.clone(), "--timeout".into(), timeout.clone()])?;
-    let reviewer_status = read_trimmed(
-        &cfg.state.join("subagents").join(&reviewer).join("status"),
-    )
-    .unwrap_or_else(|| "unknown".into());
+    wait(
+        cfg,
+        &[reviewer.clone(), "--timeout".into(), timeout.clone()],
+    )?;
+    let reviewer_status = read_trimmed(&cfg.state.join("subagents").join(&reviewer).join("status"))
+        .unwrap_or_else(|| "unknown".into());
     if !matches!(reviewer_status.as_str(), "done" | "exited") {
         return Err(format!(
             "ops reviewer {reviewer} did not complete successfully: {reviewer_status}"
@@ -1862,10 +1860,7 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
             execute_instruction,
         ],
     )?;
-    wait(
-        cfg,
-        &[ops_name.to_string(), "--timeout".into(), timeout],
-    )?;
+    wait(cfg, &[ops_name.to_string(), "--timeout".into(), timeout])?;
     Ok(())
 }
 

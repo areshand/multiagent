@@ -654,7 +654,9 @@ fn canonical_runbook_target(bytes: &[u8]) -> Result<Option<Value>, String> {
         .filter_map(|line| line.strip_prefix(PREFIX))
         .collect::<Vec<_>>();
     if declarations.len() > 1 {
-        return Err("runbook document must contain at most one canonical target declaration".into());
+        return Err(
+            "runbook document must contain at most one canonical target declaration".into(),
+        );
     }
     let Some(declaration) = declarations.first() else {
         return Ok(None);
