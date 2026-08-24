@@ -193,6 +193,10 @@ ma orchestrator complete >/dev/null
 
 grep -Fq 'phase=complete' "$STATE/workflows/$MULTIAGENT_WORKFLOW_ID/lifecycle/lifecycle.env"
 grep -Fq 'after' "$REPO/source.txt"
+grep -Fq 'External access is an authority boundary, not a mutability classification.' \
+  "$ROOT/orchestrator_prompt.md"
+grep -Fq 'A scout never calls Slack, GitHub, Grafana, AWS, Kubernetes, prod-mcp' \
+  "$ROOT/prompts/playbooks/orchestration-routing.md"
 [[ "$(grep -c '^new-window ' "$MOCK_LOG")" -eq 4 ]]
 if find "$STATE/subagents" -mindepth 1 -maxdepth 1 -type d -name '*scout*' | grep -q .; then
   echo "mock workflow spawned an unnecessary scout" >&2

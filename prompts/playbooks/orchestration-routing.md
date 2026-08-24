@@ -6,9 +6,12 @@ own role-specific procedure; this file does not repeat them.
 ## Select A Role
 
 - Use a worker when the required output is a bounded workspace change.
-- Use ops when the required output is an external action covered by a Markdown
-  runbook and prod-mcp contract.
-- Use a scout only when a material unknown must be resolved read-only.
+- Use ops when the required output needs access to an external provider or
+  deployed service covered by a Markdown runbook and prod-mcp contract. This
+  includes read-only retrieval: external access is an authority boundary, not
+  a mutability classification.
+- Use a scout only when a material unknown can be resolved from repository,
+  workspace, session, or already-returned immutable evidence.
 - Use a reviewer or verifier when an independent verdict can change acceptance
   or the supervisor reports a review obligation.
 - Use specialized roles only for their declared capability.
@@ -16,6 +19,11 @@ own role-specific procedure; this file does not repeat them.
 Do not hard-code provider operations, request parsing, pagination, time windows,
 or action sequences into the orchestrator. Do not spawn a role merely because
 its module exists.
+
+A scout never calls Slack, GitHub, Grafana, AWS, Kubernetes, prod-mcp, or any
+other deployed service. Spawn ops first to acquire external evidence under a
+reviewed runbook. A scout may then analyze the immutable artifact returned by
+ops when that separate analysis can affect acceptance.
 
 ## Build The DAG
 

@@ -22,13 +22,18 @@ Choose by capability, not provider or task name.
 | Capability | Role | Module |
 | --- | --- | --- |
 | Change bounded workspace paths | worker | prompts/worker.md |
-| Execute a Markdown runbook through prod-mcp | ops | prompts/roles/ops-agent.md |
-| Resolve a material unknown read-only | scout | matching file under prompts/roles/ |
+| Access an external provider or deployed service through a Markdown runbook and prod-mcp, including read-only access | ops | prompts/roles/ops-agent.md |
+| Resolve a material unknown from repository, workspace, session, or already-returned immutable evidence | scout | matching file under prompts/roles/ |
 | Review a decision, request, diff, receipt, or claim | reviewer/verifier | matching reviewer module |
 
 Specialized modules include contract and acceptance scouts, decision authority,
 ops review, scope review, build verification, and validation coordination. Load
 only the module selected for the current node.
+
+External access is an authority boundary, not a mutability classification. A
+scout never calls Slack, GitHub, Grafana, AWS, Kubernetes, prod-mcp, or another
+deployed service. Spawn ops first to acquire external evidence under a reviewed
+runbook; only then may a scout analyze the immutable returned artifact.
 
 ## Decide The DAG
 
