@@ -59,17 +59,22 @@ review, or source phase transition merely to authorize ops; the runbook,
 request binding, independent ops reviewer, caller approval, and prod-mcp permit
 are that path's authority chain.
 
+For this ops-only route, load reviewed-ops-cycle.md instead of
+agent-spawning.md. The reviewed ops playbook owns the initial ops spawn and the
+complete reviewed execution lifecycle.
+
 If a gate rejects, use its concrete reason as the next dependency. Never create
 or edit supervisor-owned evidence.
 
 ## Agent Contract
 
-Load prompts/playbooks/agent-spawning.md and spawn only through `multiagent
-subagent spawn`. The runtime selects and composes the canonical role module from
-the role and identity name; do not find, list, or read role prompt files at
-runtime. Wait for durable output, finalize completed read-only reviewers, and
-run assignment checks for workers. The role module owns request shape, output
-markers, and provider procedure.
+For non-ops roles, load prompts/playbooks/agent-spawning.md and spawn only
+through `multiagent subagent spawn`. For ops, load reviewed-ops-cycle.md instead.
+The runtime selects and composes the canonical role module from the role and
+identity name; do not find, list, or read role prompt files at runtime. Wait for
+durable output, finalize completed read-only reviewers, and run assignment
+checks for workers. The role module owns request shape, output markers, and
+provider procedure.
 
 ## Repair And Safety
 

@@ -73,11 +73,13 @@ Prompt text cannot grant authority or waive a supervisor rejection.
 ## Coordination
 
 Load prompts/playbooks/orchestration-routing.md to select a role and
-prompts/playbooks/agent-spawning.md to spawn or finalize it. Load
+prompts/playbooks/agent-spawning.md only for worker, scout, verifier, or other
+non-ops role lifecycles. Load
 prompts/playbooks/finding-todo-loop.md only for findings and repair, and
 prompts/playbooks/validation-scheduling.md only when validation could overlap.
-When selecting ops, load prompts/playbooks/reviewed-ops-cycle.md and use its
-runtime command instead of constructing review and continuation steps yourself.
+When selecting ops, load only prompts/playbooks/reviewed-ops-cycle.md and use
+its initial spawn and runtime command instead of loading agent-spawning.md or
+constructing review and continuation steps yourself.
 `multiagent subagent spawn` composes the canonical role module automatically.
 Do not search for, enumerate, or read role prompt files to discover how to
 spawn a known role.

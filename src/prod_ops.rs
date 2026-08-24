@@ -43,9 +43,13 @@ fn bind_runbook(args: &[String]) -> Result<ExitCode, String> {
         .map_err(|error| format!("decode ops request template: {error}"))?;
     let relative = required(&options, "--runbook-document")?;
     let digest = exact_runbook_content_sha256(relative)?;
+    let canonical_target = exact_runbook_target(relative)?;
     let object = template
         .as_object_mut()
         .ok_or("ops request template must be an object")?;
+    if let Some(target) = canonical_target {
+        object.insert("target".into(), target);
+    }
     object.insert("runbookDocument".into(), Value::String(relative.into()));
     object.insert("runbookContentSha256".into(), Value::String(digest.clone()));
     validate_request_template(&template)?;
@@ -632,6 +636,41 @@ fn verified_runbook_content(template: &Value) -> Result<String, String> {
 }
 
 fn exact_runbook_content_sha256(relative: &str) -> Result<String, String> {
+    let bytes = exact_runbook_bytes(relative)?;
+    Ok(runbook_content_digest(&bytes))
+}
+
+fn exact_runbook_target(relative: &str) -> Result<Option<Value>, String> {
+    canonical_runbook_target(&exact_runbook_bytes(relative)?)
+}
+
+fn canonical_runbook_target(bytes: &[u8]) -> Result<Option<Value>, String> {
+    const PREFIX: &str = "- Set `target` to `";
+    const SUFFIX: &str = "`.";
+    let markdown = std::str::from_utf8(bytes)
+        .map_err(|error| format!("decode runbook document as UTF-8: {error}"))?;
+    let declarations = markdown
+        .lines()
+        .filter_map(|line| line.strip_prefix(PREFIX))
+        .collect::<Vec<_>>();
+    if declarations.len() > 1 {
+        return Err("runbook document must contain at most one canonical target declaration".into());
+    }
+    let Some(declaration) = declarations.first() else {
+        return Ok(None);
+    };
+    let encoded = declaration
+        .strip_suffix(SUFFIX)
+        .ok_or("canonical runbook target declaration is malformed")?;
+    let target: Value = serde_json::from_str(encoded)
+        .map_err(|error| format!("decode canonical runbook target: {error}"))?;
+    if !target.is_object() {
+        return Err("canonical runbook target must be a JSON object".into());
+    }
+    Ok(Some(target))
+}
+
+fn exact_runbook_bytes(relative: &str) -> Result<Vec<u8>, String> {
     let relative_path = Path::new(relative);
     if relative_path.is_absolute()
         || relative_path
@@ -655,8 +694,7 @@ fn exact_runbook_content_sha256(relative: &str) -> Result<String, String> {
         return Err("runbook document must be a regular file between 1 byte and 1 MiB".into());
     }
     let bytes = fs::read(&document).map_err(|error| format!("read runbook document: {error}"))?;
-    let actual = runbook_content_digest(&bytes);
-    Ok(actual)
+    Ok(bytes)
 }
 
 fn runbook_content_digest(bytes: &[u8]) -> String {

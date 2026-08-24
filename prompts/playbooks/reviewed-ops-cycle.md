@@ -8,8 +8,24 @@ define what operations mean, not how agents are spawned.
 
 Use one persistent `ops` identity for the entire session. That agent may follow
 multiple runbooks and materialize multiple requests, but no second ops identity
-may be created. Agent judgment selects the runbook, operation, target, and
-parameters. This playbook only makes the authorization lifecycle deterministic.
+may be created. Agent judgment selects the runbook, operation, and parameters.
+`multiagent ops bind-runbook` copies canonical target metadata from the exact
+Markdown runbook when it is declared there. This playbook only makes the
+authorization lifecycle deterministic.
+
+## Start the ops identity
+
+Spawn exactly one ops identity for the session. The runtime composes the ops
+role module; do not load the general agent-spawning playbook or role prompt
+files to reconstruct it.
+
+```bash
+multiagent subagent spawn OPS_NAME --role ops --instruction "Inspect the request, follow the applicable runbook, and prepare the reviewed operation."
+multiagent subagent wait OPS_NAME --timeout 900
+```
+
+Keep this identity for every reviewed operation in the session. Do not spawn a
+replacement ops identity after review.
 
 ## Reviewed request
 
