@@ -1770,7 +1770,10 @@ fn reviewed_ops_reviewer_instruction(
 
 fn reviewed_ops_execute_instruction(request_file: &Path, reviewer: &str, ops_name: &str) -> String {
     format!(
-        "Continue the same runbook with the independently reviewed immutable request. Execute exactly:\n\nmultiagent ops execute --request-file {} --reviewer {}\n\nUse the compact execution result printed by that command; the full receipt is already persisted at its receiptPath. Do not inspect agent logs, transcripts, operation directories, or the receipt unless the compact result explicitly reports missing or truncated evidence. Decide from the runbook whether to stop, escalate, or prepare another distinct reviewed operation. Never execute the same immutable request twice and never run `ops describe` on the returned operationId or actionId. If another operation is needed, first run `multiagent ops describe OPERATION_ID`, then materialize and bind the complete next request at exactly `$MULTIAGENT_LOG_DIR/agents/{}/request.json`, run `chmod 0640` on it, and report that exact path plus the two digest lines. Do not use a role-home path, do not call `ops publish`, and do not finish with only a proposed request. If no operation remains, report the final result or exact blocker. Do not create a replacement ops identity.",
+        "Continue the same runbook in a fresh provider context restored into the existing OS-enforced ops identity `{}`. The request below is the supervisor-published immutable artifact accepted by independent reviewer `{}`. Before acting, verify that `$MULTIAGENT_SUBAGENT_NAME` is `{}`, then read that exact request and its exact digest-bound runbook. Checking these trusted artifacts is required; this is not blind execution. Do not inspect unrelated agent logs, transcripts, role homes, or operation directories.\n\nExecute exactly:\n\nmultiagent ops execute --request-file {} --reviewer {}\n\nThis command independently verifies the immutable request, runbook binding, reviewer approval, and signed permit before prod-mcp receives an operation. Do not bypass it with direct provider access. Inspect its compact execution result and the persisted receipt at `receiptPath`, then decide from the runbook whether to stop, escalate, or prepare another distinct reviewed operation. Never execute the same immutable request twice and never run `ops describe` on the returned operationId or actionId. If the command is not executed, report one exact structural blocker and do not ask the supervisor to retry this unchanged request. If another operation is needed, first run `multiagent ops describe OPERATION_ID`, then materialize and bind the complete next request at exactly `$MULTIAGENT_LOG_DIR/agents/{}/request.json`, run `chmod 0640` on it, and report that exact path plus the two digest lines. Do not use a role-home path, do not call `ops publish`, and do not finish with only a proposed request. If no operation remains, report the final result or exact blocker. Do not create a replacement ops identity.",
+        ops_name,
+        reviewer,
+        ops_name,
         shell_escape(&request_file.display().to_string()),
         shell_escape(reviewer),
         ops_name,
@@ -4240,6 +4243,12 @@ mod tests {
         assert!(execute.contains("Never execute the same immutable request twice"));
         assert!(execute.contains("compact execution result"));
         assert!(execute.contains("never run `ops describe` on the returned operationId or actionId"));
+        assert!(execute.contains("this is not blind execution"));
+        assert!(execute.contains("read that exact request and its exact digest-bound runbook"));
+        assert!(execute.contains("independently verifies the immutable request"));
+        assert!(execute.contains("Do not bypass it with direct provider access"));
+        assert!(execute.contains("do not ask the supervisor to retry this unchanged request"));
+        assert!(!execute.contains("Do not inspect agent logs"));
     }
 
     #[cfg(unix)]

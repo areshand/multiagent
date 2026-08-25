@@ -43,7 +43,9 @@ This command:
 
 Do not reconstruct these mechanics manually. Prior panes, transcripts, final
 messages, and native provider resume state are intentionally excluded from the
-continuation boundary.
+continuation boundary. A fresh context must not execute opaque instructions: it
+reads and verifies the exact supervisor-published immutable request and its
+digest-bound runbook before execution.
 
 Never pass the supervisor-owned published artifact back as `--request-file`;
 that path is intentionally outside the ops identity directory. On rejection or
@@ -52,13 +54,17 @@ and reviewer. A review correction may use a fresh reviewer on the same immutable
 request. Never create a second ops identity.
 
 The cycle already waits. Do not call `subagent wait` afterward, and do not read,
-tail, grep, find, or list agent logs, transcripts, role homes, operation
-directories, or receipts. Use only the returned `opsResult` and
+tail, grep, find, or list unrelated agent logs, transcripts, role homes, or
+operation directories. The ops continuation must inspect the exact immutable
+request and bound runbook before execution, and may inspect the exact receipt
+path returned by execution. Use only the returned `opsResult` and
 `followUpRequest`. If `followUpRequest` is non-null, run a new cycle on that
 exact path with a fresh reviewer. If it is null, use `opsResult` as the durable
-conclusion. A prose proposal, an `awaiting` statement`, or a draft under a
-private role-home path is incomplete work: restore the same ops identity to
-materialize the canonical request rather than treating it as a result or
+conclusion. If an accepted immutable request is not executed because the ops
+continuation reports a structural blocker, do not submit that unchanged request
+to another review cycle. A prose proposal, an `awaiting` statement, or a draft
+under a private role-home path is incomplete work: restore the same ops identity
+to materialize the canonical request rather than treating it as a result or
 spawning a replacement.
 
 For an external-only task with successful reviewed operations and no source

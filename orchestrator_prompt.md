@@ -59,8 +59,13 @@ bindings, independent review, and phase completion.
   only when operational work completes or reaches a blocker.
 - `reviewed-ops-cycle` waits for both review and the ops continuation. Consume
   its compact result directly: never call `subagent wait` afterward and never
-  inspect logs, transcripts, role homes, operation directories, or receipts to
-  rediscover its result.
+  inspect unrelated logs, transcripts, role homes, or operation directories to
+  rediscover its result. The ops continuation itself verifies the exact
+  immutable request and digest-bound runbook and may inspect its exact receipt.
+- If an accepted immutable request is not executed because the ops continuation
+  reports a structural blocker, do not repeat that unchanged request with a new
+  reviewer or ops context. Surface the blocker; a new reviewed cycle requires a
+  materially distinct request.
 - After a reviewed ops cycle, treat any required follow-up operation as
   incomplete until the same ops identity has materialized its complete bound
   request at `$MULTIAGENT_LOG_DIR/agents/OPS_NAME/request.json`. A prose proposal
