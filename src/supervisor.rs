@@ -718,8 +718,8 @@ fn serve_connection(stream: &mut UnixStream) -> Result<bool, String> {
         return Ok(false);
     }
     let mut bytes = Vec::new();
-    if let Err(error) = Read::take(&mut *stream, MAX_AUTHORITY_REQUEST_BYTES + 1)
-        .read_to_end(&mut bytes)
+    if let Err(error) =
+        Read::take(&mut *stream, MAX_AUTHORITY_REQUEST_BYTES + 1).read_to_end(&mut bytes)
     {
         eprintln!("authority supervisor: read request: {error}");
         return Ok(false);
@@ -730,8 +730,7 @@ fn serve_connection(stream: &mut UnixStream) -> Result<bool, String> {
             &Response {
                 code: 1,
                 stdout: String::new(),
-                stderr: "authority supervisor: request exceeds the configured byte limit\n"
-                    .into(),
+                stderr: "authority supervisor: request exceeds the configured byte limit\n".into(),
             },
         );
         return Ok(false);

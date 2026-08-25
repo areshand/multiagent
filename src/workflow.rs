@@ -544,13 +544,16 @@ fn typed_identity_context(
         let name = entry.file_name().to_string_lossy().to_string();
         valid_id("subagent identity", &name)?;
         let metadata = read_env_optional(&entry.path().join("meta.env"))?;
-        let role = metadata.get("role").map(String::as_str).unwrap_or("unknown");
+        let role = metadata
+            .get("role")
+            .map(String::as_str)
+            .unwrap_or("unknown");
         let role = bounded_identity_label(role, "identity role")?;
-        let raw_status = fs::read_to_string(entry.path().join("status"))
-            .unwrap_or_else(|_| "unknown".into());
+        let raw_status =
+            fs::read_to_string(entry.path().join("status")).unwrap_or_else(|_| "unknown".into());
         let status = match raw_status.trim() {
-            "starting" | "running" | "restoring" | "exited" | "done" | "blocked"
-            | "stopped" | "killed" | "finalized" => raw_status.trim(),
+            "starting" | "running" | "restoring" | "exited" | "done" | "blocked" | "stopped"
+            | "killed" | "finalized" => raw_status.trim(),
             _ => "unknown",
         };
         identities.push(serde_json::json!({
@@ -1254,7 +1257,10 @@ pub fn supervisor_complete_external(id: &str) -> Result<String, String> {
         || !state_value(&state, "decision_id").is_empty()
         || !state_value(&state, "candidate_diff_hash").is_empty()
     {
-        return Err("external-only completion cannot bypass a started source implementation lifecycle".into());
+        return Err(
+            "external-only completion cannot bypass a started source implementation lifecycle"
+                .into(),
+        );
     }
     validate_original_task(&state)?;
     let todos = read_todos(&p.todos)?;
@@ -1275,8 +1281,8 @@ pub fn supervisor_complete_external(id: &str) -> Result<String, String> {
         for entry in fs::read_dir(&operations_dir)
             .map_err(|error| format!("list external operation receipts: {error}"))?
         {
-            let entry = entry
-                .map_err(|error| format!("read external operation receipt entry: {error}"))?;
+            let entry =
+                entry.map_err(|error| format!("read external operation receipt entry: {error}"))?;
             let receipt_path = entry.path().join("receipt.json");
             if !receipt_path.is_file() {
                 continue;
@@ -1294,9 +1300,7 @@ pub fn supervisor_complete_external(id: &str) -> Result<String, String> {
             let structured = receipt
                 .pointer("/result/structuredContent")
                 .unwrap_or(&serde_json::Value::Null);
-            let succeeded = structured
-                .get("state")
-                .and_then(serde_json::Value::as_str)
+            let succeeded = structured.get("state").and_then(serde_json::Value::as_str)
                 == Some("succeeded")
                 && structured
                     .pointer("/outcome/disposition")
