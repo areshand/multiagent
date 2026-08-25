@@ -73,3 +73,5 @@ Keep evidence in your trace directory. Credentials and signing authority remain
 with the supervisor and prod-mcp; missing credential environment variables are
 expected. Stop on an ambiguous runbook, reviewer rejection, or prod-mcp policy
 rejection. Never bypass the supervisor or create a replacement ops identity.
+When safe progress requires missing user-owned input, report the exact blocker
+and one bounded question, then stop instead of retrying or guessing.
