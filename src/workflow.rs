@@ -1231,6 +1231,114 @@ pub fn supervisor_complete(id: &str) -> Result<String, String> {
     Ok(diff)
 }
 
+/// Seals a workflow that intentionally performed only independently reviewed
+/// external operations and never entered the source implementation lifecycle.
+pub fn supervisor_complete_external(id: &str) -> Result<String, String> {
+    if config::lifecycle_enforced()
+        && std::env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1")
+        && std::env::var("MULTIAGENT_AUTHORITY_SERVER_CHILD").as_deref() != Ok("1")
+    {
+        return Err("lifecycle completion must execute inside the authority supervisor".into());
+    }
+    let store = Store::configured()?;
+    let p = store.paths(id)?;
+    let _lock = store.lock(&p)?;
+    let mut state = read_env(&p.state, id)?;
+    if state_value(&state, "phase") != "pre-implementation" {
+        return Err(format!(
+            "external-only completion requires phase=pre-implementation, got {}",
+            state_value(&state, "phase")
+        ));
+    }
+    if !state_value(&state, "preimplementation_gate").is_empty()
+        || !state_value(&state, "decision_id").is_empty()
+        || !state_value(&state, "candidate_diff_hash").is_empty()
+    {
+        return Err("external-only completion cannot bypass a started source implementation lifecycle".into());
+    }
+    validate_original_task(&state)?;
+    let todos = read_todos(&p.todos)?;
+    let active_rows: Vec<&str> = todos
+        .iter()
+        .filter(|row| active(row.get(4)))
+        .map(|row| row.get(0))
+        .collect();
+    if !active_rows.is_empty() {
+        return Err(format!(
+            "external-only completion blocked by active TODOs: {}",
+            active_rows.join(",")
+        ));
+    }
+    let operations_dir = store.state_dir.join("operations");
+    let mut successful_operations = 0usize;
+    if operations_dir.is_dir() {
+        for entry in fs::read_dir(&operations_dir)
+            .map_err(|error| format!("list external operation receipts: {error}"))?
+        {
+            let entry = entry
+                .map_err(|error| format!("read external operation receipt entry: {error}"))?;
+            let receipt_path = entry.path().join("receipt.json");
+            if !receipt_path.is_file() {
+                continue;
+            }
+            let receipt: serde_json::Value = serde_json::from_slice(
+                &fs::read(&receipt_path)
+                    .map_err(|error| format!("read external operation receipt: {error}"))?,
+            )
+            .map_err(|error| {
+                format!(
+                    "decode external operation receipt {}: {error}",
+                    receipt_path.display()
+                )
+            })?;
+            let structured = receipt
+                .pointer("/result/structuredContent")
+                .unwrap_or(&serde_json::Value::Null);
+            let succeeded = structured
+                .get("state")
+                .and_then(serde_json::Value::as_str)
+                == Some("succeeded")
+                && structured
+                    .pointer("/outcome/disposition")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("succeeded")
+                && structured
+                    .pointer("/outcome/terminal")
+                    .and_then(serde_json::Value::as_bool)
+                    == Some(true);
+            if !succeeded {
+                return Err(format!(
+                    "external-only completion requires successful terminal receipts; {} is not successful",
+                    receipt_path.display()
+                ));
+            }
+            successful_operations += 1;
+        }
+    }
+    if successful_operations == 0 {
+        return Err(
+            "external-only completion requires at least one successful reviewed operation receipt"
+                .into(),
+        );
+    }
+    crate::subagent::completion_gate_check()?;
+    let result = format!("external-only:{successful_operations}");
+    state.insert("phase".into(), "complete".into());
+    state.insert("candidate_diff_hash".into(), result.clone());
+    state.insert("reviewed_diff_hash".into(), result.clone());
+    state.insert("updated_at".into(), timestamp());
+    write_env(&p.state, &state)?;
+    event(
+        &p.events,
+        "phase_transitioned",
+        &format!(
+            "from=pre-implementation\tto=complete\titeration={}\tauthority=supervisor\troute=external-only\toperations={successful_operations}",
+            state_value(&state, "iteration")
+        ),
+    )?;
+    Ok(result)
+}
+
 fn value(args: &[String]) -> Result<(), String> {
     if args.len() != 2 {
         return Err("value requires WORKFLOW_ID KEY".into());

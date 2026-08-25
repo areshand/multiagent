@@ -1023,16 +1023,23 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
             .iter()
             .any(|arg| matches!(arg.as_str(), "-h" | "--help"))
     {
-        println!("Usage:\n  multiagent orchestrator complete\n\nRuns the normal-path completion gates for the active orchestrated workflow.");
+        println!("Usage:\n  multiagent orchestrator complete [--external-only]\n\nRuns the supervisor completion gates. Use --external-only only for reviewed operations with no source implementation lifecycle.");
         return Ok(ExitCode::SUCCESS);
     }
-    if args != ["complete"] {
+    if args.first().map(String::as_str) != Some("complete")
+        || args.len() > 2
+        || (args.len() == 2 && args[1] != "--external-only")
+    {
         return Err(format!("unknown command: {}", args[0]));
     }
     if config::lifecycle_enforced() {
         let workflow_id = env_nonempty("MULTIAGENT_WORKFLOW_ID")
             .ok_or_else(|| "lifecycle enforcement requires MULTIAGENT_WORKFLOW_ID".to_string())?;
-        let diff = crate::workflow::supervisor_complete(&workflow_id)?;
+        let diff = if args.get(1).map(String::as_str) == Some("--external-only") {
+            crate::workflow::supervisor_complete_external(&workflow_id)?
+        } else {
+            crate::workflow::supervisor_complete(&workflow_id)?
+        };
         println!("workflow completed\t{workflow_id}\t{diff}\tauthority=supervisor");
     } else {
         run_self_quiet(&["subagent", "gate-check"])?;
@@ -1761,11 +1768,12 @@ fn reviewed_ops_reviewer_instruction(
     )
 }
 
-fn reviewed_ops_execute_instruction(request_file: &Path, reviewer: &str) -> String {
+fn reviewed_ops_execute_instruction(request_file: &Path, reviewer: &str, ops_name: &str) -> String {
     format!(
-        "Continue the same runbook with the independently reviewed immutable request. Execute exactly:\n\nmultiagent ops execute --request-file {} --reviewer {}\n\nInspect the persisted structured outcome and decide from the runbook whether to stop, escalate, or propose another distinct reviewed operation. Never execute the same immutable request twice. Report the result or exact blocker. Do not create a replacement ops identity.",
+        "Continue the same runbook with the independently reviewed immutable request. Execute exactly:\n\nmultiagent ops execute --request-file {} --reviewer {}\n\nUse the compact execution result printed by that command; the full receipt is already persisted at its receiptPath. Do not inspect agent logs, transcripts, operation directories, or the receipt unless the compact result explicitly reports missing or truncated evidence. Decide from the runbook whether to stop, escalate, or prepare another distinct reviewed operation. Never execute the same immutable request twice and never run `ops describe` on the returned operationId or actionId. If another operation is needed, first run `multiagent ops describe OPERATION_ID`, then materialize and bind the complete next request at exactly `$MULTIAGENT_LOG_DIR/agents/{}/request.json`, run `chmod 0640` on it, and report that exact path plus the two digest lines. Do not use a role-home path, do not call `ops publish`, and do not finish with only a proposed request. If no operation remains, report the final result or exact blocker. Do not create a replacement ops identity.",
         shell_escape(&request_file.display().to_string()),
-        shell_escape(reviewer)
+        shell_escape(reviewer),
+        ops_name,
     )
 }
 
@@ -1824,13 +1832,17 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
         .map_err(io_error("resolve ops agent log directory"))?;
     if !request_file.starts_with(&ops_logs) {
         return Err(format!(
-            "reviewed ops request must belong to ops identity {ops_name}"
+            "reviewed ops request must be the ops-owned bound request under {}; do not pass the supervisor-owned published artifact",
+            ops_logs.display()
         ));
     }
-    let published = crate::prod_ops::publish_bound_request(&cfg.state, &request_file)?;
-    let request_file = published.path();
-    let descriptor = published.descriptor_json()?;
-    let binding = crate::prod_ops::review_binding_for_request(request_file)?;
+    let reviewed_request_sha256 = format!(
+        "sha256:{:x}",
+        Sha256::digest(fs::read(&request_file).map_err(io_error("read reviewed ops request"))?)
+    );
+    let ops_request_file = request_file;
+    let (request_file, descriptor) = publish_reviewed_ops_request(&ops_request_file)?;
+    let binding = crate::prod_ops::review_binding_for_request(&request_file)?;
     let reviewer_instruction =
         reviewed_ops_reviewer_instruction(&request_file, &descriptor, &binding);
     spawn(
@@ -1838,7 +1850,7 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
         &[
             reviewer.clone(),
             "--role".into(),
-            "ops-reviewer".into(),
+            "reviewer".into(),
             "--instruction".into(),
             reviewer_instruction,
         ],
@@ -1855,9 +1867,9 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
         ));
     }
     finalize(cfg, std::slice::from_ref(&reviewer))?;
-    crate::prod_ops::preflight_reviewed_request(request_file, &reviewer)?;
+    crate::prod_ops::preflight_reviewed_request(&request_file, &reviewer)?;
 
-    let execute_instruction = reviewed_ops_execute_instruction(request_file, &reviewer);
+    let execute_instruction = reviewed_ops_execute_instruction(&request_file, &reviewer, ops_name);
     restore(
         cfg,
         &[
@@ -1869,7 +1881,59 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
         ],
     )?;
     wait(cfg, &[ops_name.to_string(), "--timeout".into(), timeout])?;
+    let ops_status = read_trimmed(&ops_dir.join("status")).unwrap_or_else(|| "unknown".into());
+    let ops_result = fs::read_to_string(ops_dir.join("last-message.txt"))
+        .unwrap_or_else(|_| "ops agent produced no durable final message".into());
+    let ops_result: String = ops_result.chars().take(16_384).collect();
+    let follow_up_request = fs::read(&ops_request_file).ok().and_then(|bytes| {
+        let sha256 = format!("sha256:{:x}", Sha256::digest(&bytes));
+        (sha256 != reviewed_request_sha256).then(|| {
+            serde_json::json!({
+                "path": ops_request_file.display().to_string(),
+                "sha256": sha256,
+                "bytes": bytes.len(),
+            })
+        })
+    });
+    println!(
+        "{}",
+        serde_json::to_string(&serde_json::json!({
+            "apiVersion": "multiagent.moveindustries.io/v1",
+            "kind": "ReviewedOpsCycleResult",
+            "opsName": ops_name,
+            "reviewer": reviewer,
+            "opsStatus": ops_status,
+            "cycleWaitedForCompletion": true,
+            "additionalWaitRequired": false,
+            "opsResult": ops_result,
+            "followUpRequest": follow_up_request,
+        }))
+        .map_err(|error| format!("encode reviewed ops cycle result: {error}"))?
+    );
     Ok(())
+}
+
+fn publish_reviewed_ops_request(request_file: &Path) -> Result<(PathBuf, String), String> {
+    let request_file = request_file
+        .to_str()
+        .ok_or("reviewed ops request path is not valid UTF-8")?;
+    let output = run_self_output(&[
+        "ops",
+        "publish-bound",
+        "--request-file",
+        request_file,
+    ])?;
+    let descriptor = String::from_utf8(output.stdout)
+        .map_err(|error| format!("decode published ops request descriptor: {error}"))?;
+    let descriptor = descriptor.trim().to_string();
+    let value: serde_json::Value = serde_json::from_str(&descriptor)
+        .map_err(|error| format!("decode published ops request descriptor: {error}"))?;
+    let artifact_path = value
+        .get("artifactPath")
+        .and_then(serde_json::Value::as_str)
+        .filter(|path| !path.is_empty())
+        .ok_or("published ops request descriptor has no artifactPath")?;
+    Ok((PathBuf::from(artifact_path), descriptor))
 }
 
 fn list_subagents(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
@@ -4168,12 +4232,14 @@ mod tests {
         assert!(!review.contains("Slack"));
         assert!(!review.contains("Grafana"));
 
-        let execute = reviewed_ops_execute_instruction(request, "ops-reviewer-01");
+        let execute = reviewed_ops_execute_instruction(request, "ops-reviewer-01", "github-ops");
         assert!(execute.contains(
             "multiagent ops execute --request-file /state/logs/agents/ops-primary/request.json --reviewer ops-reviewer-01"
         ));
         assert!(execute.contains("decide from the runbook"));
         assert!(execute.contains("Never execute the same immutable request twice"));
+        assert!(execute.contains("compact execution result"));
+        assert!(execute.contains("never run `ops describe` on the returned operationId or actionId"));
     }
 
     #[cfg(unix)]

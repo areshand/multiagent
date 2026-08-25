@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.mjs",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "test:e2e:github": "node test/github-unreviewed-pr.e2e.mjs"
   },
   "dependencies": {
     "ws": "8.21.3"
