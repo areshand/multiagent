@@ -72,6 +72,17 @@ under a private role-home path is incomplete work: restore the same ops identity
 to materialize the canonical request rather than treating it as a result or
 spawning a replacement.
 
+Do not restore the ops identity merely to persuade it that commands, environment
+variables, or paths are real. The continuation contract requires one shell
+check before it may report such a blocker. Accept the evidence-backed result or
+stop with that blocker; never retry the same instruction with stronger or more
+elaborate framing.
+
+If the returned result says safe progress requires missing user-owned input,
+report its exact blocker and bounded question to the caller, then stop the
+session. Do not restore an agent to repeat the question or continue waiting
+without a new caller response.
+
 For an external-only task with successful reviewed operations and no source
 changes, finish with `multiagent orchestrator complete --external-only`. Do not
 manufacture source lifecycle phases or files.
