@@ -1761,11 +1761,12 @@ fn reviewed_ops_reviewer_instruction(
     )
 }
 
-fn reviewed_ops_execute_instruction(request_file: &Path, reviewer: &str) -> String {
+fn reviewed_ops_execute_instruction(request_file: &Path, reviewer: &str, ops_name: &str) -> String {
     format!(
-        "Continue the same runbook with the independently reviewed immutable request. Execute exactly:\n\nmultiagent ops execute --request-file {} --reviewer {}\n\nInspect the persisted structured outcome and decide from the runbook whether to stop, escalate, or propose another distinct reviewed operation. Never execute the same immutable request twice. Report the result or exact blocker. Do not create a replacement ops identity.",
+        "Continue the same runbook with the independently reviewed immutable request. Execute exactly:\n\nmultiagent ops execute --request-file {} --reviewer {}\n\nInspect the persisted structured outcome and decide from the runbook whether to stop, escalate, or prepare another distinct reviewed operation. Never execute the same immutable request twice. If another operation is needed, first run `multiagent ops describe OPERATION_ID`, then materialize and bind the complete next request at exactly `$MULTIAGENT_LOG_DIR/agents/{}/request.json`, run `chmod 0640` on it, and report that exact path plus the two digest lines. Do not use a role-home path, do not call `ops publish`, and do not finish with only a proposed request. If no operation remains, report the final result or exact blocker. Do not create a replacement ops identity.",
         shell_escape(&request_file.display().to_string()),
-        shell_escape(reviewer)
+        shell_escape(reviewer),
+        ops_name,
     )
 }
 
@@ -1856,7 +1857,7 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
     finalize(cfg, std::slice::from_ref(&reviewer))?;
     crate::prod_ops::preflight_reviewed_request(&request_file, &reviewer)?;
 
-    let execute_instruction = reviewed_ops_execute_instruction(&request_file, &reviewer);
+    let execute_instruction = reviewed_ops_execute_instruction(&request_file, &reviewer, ops_name);
     restore(
         cfg,
         &[
@@ -4190,7 +4191,7 @@ mod tests {
         assert!(!review.contains("Slack"));
         assert!(!review.contains("Grafana"));
 
-        let execute = reviewed_ops_execute_instruction(request, "ops-reviewer-01");
+        let execute = reviewed_ops_execute_instruction(request, "ops-reviewer-01", "github-ops");
         assert!(execute.contains(
             "multiagent ops execute --request-file /state/logs/agents/ops-primary/request.json --reviewer ops-reviewer-01"
         ));

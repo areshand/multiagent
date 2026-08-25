@@ -46,3 +46,11 @@ that path is intentionally outside the ops identity directory. On rejection or
 preflight failure, report the blocker. A changed request needs a new publication
 and reviewer. A review correction may use a fresh reviewer on the same immutable
 request. Never create a second ops identity.
+
+After each cycle, inspect the ops result before declaring operational work
+complete. If it identifies another required operation, require the complete
+bound request at `$MULTIAGENT_LOG_DIR/agents/OPS_NAME/request.json` and run a new
+cycle with a fresh reviewer. A prose proposal, an `awaiting` statement, or a
+draft under a private role-home path is incomplete work: restore the same ops
+identity to materialize the canonical request rather than treating it as a
+result or spawning a replacement.

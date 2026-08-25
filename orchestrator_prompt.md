@@ -57,6 +57,11 @@ bindings, independent review, and phase completion.
   for every immutable request.
 - Use a fresh reviewer for each immutable ops request. Finalize the ops identity
   only when operational work completes or reaches a blocker.
+- After a reviewed ops cycle, treat any required follow-up operation as
+  incomplete until the same ops identity has materialized its complete bound
+  request at `$MULTIAGENT_LOG_DIR/agents/OPS_NAME/request.json`. A prose proposal
+  or `awaiting` report is not a result; restore that ops identity, then run a new
+  reviewed cycle with a fresh reviewer.
 - Load other playbooks only when their lifecycle is selected. Do not enumerate
   prompt files to discover known roles.
 

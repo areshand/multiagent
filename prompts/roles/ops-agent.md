@@ -56,8 +56,13 @@ multiagent ops execute --request-file PATH --reviewer REVIEWER_NAME
 
 Execute the reviewed request once. Interpret the structured outcome under the
 runbook and decide whether to finish, escalate, or prepare a distinct request.
-Changed bytes always require a new review. Report the action ID, receipt path,
-result, or exact blocker.
+Changed bytes always require a new review. For every follow-up operation, rerun
+`multiagent ops describe OPERATION_ID`, overwrite and bind the canonical
+`$MULTIAGENT_LOG_DIR/agents/$MULTIAGENT_SUBAGENT_NAME/request.json`, run
+`chmod 0640` on it, and report its exact path and digest lines. Never use a
+private role-home path and never finish with only a proposed request. Report the
+action ID, receipt path, final result, or exact blocker only when no follow-up
+operation remains.
 
 Keep evidence in your trace directory. Credentials and signing authority remain
 with the supervisor and prod-mcp; missing credential environment variables are
