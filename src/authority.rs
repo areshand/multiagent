@@ -153,9 +153,7 @@ impl AuthorityRequest {
             | AuthorityOperation::GateCheck => uid == config::ORCHESTRATOR_UID,
             AuthorityOperation::OpsDescribe
             | AuthorityOperation::OpsPublish
-            | AuthorityOperation::OpsExecute => {
-                uid == config::OPS_UID
-            }
+            | AuthorityOperation::OpsExecute => uid == config::OPS_UID,
             AuthorityOperation::OpsPublishBound => uid == config::ORCHESTRATOR_UID,
             AuthorityOperation::FindingCreate => uid == config::READER_UID,
             AuthorityOperation::FindingDismiss | AuthorityOperation::TodoClose => {
@@ -251,7 +249,9 @@ mod tests {
     #[test]
     fn typed_api_excludes_runtime_and_arbitrary_execution() {
         assert!(AuthorityRequest::from_cli("workflow", &strings(&["status"])).is_some());
-        assert!(AuthorityRequest::from_cli("workflow", &strings(&["context", "workflow-1"])).is_none());
+        assert!(
+            AuthorityRequest::from_cli("workflow", &strings(&["context", "workflow-1"])).is_none()
+        );
         assert!(AuthorityRequest::from_cli("subagent", &strings(&["assignment-create"])).is_some());
         assert!(AuthorityRequest::from_cli("agent", &strings(&["run"])).is_none());
         assert!(AuthorityRequest::from_cli("role-exec", &[]).is_none());

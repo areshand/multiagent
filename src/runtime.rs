@@ -255,8 +255,8 @@ pub fn role_agent_exec(args: &[String]) -> Result<ExitCode, String> {
     let trace_dir = cfg.logs.join("agents").join(name);
     let resume_session = (restored
         && env::var("MULTIAGENT_FORCE_FRESH_CONTEXT").as_deref() != Ok("1"))
-        .then(|| native_resume_session(&trace_dir))
-        .flatten();
+    .then(|| native_resume_session(&trace_dir))
+    .flatten();
     let executable = env::current_exe().map_err(io_error("resolve multiagent executable"))?;
     let role_uid = if authorization.role == "ops" {
         config::OPS_UID
@@ -1920,12 +1920,7 @@ fn publish_reviewed_ops_request(request_file: &Path) -> Result<(PathBuf, String)
     let request_file = request_file
         .to_str()
         .ok_or("reviewed ops request path is not valid UTF-8")?;
-    let output = run_self_output(&[
-        "ops",
-        "publish-bound",
-        "--request-file",
-        request_file,
-    ])?;
+    let output = run_self_output(&["ops", "publish-bound", "--request-file", request_file])?;
     let descriptor = String::from_utf8(output.stdout)
         .map_err(|error| format!("decode published ops request descriptor: {error}"))?;
     let descriptor = descriptor.trim().to_string();
@@ -4242,7 +4237,9 @@ mod tests {
         assert!(execute.contains("decide from the runbook"));
         assert!(execute.contains("Never execute the same immutable request twice"));
         assert!(execute.contains("compact execution result"));
-        assert!(execute.contains("never run `ops describe` on the returned operationId or actionId"));
+        assert!(
+            execute.contains("never run `ops describe` on the returned operationId or actionId")
+        );
         assert!(execute.contains("this is not blind execution"));
         assert!(execute.contains("read that exact request and its exact digest-bound runbook"));
         assert!(execute.contains("independently verifies the immutable request"));
