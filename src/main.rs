@@ -81,6 +81,9 @@ fn main() -> ExitCode {
         "role-agent-exec" => {
             runtime::role_agent_exec(&args).map_err(|message| ("role-agent-exec", message))
         }
+        "reviewed-ops-exec" => {
+            runtime::reviewed_ops_exec(&args).map_err(|message| ("reviewed-ops-exec", message))
+        }
         "session-control" => {
             session_control::run(&args).map_err(|message| ("session-control", message))
         }

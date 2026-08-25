@@ -36,16 +36,21 @@ This command:
 2. binds the reviewer to the immutable request and exact runbook;
 3. passes only a bounded artifact descriptor to the reviewer;
 4. finalizes accepted review evidence before execution; and
-5. continues the same ops identity in a fresh provider context with the exact
-   execute command; and
-6. waits for that continuation and prints one compact `ReviewedOpsCycleResult`
+5. launches a deterministic executor under the existing ops Linux identity,
+   which submits the accepted request through the digest- and reviewer-bound
+   authority transaction;
+6. continues the same ops identity in a fresh provider context with the trusted
+   compact execution result; and
+7. waits for that continuation and prints one compact `ReviewedOpsCycleResult`
    containing the ops conclusion or the next bound request.
 
 Do not reconstruct these mechanics manually. Prior panes, transcripts, final
 messages, and native provider resume state are intentionally excluded from the
-continuation boundary. A fresh context must not execute opaque instructions: it
-reads and verifies the exact supervisor-published immutable request and its
-digest-bound runbook before execution.
+continuation boundary. The model never performs the mechanical reviewed
+execution. The deterministic executor remains kernel-authenticated as the ops
+role; its fresh model context reads the exact immutable request, digest-bound
+runbook, and authority-produced execution result to decide the next runbook
+step.
 
 Never pass the supervisor-owned published artifact back as `--request-file`;
 that path is intentionally outside the ops identity directory. On rejection or
@@ -56,8 +61,8 @@ request. Never create a second ops identity.
 The cycle already waits. Do not call `subagent wait` afterward, and do not read,
 tail, grep, find, or list unrelated agent logs, transcripts, role homes, or
 operation directories. The ops continuation must inspect the exact immutable
-request and bound runbook before execution, and may inspect the exact receipt
-path returned by execution. Use only the returned `opsResult` and
+request, bound runbook, and compact execution result, and may inspect the exact
+receipt path returned by execution. Use only the returned `opsResult` and
 `followUpRequest`. If `followUpRequest` is non-null, run a new cycle on that
 exact path with a fresh reviewer. If it is null, use `opsResult` as the durable
 conclusion. If an accepted immutable request is not executed because the ops

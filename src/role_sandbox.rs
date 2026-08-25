@@ -19,7 +19,8 @@ pub fn gate_setuid_invocation(command: &str) -> Result<(), String> {
 }
 
 fn privileged_command_allowed(command: &str, real_uid: u32) -> bool {
-    command == "role-agent-exec" && real_uid == crate::config::ORCHESTRATOR_UID
+    matches!(command, "role-agent-exec" | "reviewed-ops-exec")
+        && real_uid == crate::config::ORCHESTRATOR_UID
         || matches!(
             command,
             "authority-supervisor-exec" | "container-bootstrap" | "launch" | "session-control"
@@ -428,6 +429,15 @@ mod tests {
         ));
         assert!(!privileged_command_allowed("role-agent-exec", CONTROL_UID));
         assert!(!privileged_command_allowed("role-agent-exec", 65534));
+        assert!(privileged_command_allowed(
+            "reviewed-ops-exec",
+            ORCHESTRATOR_UID
+        ));
+        assert!(!privileged_command_allowed(
+            "reviewed-ops-exec",
+            CONTROL_UID
+        ));
+        assert!(!privileged_command_allowed("reviewed-ops-exec", 65534));
 
         for command in [
             "authority-supervisor-exec",

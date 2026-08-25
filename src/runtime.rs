@@ -328,6 +328,30 @@ pub fn role_agent_exec(args: &[String]) -> Result<ExitCode, String> {
     result
 }
 
+pub fn reviewed_ops_exec(args: &[String]) -> Result<ExitCode, String> {
+    match args {
+        [request_flag, request_file, reviewer_flag, reviewer]
+            if request_flag == "--request-file"
+                && !request_file.is_empty()
+                && reviewer_flag == "--reviewer"
+                && !reviewer.is_empty() => {}
+        _ => {
+            return Err(
+                "reviewed-ops-exec requires exactly --request-file PATH --reviewer NAME".into(),
+            )
+        }
+    }
+    let mut authority_args = vec!["execute".to_string()];
+    authority_args.extend_from_slice(args);
+    let request = crate::authority::AuthorityRequest::from_cli("ops", &authority_args)
+        .ok_or("construct reviewed ops authority request")?;
+    crate::linux_privilege::apply_identity(&crate::linux_privilege::IdentitySpec::new(
+        config::OPS_UID,
+        ROLE_GID,
+    ))?;
+    crate::supervisor::proxy_request(request)
+}
+
 #[cfg(unix)]
 fn validate_privileged_agent_binary(path: &Path) -> Result<(), String> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -1768,14 +1792,19 @@ fn reviewed_ops_reviewer_instruction(
     )
 }
 
-fn reviewed_ops_execute_instruction(request_file: &Path, reviewer: &str, ops_name: &str) -> String {
+fn reviewed_ops_result_instruction(
+    request_file: &Path,
+    reviewer: &str,
+    ops_name: &str,
+    execution_result: &str,
+) -> String {
     format!(
-        "Continue the same runbook in a fresh provider context restored into the existing OS-enforced ops identity `{}`. The request below is the supervisor-published immutable artifact accepted by independent reviewer `{}`. Before acting, verify that `$MULTIAGENT_SUBAGENT_NAME` is `{}`, then read that exact request and its exact digest-bound runbook. Checking these trusted artifacts is required; this is not blind execution. Do not inspect unrelated agent logs, transcripts, role homes, or operation directories.\n\nExecute exactly:\n\nmultiagent ops execute --request-file {} --reviewer {}\n\nThis command independently verifies the immutable request, runbook binding, reviewer approval, and signed permit before prod-mcp receives an operation. Do not bypass it with direct provider access. Inspect its compact execution result and the persisted receipt at `receiptPath`, then decide from the runbook whether to stop, escalate, or prepare another distinct reviewed operation. Never execute the same immutable request twice and never run `ops describe` on the returned operationId or actionId. If the command is not executed, report one exact structural blocker and do not ask the supervisor to retry this unchanged request. If another operation is needed, first run `multiagent ops describe OPERATION_ID`, then materialize and bind the complete next request at exactly `$MULTIAGENT_LOG_DIR/agents/{}/request.json`, run `chmod 0640` on it, and report that exact path plus the two digest lines. Do not use a role-home path, do not call `ops publish`, and do not finish with only a proposed request. If no operation remains, report the final result or exact blocker. Do not create a replacement ops identity.",
+        "Continue the same runbook in a fresh provider context restored into the existing OS-enforced ops identity `{}`. Independent reviewer `{}` accepted the immutable request at `{}`, and the deterministic ops executor has already submitted it as `OPS_UID` through the reviewed authority transaction. Do not execute this request again and do not use direct provider access. Verify that `$MULTIAGENT_SUBAGENT_NAME` is `{}`, read the exact request and its digest-bound runbook, then interpret the trusted compact execution result below. You may inspect the exact persisted receipt at `receiptPath`; do not inspect unrelated agent logs, transcripts, role homes, or operation directories.\n\n<reviewed-execution-result>\n{}\n</reviewed-execution-result>\n\nDecide from the runbook whether to stop, escalate, or prepare another distinct reviewed operation. Never execute the same immutable request twice and never run `ops describe` on the returned operationId or actionId. If another operation is needed, first run `multiagent ops describe OPERATION_ID`, then materialize and bind the complete next request at exactly `$MULTIAGENT_LOG_DIR/agents/{}/request.json`, run `chmod 0640` on it, and report that exact path plus the two digest lines. Do not use a role-home path, do not call `ops publish`, and do not finish with only a proposed request. If no operation remains, report the final result or exact blocker. Do not create a replacement ops identity.",
         ops_name,
         reviewer,
-        ops_name,
         shell_escape(&request_file.display().to_string()),
-        shell_escape(reviewer),
+        ops_name,
+        execution_result,
         ops_name,
     )
 }
@@ -1872,7 +1901,23 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
     finalize(cfg, std::slice::from_ref(&reviewer))?;
     crate::prod_ops::preflight_reviewed_request(&request_file, &reviewer)?;
 
-    let execute_instruction = reviewed_ops_execute_instruction(&request_file, &reviewer, ops_name);
+    let request_argument = request_file
+        .to_str()
+        .ok_or("reviewed ops request path is not valid UTF-8")?;
+    let execution_output = run_self_output(&[
+        "reviewed-ops-exec",
+        "--request-file",
+        request_argument,
+        "--reviewer",
+        &reviewer,
+    ])?;
+    let execution_text = String::from_utf8(execution_output.stdout)
+        .map_err(|error| format!("decode reviewed ops execution result: {error}"))?;
+    let execution_text = execution_text.trim();
+    let execution_result: serde_json::Value = serde_json::from_str(execution_text)
+        .map_err(|error| format!("decode reviewed ops execution result JSON: {error}"))?;
+    let result_instruction =
+        reviewed_ops_result_instruction(&request_file, &reviewer, ops_name, execution_text);
     restore(
         cfg,
         &[
@@ -1880,7 +1925,7 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
             "--force".into(),
             "--fresh-context".into(),
             "--instruction".into(),
-            execute_instruction,
+            result_instruction,
         ],
     )?;
     wait(cfg, &[ops_name.to_string(), "--timeout".into(), timeout])?;
@@ -1908,6 +1953,7 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
             "opsStatus": ops_status,
             "cycleWaitedForCompletion": true,
             "additionalWaitRequired": false,
+            "executionResult": execution_result,
             "opsResult": ops_result,
             "followUpRequest": follow_up_request,
         }))
@@ -4230,22 +4276,20 @@ mod tests {
         assert!(!review.contains("Slack"));
         assert!(!review.contains("Grafana"));
 
-        let execute = reviewed_ops_execute_instruction(request, "ops-reviewer-01", "github-ops");
-        assert!(execute.contains(
-            "multiagent ops execute --request-file /state/logs/agents/ops-primary/request.json --reviewer ops-reviewer-01"
-        ));
-        assert!(execute.contains("decide from the runbook"));
-        assert!(execute.contains("Never execute the same immutable request twice"));
-        assert!(execute.contains("compact execution result"));
-        assert!(
-            execute.contains("never run `ops describe` on the returned operationId or actionId")
+        let result = reviewed_ops_result_instruction(
+            request,
+            "ops-reviewer-01",
+            "github-ops",
+            r#"{"kind":"OperationExecutionResult","state":"succeeded"}"#,
         );
-        assert!(execute.contains("this is not blind execution"));
-        assert!(execute.contains("read that exact request and its exact digest-bound runbook"));
-        assert!(execute.contains("independently verifies the immutable request"));
-        assert!(execute.contains("Do not bypass it with direct provider access"));
-        assert!(execute.contains("do not ask the supervisor to retry this unchanged request"));
-        assert!(!execute.contains("Do not inspect agent logs"));
+        assert!(result.contains("deterministic ops executor has already submitted it as `OPS_UID`"));
+        assert!(result.contains("<reviewed-execution-result>"));
+        assert!(result.contains(r#""state":"succeeded""#));
+        assert!(result.contains("Do not execute this request again"));
+        assert!(result.contains("Never execute the same immutable request twice"));
+        assert!(result.contains("never run `ops describe` on the returned operationId or actionId"));
+        assert!(result.contains("do not use direct provider access"));
+        assert!(!result.contains("multiagent ops execute"));
     }
 
     #[cfg(unix)]
