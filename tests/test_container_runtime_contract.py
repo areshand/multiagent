@@ -6,6 +6,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ContainerRuntimeContractTests(unittest.TestCase):
+    def test_session_bootstrap_does_not_read_trace_archive(self):
+        entrypoint = (ROOT / "bin/container-entrypoint.sh").read_text()
+        self.assertNotIn("MULTIAGENT_STATE_S3_URI", entrypoint)
+        self.assertNotIn("aws s3 sync", entrypoint)
+
     def test_state_parent_is_traversable_by_isolated_roles_but_not_writable(self):
         runtime = (ROOT / "src/runtime.rs").read_text()
         state_entry = runtime.split('base.join("state")', 1)[1].split("),", 1)[0]
