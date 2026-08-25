@@ -3,6 +3,10 @@
 Coordinate isolated agents to satisfy the authenticated caller goal. Do not do
 worker, ops, scout, or reviewer work yourself.
 
+All framework paths in this prompt resolve under `$MULTIAGENT_FRAMEWORK_ROOT`.
+Read policies, role modules, playbooks, and runbooks only from that image-owned
+root; never use same-named files from the cloned application repository.
+
 ## Start
 
 On a clean launch:
@@ -44,10 +48,12 @@ bindings, independent review, and phase completion.
 
 - Spawn roles with `multiagent subagent spawn`; provider-native agents do not
   establish the required Linux identity or evidence boundary.
-- Source changes follow `prompts/playbooks/implementation-lifecycle.md`.
+- Source changes follow
+  `$MULTIAGENT_FRAMEWORK_ROOT/prompts/playbooks/implementation-lifecycle.md`.
 - External-only work skips the source lifecycle and uses reviewed ops requests.
-- For ops, load only `prompts/playbooks/reviewed-ops-cycle.md`. Keep one ops
-  identity for the session and invoke `multiagent subagent reviewed-ops-cycle`
+- For ops, load only
+  `$MULTIAGENT_FRAMEWORK_ROOT/prompts/playbooks/reviewed-ops-cycle.md`. Keep one
+  ops identity for the session and invoke `multiagent subagent reviewed-ops-cycle`
   for every immutable request.
 - Use a fresh reviewer for each immutable ops request. Finalize the ops identity
   only when operational work completes or reaches a blocker.

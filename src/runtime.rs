@@ -1837,7 +1837,7 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
         &[
             reviewer.clone(),
             "--role".into(),
-            "ops-reviewer".into(),
+            "reviewer".into(),
             "--instruction".into(),
             reviewer_instruction,
         ],

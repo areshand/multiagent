@@ -53,6 +53,9 @@ enum AuthorityOperation {
 impl AuthorityRequest {
     pub fn from_cli(command: &str, args: &[String]) -> Option<Self> {
         let (operation, forwarded) = match command {
+            // Typed workflow context is read-only and verifies the direct caller's
+            // kernel UID, so it must not be re-executed as the supervisor UID.
+            "workflow" if args.first().map(String::as_str) == Some("context") => return None,
             "workflow" => (AuthorityOperation::Workflow, args),
             "decision" => (AuthorityOperation::Decision, args),
             "dag" => (AuthorityOperation::Dag, args),
@@ -248,6 +251,7 @@ mod tests {
     #[test]
     fn typed_api_excludes_runtime_and_arbitrary_execution() {
         assert!(AuthorityRequest::from_cli("workflow", &strings(&["status"])).is_some());
+        assert!(AuthorityRequest::from_cli("workflow", &strings(&["context", "workflow-1"])).is_none());
         assert!(AuthorityRequest::from_cli("subagent", &strings(&["assignment-create"])).is_some());
         assert!(AuthorityRequest::from_cli("agent", &strings(&["run"])).is_none());
         assert!(AuthorityRequest::from_cli("role-exec", &[]).is_none());
