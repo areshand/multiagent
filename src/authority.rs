@@ -71,7 +71,10 @@ impl AuthorityRequest {
             "ops" if args.first().map(String::as_str) == Some("execute") => {
                 (AuthorityOperation::OpsExecute, &args[1..])
             }
-            "orchestrator" if args == ["complete"] => {
+            "orchestrator"
+                if args.first().map(String::as_str) == Some("complete")
+                    && (args.len() == 1 || (args.len() == 2 && args[1] == "--external-only")) =>
+            {
                 (AuthorityOperation::OrchestratorComplete, &args[1..])
             }
             "supervisor" => match args.first().map(String::as_str) {
@@ -295,6 +298,24 @@ mod tests {
         .expect("ops publish-bound request");
         assert!(publish_bound.authorized_for(config::ORCHESTRATOR_UID));
         assert!(!publish_bound.authorized_for(config::OPS_UID));
+
+        let external_completion =
+            AuthorityRequest::from_cli("orchestrator", &strings(&["complete", "--external-only"]))
+                .expect("external-only completion request");
+        assert!(external_completion.authorized_for(config::ORCHESTRATOR_UID));
+        assert!(!external_completion.authorized_for(config::OPS_UID));
+        assert_eq!(
+            external_completion.into_cli(),
+            (
+                "orchestrator".to_string(),
+                strings(&["complete", "--external-only"]),
+            )
+        );
+        assert!(AuthorityRequest::from_cli(
+            "orchestrator",
+            &strings(&["complete", "--unsupported"]),
+        )
+        .is_none());
     }
 
     #[test]

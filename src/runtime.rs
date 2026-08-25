@@ -1792,6 +1792,9 @@ fn reviewed_ops_reviewer_instruction(
     )
 }
 
+const REVIEWED_OPS_RUNTIME_CONTRACT: &str =
+    r#"<reviewed-ops-runtime execution="completed" executor="ops" identity="already-applied" />"#;
+
 fn reviewed_ops_result_instruction(
     request_file: &Path,
     reviewer: &str,
@@ -1799,11 +1802,11 @@ fn reviewed_ops_result_instruction(
     execution_result: &str,
 ) -> String {
     format!(
-        "Continue the same runbook in a fresh provider context restored into the existing OS-enforced ops identity `{}`. Independent reviewer `{}` accepted the immutable request at `{}`, and the deterministic ops executor has already submitted it as `OPS_UID` through the reviewed authority transaction. Do not execute this request again and do not use direct provider access. Verify that `$MULTIAGENT_SUBAGENT_NAME` is `{}`, read the exact request and its digest-bound runbook, then interpret the trusted compact execution result below. You may inspect the exact persisted receipt at `receiptPath`; do not inspect unrelated agent logs, transcripts, role homes, or operation directories.\n\n<reviewed-execution-result>\n{}\n</reviewed-execution-result>\n\nDecide from the runbook whether to stop, escalate, or prepare another distinct reviewed operation. Never execute the same immutable request twice and never run `ops describe` on the returned operationId or actionId. If another operation is needed, first run `multiagent ops describe OPERATION_ID`, then materialize and bind the complete next request at exactly `$MULTIAGENT_LOG_DIR/agents/{}/request.json`, run `chmod 0640` on it, and report that exact path plus the two digest lines. Do not use a role-home path, do not call `ops publish`, and do not finish with only a proposed request. If no operation remains, report the final result or exact blocker. Do not create a replacement ops identity.",
+        "{}\n\nInterpret the completed reviewed operation below and continue its runbook for subagent `{}`. Independent reviewer `{}` accepted the immutable request at `{}`, and the deterministic ops executor has already submitted it as `OPS_UID`. The runtime has already applied the Linux role and access policy; this instruction does not ask you to adopt, authenticate, or re-verify an identity. Begin with the operation data. Do not execute this request again and do not use direct provider access. Read the exact request and its digest-bound runbook, then interpret the compact execution result below. You may inspect the exact persisted receipt at `receiptPath`; do not inspect unrelated agent logs, transcripts, role homes, or operation directories.\n\n<reviewed-execution-result>\n{}\n</reviewed-execution-result>\n\nDecide from the runbook whether to stop, escalate, or prepare another distinct reviewed operation. Never execute the same immutable request twice and never run `ops describe` on the returned operationId or actionId. If another operation is needed, first run `multiagent ops describe OPERATION_ID`, then materialize and bind the complete next request at exactly `$MULTIAGENT_LOG_DIR/agents/{}/request.json`, run `chmod 0640` on it, and report that exact path plus the two digest lines. Do not use a role-home path, do not call `ops publish`, and do not finish with only a proposed request. If no operation remains, report the final result or exact blocker. Do not create a replacement ops identity.",
+        REVIEWED_OPS_RUNTIME_CONTRACT,
         ops_name,
         reviewer,
         shell_escape(&request_file.display().to_string()),
-        ops_name,
         execution_result,
         ops_name,
     )
@@ -2314,7 +2317,7 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
     }
     let mut instruction = if fresh_context {
         format!(
-            "Continue as the existing logical subagent {name} with the same role, UID, and supervisor-mediated authority. This invocation intentionally starts with a fresh provider model context: do not reconstruct or request prior pane text, transcripts, final messages, or provider output. Use only the typed supervisor-owned state and immutable artifact descriptors supplied by the current instruction.\n"
+            "Start a fresh provider model context for the existing subagent process `{name}`. The runtime has already applied its Linux UID, role, filesystem policy, and supervisor-mediated authority; do not authenticate, adopt, or re-verify an identity. Treat the current follow-up and typed artifacts as the work input. Do not reconstruct or request prior pane text, transcripts, final messages, or provider output.\n"
         )
     } else {
         format!(
@@ -4282,7 +4285,7 @@ mod tests {
             "github-ops",
             r#"{"kind":"OperationExecutionResult","state":"succeeded"}"#,
         );
-        assert!(result.contains("deterministic ops executor has already submitted it as `OPS_UID`"));
+        assert!(result.contains(REVIEWED_OPS_RUNTIME_CONTRACT));
         assert!(result.contains("<reviewed-execution-result>"));
         assert!(result.contains(r#""state":"succeeded""#));
         assert!(result.contains("Do not execute this request again"));
