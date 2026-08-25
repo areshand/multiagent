@@ -62,6 +62,11 @@ bindings, independent review, and phase completion.
   request at `$MULTIAGENT_LOG_DIR/agents/OPS_NAME/request.json`. A prose proposal
   or `awaiting` report is not a result; restore that ops identity, then run a new
   reviewed cycle with a fresh reviewer.
+- Preserve literal predicates from the authenticated goal. When the caller
+  requires an empty list, zero records, or no submitted items, any returned item
+  disqualifies that candidate regardless of its subtype or state. Do not weaken
+  the predicate by reclassifying records; continue the same bounded search until
+  the exact predicate is proven or a concrete blocker is reached.
 - Load other playbooks only when their lifecycle is selected. Do not enumerate
   prompt files to discover known roles.
 
