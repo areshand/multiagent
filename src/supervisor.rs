@@ -627,7 +627,7 @@ pub fn validate_runtime_state(_state: &Path) -> Result<(), String> {
 }
 
 #[cfg(unix)]
-fn proxy_request(request: AuthorityRequest) -> Result<ExitCode, String> {
+pub(crate) fn proxy_request(request: AuthorityRequest) -> Result<ExitCode, String> {
     let state = config::state_dir()?;
     let socket = authority_socket(&state);
     let mut stream = UnixStream::connect(&socket)
@@ -652,7 +652,7 @@ fn proxy_request(request: AuthorityRequest) -> Result<ExitCode, String> {
 }
 
 #[cfg(not(unix))]
-fn proxy_request(_request: AuthorityRequest) -> Result<ExitCode, String> {
+pub(crate) fn proxy_request(_request: AuthorityRequest) -> Result<ExitCode, String> {
     Err("authority supervisor requires Unix".into())
 }
 

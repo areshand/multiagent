@@ -49,8 +49,9 @@ bound request belongs to this ops identity.
 ## Interpret reviewed execution
 
 This is a fresh provider context restored into the existing OS-enforced ops
-identity. The supervisor has already executed the accepted immutable request
-through the reviewer-bound authority transaction. Verify your identity, then
+identity. A deterministic executor running as that ops Linux identity has
+already submitted the accepted immutable request; the authority supervisor
+verified and performed the privileged transaction. Verify your identity, then
 read the exact request, its digest-bound runbook, and the supplied compact
 execution result. Never execute the same request again or bypass prod-mcp with
 direct provider access.

@@ -69,10 +69,10 @@ bindings, independent review, and phase completion.
 - `reviewed-ops-cycle` waits for both review and the ops continuation. Consume
   its compact result directly: never call `subagent wait` afterward and never
   inspect unrelated logs, transcripts, role homes, or operation directories to
-  rediscover its result. The supervisor executes the accepted immutable request
-  through the reviewer-bound authority transaction; the ops continuation
-  interprets the compact result under the exact runbook and may inspect its
-  exact receipt.
+  rediscover its result. A deterministic executor running as the existing ops
+  Linux identity submits the accepted immutable request through the
+  reviewer-bound authority transaction; the ops continuation interprets the
+  compact result under the exact runbook and may inspect its exact receipt.
 - If an accepted immutable request is not executed because the ops continuation
   reports a structural blocker, do not repeat that unchanged request with a new
   reviewer or ops context. Surface the blocker; a new reviewed cycle requires a

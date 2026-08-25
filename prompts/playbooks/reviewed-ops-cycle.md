@@ -36,8 +36,9 @@ This command:
 2. binds the reviewer to the immutable request and exact runbook;
 3. passes only a bounded artifact descriptor to the reviewer;
 4. finalizes accepted review evidence before execution; and
-5. executes the accepted request through a supervisor-owned, digest- and
-   reviewer-bound authority transaction;
+5. launches a deterministic executor under the existing ops Linux identity,
+   which submits the accepted request through the digest- and reviewer-bound
+   authority transaction;
 6. continues the same ops identity in a fresh provider context with the trusted
    compact execution result; and
 7. waits for that continuation and prints one compact `ReviewedOpsCycleResult`
@@ -46,8 +47,9 @@ This command:
 Do not reconstruct these mechanics manually. Prior panes, transcripts, final
 messages, and native provider resume state are intentionally excluded from the
 continuation boundary. The model never performs the mechanical reviewed
-execution. Its fresh context reads the exact immutable request, digest-bound
-runbook, and supervisor-produced execution result to decide the next runbook
+execution. The deterministic executor remains kernel-authenticated as the ops
+role; its fresh model context reads the exact immutable request, digest-bound
+runbook, and authority-produced execution result to decide the next runbook
 step.
 
 Never pass the supervisor-owned published artifact back as `--request-file`;

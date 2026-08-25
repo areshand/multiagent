@@ -328,6 +328,30 @@ pub fn role_agent_exec(args: &[String]) -> Result<ExitCode, String> {
     result
 }
 
+pub fn reviewed_ops_exec(args: &[String]) -> Result<ExitCode, String> {
+    match args {
+        [request_flag, request_file, reviewer_flag, reviewer]
+            if request_flag == "--request-file"
+                && !request_file.is_empty()
+                && reviewer_flag == "--reviewer"
+                && !reviewer.is_empty() => {}
+        _ => {
+            return Err(
+                "reviewed-ops-exec requires exactly --request-file PATH --reviewer NAME".into(),
+            )
+        }
+    }
+    let mut authority_args = vec!["execute".to_string()];
+    authority_args.extend_from_slice(args);
+    let request = crate::authority::AuthorityRequest::from_cli("ops", &authority_args)
+        .ok_or("construct reviewed ops authority request")?;
+    crate::linux_privilege::apply_identity(&crate::linux_privilege::IdentitySpec::new(
+        config::OPS_UID,
+        ROLE_GID,
+    ))?;
+    crate::supervisor::proxy_request(request)
+}
+
 #[cfg(unix)]
 fn validate_privileged_agent_binary(path: &Path) -> Result<(), String> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -1775,7 +1799,7 @@ fn reviewed_ops_result_instruction(
     execution_result: &str,
 ) -> String {
     format!(
-        "Continue the same runbook in a fresh provider context restored into the existing OS-enforced ops identity `{}`. Independent reviewer `{}` accepted the immutable request at `{}`, and the supervisor has already executed it through the reviewed authority transaction. Do not execute this request again and do not use direct provider access. Verify that `$MULTIAGENT_SUBAGENT_NAME` is `{}`, read the exact request and its digest-bound runbook, then interpret the trusted compact execution result below. You may inspect the exact persisted receipt at `receiptPath`; do not inspect unrelated agent logs, transcripts, role homes, or operation directories.\n\n<reviewed-execution-result>\n{}\n</reviewed-execution-result>\n\nDecide from the runbook whether to stop, escalate, or prepare another distinct reviewed operation. Never execute the same immutable request twice and never run `ops describe` on the returned operationId or actionId. If another operation is needed, first run `multiagent ops describe OPERATION_ID`, then materialize and bind the complete next request at exactly `$MULTIAGENT_LOG_DIR/agents/{}/request.json`, run `chmod 0640` on it, and report that exact path plus the two digest lines. Do not use a role-home path, do not call `ops publish`, and do not finish with only a proposed request. If no operation remains, report the final result or exact blocker. Do not create a replacement ops identity.",
+        "Continue the same runbook in a fresh provider context restored into the existing OS-enforced ops identity `{}`. Independent reviewer `{}` accepted the immutable request at `{}`, and the deterministic ops executor has already submitted it as `OPS_UID` through the reviewed authority transaction. Do not execute this request again and do not use direct provider access. Verify that `$MULTIAGENT_SUBAGENT_NAME` is `{}`, read the exact request and its digest-bound runbook, then interpret the trusted compact execution result below. You may inspect the exact persisted receipt at `receiptPath`; do not inspect unrelated agent logs, transcripts, role homes, or operation directories.\n\n<reviewed-execution-result>\n{}\n</reviewed-execution-result>\n\nDecide from the runbook whether to stop, escalate, or prepare another distinct reviewed operation. Never execute the same immutable request twice and never run `ops describe` on the returned operationId or actionId. If another operation is needed, first run `multiagent ops describe OPERATION_ID`, then materialize and bind the complete next request at exactly `$MULTIAGENT_LOG_DIR/agents/{}/request.json`, run `chmod 0640` on it, and report that exact path plus the two digest lines. Do not use a role-home path, do not call `ops publish`, and do not finish with only a proposed request. If no operation remains, report the final result or exact blocker. Do not create a replacement ops identity.",
         ops_name,
         reviewer,
         shell_escape(&request_file.display().to_string()),
@@ -1881,8 +1905,7 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
         .to_str()
         .ok_or("reviewed ops request path is not valid UTF-8")?;
     let execution_output = run_self_output(&[
-        "ops",
-        "execute-reviewed",
+        "reviewed-ops-exec",
         "--request-file",
         request_argument,
         "--reviewer",
@@ -4259,7 +4282,7 @@ mod tests {
             "github-ops",
             r#"{"kind":"OperationExecutionResult","state":"succeeded"}"#,
         );
-        assert!(result.contains("the supervisor has already executed it"));
+        assert!(result.contains("deterministic ops executor has already submitted it as `OPS_UID`"));
         assert!(result.contains("<reviewed-execution-result>"));
         assert!(result.contains(r#""state":"succeeded""#));
         assert!(result.contains("Do not execute this request again"));

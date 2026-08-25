@@ -48,7 +48,6 @@ enum AuthorityOperation {
     OpsPublishBound,
     OpsPublish,
     OpsExecute,
-    OpsExecuteReviewed,
 }
 
 impl AuthorityRequest {
@@ -68,9 +67,6 @@ impl AuthorityRequest {
             }
             "ops" if args.first().map(String::as_str) == Some("publish") => {
                 (AuthorityOperation::OpsPublish, &args[1..])
-            }
-            "ops" if args.first().map(String::as_str) == Some("execute-reviewed") => {
-                (AuthorityOperation::OpsExecuteReviewed, &args[1..])
             }
             "ops" if args.first().map(String::as_str) == Some("execute") => {
                 (AuthorityOperation::OpsExecute, &args[1..])
@@ -158,9 +154,7 @@ impl AuthorityRequest {
             AuthorityOperation::OpsDescribe
             | AuthorityOperation::OpsPublish
             | AuthorityOperation::OpsExecute => uid == config::OPS_UID,
-            AuthorityOperation::OpsPublishBound | AuthorityOperation::OpsExecuteReviewed => {
-                uid == config::ORCHESTRATOR_UID
-            }
+            AuthorityOperation::OpsPublishBound => uid == config::ORCHESTRATOR_UID,
             AuthorityOperation::FindingCreate => uid == config::READER_UID,
             AuthorityOperation::FindingDismiss | AuthorityOperation::TodoClose => {
                 matches!(uid, config::ORCHESTRATOR_UID | config::READER_UID)
@@ -225,7 +219,6 @@ impl AuthorityRequest {
             AuthorityOperation::OpsPublishBound => ("ops", Some("publish-bound")),
             AuthorityOperation::OpsPublish => ("ops", Some("publish")),
             AuthorityOperation::OpsExecute => ("ops", Some("execute")),
-            AuthorityOperation::OpsExecuteReviewed => ("ops", Some("execute-reviewed")),
         };
         let mut args = self.args;
         if let Some(subcommand) = subcommand {
@@ -287,20 +280,6 @@ mod tests {
         .expect("ops request");
         assert!(ops.authorized_for(config::OPS_UID));
         assert!(!ops.authorized_for(config::ORCHESTRATOR_UID));
-        let reviewed = AuthorityRequest::from_cli(
-            "ops",
-            &strings(&[
-                "execute-reviewed",
-                "--request-file",
-                "/state/request.json",
-                "--reviewer",
-                "ops-reviewer-01",
-            ]),
-        )
-        .expect("reviewed ops request");
-        assert!(reviewed.authorized_for(config::ORCHESTRATOR_UID));
-        assert!(!reviewed.authorized_for(config::OPS_UID));
-        assert!(!reviewed.authorized_for(config::READER_UID));
         let describe = AuthorityRequest::from_cli("ops", &strings(&["describe", "github.read"]))
             .expect("ops describe request");
         assert!(describe.authorized_for(config::OPS_UID));
