@@ -15,9 +15,6 @@ if [[ "${MULTIAGENT_CONTROL_MODE:-local}" == "gateway" ]]; then
 fi
 /opt/multiagent/bin/multiagent container-bootstrap
 mkdir -p "$HOME"
-if [[ -n "${MULTIAGENT_STATE_S3_URI:-}" && ! -f "$MULTIAGENT_STATE_DIR/control-server/sessions.json" ]]; then
-  aws s3 sync "$MULTIAGENT_STATE_S3_URI" "$MULTIAGENT_STATE_DIR" --only-show-errors || true
-fi
 if [[ -n "${MULTIAGENT_BOOTSTRAP_REPOSITORY_URL:-}" ]]; then
   repository_name="${MULTIAGENT_BOOTSTRAP_REPOSITORY_NAME:-multiagent}"
   if [[ ! "$repository_name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
