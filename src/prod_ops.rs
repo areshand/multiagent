@@ -23,10 +23,6 @@ pub(crate) struct PublishedRequest {
 }
 
 impl PublishedRequest {
-    pub(crate) fn path(&self) -> &Path {
-        &self.artifact_path
-    }
-
     pub(crate) fn descriptor_json(&self) -> Result<String, String> {
         serde_json::to_string(&json!({
             "artifactPath": self.artifact_path,
@@ -51,6 +47,7 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
         Some("describe") => describe(&args[1..]),
         Some("template") => template(&args[1..]),
         Some("bind-runbook") => bind_runbook(&args[1..]),
+        Some("publish-bound") => publish_bound(&args[1..]),
         Some("publish") => publish(&args[1..]),
         Some("execute") => execute(&args[1..]),
         Some("review-bind") => review_bind(&args[1..]),
@@ -163,6 +160,27 @@ fn publish(args: &[String]) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
+#[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
+fn publish_bound(args: &[String]) -> Result<ExitCode, String> {
+    #[cfg(target_os = "linux")]
+    if unsafe { libc::geteuid() } != crate::config::SUPERVISOR_UID {
+        return Err("ops publish-bound is reserved for the authority supervisor".into());
+    }
+    #[cfg(not(target_os = "linux"))]
+    return Err("ops publish-bound requires Linux".into());
+
+    #[cfg(target_os = "linux")]
+    {
+        let options = options(args)?;
+        let state = PathBuf::from(required_env("MULTIAGENT_STATE_DIR")?);
+        let request_file = PathBuf::from(required(&options, "--request-file")?);
+        let descriptor = publish_bound_request(&state, &request_file)?;
+        println!("{}", descriptor.descriptor_json()?);
+        Ok(ExitCode::SUCCESS)
+    }
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) fn publish_bound_request(
     state: &Path,
     request_file: &Path,

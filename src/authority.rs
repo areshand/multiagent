@@ -45,6 +45,7 @@ enum AuthorityOperation {
     ValidationLeaseList,
     GateCheck,
     OpsDescribe,
+    OpsPublishBound,
     OpsPublish,
     OpsExecute,
 }
@@ -57,6 +58,9 @@ impl AuthorityRequest {
             "dag" => (AuthorityOperation::Dag, args),
             "ops" if args.first().map(String::as_str) == Some("describe") => {
                 (AuthorityOperation::OpsDescribe, &args[1..])
+            }
+            "ops" if args.first().map(String::as_str) == Some("publish-bound") => {
+                (AuthorityOperation::OpsPublishBound, &args[1..])
             }
             "ops" if args.first().map(String::as_str) == Some("publish") => {
                 (AuthorityOperation::OpsPublish, &args[1..])
@@ -149,6 +153,7 @@ impl AuthorityRequest {
             | AuthorityOperation::OpsExecute => {
                 uid == config::OPS_UID
             }
+            AuthorityOperation::OpsPublishBound => uid == config::ORCHESTRATOR_UID,
             AuthorityOperation::FindingCreate => uid == config::READER_UID,
             AuthorityOperation::FindingDismiss | AuthorityOperation::TodoClose => {
                 matches!(uid, config::ORCHESTRATOR_UID | config::READER_UID)
@@ -210,6 +215,7 @@ impl AuthorityRequest {
             AuthorityOperation::ValidationLeaseList => ("subagent", Some("validation-lease-list")),
             AuthorityOperation::GateCheck => ("subagent", Some("gate-check")),
             AuthorityOperation::OpsDescribe => ("ops", Some("describe")),
+            AuthorityOperation::OpsPublishBound => ("ops", Some("publish-bound")),
             AuthorityOperation::OpsPublish => ("ops", Some("publish")),
             AuthorityOperation::OpsExecute => ("ops", Some("execute")),
         };
@@ -278,6 +284,13 @@ mod tests {
             describe.into_cli(),
             ("ops".to_string(), strings(&["describe", "github.read"]))
         );
+        let publish_bound = AuthorityRequest::from_cli(
+            "ops",
+            &strings(&["publish-bound", "--request-file", "/state/request.json"]),
+        )
+        .expect("ops publish-bound request");
+        assert!(publish_bound.authorized_for(config::ORCHESTRATOR_UID));
+        assert!(!publish_bound.authorized_for(config::OPS_UID));
     }
 
     #[test]

@@ -1828,10 +1828,8 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
             ops_logs.display()
         ));
     }
-    let published = crate::prod_ops::publish_bound_request(&cfg.state, &request_file)?;
-    let request_file = published.path();
-    let descriptor = published.descriptor_json()?;
-    let binding = crate::prod_ops::review_binding_for_request(request_file)?;
+    let (request_file, descriptor) = publish_reviewed_ops_request(&request_file)?;
+    let binding = crate::prod_ops::review_binding_for_request(&request_file)?;
     let reviewer_instruction =
         reviewed_ops_reviewer_instruction(&request_file, &descriptor, &binding);
     spawn(
@@ -1856,9 +1854,9 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
         ));
     }
     finalize(cfg, std::slice::from_ref(&reviewer))?;
-    crate::prod_ops::preflight_reviewed_request(request_file, &reviewer)?;
+    crate::prod_ops::preflight_reviewed_request(&request_file, &reviewer)?;
 
-    let execute_instruction = reviewed_ops_execute_instruction(request_file, &reviewer);
+    let execute_instruction = reviewed_ops_execute_instruction(&request_file, &reviewer);
     restore(
         cfg,
         &[
@@ -1871,6 +1869,29 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
     )?;
     wait(cfg, &[ops_name.to_string(), "--timeout".into(), timeout])?;
     Ok(())
+}
+
+fn publish_reviewed_ops_request(request_file: &Path) -> Result<(PathBuf, String), String> {
+    let request_file = request_file
+        .to_str()
+        .ok_or("reviewed ops request path is not valid UTF-8")?;
+    let output = run_self_output(&[
+        "ops",
+        "publish-bound",
+        "--request-file",
+        request_file,
+    ])?;
+    let descriptor = String::from_utf8(output.stdout)
+        .map_err(|error| format!("decode published ops request descriptor: {error}"))?;
+    let descriptor = descriptor.trim().to_string();
+    let value: serde_json::Value = serde_json::from_str(&descriptor)
+        .map_err(|error| format!("decode published ops request descriptor: {error}"))?;
+    let artifact_path = value
+        .get("artifactPath")
+        .and_then(serde_json::Value::as_str)
+        .filter(|path| !path.is_empty())
+        .ok_or("published ops request descriptor has no artifactPath")?;
+    Ok((PathBuf::from(artifact_path), descriptor))
 }
 
 fn list_subagents(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
