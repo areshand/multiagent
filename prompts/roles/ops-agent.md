@@ -46,27 +46,19 @@ for independent review. Do not call `ops publish`; the supervisor-owned
 `reviewed-ops-cycle` publishes the immutable artifact after validating that the
 bound request belongs to this ops identity.
 
-## Execute after review
-
-When restored, use the exact command supplied by the supervisor:
-
-```bash
-multiagent ops execute --request-file PATH --reviewer REVIEWER_NAME
-```
+## Interpret reviewed execution
 
 This is a fresh provider context restored into the existing OS-enforced ops
-identity. Verify that identity, then read the exact supervisor-published
-immutable request and its digest-bound runbook before execution. The command
-independently verifies the request, reviewer approval, and signed permit. Never
-bypass it with direct provider access.
+identity. The supervisor has already executed the accepted immutable request
+through the reviewer-bound authority transaction. Verify your identity, then
+read the exact request, its digest-bound runbook, and the supplied compact
+execution result. Never execute the same request again or bypass prod-mcp with
+direct provider access.
 
-Execute the reviewed request once. Interpret the structured outcome under the
-runbook and decide whether to finish, escalate, or prepare a distinct request.
-The command prints a compact result and persists the full receipt at
-`receiptPath`; inspect both. Do not search unrelated logs, transcripts, role
-homes, or operation directories. If you do not execute an accepted request,
-report one exact structural blocker and never ask the supervisor to retry the
-same immutable request with another reviewer or ops context. An
+Interpret the structured outcome under the runbook and decide whether to
+finish, escalate, or prepare a distinct request. The full receipt is persisted
+at `receiptPath`; inspect it when needed. Do not search unrelated logs,
+transcripts, role homes, or operation directories. An
 `operationId` or `actionId` returned by execution is evidence, not an operation
 capability ID; never pass it to `ops describe`.
 Changed bytes always require a new review. For every follow-up operation, rerun

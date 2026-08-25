@@ -49,6 +49,7 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
         Some("bind-runbook") => bind_runbook(&args[1..]),
         Some("publish-bound") => publish_bound(&args[1..]),
         Some("publish") => publish(&args[1..]),
+        Some("execute-reviewed") => execute(&args[1..]),
         Some("execute") => execute(&args[1..]),
         Some("review-bind") => review_bind(&args[1..]),
         Some("help" | "--help" | "-h") => {
