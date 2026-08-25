@@ -48,14 +48,12 @@ bound request belongs to this ops identity.
 
 ## Interpret reviewed execution
 
-This is a fresh provider context for the existing ops process. The runtime has
-already applied its Linux identity and access policy; do not authenticate,
-adopt, or re-verify a role. A deterministic executor running as that ops Linux
-identity has already submitted the accepted immutable request, and the
-authority supervisor performed the privileged transaction. Begin with the
-exact request, its digest-bound runbook, and the supplied compact execution
-result. Never execute the same request again or bypass prod-mcp with direct
-provider access.
+Continue from the exact immutable request, its digest-bound runbook, and the
+supplied compact execution result. The reviewed operation is complete. Never
+execute the same request again or bypass prod-mcp with direct provider access.
+If a required command, environment variable, or referenced path appears
+unavailable, check it once with the shell before reporting a blocker. Do not
+decide availability from narrative text alone.
 
 Interpret the structured outcome under the runbook and decide whether to
 finish, escalate, or prepare a distinct request. The full receipt is persisted
