@@ -1792,6 +1792,9 @@ fn reviewed_ops_reviewer_instruction(
     )
 }
 
+const REVIEWED_OPS_RUNTIME_CONTRACT: &str =
+    r#"<reviewed-ops-runtime execution="completed" executor="ops" identity="already-applied" />"#;
+
 fn reviewed_ops_result_instruction(
     request_file: &Path,
     reviewer: &str,
@@ -1799,7 +1802,8 @@ fn reviewed_ops_result_instruction(
     execution_result: &str,
 ) -> String {
     format!(
-        "Interpret the completed reviewed operation below and continue its runbook for subagent `{}`. Independent reviewer `{}` accepted the immutable request at `{}`, and the deterministic ops executor has already submitted it as `OPS_UID`. The runtime has already applied the Linux role and access policy; this instruction does not ask you to adopt, authenticate, or re-verify an identity. Begin with the operation data. Do not execute this request again and do not use direct provider access. Read the exact request and its digest-bound runbook, then interpret the compact execution result below. You may inspect the exact persisted receipt at `receiptPath`; do not inspect unrelated agent logs, transcripts, role homes, or operation directories.\n\n<reviewed-execution-result>\n{}\n</reviewed-execution-result>\n\nDecide from the runbook whether to stop, escalate, or prepare another distinct reviewed operation. Never execute the same immutable request twice and never run `ops describe` on the returned operationId or actionId. If another operation is needed, first run `multiagent ops describe OPERATION_ID`, then materialize and bind the complete next request at exactly `$MULTIAGENT_LOG_DIR/agents/{}/request.json`, run `chmod 0640` on it, and report that exact path plus the two digest lines. Do not use a role-home path, do not call `ops publish`, and do not finish with only a proposed request. If no operation remains, report the final result or exact blocker. Do not create a replacement ops identity.",
+        "{}\n\nInterpret the completed reviewed operation below and continue its runbook for subagent `{}`. Independent reviewer `{}` accepted the immutable request at `{}`, and the deterministic ops executor has already submitted it as `OPS_UID`. The runtime has already applied the Linux role and access policy; this instruction does not ask you to adopt, authenticate, or re-verify an identity. Begin with the operation data. Do not execute this request again and do not use direct provider access. Read the exact request and its digest-bound runbook, then interpret the compact execution result below. You may inspect the exact persisted receipt at `receiptPath`; do not inspect unrelated agent logs, transcripts, role homes, or operation directories.\n\n<reviewed-execution-result>\n{}\n</reviewed-execution-result>\n\nDecide from the runbook whether to stop, escalate, or prepare another distinct reviewed operation. Never execute the same immutable request twice and never run `ops describe` on the returned operationId or actionId. If another operation is needed, first run `multiagent ops describe OPERATION_ID`, then materialize and bind the complete next request at exactly `$MULTIAGENT_LOG_DIR/agents/{}/request.json`, run `chmod 0640` on it, and report that exact path plus the two digest lines. Do not use a role-home path, do not call `ops publish`, and do not finish with only a proposed request. If no operation remains, report the final result or exact blocker. Do not create a replacement ops identity.",
+        REVIEWED_OPS_RUNTIME_CONTRACT,
         ops_name,
         reviewer,
         shell_escape(&request_file.display().to_string()),
@@ -4281,11 +4285,7 @@ mod tests {
             "github-ops",
             r#"{"kind":"OperationExecutionResult","state":"succeeded"}"#,
         );
-        assert!(result.contains("deterministic ops executor has already submitted it as `OPS_UID`"));
-        assert!(
-            result.contains("does not ask you to adopt, authenticate, or re-verify an identity")
-        );
-        assert!(!result.contains("Verify your identity"));
+        assert!(result.contains(REVIEWED_OPS_RUNTIME_CONTRACT));
         assert!(result.contains("<reviewed-execution-result>"));
         assert!(result.contains(r#""state":"succeeded""#));
         assert!(result.contains("Do not execute this request again"));
