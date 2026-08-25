@@ -56,6 +56,12 @@ multiagent ops execute --request-file PATH --reviewer REVIEWER_NAME
 
 Execute the reviewed request once. Interpret the structured outcome under the
 runbook and decide whether to finish, escalate, or prepare a distinct request.
+The command prints a compact result and persists the full receipt at
+`receiptPath`. Use the compact result directly. Do not search logs, transcripts,
+role homes, or operation directories, and do not reread the receipt unless the
+compact result explicitly reports missing or truncated evidence. An
+`operationId` or `actionId` returned by execution is evidence, not an operation
+capability ID; never pass it to `ops describe`.
 Changed bytes always require a new review. For every follow-up operation, rerun
 `multiagent ops describe OPERATION_ID`, overwrite and bind the canonical
 `$MULTIAGENT_LOG_DIR/agents/$MULTIAGENT_SUBAGENT_NAME/request.json`, run

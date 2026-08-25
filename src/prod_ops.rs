@@ -65,9 +65,25 @@ fn describe(args: &[String]) -> Result<ExitCode, String> {
     }
     let response = call_prod_mcp_tool("operations_capabilities", json!({}))?;
     let operation = operation_capability(&response, &args[0])?;
+    let mut compact = serde_json::Map::new();
+    for key in [
+        "id",
+        "version",
+        "description",
+        "access",
+        "allowedRunbooks",
+        "parameterSchema",
+        "parameterExamples",
+        "requireChangeTicket",
+        "requiredApprovalRoles",
+    ] {
+        if let Some(value) = operation.get(key) {
+            compact.insert(key.into(), value.clone());
+        }
+    }
     println!(
         "{}",
-        serde_json::to_string_pretty(operation)
+        serde_json::to_string(&Value::Object(compact))
             .map_err(|error| format!("encode prod-mcp operation capability: {error}"))?
     );
     Ok(ExitCode::SUCCESS)
@@ -597,9 +613,33 @@ fn execute(args: &[String]) -> Result<ExitCode, String> {
         serde_json::to_vec_pretty(&result).map_err(|error| error.to_string())?,
     )
     .map_err(|error| format!("persist operation receipt: {error}"))?;
+    let structured = result
+        .pointer("/result/structuredContent")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let evidence = structured
+        .get("summary")
+        .and_then(Value::as_str)
+        .map(|summary| {
+            serde_json::from_str(summary).unwrap_or_else(|_| Value::String(summary.into()))
+        })
+        .unwrap_or(Value::Null);
+    let compact = json!({
+        "apiVersion": "multiagent.moveindustries.io/v1",
+        "kind": "OperationExecutionResult",
+        "actionId": action_id,
+        "operationId": structured.get("operationId").cloned().unwrap_or(Value::Null),
+        "requestedOperation": structured.get("requestedOperation").cloned().unwrap_or(Value::Null),
+        "state": structured.get("state").cloned().unwrap_or(Value::Null),
+        "outcome": structured.get("outcome").cloned().unwrap_or(Value::Null),
+        "code": structured.get("code").cloned().unwrap_or(Value::Null),
+        "message": structured.get("message").cloned().unwrap_or(Value::Null),
+        "evidence": evidence,
+        "receiptPath": operation_dir.join("receipt.json"),
+    });
     println!(
         "{}",
-        serde_json::to_string_pretty(&result).map_err(|error| error.to_string())?
+        serde_json::to_string(&compact).map_err(|error| error.to_string())?
     );
     Ok(ExitCode::SUCCESS)
 }

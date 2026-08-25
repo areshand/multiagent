@@ -57,11 +57,18 @@ bindings, independent review, and phase completion.
   for every immutable request.
 - Use a fresh reviewer for each immutable ops request. Finalize the ops identity
   only when operational work completes or reaches a blocker.
+- `reviewed-ops-cycle` waits for both review and the ops continuation. Consume
+  its compact result directly: never call `subagent wait` afterward and never
+  inspect logs, transcripts, role homes, operation directories, or receipts to
+  rediscover its result.
 - After a reviewed ops cycle, treat any required follow-up operation as
   incomplete until the same ops identity has materialized its complete bound
   request at `$MULTIAGENT_LOG_DIR/agents/OPS_NAME/request.json`. A prose proposal
   or `awaiting` report is not a result; restore that ops identity, then run a new
   reviewed cycle with a fresh reviewer.
+- Complete successful external-only work with
+  `multiagent orchestrator complete --external-only`; do not enter source
+  lifecycle phases or write surrogate result files.
 - Preserve literal predicates from the authenticated goal. When the caller
   requires an empty list, zero records, or no submitted items, any returned item
   disqualifies that candidate regardless of its subtype or state. Do not weaken
