@@ -2310,11 +2310,7 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         return Err(format!("no persisted subagent state: {name}"));
     }
     let metadata = read_env(&dir.join("meta.env")).unwrap_or_default();
-    reject_terminal_reviewed_ops_restore(
-        &dir,
-        metadata.get("role").map(String::as_str),
-        name,
-    )?;
+    reject_terminal_reviewed_ops_restore(&dir, metadata.get("role").map(String::as_str), name)?;
     let cli = metadata
         .get("cli")
         .filter(|value| !value.is_empty())
@@ -4344,8 +4340,8 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join(REVIEWED_OPS_TERMINAL_FILE), "terminal\n").unwrap();
-        let error = reject_terminal_reviewed_ops_restore(&dir, Some("ops"), "ops-primary")
-            .unwrap_err();
+        let error =
+            reject_terminal_reviewed_ops_restore(&dir, Some("ops"), "ops-primary").unwrap_err();
         assert!(error.contains("refusing to restore terminal reviewed ops identity"));
         assert!(reject_terminal_reviewed_ops_restore(&dir, Some("worker"), "worker-01").is_ok());
         fs::remove_dir_all(dir).unwrap();
