@@ -1,5 +1,6 @@
 :root { --ink:#171811; --paper:#e9e3d2; --acid:#d8ff3e; --rust:#bb3e24; --muted:#817d70; --line:#3a3b31; }
 * { box-sizing:border-box; }
+[hidden] { display:none !important; }
 body { margin:0; min-height:100vh; background:var(--ink); color:var(--paper); font-family:"IBM Plex Mono","Courier New",monospace; }
 .grain { position:fixed; inset:0; opacity:.12; pointer-events:none; background-image:repeating-linear-gradient(0deg,transparent,transparent 3px,#fff 4px); mix-blend-mode:overlay; }
 .eyebrow { margin:0 0 .5rem; color:var(--acid); font-size:.72rem; letter-spacing:.2em; text-transform:uppercase; }
