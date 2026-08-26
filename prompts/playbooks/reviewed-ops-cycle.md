@@ -83,6 +83,10 @@ report its exact blocker and bounded question to the caller, then stop the
 session. Do not restore an agent to repeat the question or continue waiting
 without a new caller response.
 
+When `terminal` is true, the runtime records a terminal reviewed-cycle marker
+and rejects every later restore of that ops identity. Report `opsResult` to the
+caller and stop; a new caller-authorized session is required for more work.
+
 For an external-only task with successful reviewed operations and no source
 changes, finish with `multiagent orchestrator complete --external-only`. Do not
 manufacture source lifecycle phases or files.

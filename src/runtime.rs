@@ -1793,6 +1793,28 @@ fn reviewed_ops_reviewer_instruction(
 }
 
 const REVIEWED_OPS_RUNTIME_CONTRACT: &str = r#"<reviewed-ops-runtime phase="interpret" execution="completed" environment-check="required-before-blocker" repeat-execution="forbidden" direct-provider="forbidden" />"#;
+const FRESH_CONTEXT_CONTRACT: &str =
+    r#"<model-context kind="fresh" prior-transcript="excluded" />"#;
+const REVIEWED_OPS_TERMINAL_FILE: &str = "reviewed-ops-terminal";
+
+fn fresh_context_instruction() -> String {
+    format!(
+        "{FRESH_CONTEXT_CONTRACT}\n\nUse the supervisor follow-up and typed artifacts below as the complete input for this model context. Do not reconstruct or request prior pane text, transcripts, final messages, or provider output."
+    )
+}
+
+fn reject_terminal_reviewed_ops_restore(
+    dir: &Path,
+    role: Option<&str>,
+    name: &str,
+) -> Result<(), String> {
+    if role == Some("ops") && dir.join(REVIEWED_OPS_TERMINAL_FILE).is_file() {
+        return Err(format!(
+            "refusing to restore terminal reviewed ops identity {name}: report its result or blocker to the caller and wait for a new caller-authorized session"
+        ));
+    }
+    Ok(())
+}
 
 fn reviewed_ops_result_instruction(
     request_file: &Path,
@@ -1945,6 +1967,14 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
             })
         })
     });
+    let terminal = follow_up_request.is_none();
+    if terminal {
+        fs::write(
+            ops_dir.join(REVIEWED_OPS_TERMINAL_FILE),
+            format!("requestSha256={reviewed_request_sha256}\n"),
+        )
+        .map_err(io_error("write reviewed ops terminal marker"))?;
+    }
     println!(
         "{}",
         serde_json::to_string(&serde_json::json!({
@@ -1955,6 +1985,7 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
             "opsStatus": ops_status,
             "cycleWaitedForCompletion": true,
             "additionalWaitRequired": false,
+            "terminal": terminal,
             "executionResult": execution_result,
             "opsResult": ops_result,
             "followUpRequest": follow_up_request,
@@ -2279,6 +2310,11 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         return Err(format!("no persisted subagent state: {name}"));
     }
     let metadata = read_env(&dir.join("meta.env")).unwrap_or_default();
+    reject_terminal_reviewed_ops_restore(
+        &dir,
+        metadata.get("role").map(String::as_str),
+        name,
+    )?;
     let cli = metadata
         .get("cli")
         .filter(|value| !value.is_empty())
@@ -2315,9 +2351,7 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         tmux_checked(&["kill-window", "-t", &format!("{}:{name}", cfg.session)])?;
     }
     let mut instruction = if fresh_context {
-        format!(
-            "Start a fresh provider model context for the existing subagent process `{name}`. The runtime has already applied its Linux UID, role, filesystem policy, and supervisor-mediated authority; do not authenticate, adopt, or re-verify an identity. Treat the current follow-up and typed artifacts as the work input. Do not reconstruct or request prior pane text, transcripts, final messages, or provider output.\n"
-        )
+        fresh_context_instruction()
     } else {
         format!(
             "You are a restored long-running subagent.\n\nRestoration details:\n- Subagent name: {name}\n- Prior persisted status: {}\n- Persisted state directory: {}\n- This is a fresh tmux window after an orchestrator/session recovery.\n- Do not delete, overwrite, or reset prior memory in the state directory.\n- Read the prior context below, continue only if the assignment is still valid, and report progress/final status in this tmux window.\n- If the prior state shows completion, intentional stop, stale instructions, or a blocker that needs orchestrator/user input, stop and state what you need instead of guessing.\n\nConcise prior context:\n{}\n",
@@ -4293,6 +4327,28 @@ mod tests {
         assert!(!result.contains("authenticate"));
         assert!(!result.contains("OPS_UID"));
         assert!(!result.contains("multiagent ops execute"));
+    }
+
+    #[test]
+    fn fresh_context_and_terminal_restore_contracts_are_machine_stable() {
+        let instruction = fresh_context_instruction();
+        assert!(instruction.contains(FRESH_CONTEXT_CONTRACT));
+        assert!(!instruction.contains("subagent process"));
+        assert!(!instruction.contains("identity"));
+        assert!(!instruction.contains("authority"));
+
+        let dir = std::env::temp_dir().join(format!(
+            "multiagent-terminal-reviewed-ops-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(REVIEWED_OPS_TERMINAL_FILE), "terminal\n").unwrap();
+        let error = reject_terminal_reviewed_ops_restore(&dir, Some("ops"), "ops-primary")
+            .unwrap_err();
+        assert!(error.contains("refusing to restore terminal reviewed ops identity"));
+        assert!(reject_terminal_reviewed_ops_restore(&dir, Some("worker"), "worker-01").is_ok());
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[cfg(unix)]
