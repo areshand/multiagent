@@ -950,10 +950,20 @@ fn gate_check(args: &[String]) -> Result<(), String> {
     if !args.is_empty() {
         return Err("gate-check takes no arguments".into());
     }
+    completion_gate_check_with_source_diff(true)
+}
+
+fn completion_gate_check_with_source_diff(include_source_diff: bool) -> Result<(), String> {
     let state = config::state_dir()?;
     reconcile_terminal_verifiers(&state)?;
-    let final_hash = current_final_diff_sha256()?;
-    let route_probe_required = current_diff_requires_route_probe()?;
+    let (final_hash, route_probe_required) = if include_source_diff {
+        (
+            current_final_diff_sha256()?,
+            current_diff_requires_route_probe()?,
+        )
+    } else {
+        (String::new(), false)
+    };
     let mut failed = false;
 
     for (name, status) in active_verifiers(&state)? {
@@ -1069,7 +1079,11 @@ fn gate_check(args: &[String]) -> Result<(), String> {
 }
 
 pub fn completion_gate_check() -> Result<(), String> {
-    gate_check(&[])
+    completion_gate_check_with_source_diff(true)
+}
+
+pub fn external_completion_gate_check() -> Result<(), String> {
+    completion_gate_check_with_source_diff(false)
 }
 
 fn verifier_dirs(state: &Path) -> Result<Vec<PathBuf>, String> {
