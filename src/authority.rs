@@ -73,7 +73,11 @@ impl AuthorityRequest {
             }
             "orchestrator"
                 if args.first().map(String::as_str) == Some("complete")
-                    && (args.len() == 1 || (args.len() == 2 && args[1] == "--external-only")) =>
+                    && (args.len() == 1
+                        || (args.len() == 2 && args[1] == "--external-only")
+                        || (args.len() == 4
+                            && args[1] == "--external-only"
+                            && args[2] == "--result-file")) =>
             {
                 (AuthorityOperation::OrchestratorComplete, &args[1..])
             }
@@ -311,9 +315,37 @@ mod tests {
                 strings(&["complete", "--external-only"]),
             )
         );
+        let external_completion_with_result = AuthorityRequest::from_cli(
+            "orchestrator",
+            &strings(&[
+                "complete",
+                "--external-only",
+                "--result-file",
+                "/state/orchestrator-result.md",
+            ]),
+        )
+        .expect("external-only completion with result request");
+        assert!(external_completion_with_result.authorized_for(config::ORCHESTRATOR_UID));
+        assert_eq!(
+            external_completion_with_result.into_cli(),
+            (
+                "orchestrator".to_string(),
+                strings(&[
+                    "complete",
+                    "--external-only",
+                    "--result-file",
+                    "/state/orchestrator-result.md",
+                ]),
+            )
+        );
         assert!(AuthorityRequest::from_cli(
             "orchestrator",
             &strings(&["complete", "--unsupported"]),
+        )
+        .is_none());
+        assert!(AuthorityRequest::from_cli(
+            "orchestrator",
+            &strings(&["complete", "--external-only", "--result-file"]),
         )
         .is_none());
     }
