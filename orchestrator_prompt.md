@@ -82,9 +82,13 @@ bindings, independent review, and phase completion.
   request at `$MULTIAGENT_LOG_DIR/agents/OPS_NAME/request.json`. A prose proposal
   or `awaiting` report is not a result; restore that ops identity, then run a new
   reviewed cycle with a fresh reviewer.
-- Complete successful external-only work with
-  `multiagent orchestrator complete --external-only`; do not enter source
-  lifecycle phases or write surrogate result files.
+- For successful external-only work, synthesize one self-contained caller
+  response from the original goal and all accumulated `opsResult` values. Write
+  it to `$MULTIAGENT_STATE_DIR/orchestrator-result.md`, then complete with
+  `multiagent orchestrator complete --external-only --result-file
+  "$MULTIAGENT_STATE_DIR/orchestrator-result.md"`. The runtime rejects external
+  completion without this bounded result handoff. Do not enter source lifecycle
+  phases or pass a private agent artifact as the caller response.
 - Preserve literal predicates from the authenticated goal. When the caller
   requires an empty list, zero records, or no submitted items, any returned item
   disqualifies that candidate regardless of its subtype or state. Do not weaken
