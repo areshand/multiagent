@@ -1253,10 +1253,7 @@ pub fn supervisor_complete_external(id: &str) -> Result<String, String> {
             state_value(&state, "phase")
         ));
     }
-    if !state_value(&state, "preimplementation_gate").is_empty()
-        || !state_value(&state, "decision_id").is_empty()
-        || !state_value(&state, "candidate_diff_hash").is_empty()
-    {
+    if source_implementation_started(&state) {
         return Err(
             "external-only completion cannot bypass a started source implementation lifecycle"
                 .into(),
@@ -1341,6 +1338,25 @@ pub fn supervisor_complete_external(id: &str) -> Result<String, String> {
         ),
     )?;
     Ok(result)
+}
+
+fn source_implementation_started(state: &BTreeMap<String, String>) -> bool {
+    !matches!(state_value(state, "preimplementation_gate"), "" | "pending")
+        || [
+            "contract_scout",
+            "contract_artifact",
+            "contract_artifact_sha256",
+            "decision_id",
+            "plan_id",
+            "decision_revision",
+            "implementation_context",
+            "implementation_context_sha256",
+            "authority_review_id",
+            "candidate_diff_hash",
+            "reviewed_diff_hash",
+        ]
+        .iter()
+        .any(|key| !state_value(state, key).is_empty())
 }
 
 fn value(args: &[String]) -> Result<(), String> {
@@ -2091,6 +2107,23 @@ mod tests {
             fields: std::array::from_fn(|i| format!("v{i}")),
         };
         assert_eq!(Todo::parse(&row.line()).fields, row.fields);
+    }
+
+    #[test]
+    fn external_only_completion_distinguishes_pristine_state_from_source_work() {
+        let mut state = BTreeMap::from([("preimplementation_gate".into(), "pending".into())]);
+        assert!(!source_implementation_started(&state));
+
+        state.insert("decision_id".into(), "DEC-1".into());
+        assert!(source_implementation_started(&state));
+        state.remove("decision_id");
+
+        state.insert("contract_artifact".into(), "/tmp/contract.md".into());
+        assert!(source_implementation_started(&state));
+        state.remove("contract_artifact");
+
+        state.insert("preimplementation_gate".into(), "passed".into());
+        assert!(source_implementation_started(&state));
     }
 
     #[test]
