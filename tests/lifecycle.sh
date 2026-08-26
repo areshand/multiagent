@@ -368,4 +368,32 @@ assert_contains "$TEST_TMP/complete.out" $'run completed\tRUN-LIFECYCLE'
 assert_contains "$LOOP_STATE/workflows/WF-LOOP/lifecycle/lifecycle.env" "phase=complete"
 assert_contains "$LOOP_STATE/workflows/WF-LOOP/lifecycle/events.log" "authority=supervisor"
 
+EXTERNAL_STATE="$TEST_TMP/external-state"
+EXTERNAL_ROOT="$TEST_TMP/external-non-git-root"
+mkdir -p "$EXTERNAL_ROOT" "$EXTERNAL_STATE/operations/OP-EXTERNAL"
+MULTIAGENT_STATE_DIR="$EXTERNAL_STATE" "$MULTIAGENT" workflow init WF-EXTERNAL >/dev/null
+cat >"$EXTERNAL_STATE/operations/OP-EXTERNAL/receipt.json" <<'EOF'
+{
+  "result": {
+    "structuredContent": {
+      "state": "succeeded",
+      "outcome": {
+        "disposition": "succeeded",
+        "terminal": true
+      }
+    }
+  }
+}
+EOF
+MULTIAGENT_ROOT="$EXTERNAL_ROOT" MULTIAGENT_STATE_DIR="$EXTERNAL_STATE" \
+  MULTIAGENT_WORKFLOW_ID=WF-EXTERNAL MULTIAGENT_RUN_ID=RUN-EXTERNAL \
+  MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
+  "$MULTIAGENT" orchestrator complete --external-only \
+  >"$TEST_TMP/external-complete.out"
+assert_contains "$TEST_TMP/external-complete.out" $'run completed\tRUN-EXTERNAL'
+assert_contains "$EXTERNAL_STATE/workflows/WF-EXTERNAL/lifecycle/lifecycle.env" \
+  "phase=complete"
+assert_contains "$EXTERNAL_STATE/workflows/WF-EXTERNAL/lifecycle/events.log" \
+  "route=external-only"
+
 echo "implementation lifecycle tests passed"

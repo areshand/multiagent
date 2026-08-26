@@ -1322,7 +1322,7 @@ pub fn supervisor_complete_external(id: &str) -> Result<String, String> {
                 .into(),
         );
     }
-    crate::subagent::completion_gate_check()?;
+    crate::subagent::external_completion_gate_check()?;
     let result = format!("external-only:{successful_operations}");
     state.insert("phase".into(), "complete".into());
     state.insert("candidate_diff_hash".into(), result.clone());
