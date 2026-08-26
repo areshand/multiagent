@@ -6,7 +6,16 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { WebSocket, WebSocketServer } from "ws";
 import { jobPhase, KubernetesSessionClient } from "./kubernetes-session.mjs";
-import { controlMode, findActiveSession, sessionControlInvocation, sessionLaunchInvocation, validResourceId } from "./session-runtime.mjs";
+import {
+  completionExitDelayMs,
+  controlMode,
+  findActiveSession,
+  normalizeWorkerReport,
+  selectFinalMessage,
+  sessionControlInvocation,
+  sessionLaunchInvocation,
+  validResourceId,
+} from "./session-runtime.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(here, "../public");
@@ -25,6 +34,7 @@ const sessionTtlSeconds = Number(process.env.MULTIAGENT_LOGIN_TTL_SECONDS || "43
 const captureLines = Math.min(Number(process.env.MULTIAGENT_CAPTURE_LINES || "1200"), 5000);
 const snapshotIntervalMs = Math.max(Number(process.env.MULTIAGENT_SNAPSHOT_INTERVAL_SECONDS || "60"), 15) * 1000;
 const idleTimeoutMs = Math.max(Number(process.env.MULTIAGENT_IDLE_TIMEOUT_SECONDS || "86400"), 300) * 1000;
+const completionGraceMs = completionExitDelayMs();
 const uidSandbox = process.env.MULTIAGENT_UID_SANDBOX === "1";
 const mode = controlMode();
 const gatewayMode = mode === "gateway";
@@ -184,6 +194,10 @@ function traceRoot(id) {
   return path.join(sessionStateDir(id), "logs");
 }
 
+function gatewayReportFile(id) {
+  return path.join(stateRoot, "control-server", "reports", `${id}.json`);
+}
+
 function conciseTail(value, lines = 80, characters = 12000) {
   return String(value || "").split("\n").slice(-lines).join("\n").slice(-characters);
 }
@@ -222,8 +236,11 @@ function traceReferences(id) {
 function writeTraceSummary(id, status) {
   const root = traceRoot(id);
   fs.mkdirSync(root, { recursive: true });
-  let finalMessage = "";
-  try { finalMessage = conciseTail(fs.readFileSync(path.join(sessionStateDir(id), "orchestrator-last-message.txt"), "utf8"), 40, 6000); } catch {}
+  let result = "";
+  let fallback = "";
+  try { result = conciseTail(fs.readFileSync(path.join(sessionStateDir(id), "orchestrator-result.md"), "utf8"), 80, 6000); } catch {}
+  try { fallback = conciseTail(fs.readFileSync(path.join(sessionStateDir(id), "orchestrator-last-message.txt"), "utf8"), 40, 6000); } catch {}
+  const finalMessage = selectFinalMessage(result, fallback);
   const references = traceReferences(id);
   const report = {
     taskId: id,
@@ -310,6 +327,7 @@ async function launchGatewaySession(id, repository, resume, actor, originalTask 
   if (!task || task.length > 32768) throw new Error("task must contain 1 to 32768 characters");
   const repositoryUrl = configuredRepository(repository);
   const callerSubject = `caller-${crypto.createHash("sha256").update(actor).digest("hex").slice(0, 32)}`;
+  fs.rmSync(gatewayReportFile(id), { force: true });
   await kubernetes.createSession({
     id,
     task,
@@ -335,12 +353,61 @@ async function launchGatewaySession(id, repository, resume, actor, originalTask 
   return registry.sessions[id];
 }
 
+function readGatewayReport(id) {
+  try { return normalizeWorkerReport(JSON.parse(fs.readFileSync(gatewayReportFile(id), "utf8"))); }
+  catch { return null; }
+}
+
+async function writeGatewayReport(id, report) {
+  const file = gatewayReportFile(id);
+  await fs.promises.mkdir(path.dirname(file), { recursive: true });
+  const temporary = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  await fs.promises.writeFile(temporary, JSON.stringify(report) + "\n", { mode: 0o600 });
+  await fs.promises.rename(temporary, file);
+}
+
+function fetchWorkerReport(id, podIP, username) {
+  return new Promise((resolve, reject) => {
+    const request = http.request({
+      hostname: podIP,
+      port: 8080,
+      method: "GET",
+      path: `/api/sessions/${id}/report`,
+      headers: { accept: "application/json", cookie: `multiagent_session=${issueSession(username)}` },
+      timeout: 3000,
+    }, (response) => {
+      const chunks = [];
+      let size = 0;
+      response.on("data", (chunk) => {
+        size += chunk.length;
+        if (size > 128 * 1024) response.destroy(new Error("session report exceeds cache limit"));
+        else chunks.push(chunk);
+      });
+      response.on("end", () => {
+        if (response.statusCode < 200 || response.statusCode >= 300) return reject(new Error(`session worker report returned ${response.statusCode}`));
+        try { resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))); }
+        catch { reject(new Error("session worker returned invalid report JSON")); }
+      });
+    });
+    request.on("timeout", () => request.destroy(new Error("session worker report timed out")));
+    request.on("error", reject);
+    request.end();
+  });
+}
+
 async function reconcileGatewaySession(id) {
   const record = registry.sessions[id];
   if (!record) return null;
   const [job, pod] = await Promise.all([kubernetes.getJob(id), kubernetes.getPod(id)]);
   const status = jobPhase(job);
-  const live = status === "running" && Boolean(pod?.status?.podIP);
+  const podIP = pod?.status?.podIP || null;
+  const live = status === "running" && Boolean(podIP);
+  if (live && !readGatewayReport(id)) {
+    try {
+      const report = normalizeWorkerReport(await fetchWorkerReport(id, podIP, record.createdBy));
+      if (report) await writeGatewayReport(id, report);
+    } catch {}
+  }
   if (record.status !== status || record.live !== live || record.podIP !== pod?.status?.podIP) {
     record.status = status;
     record.live = live;
@@ -554,7 +621,15 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && reportMatch) {
       const id = reportMatch[1];
       if (!registry.sessions[id]) return json(response, 404, { error: "unknown session" });
-      if (gatewayMode) return proxyHttp(request, response, await workerEndpoint(id));
+      if (gatewayMode) {
+        const cached = readGatewayReport(id);
+        if (cached) return json(response, 200, cached);
+        const record = await reconcileGatewaySession(id);
+        const refreshed = readGatewayReport(id);
+        if (refreshed) return json(response, 200, refreshed);
+        if (!record?.podIP) return json(response, 200, { report: "", transcript: null });
+        return proxyHttp(request, response, `http://${record.podIP}:8080`);
+      }
       try {
         const report = fs.readFileSync(path.join(traceRoot(id), "final-report.md"), "utf8");
         const transcript = JSON.parse(fs.readFileSync(path.join(traceRoot(id), "transcript-index.json"), "utf8"));
@@ -697,6 +772,7 @@ for (const record of gatewayMode ? [] : Object.values(registry.sessions)) {
     record.updatedAt = now;
     writeTraceSummary(record.id, "completed");
     saveRegistry();
+    if (workerMode) setTimeout(() => process.exit(0), completionGraceMs);
   } else if (record.status === "running" && record.autoResume && !tmuxAlive(record.id)) {
     try { launchSession(record.id, record.repository, true, "system"); } catch (error) { console.error(`restore failed for ${record.id}`, error); }
   }
@@ -711,7 +787,7 @@ const retirementTimer = setInterval(() => {
   for (const record of Object.values(registry.sessions)) {
     if (record.status === "running" && workflowPhase(record.id) === "complete") {
       retireSession(record.id, "completed", "workflow-supervisor").then(() => {
-        if (workerMode) setTimeout(() => process.exit(0), 1000);
+        if (workerMode) setTimeout(() => process.exit(0), completionGraceMs);
       }).catch((error) => console.error(`completion retirement failed for ${record.id}`, error));
       continue;
     }

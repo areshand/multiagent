@@ -84,9 +84,21 @@ session. Do not restore an agent to repeat the question or continue waiting
 without a new caller response.
 
 When `terminal` is true, the runtime records a terminal reviewed-cycle marker
-and rejects every later restore of that ops identity. Report `opsResult` to the
-caller and stop; a new caller-authorized session is required for more work.
+and rejects every later restore of that ops identity. Use the accumulated
+`opsResult` values and the original goal to compose one self-contained caller
+response. It must include every caller-requested field and its supporting
+evidence, not merely a completion statement. A new caller-authorized session is
+required for more work.
 
 For an external-only task with successful reviewed operations and no source
-changes, finish with `multiagent orchestrator complete --external-only`. Do not
-manufacture source lifecycle phases or files.
+changes, write that caller response to
+`$MULTIAGENT_STATE_DIR/orchestrator-result.md`, then finish with:
+
+```bash
+multiagent orchestrator complete --external-only \
+  --result-file "$MULTIAGENT_STATE_DIR/orchestrator-result.md"
+```
+
+The result artifact is the control server handoff, not a substitute for an
+operation receipt. Do not pass a private agent artifact as the caller response,
+and do not manufacture source lifecycle phases or files.

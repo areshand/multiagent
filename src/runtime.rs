@@ -1047,19 +1047,27 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
             .iter()
             .any(|arg| matches!(arg.as_str(), "-h" | "--help"))
     {
-        println!("Usage:\n  multiagent orchestrator complete [--external-only]\n\nRuns the supervisor completion gates. Use --external-only only for reviewed operations with no source implementation lifecycle.");
+        println!("Usage:\n  multiagent orchestrator complete\n  multiagent orchestrator complete --external-only --result-file PATH\n\nRuns the supervisor completion gates. External-only completion requires a self-contained caller result under MULTIAGENT_STATE_DIR.");
         return Ok(ExitCode::SUCCESS);
     }
-    if args.first().map(String::as_str) != Some("complete")
-        || args.len() > 2
-        || (args.len() == 2 && args[1] != "--external-only")
+    let result_file = if args.len() == 1 && args[0] == "complete" {
+        None
+    } else if args.len() == 4
+        && args[0] == "complete"
+        && args[1] == "--external-only"
+        && args[2] == "--result-file"
     {
+        Some(args[3].as_str())
+    } else {
         return Err(format!("unknown command: {}", args[0]));
+    };
+    if let Some(path) = result_file {
+        persist_orchestrator_result(path)?;
     }
     if config::lifecycle_enforced() {
         let workflow_id = env_nonempty("MULTIAGENT_WORKFLOW_ID")
             .ok_or_else(|| "lifecycle enforcement requires MULTIAGENT_WORKFLOW_ID".to_string())?;
-        let diff = if args.get(1).map(String::as_str) == Some("--external-only") {
+        let diff = if result_file.is_some() {
             crate::workflow::supervisor_complete_external(&workflow_id)?
         } else {
             crate::workflow::supervisor_complete(&workflow_id)?
@@ -1075,6 +1083,36 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
             .unwrap_or_else(|| "unknown".into())
     );
     Ok(ExitCode::SUCCESS)
+}
+
+fn persist_orchestrator_result(path: &str) -> Result<(), String> {
+    const MAX_RESULT_BYTES: usize = 6_000;
+    let state = config::state_dir()?;
+    let canonical_state =
+        fs::canonicalize(&state).map_err(io_error("canonicalize state directory"))?;
+    let candidate = fs::canonicalize(path).map_err(io_error("canonicalize orchestrator result"))?;
+    if !candidate.starts_with(&canonical_state) || !candidate.is_file() {
+        return Err(
+            "external-only result file must be a regular file under MULTIAGENT_STATE_DIR".into(),
+        );
+    }
+    let bytes = fs::read(&candidate).map_err(io_error("read orchestrator result"))?;
+    if bytes.is_empty() || bytes.len() > MAX_RESULT_BYTES {
+        return Err(format!(
+            "external-only result must contain 1 to {MAX_RESULT_BYTES} UTF-8 bytes"
+        ));
+    }
+    let result = String::from_utf8(bytes)
+        .map_err(|_| "external-only result must contain valid UTF-8".to_string())?;
+    let result = result.trim();
+    if result.is_empty() {
+        return Err("external-only result must not be blank".into());
+    }
+    atomic_write(
+        &state.join("orchestrator-result.md"),
+        &format!("{result}\n"),
+        "orchestrator result",
+    )
 }
 
 pub fn status(args: &[String]) -> Result<ExitCode, String> {

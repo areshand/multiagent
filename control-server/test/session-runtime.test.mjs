@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { controlMode, findActiveSession, sessionControlInvocation, sessionLaunchInvocation, validResourceId } from "../src/session-runtime.mjs";
+import {
+  completionExitDelayMs,
+  controlMode,
+  findActiveSession,
+  normalizeWorkerReport,
+  selectFinalMessage,
+  sessionControlInvocation,
+  sessionLaunchInvocation,
+  validResourceId,
+} from "../src/session-runtime.mjs";
 
 test("control server session IDs match the shared Rust contract", async () => {
   const vectors = JSON.parse(
@@ -38,4 +47,22 @@ test("control mode defaults to local and accepts only explicit deployment modes"
   assert.equal(controlMode("gateway"), "gateway");
   assert.equal(controlMode("session-worker"), "session-worker");
   assert.throws(() => controlMode("kubernetes"), /unsupported control mode/);
+});
+
+test("completed session reports prefer the explicit bounded caller result", () => {
+  assert.equal(selectFinalMessage("caller result\n", "procedural fallback"), "caller result");
+  assert.equal(selectFinalMessage("", "procedural fallback\n"), "procedural fallback");
+  assert.deepEqual(normalizeWorkerReport({ report: "complete result", transcript: { taskId: "task-1" } }), {
+    report: "complete result",
+    transcript: { taskId: "task-1" },
+  });
+  assert.equal(normalizeWorkerReport({ report: "" }), null);
+  assert.equal(normalizeWorkerReport({ report: "x".repeat(64 * 1024 + 1) }), null);
+});
+
+test("session completion grace is bounded and has a stable default", () => {
+  assert.equal(completionExitDelayMs(), 30_000);
+  assert.equal(completionExitDelayMs("1"), 10_000);
+  assert.equal(completionExitDelayMs("999"), 120_000);
+  assert.equal(completionExitDelayMs("invalid"), 30_000);
 });

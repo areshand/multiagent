@@ -372,6 +372,8 @@ EXTERNAL_STATE="$TEST_TMP/external-state"
 EXTERNAL_ROOT="$TEST_TMP/external-non-git-root"
 mkdir -p "$EXTERNAL_ROOT" "$EXTERNAL_STATE/operations/OP-EXTERNAL"
 MULTIAGENT_STATE_DIR="$EXTERNAL_STATE" "$MULTIAGENT" workflow init WF-EXTERNAL >/dev/null
+EXTERNAL_RESULT="$EXTERNAL_STATE/external-result-candidate.md"
+printf 'External operation completed with reviewed evidence.\n' >"$EXTERNAL_RESULT"
 cat >"$EXTERNAL_STATE/operations/OP-EXTERNAL/receipt.json" <<'EOF'
 {
   "result": {
@@ -385,15 +387,26 @@ cat >"$EXTERNAL_STATE/operations/OP-EXTERNAL/receipt.json" <<'EOF'
   }
 }
 EOF
-MULTIAGENT_ROOT="$EXTERNAL_ROOT" MULTIAGENT_STATE_DIR="$EXTERNAL_STATE" \
+if MULTIAGENT_ROOT="$EXTERNAL_ROOT" MULTIAGENT_STATE_DIR="$EXTERNAL_STATE" \
   MULTIAGENT_WORKFLOW_ID=WF-EXTERNAL MULTIAGENT_RUN_ID=RUN-EXTERNAL \
   MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
   "$MULTIAGENT" orchestrator complete --external-only \
+  >"$TEST_TMP/external-missing-result.out" 2>&1; then
+  echo "expected external-only completion without a caller result to fail" >&2
+  exit 1
+fi
+assert_contains "$TEST_TMP/external-missing-result.out" "unknown command"
+MULTIAGENT_ROOT="$EXTERNAL_ROOT" MULTIAGENT_STATE_DIR="$EXTERNAL_STATE" \
+  MULTIAGENT_WORKFLOW_ID=WF-EXTERNAL MULTIAGENT_RUN_ID=RUN-EXTERNAL \
+  MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
+  "$MULTIAGENT" orchestrator complete --external-only --result-file "$EXTERNAL_RESULT" \
   >"$TEST_TMP/external-complete.out"
 assert_contains "$TEST_TMP/external-complete.out" $'run completed\tRUN-EXTERNAL'
 assert_contains "$EXTERNAL_STATE/workflows/WF-EXTERNAL/lifecycle/lifecycle.env" \
   "phase=complete"
 assert_contains "$EXTERNAL_STATE/workflows/WF-EXTERNAL/lifecycle/events.log" \
   "route=external-only"
+assert_contains "$EXTERNAL_STATE/orchestrator-result.md" \
+  "External operation completed with reviewed evidence."
 
 echo "implementation lifecycle tests passed"
