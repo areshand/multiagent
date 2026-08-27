@@ -1274,6 +1274,7 @@ pub fn supervisor_complete_external(id: &str) -> Result<String, String> {
     }
     let operations_dir = store.state_dir.join("operations");
     let mut successful_operations = 0usize;
+    let mut failed_operations = 0usize;
     if operations_dir.is_dir() {
         for entry in fs::read_dir(&operations_dir)
             .map_err(|error| format!("list external operation receipts: {error}"))?
@@ -1297,23 +1298,31 @@ pub fn supervisor_complete_external(id: &str) -> Result<String, String> {
             let structured = receipt
                 .pointer("/result/structuredContent")
                 .unwrap_or(&serde_json::Value::Null);
-            let succeeded = structured.get("state").and_then(serde_json::Value::as_str)
-                == Some("succeeded")
-                && structured
-                    .pointer("/outcome/disposition")
-                    .and_then(serde_json::Value::as_str)
-                    == Some("succeeded")
-                && structured
-                    .pointer("/outcome/terminal")
-                    .and_then(serde_json::Value::as_bool)
-                    == Some(true);
-            if !succeeded {
+            if structured
+                .pointer("/outcome/terminal")
+                .and_then(serde_json::Value::as_bool)
+                != Some(true)
+            {
                 return Err(format!(
-                    "external-only completion requires successful terminal receipts; {} is not successful",
+                    "external-only completion requires terminal receipts; {} is not terminal",
                     receipt_path.display()
                 ));
             }
-            successful_operations += 1;
+            match (
+                structured.get("state").and_then(serde_json::Value::as_str),
+                structured
+                    .pointer("/outcome/disposition")
+                    .and_then(serde_json::Value::as_str),
+            ) {
+                (Some("succeeded"), Some("succeeded")) => successful_operations += 1,
+                (Some("failed"), Some("failed")) => failed_operations += 1,
+                _ => {
+                    return Err(format!(
+                        "external-only completion requires consistently classified terminal receipts; {} has mismatched state and disposition",
+                        receipt_path.display()
+                    ));
+                }
+            }
         }
     }
     if successful_operations == 0 {
@@ -1333,7 +1342,7 @@ pub fn supervisor_complete_external(id: &str) -> Result<String, String> {
         &p.events,
         "phase_transitioned",
         &format!(
-            "from=pre-implementation\tto=complete\titeration={}\tauthority=supervisor\troute=external-only\toperations={successful_operations}",
+            "from=pre-implementation\tto=complete\titeration={}\tauthority=supervisor\troute=external-only\toperations={successful_operations}\tfailed_operations={failed_operations}",
             state_value(&state, "iteration")
         ),
     )?;

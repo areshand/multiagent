@@ -387,6 +387,37 @@ cat >"$EXTERNAL_STATE/operations/OP-EXTERNAL/receipt.json" <<'EOF'
   }
 }
 EOF
+mkdir -p "$EXTERNAL_STATE/operations/OP-FAILED" "$EXTERNAL_STATE/operations/OP-NONTERMINAL"
+cat >"$EXTERNAL_STATE/operations/OP-FAILED/receipt.json" <<'EOF'
+{
+  "result": {
+    "structuredContent": {
+      "state": "failed",
+      "outcome": {
+        "disposition": "failed",
+        "terminal": true,
+        "retryable": false,
+        "code": "executor_failure"
+      }
+    }
+  }
+}
+EOF
+cat >"$EXTERNAL_STATE/operations/OP-NONTERMINAL/receipt.json" <<'EOF'
+{
+  "result": {
+    "structuredContent": {
+      "state": "failed",
+      "outcome": {
+        "disposition": "failed",
+        "terminal": false,
+        "retryable": true,
+        "code": "operation_pending"
+      }
+    }
+  }
+}
+EOF
 if MULTIAGENT_ROOT="$EXTERNAL_ROOT" MULTIAGENT_STATE_DIR="$EXTERNAL_STATE" \
   MULTIAGENT_WORKFLOW_ID=WF-EXTERNAL MULTIAGENT_RUN_ID=RUN-EXTERNAL \
   MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
@@ -396,6 +427,19 @@ if MULTIAGENT_ROOT="$EXTERNAL_ROOT" MULTIAGENT_STATE_DIR="$EXTERNAL_STATE" \
   exit 1
 fi
 assert_contains "$TEST_TMP/external-missing-result.out" "unknown command"
+if MULTIAGENT_ROOT="$EXTERNAL_ROOT" MULTIAGENT_STATE_DIR="$EXTERNAL_STATE" \
+  MULTIAGENT_WORKFLOW_ID=WF-EXTERNAL MULTIAGENT_RUN_ID=RUN-EXTERNAL \
+  MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
+  "$MULTIAGENT" orchestrator complete --external-only --result-file "$EXTERNAL_RESULT" \
+  >"$TEST_TMP/external-nonterminal.out" 2>&1; then
+  echo "expected external-only completion with a nonterminal receipt to fail" >&2
+  exit 1
+fi
+assert_contains "$TEST_TMP/external-nonterminal.out" \
+  "external-only completion requires terminal receipts"
+sed -i.bak 's/"terminal": false/"terminal": true/' \
+  "$EXTERNAL_STATE/operations/OP-NONTERMINAL/receipt.json"
+rm "$EXTERNAL_STATE/operations/OP-NONTERMINAL/receipt.json.bak"
 MULTIAGENT_ROOT="$EXTERNAL_ROOT" MULTIAGENT_STATE_DIR="$EXTERNAL_STATE" \
   MULTIAGENT_WORKFLOW_ID=WF-EXTERNAL MULTIAGENT_RUN_ID=RUN-EXTERNAL \
   MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
@@ -406,6 +450,8 @@ assert_contains "$EXTERNAL_STATE/workflows/WF-EXTERNAL/lifecycle/lifecycle.env" 
   "phase=complete"
 assert_contains "$EXTERNAL_STATE/workflows/WF-EXTERNAL/lifecycle/events.log" \
   "route=external-only"
+assert_contains "$EXTERNAL_STATE/workflows/WF-EXTERNAL/lifecycle/events.log" \
+  $'operations=1\tfailed_operations=2'
 assert_contains "$EXTERNAL_STATE/orchestrator-result.md" \
   "External operation completed with reviewed evidence."
 
