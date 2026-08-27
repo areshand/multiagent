@@ -28,14 +28,17 @@ aside { border-right:1px solid var(--line); background:#202119; overflow:auto; }
 .session { width:100%; display:block; text-align:left; padding:1rem 1.2rem; background:transparent; color:var(--paper); border:0; border-bottom:1px solid #303126; text-transform:none; letter-spacing:0; }
 .session.active { background:#303226; box-shadow:inset 4px 0 var(--acid); }
 .session small { display:block; color:var(--muted); margin-top:.35rem; }
-.terminal-panel { min-width:0; display:grid; grid-template-rows:auto 1fr auto; background:#10110d; }
+.empty-list { padding:1rem 1.2rem; color:var(--muted); font-size:.78rem; }
+.terminal-panel { min-width:0; display:grid; grid-template-rows:auto auto minmax(0,1fr) auto; background:#10110d; }
 .terminal-head { display:flex; align-items:center; justify-content:space-between; padding:1rem 1.25rem; border-bottom:1px solid var(--line); }
 .terminal-head small { display:block; color:var(--muted); margin:.35rem 0 0 1.2rem; }
 .dot { display:inline-block; width:8px; height:8px; margin-right:.7rem; border-radius:50%; background:#555; }
 .dot.live { background:var(--acid); box-shadow:0 0 12px var(--acid); }
 .actions { display:flex; gap:.5rem; }
-#terminal { margin:0; padding:1.5rem; overflow:auto; white-space:pre-wrap; word-break:break-word; color:#d6d2c4; font:13px/1.52 "IBM Plex Mono","Courier New",monospace; }
-#message-form { display:grid; grid-template-columns:1fr auto; gap:.75rem; padding:1rem; border-top:1px solid var(--line); background:#1b1c15; }
+#terminal { grid-row:3; margin:0; padding:1.5rem; overflow:auto; white-space:pre-wrap; word-break:break-word; color:#d6d2c4; font:13px/1.52 "IBM Plex Mono","Courier New",monospace; }
+#report { margin:0; padding:1rem 1.5rem; max-height:28vh; overflow:auto; white-space:pre-wrap; word-break:break-word; border-bottom:1px solid var(--line); color:#b9b4a6; font:12px/1.5 "IBM Plex Mono","Courier New",monospace; }
+#report:empty { display:none; }
+#message-form { grid-row:4; display:grid; grid-template-columns:1fr auto; gap:.75rem; padding:1rem; border-top:1px solid var(--line); background:#1b1c15; }
 #message { resize:vertical; min-height:66px; }
 dialog { width:min(480px,calc(100% - 2rem)); border:1px solid #696b57; background:#202119; color:var(--paper); padding:2rem; box-shadow:12px 12px 0 #090a07; }
 dialog::backdrop { background:#080906cc; }
