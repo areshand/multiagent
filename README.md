@@ -8,10 +8,10 @@ accepts work only when reviewer evidence matches the exact final Git diff.
 ## Stateful control server and client CLI
 
 The container image runs an authenticated HTTP/WebSocket gateway as PID 1. The
-repo-owned client CLI is the primary user and test interface; the browser serves
-only a minimal gateway-reachability page. Durable threads own public history and
-route work to isolated execution sessions. Completed threads retain their public
-events, reports, and trace references without requiring a live session worker.
+repo-owned terminal client is the user and test interface; there is no browser
+UI. Durable threads own public history and route work to isolated execution
+sessions. Completed threads retain their public events, reports, and trace
+references without requiring a live session worker.
 
 The production container runs its authenticated control server as trusted UID 10000. A root-owned setuid launcher accepts privileged bootstrap and session launch only from that UID. The orchestrator, writer, readers, authority supervisor, and operations agent run as fixed UIDs 10001 through 10005. Only the setuid-gated `role-agent-exec` path may launch a registered role process; Landlock and Unix ownership enforce its filesystem boundary. The tmux environment is allowlisted so KMS, prod-mcp, GitHub, and AWS workload credentials remain available only to the authority supervisor and trusted control process.
 
@@ -49,14 +49,19 @@ The PVC mounted at `/var/lib/multiagent` is the primary store for repositories, 
 
 ### Client CLI
 
-The CLI uses the same public thread API as other clients and outputs JSON by
-default. Login stores only the scoped session cookie in a local file with mode
-`0600`; the password is read from a hidden prompt or stdin and is never accepted
-as a command-line option.
+The client uses the public thread API directly. With no command it opens a
+persistent, Claude Code-style terminal for listing, selecting, creating, and
+continuing threads. Its explicit subcommands output JSON for agents, scripts,
+and debugging. Login stores only the scoped session cookie in a local file with
+mode `0600`; the password is read from a hidden prompt or stdin and is never
+accepted as a command-line option.
 
 ```bash
 cd control-server
 npm run client -- --server https://agent.example login operator
+npm run client --
+
+# Non-interactive examples
 npm run client -- threads list
 npm run client -- repositories list
 npm run client -- threads create incident-123 \

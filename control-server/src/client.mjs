@@ -3,14 +3,16 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { createInterface } from "node:readline/promises";
 
-export const usage = `Usage: multiagent-client [global options] <command>
+export const usage = `Usage: multiagent-client [global options] [connect [THREAD_ID] | <command>]
 
 Global options:
   --server URL          Control-server URL (or MULTIAGENT_SERVER)
   --session-file PATH   Login session file (or MULTIAGENT_CLIENT_SESSION_FILE)
 
 Commands:
+  connect [THREAD_ID]   Open the interactive terminal client (default)
   login USERNAME
   logout
   whoami
@@ -25,7 +27,19 @@ Commands:
   legacy report SESSION_ID
 
 Passwords are read from a hidden terminal prompt or stdin. Command output is JSON;
-thread watch emits one JSON event per line.`;
+thread watch emits one JSON event per line. Run without a command for the
+interactive terminal client.`;
+
+const interactiveHelp = `Commands:
+  /threads                 List threads
+  /open THREAD_ID          Open a thread
+  /new THREAD_ID REPO      Create and open a thread
+  /sessions                List execution sessions for the open thread
+  /refresh                 Replay new events
+  /help                    Show this help
+  /quit                    Exit
+
+After opening a thread, enter a message normally to send it.`;
 
 export class ClientError extends Error {
   constructor(message, { statusCode = null, body = null } = {}) {
@@ -72,12 +86,13 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
   const fetchImpl = dependencies.fetchImpl || globalThis.fetch;
   const sleep = dependencies.sleep || ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
   const readPassword = dependencies.readPassword || (() => readSecret(stdin, stderr));
+  const createInterfaceImpl = dependencies.createInterface || createInterface;
   const parsed = parseGlobalOptions(argv);
   const sessionFile = path.resolve(parsed.sessionFile || environment.MULTIAGENT_CLIENT_SESSION_FILE || defaultSessionFile());
   const stored = await loadSession(sessionFile);
   const server = parsed.server || environment.MULTIAGENT_SERVER || stored?.server;
   const command = parsed.args.shift();
-  if (!command || command === "help" || command === "--help" || command === "-h") {
+  if (command === "help" || command === "--help" || command === "-h") {
     stdout.write(usage + "\n");
     return 0;
   }
@@ -85,6 +100,13 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
   const normalizedServer = normalizeServer(server).href;
   const cookie = stored?.server === normalizedServer ? stored.cookie : "";
   const client = new ControlClient({ server: normalizedServer, cookie, fetchImpl });
+
+  if (!command || command === "connect") {
+    if (!client.cookie) throw new ClientError(`not logged in to ${normalizedServer}; run the login command first`);
+    const initialThreadId = command === "connect" ? parsed.args.shift() || "" : "";
+    rejectExtraArguments(parsed.args);
+    return runInteractive({ client, stdin, stdout, sleep, createInterfaceImpl, initialThreadId });
+  }
 
   if (command === "login") {
     const username = requiredArgument(parsed.args.shift(), "username");
@@ -134,6 +156,135 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
     return runLegacy({ client, args: parsed.args, stdout });
   }
   throw new ClientError(`unknown command: ${command}\n\n${usage}`);
+}
+
+export async function runInteractive({ client, stdin, stdout, sleep, createInterfaceImpl = createInterface, initialThreadId = "" }) {
+  if (!stdin?.isTTY) throw new ClientError("interactive mode requires a terminal; use a JSON command for non-interactive calls");
+  const terminal = createInterfaceImpl({ input: stdin, output: stdout, terminal: true });
+  let threads = [];
+  let current = null;
+  let cursor = 0;
+
+  const listThreads = async () => {
+    threads = (await client.request("/api/threads")).value.threads || [];
+    if (!threads.length) {
+      stdout.write("\nNo threads. Create one with /new THREAD_ID REPOSITORY.\n");
+      return;
+    }
+    stdout.write("\nThreads\n");
+    threads.forEach((thread, index) => {
+      const title = thread.title && thread.title !== thread.id ? ` — ${thread.title}` : "";
+      stdout.write(`  ${index + 1}. ${thread.id}${title}  [${thread.state}]  ${thread.repository}\n`);
+    });
+  };
+
+  const replay = async ({ all = false } = {}) => {
+    if (!current) return [];
+    const after = all ? 0 : cursor;
+    const response = await client.request(`/api/threads/${encodeURIComponent(current.id)}/events?after_sequence=${after}&limit=500`);
+    const events = response.value.events || [];
+    if (all) cursor = 0;
+    for (const event of events) {
+      cursor = Math.max(cursor, Number(event.sequence) || 0);
+      renderInteractiveEvent(stdout, event);
+    }
+    return events;
+  };
+
+  const openThread = async (selector) => {
+    const selected = selectThread(threads, selector);
+    const response = await client.request(`/api/threads/${encodeURIComponent(selected)}`);
+    current = response.value.thread;
+    cursor = 0;
+    stdout.write(`\nOpened ${current.id} [${current.state}] — ${current.repository}\n`);
+    await replay({ all: true });
+  };
+
+  const waitForReply = async () => {
+    while (true) {
+      const events = await replay();
+      if (events.some((event) => new Set(["assistant_message", "question", "session_interrupted"]).has(event.type))) return;
+      await sleep(1000);
+    }
+  };
+
+  stdout.write("Multiagent terminal\n");
+  stdout.write("Threads are durable conversations; execution session IDs are managed by the server.\n");
+  stdout.write("Type /help for commands.\n");
+  try {
+    await listThreads();
+    if (initialThreadId) await openThread(initialThreadId);
+    while (true) {
+      const line = String(await terminal.question(current ? `${current.id}> ` : "multiagent> ")).trim();
+      if (!line) continue;
+      try {
+        if (line === "/quit" || line === "/exit") return 0;
+        if (line === "/help") { stdout.write(`\n${interactiveHelp}\n`); continue; }
+        if (line === "/threads") { await listThreads(); continue; }
+        if (line === "/refresh") { await replay(); continue; }
+        if (line === "/sessions") {
+          if (!current) { stdout.write("Open a thread first.\n"); continue; }
+          const sessions = (await client.request(`/api/threads/${encodeURIComponent(current.id)}/sessions`)).value.sessions || [];
+          if (!sessions.length) stdout.write("No execution sessions yet.\n");
+          else sessions.forEach((session) => stdout.write(`  ${session.ordinal}. ${session.id}  [${session.status}]\n`));
+          continue;
+        }
+        if (line.startsWith("/open ")) { await openThread(line.slice(6).trim()); continue; }
+        if (line.startsWith("/new ")) {
+          const [threadId, repository, ...titleParts] = line.slice(5).trim().split(/\s+/);
+          if (!threadId || !repository) { stdout.write("Usage: /new THREAD_ID REPOSITORY [TITLE]\n"); continue; }
+          const created = await client.request("/api/threads", {
+            method: "POST",
+            body: { id: threadId, repository, title: titleParts.join(" ") || threadId },
+          });
+          current = created.value.thread;
+          cursor = 0;
+          await listThreads();
+          stdout.write(`\nOpened ${current.id}. Enter its first message.\n`);
+          continue;
+        }
+        if (line.startsWith("/")) { stdout.write(`Unknown command: ${line.split(/\s+/, 1)[0]}. Type /help.\n`); continue; }
+        if (!current) {
+          await openThread(line);
+          continue;
+        }
+        if (line.length > 32768) { stdout.write("Message exceeds 32768 characters.\n"); continue; }
+        const routed = await sendThreadMessage(client, current.id, line);
+        if (routed.event) {
+          cursor = Math.max(cursor, Number(routed.event.sequence) || 0);
+          renderInteractiveEvent(stdout, routed.event);
+        }
+        const session = routed.session;
+        if (session) stdout.write(`[execution ${session.status}] ${session.id}\n`);
+        await waitForReply();
+      } catch (error) {
+        if (!(error instanceof ClientError)) throw error;
+        stdout.write(`[error] ${error.message}\n`);
+      }
+    }
+  } finally {
+    terminal.close();
+  }
+}
+
+function selectThread(threads, selector) {
+  const value = String(selector || "").trim();
+  if (/^[1-9][0-9]*$/.test(value)) {
+    const selected = threads[Number(value) - 1];
+    if (!selected) throw new ClientError(`thread number does not exist: ${value}`);
+    return selected.id;
+  }
+  if (!value) throw new ClientError("thread ID is required");
+  return value;
+}
+
+function renderInteractiveEvent(stdout, event) {
+  const text = String(event.payload?.text || event.payload?.report || "").trim();
+  if (event.type === "user_message") stdout.write(`\nyou> ${text}\n`);
+  else if (event.type === "assistant_message") stdout.write(`\nassistant> ${text}\n`);
+  else if (event.type === "question") stdout.write(`\nassistant? ${text}\n`);
+  else if (event.type === "artifact_available") stdout.write(`\n[artifact] ${text || JSON.stringify(event.payload)}\n`);
+  else stdout.write(`\n[${event.type.replaceAll("_", " ")}] ${text || JSON.stringify(event.payload)}\n`);
 }
 
 async function runThreads({ client, args, stdout, stdin, sleep }) {

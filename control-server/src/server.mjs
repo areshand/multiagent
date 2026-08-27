@@ -22,7 +22,6 @@ import {
 } from "./session-runtime.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const publicDir = path.resolve(here, "../public");
 const launcherRoot = path.resolve(process.env.MULTIAGENT_LAUNCHER_ROOT || path.join(here, "../.."));
 const stateRoot = path.resolve(process.env.MULTIAGENT_STATE_DIR || "/var/lib/multiagent/state");
 const repositoryRoot = path.resolve(process.env.MULTIAGENT_REPOSITORY_ROOT || "/var/lib/multiagent/repositories");
@@ -723,12 +722,6 @@ function recordLoginFailure(address) {
   loginAttempts.set(address, previous);
 }
 
-function staticFile(response, file, type) {
-  const body = fs.readFileSync(path.join(publicDir, file));
-  response.writeHead(200, { "content-type": type, "content-length": body.length, "cache-control": "no-store" });
-  response.end(body);
-}
-
 function traceExportStatus() {
   if (!traceExportStatusFile) return { configured: false, ready: true };
   try {
@@ -757,8 +750,14 @@ const server = http.createServer(async (request, response) => {
       const ready = fs.existsSync(usersFile) && traceExport.ready;
       return json(response, ready ? 200 : 503, { ready, traceExport });
     }
-    if (request.method === "GET" && url.pathname === "/") return staticFile(response, "index.html", "text/html; charset=utf-8");
-    if (request.method === "GET" && url.pathname === "/styles.css") return staticFile(response, "styles.css", "text/css; charset=utf-8");
+    if (request.method === "GET" && url.pathname === "/") {
+      return json(response, 200, {
+        service: "multiagent-control-server",
+        client: "multiagent-client",
+        health: "/healthz",
+        readiness: "/readyz",
+      });
+    }
 
     if (!validOrigin(request)) return json(response, 403, { error: "origin rejected" });
     if (request.method === "POST" && url.pathname === "/api/login") {

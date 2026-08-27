@@ -120,9 +120,47 @@ test("client refuses to send authentication over non-local plaintext HTTP", () =
   assert.doesNotThrow(() => new ControlClient({ server: "http://127.0.0.1:8080" }));
 });
 
-test("landing page remains a minimal pointer to the client CLI", async () => {
-  const page = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
-  assert.match(page, /Thread Gateway/);
-  assert.match(page, /npm run client -- threads list/);
-  assert.doesNotMatch(page, /<form|<button|<script/i);
+test("interactive terminal lists, opens, and continues durable threads", async () => {
+  const sessionFile = await sessionFixture();
+  const output = writer();
+  const answers = ["/open missing", "/open 1", "Continue the investigation", "/quit"];
+  const requests = [];
+  await main([
+    "--server", "https://control.example", "--session-file", sessionFile,
+  ], {
+    stdin: { isTTY: true },
+    stdout: output,
+    sleep: async () => {},
+    createInterface: () => ({ question: async () => answers.shift(), close() {} }),
+    fetchImpl: async (url, options) => {
+      const value = String(url);
+      requests.push({ url: value, options });
+      if (value.endsWith("/api/threads")) {
+        if (options.method === "POST") throw new Error("unexpected thread creation");
+        return jsonResponse({ threads: [{ id: "thread-1", title: "Incident", state: "idle", repository: "multiagent" }] });
+      }
+      if (value.endsWith("/api/threads/thread-1")) {
+        return jsonResponse({ thread: { id: "thread-1", title: "Incident", state: "idle", repository: "multiagent" } });
+      }
+      if (value.endsWith("/api/threads/missing")) return jsonResponse({ error: "thread not found" }, { status: 404 });
+      if (value.includes("after_sequence=0")) return jsonResponse({ events: [] });
+      if (value.endsWith("/api/threads/thread-1/messages")) {
+        assert.deepEqual(JSON.parse(options.body), { text: "Continue the investigation" });
+        return jsonResponse({
+          event: { sequence: 1, type: "user_message", payload: { text: "Continue the investigation" } },
+          session: { id: "thread-1-generated-session", status: "running" },
+        }, { status: 202 });
+      }
+      if (value.includes("after_sequence=1")) {
+        return jsonResponse({ events: [{ sequence: 2, type: "assistant_message", payload: { text: "Investigation complete" } }] });
+      }
+      throw new Error(`unexpected request: ${value}`);
+    },
+  });
+  assert.match(output.output, /Threads/);
+  assert.match(output.output, /1\. thread-1 — Incident/);
+  assert.match(output.output, /\[error\] thread not found/);
+  assert.match(output.output, /Opened thread-1/);
+  assert.match(output.output, /assistant> Investigation complete/);
+  assert.ok(requests.some((request) => request.url.endsWith("/api/threads/thread-1/messages")));
 });
