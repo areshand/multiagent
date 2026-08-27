@@ -65,13 +65,13 @@ function renderTaskList() {
   if (!target.childElementCount) {
     const empty = document.createElement("p");
     empty.className = "empty-list";
-    empty.textContent = "No tasks yet.";
+    empty.textContent = "No threads yet.";
     target.append(empty);
   }
 }
 
 function updateThreadHeader(thread) {
-  $("#active-name").textContent = thread?.title || thread?.id || "Select a task";
+  $("#active-name").textContent = thread?.title || thread?.id || "Select a thread";
   $("#active-repo").textContent = thread ? `${thread.repository} · ${thread.id}` : "";
   $("#live-dot").classList.toggle("live", Boolean(thread && ["starting", "running"].includes(thread.state)));
 }
@@ -121,7 +121,7 @@ function clearSelection() {
   updateThreadHeader(null);
   showLegacyActions(false);
   $("#report").textContent = "";
-  $("#terminal").textContent = "No task selected.";
+  $("#terminal").textContent = "No thread selected.";
   $("#message").disabled = true;
   $("#send").disabled = true;
   renderTaskList();
@@ -143,7 +143,7 @@ function renderConversation() {
         : event.type.replaceAll("_", " ");
     lines.push(`[${label}]`, text, "");
   }
-  if (!lines.length) lines.push("This task has no messages yet.");
+  if (!lines.length) lines.push("This thread has no messages yet.");
   if (threadSessions.length) {
     const latest = threadSessions.at(-1);
     lines.push(`Execution: ${latest.status} (${latest.id})`);
@@ -193,7 +193,7 @@ async function selectThread(id) {
   updateThreadHeader(thread);
   showLegacyActions(false);
   $("#report").textContent = "";
-  $("#terminal").textContent = "Loading task history…";
+  $("#terminal").textContent = "Loading thread history…";
   $("#message").disabled = false;
   $("#send").disabled = false;
   try { await loadThread(id); }
@@ -201,7 +201,7 @@ async function selectThread(id) {
 }
 
 function updateLegacyHeader(session) {
-  $("#active-name").textContent = session?.id || "Select a task";
+  $("#active-name").textContent = session?.id || "Select a thread";
   $("#active-repo").textContent = session ? `${session.repository} · legacy session` : "";
   $("#live-dot").classList.toggle("live", Boolean(session?.live));
 }
@@ -221,7 +221,7 @@ async function selectLegacySession(id) {
     $("#report").textContent = report || (transcript ? `Trace references\n${(transcript.traceReferences || []).join("\n")}` : "");
   }).catch((error) => { $("#report").textContent = `[report unavailable] ${error.message}`; });
   $("#terminal").textContent = session.live
-    ? "This pre-thread execution is marked live, but its worker terminal is not part of the durable task view. Its retained report is shown above when available."
+    ? "This pre-thread execution is marked live, but its worker terminal is not part of the durable thread view. Its retained report is shown above when available."
     : "This pre-thread execution has stopped. Its retained report is shown above.";
 }
 

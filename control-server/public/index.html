@@ -21,23 +21,23 @@
 
   <main id="console" hidden>
     <header>
-      <div><p class="eyebrow">Multiagent</p><h1>Task Control</h1></div>
+      <div><p class="eyebrow">Multiagent</p><h1>Thread Control</h1></div>
       <div class="operator"><span id="username"></span><button id="logout" class="quiet">Log out</button></div>
     </header>
     <div class="layout">
       <aside>
-        <div class="aside-head"><h2>Tasks</h2><button id="new-session" title="New task">+</button></div>
+        <div class="aside-head"><h2>Threads</h2><button id="new-session" title="New thread">+</button></div>
         <div id="sessions"></div>
       </aside>
       <section class="terminal-panel">
         <div class="terminal-head">
-          <div><span id="live-dot" class="dot"></span><strong id="active-name">Select a task</strong><small id="active-repo"></small></div>
+          <div><span id="live-dot" class="dot"></span><strong id="active-name">Select a thread</strong><small id="active-repo"></small></div>
           <div id="legacy-actions" class="actions" hidden><button id="resume" disabled>Resume</button><button id="restart" disabled>Restart</button><button id="checkpoint" disabled>Checkpoint</button><button id="pause" disabled>Pause</button><button id="complete" disabled>Complete</button><button id="archive" disabled>Archive</button></div>
         </div>
         <pre id="report"></pre>
-        <pre id="terminal">No task selected.</pre>
+        <pre id="terminal">No thread selected.</pre>
         <form id="message-form">
-          <textarea id="message" rows="3" placeholder="Send a message to this task" disabled></textarea>
+          <textarea id="message" rows="3" placeholder="Send a message to this thread" disabled></textarea>
           <button id="send" type="submit" disabled>Send message</button>
         </form>
       </section>
@@ -46,10 +46,10 @@
 
   <dialog id="create-dialog">
     <form id="create-form">
-      <p class="eyebrow">Durable thread</p><h2>New task</h2>
-      <label>Task ID<input name="id" pattern="[a-z0-9][a-z0-9-]{0,62}" required></label>
+      <p class="eyebrow">Durable thread</p><h2>New thread</h2>
+      <label>Thread ID<input name="id" pattern="[a-z0-9][a-z0-9-]{0,62}" required></label>
       <label>Repository<select name="repository" required></select></label>
-      <label>Original task<textarea name="task" rows="8" maxlength="32768" required></textarea></label>
+      <label>Initial message<textarea name="task" rows="8" maxlength="32768" required></textarea></label>
       <div class="dialog-actions"><button type="button" id="cancel-create" class="quiet">Cancel</button><button type="submit">Start orchestrator</button></div>
       <p id="create-error" class="error"></p>
     </form>
