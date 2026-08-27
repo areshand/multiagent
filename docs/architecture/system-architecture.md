@@ -131,6 +131,14 @@ a replay and live-delivery transport with stable event IDs and thread-local
 sequence numbers; raw orchestrator stdout is never streamed into a new model
 context without bounded deterministic projection.
 
+Before a completed session runtime exits, it sends its bounded final report to
+the control gateway through a deployment-provided endpoint using a
+gateway-issued, session-scoped bearer token. Delivery is retried for a bounded
+period so a gateway restart does not lose the public result. The gateway
+persists the report before projecting the assistant event and finalizing the
+session. This protocol contains no S3 location or provider credential;
+deployment-managed trace export remains the independent audit path.
+
 `multiagent` owns the thread manifest and single-writer lifecycle semantics.
 `InternalServices` provisions the gateway PVC, versioned S3 backup, IAM,
 encryption, endpoints, and retention configuration. With one gateway writer,
@@ -333,7 +341,9 @@ roles and dependencies, not provider credentials, model names, or prices.
 13. The reviewer and supervisor evaluate the result before another runbook
     phase or operation is allowed.
 14. The trace sidecar persists session evidence to S3.
-15. The control server streams user-safe progress and results to the website.
+15. The session runtime delivers its bounded result to the gateway with its
+    session-scoped token, and the gateway persists it before finalization.
+16. The control server streams user-safe progress and results to the website.
 
 ## Deployment topology
 
@@ -485,8 +495,6 @@ mock Grafana response does not satisfy this acceptance path.
 The following items are compatible with the accepted architecture but may not
 yet be fully implemented:
 
-- Split the long-lived control gateway from Kubernetes session runtimes while
-  preserving one supervisor per session.
 - Add stale runtime cleanup, artifact materialization, and child-process reaping
   around the file-backed thread manifest and existing S3 trace lifecycle.
 - Separate gateway and session S3 identities or add independently verified

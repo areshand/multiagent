@@ -17,7 +17,7 @@ export function renderSessionTemplate(value, replacements) {
   return rendered;
 }
 
-export function sessionSecret(id, namespace, task, actor, threadId = id, leaseGeneration = 1, authorizingEventId = id) {
+export function sessionSecret(id, namespace, task, actor, threadId = id, leaseGeneration = 1, authorizingEventId = id, gatewayToken = "") {
   return {
     apiVersion: "v1",
     kind: "Secret",
@@ -38,6 +38,7 @@ export function sessionSecret(id, namespace, task, actor, threadId = id, leaseGe
       "thread-id": Buffer.from(threadId, "utf8").toString("base64"),
       "lease-generation": Buffer.from(String(leaseGeneration), "utf8").toString("base64"),
       "authorizing-event-id": Buffer.from(authorizingEventId, "utf8").toString("base64"),
+      ...(gatewayToken ? { "gateway-token": Buffer.from(gatewayToken, "utf8").toString("base64") } : {}),
     },
   };
 }
@@ -107,8 +108,8 @@ export class KubernetesSessionClient {
     return `/api/v1/namespaces/${encodeURIComponent(this.namespace)}/${resource}${name ? `/${encodeURIComponent(name)}` : ""}${query}`;
   }
 
-  async createSession({ id, threadId = id, leaseGeneration = 1, authorizingEventId = id, task, actor, repositoryName, repositoryUrl, resume, template }) {
-    const secret = sessionSecret(id, this.namespace, task, actor, threadId, leaseGeneration, authorizingEventId);
+  async createSession({ id, threadId = id, leaseGeneration = 1, authorizingEventId = id, gatewayToken = "", task, actor, repositoryName, repositoryUrl, resume, template }) {
+    const secret = sessionSecret(id, this.namespace, task, actor, threadId, leaseGeneration, authorizingEventId, gatewayToken);
     const job = renderSessionTemplate(template, {
       SESSION_ID: id,
       THREAD_ID: threadId,
