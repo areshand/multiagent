@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+
 const acceptingSessionStates = new Set(["queued", "starting", "running", "waiting_for_user"]);
 const terminalSessionStates = new Set(["completed", "failed", "interrupted", "cancelled"]);
 const publicEventTypes = new Set([
@@ -41,13 +44,35 @@ function conflict(message) {
 }
 
 export class InMemoryThreadStore {
-  constructor() {
-    this.threads = new Map();
-    this.sessions = new Map();
-    this.events = new Map();
-    this.idempotency = new Map();
-    this.checkpoints = new Map();
-    this.artifacts = new Map();
+  constructor(snapshot = null) {
+    this.restoreSnapshot(snapshot);
+  }
+
+  restoreSnapshot(snapshot = null) {
+    if (snapshot && snapshot.schemaVersion !== 1) throw new Error("unsupported thread manifest schema");
+    const entries = (name) => {
+      const value = snapshot?.[name] || [];
+      if (!Array.isArray(value)) throw new Error(`thread manifest ${name} must be an array`);
+      return value;
+    };
+    this.threads = new Map(entries("threads"));
+    this.sessions = new Map(entries("sessions"));
+    this.events = new Map(entries("events"));
+    this.idempotency = new Map(entries("idempotency"));
+    this.checkpoints = new Map(entries("checkpoints"));
+    this.artifacts = new Map(entries("artifacts"));
+  }
+
+  snapshot() {
+    return clone({
+      schemaVersion: 1,
+      threads: [...this.threads.entries()],
+      sessions: [...this.sessions.entries()],
+      events: [...this.events.entries()],
+      idempotency: [...this.idempotency.entries()],
+      checkpoints: [...this.checkpoints.entries()],
+      artifacts: [...this.artifacts.entries()],
+    });
   }
 
   createThread({ id, ownerSubject, repository, title = "", now = new Date().toISOString() }) {
@@ -349,15 +374,67 @@ export class InMemoryThreadStore {
   }
 }
 
-export async function createThreadStore({ backend = process.env.MULTIAGENT_THREAD_STORE_BACKEND || "memory" } = {}) {
-  if (backend === "memory") return new InMemoryThreadStore();
-  if (backend === "dynamodb") {
-    const { DynamoThreadStore } = await import("./dynamo-thread-store.mjs");
-    return new DynamoThreadStore({
-      tableName: process.env.MULTIAGENT_THREAD_STORE_TABLE,
-      region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION,
-      endpoint: process.env.MULTIAGENT_THREAD_STORE_ENDPOINT,
-    });
+const mutatingMethods = new Set([
+  "createThread",
+  "appendUserMessageAndRoute",
+  "markSessionRunning",
+  "acknowledgeInbox",
+  "markSessionFinishing",
+  "appendFencedSessionEvent",
+  "renewSessionLease",
+  "finalizeSession",
+  "publishCheckpoint",
+  "registerArtifact",
+]);
+
+async function fileThreadStore(filePath) {
+  if (!filePath) throw new Error("file thread store requires a path");
+  let snapshot = null;
+  try {
+    snapshot = JSON.parse(await fs.readFile(filePath, "utf8"));
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
   }
+  const store = new InMemoryThreadStore(snapshot);
+  let operations = Promise.resolve();
+  const persist = async (nextSnapshot) => {
+    const encoded = JSON.stringify(nextSnapshot) + "\n";
+    await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
+    const temporary = `${filePath}.tmp-${process.pid}`;
+    await fs.writeFile(temporary, encoded, { mode: 0o600 });
+    await fs.rename(temporary, filePath);
+  };
+  return new Proxy(store, {
+    get(target, property) {
+      const value = Reflect.get(target, property, target);
+      if (typeof value !== "function") return value;
+      if (!mutatingMethods.has(property)) {
+        return async (...args) => {
+          await operations;
+          return value.apply(target, args);
+        };
+      }
+      return async (...args) => {
+        const operation = operations.then(async () => {
+          const candidate = new InMemoryThreadStore(target.snapshot());
+          const result = value.apply(candidate, args);
+          const nextSnapshot = candidate.snapshot();
+          await persist(nextSnapshot);
+          target.restoreSnapshot(nextSnapshot);
+          return result;
+        });
+        operations = operation.then(() => undefined, () => undefined);
+        return operation;
+      };
+    },
+  });
+}
+
+export async function createThreadStore({
+  backend = process.env.MULTIAGENT_THREAD_STORE_BACKEND || "memory",
+  filePath = process.env.MULTIAGENT_THREAD_STORE_FILE,
+} = {}) {
+  if (backend === "memory") return new InMemoryThreadStore();
+  if (backend === "file") return fileThreadStore(filePath);
   throw new Error(`unsupported thread store backend: ${backend}`);
 }

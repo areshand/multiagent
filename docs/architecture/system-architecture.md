@@ -71,7 +71,7 @@ storage configuration shown above.
 | Component | Owns | Must not own or know |
 | --- | --- | --- |
 | Website | User authentication, user intent, session initiation | Runbook implementation, KMS signing, production credentials |
-| Control server | Treating the authenticated website caller as the user, durable thread ownership and history, execution-session creation, message transport, event replay, result streaming | Provider lifecycle logic, Grafana procedures, operation IDs, runbook steps, production credentials |
+| Control server | Treating the authenticated website caller as the user, durable thread ownership and public history, execution-session creation, message transport, event replay, trace-derived context, result streaming | Provider lifecycle logic, agent/model turn storage, Grafana procedures, operation IDs, runbook steps, production credentials |
 | Supervisor | One session's authority, role bootstrap, role confinement, privileged-request mediation, KMS signing | Service-specific operational procedures |
 | Orchestrator | Goal decomposition, role routing, workflow coordination | Grafana/Loki knowledge, concrete production operations, `prod-mcp` parameters, provider-specific prompts |
 | Ops agent | Reading a selected Markdown runbook, planning and requesting its steps, reporting evidence | Deployment secrets, KMS private authority, infrastructure provisioning |
@@ -110,25 +110,35 @@ the supervisor creates role processes and confines them after creation.
 
 A thread is the durable, user-owned task and conversation shown by the website.
 An execution session is one isolated runtime instance created to make progress
-on that thread. The control server owns thread authorization, an append-only
-user-visible event timeline, context checkpoints, artifact references, and the
-mapping to sequential execution sessions.
+on that thread. The control server owns thread authorization, a small append-only
+user-visible manifest, context checkpoints, S3 trace references, and the mapping
+to sequential execution sessions. Detailed model and agent histories remain in
+the session traces already exported to S3; the control server does not duplicate
+or reinterpret provider-native conversation storage.
 
 Only one execution session may hold the active fenced lease for a thread. A
 follow-up after a session finishes creates a new session ID, Pod or Job,
-supervisor, provider session, writable workspace, reviewer decisions, and
-permits. It receives bounded thread context and verified immutable artifact
-references, not the previous session's credentials, permits, raw trace, or
-writable filesystem.
+supervisor, orchestrator, role agents, provider sessions, writable workspace,
+reviewer decisions, and permits. No prior agent is revived. The new orchestrator
+receives bounded context derived from public messages, final reports,
+checkpoints, and verified S3 trace references, not the previous session's
+credentials, permits, unbounded raw trace, provider home, or writable filesystem.
 
 User messages are durably and idempotently appended before acknowledgement.
-Structured redacted events are the conversation source of truth. WebSocket is
+The public manifest is the website conversation source of truth, while S3
+session traces are the detailed audit and context-recovery source. WebSocket is
 a replay and live-delivery transport with stable event IDs and thread-local
-sequence numbers; raw orchestrator stdout is not durable conversation history.
+sequence numbers; raw orchestrator stdout is never streamed into a new model
+context without bounded deterministic projection.
 
-`multiagent` owns the thread schemas and transactional storage semantics.
-`InternalServices` provisions the selected durable backend, IAM, encryption,
-endpoints, and retention configuration.
+`multiagent` owns the thread manifest and single-writer lifecycle semantics.
+`InternalServices` provisions the gateway PVC, versioned S3 backup, IAM,
+encryption, endpoints, and retention configuration. With one gateway writer,
+atomic local manifest replacement is sufficient; a distributed database is
+required only if the gateway is later scaled to multiple writers. Automatic S3
+restore is forbidden while session Pods can write the same prefix; recovery is
+operator-gated until the gateway has a distinct read identity or manifests have
+an independently verified integrity signature.
 
 ### AD-015: Session fences do not revoke issued permits
 
@@ -334,7 +344,7 @@ The desired production topology is:
 
 | Workload | Lifetime | Network exposure | Credentials |
 | --- | --- | --- | --- |
-| Control server | Long-lived | Reverse proxy or approved private ingress | Website/session authentication only |
+| Control server | Long-lived, one writer | Reverse proxy or approved private ingress | Website/session authentication only |
 | Session runtime | One per execution session | Private | Model keys as needed, supervisor KMS and `prod-mcp` client authority |
 | Trace sidecar | Same lifetime as session | S3 egress | Narrow S3 write role |
 | `prod-mcp` | Long-lived central service | Private service endpoint | Grafana token and narrow cross-account execution roles |
@@ -477,9 +487,10 @@ yet be fully implemented:
 
 - Split the long-lived control gateway from Kubernetes session runtimes while
   preserving one supervisor per session.
-- Add the deployment-backed durable thread store, execution-session mapping,
-  fenced leases, structured replay, context hydration, artifact materialization,
-  stale runtime cleanup, and child-process reaping.
+- Add stale runtime cleanup, artifact materialization, and child-process reaping
+  around the file-backed thread manifest and existing S3 trace lifecycle.
+- Separate gateway and session S3 identities or add independently verified
+  manifest integrity before enabling automatic S3 bootstrap.
 - Harden filesystem operations against descriptor-relative path and race
   attacks where pathname policy is insufficient.
 - Complete cross-account Route53, ACM validation, load balancer routing, and

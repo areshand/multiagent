@@ -12,6 +12,7 @@ import {
   controlMode,
   findActiveSession,
   normalizeWorkerReport,
+  scopedThreadTranscript,
   selectFinalMessage,
   sessionControlInvocation,
   sessionLaunchInvocation,
@@ -46,7 +47,8 @@ const repositoryCatalog = gatewayMode ? JSON.parse(process.env.MULTIAGENT_REPOSI
 const kubernetes = gatewayMode ? new KubernetesSessionClient() : null;
 const sessionJobTemplate = gatewayMode ? JSON.parse(fs.readFileSync(sessionJobTemplateFile, "utf8")) : null;
 const threadStore = await createThreadStore({
-  backend: process.env.MULTIAGENT_THREAD_STORE_BACKEND || (gatewayMode ? "dynamodb" : "memory"),
+  backend: process.env.MULTIAGENT_THREAD_STORE_BACKEND || (gatewayMode ? "file" : "memory"),
+  filePath: process.env.MULTIAGENT_THREAD_STORE_FILE || path.join(stateRoot, "control-server", "thread-manifest-v1.json"),
 });
 
 fs.mkdirSync(path.dirname(registryFile), { recursive: true });
@@ -500,6 +502,10 @@ function renderThreadTask(envelope) {
     if (!text) continue;
     const role = event.type === "user_message" ? "User" : event.type === "assistant_message" ? "Assistant" : "Status";
     lines.push(`${role}: ${text}`, "");
+    const references = event.payload?.transcript?.traceReferences;
+    if (Array.isArray(references) && references.length) {
+      lines.push("Prior session trace references:", ...references.slice(0, 16).map((reference) => `- ${String(reference)}`), "");
+    }
   }
   return lines.join("\n").slice(-32768);
 }
@@ -556,7 +562,7 @@ async function projectGatewaySessionToThread(id, status) {
       generation: record.leaseGeneration,
       eventId: `final-${id}`,
       type: "assistant_message",
-      payload: { text: report.report, transcript: report.transcript },
+      payload: { text: report.report, transcript: scopedThreadTranscript(id, report.transcript) },
     });
     await threadStore.acknowledgeInbox({
       threadId: record.threadId,
@@ -1003,7 +1009,8 @@ if (workerMode) {
   if (!validResourceId(id) || !validResourceId(repository) || !taskFile) throw new Error("session-worker mode requires a valid session, repository, and task file");
   const threadId = String(process.env.MULTIAGENT_THREAD_ID || id);
   const leaseGeneration = Number(process.env.MULTIAGENT_LEASE_GENERATION || "1");
-  if (!registry.sessions[id]) launchSession(id, repository, resume, actor, fs.readFileSync(taskFile, "utf8"), { threadId, leaseGeneration });
+  const authorizingEventId = String(process.env.MULTIAGENT_AUTHORIZING_EVENT_ID || id);
+  if (!registry.sessions[id]) launchSession(id, repository, resume, actor, fs.readFileSync(taskFile, "utf8"), { threadId, leaseGeneration, authorizingEventId });
 }
 
 for (const record of gatewayMode ? [] : Object.values(registry.sessions)) {

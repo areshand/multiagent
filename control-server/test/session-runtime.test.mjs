@@ -6,6 +6,7 @@ import {
   controlMode,
   findActiveSession,
   normalizeWorkerReport,
+  scopedThreadTranscript,
   selectFinalMessage,
   sessionControlInvocation,
   sessionLaunchInvocation,
@@ -58,6 +59,19 @@ test("completed session reports prefer the explicit bounded caller result", () =
   });
   assert.equal(normalizeWorkerReport({ report: "" }), null);
   assert.equal(normalizeWorkerReport({ report: "x".repeat(64 * 1024 + 1) }), null);
+});
+
+test("thread transcript references remain bound to their originating session", () => {
+  assert.deepEqual(scopedThreadTranscript("session-a", {
+    taskId: "session-a",
+    traceReferences: ["agents/orchestrator/attempt-0001/events.jsonl", "../workflows/run-1/lifecycle/events.log", "../../../escape"],
+  }), {
+    taskId: "session-a",
+    traceReferences: [
+      "trace://session/session-a/logs/agents/orchestrator/attempt-0001/events.jsonl",
+      "trace://session/session-a/workflows/run-1/lifecycle/events.log",
+    ],
+  });
 });
 
 test("session completion grace is bounded and has a stable default", () => {

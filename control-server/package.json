@@ -10,8 +10,6 @@
     "test:e2e:thread": "node test/github-thread-resume.e2e.mjs"
   },
   "dependencies": {
-    "@aws-sdk/client-dynamodb": "^3.0.0",
-    "@aws-sdk/lib-dynamodb": "^3.0.0",
     "ws": "8.21.3"
   }
 }
