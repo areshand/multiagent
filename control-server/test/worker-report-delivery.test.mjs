@@ -5,6 +5,26 @@ import {
   reportDeliveryTimeoutMs,
   workerReportEndpoint,
 } from "../src/worker-report-delivery.mjs";
+import { issueWorkerToken, verifyWorkerAuthorization } from "../src/worker-token.mjs";
+
+test("session worker tokens authenticate only to the matching gateway session", () => {
+  const sessionSecret = "test-session-secret-that-is-long-enough";
+  const token = issueWorkerToken({ sessionSecret, sessionId: "session-1", ttlMs: 60_000, now: 1_000 });
+  const verify = (overrides = {}) => verifyWorkerAuthorization({
+    serverMode: "gateway",
+    authorization: `Bearer ${token}`,
+    sessionSecret,
+    sessionId: "session-1",
+    now: 2_000,
+    ...overrides,
+  });
+
+  assert.equal(verify(), true);
+  assert.equal(verify({ serverMode: "session-worker" }), false);
+  assert.equal(verify({ sessionId: "session-2" }), false);
+  assert.equal(verify({ now: 61_001 }), false);
+  assert.equal(verify({ authorization: `Bearer ${token}tampered` }), false);
+});
 
 test("worker report delivery retries a deployment-owned session endpoint", async () => {
   let attempts = 0;

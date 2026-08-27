@@ -8,6 +8,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { jobPhase, KubernetesSessionClient } from "./kubernetes-session.mjs";
 import { createThreadStore } from "./thread-store.mjs";
 import { deliverWorkerReport, reportDeliveryTimeoutMs } from "./worker-report-delivery.mjs";
+import { issueWorkerToken as createWorkerToken, verifyWorkerAuthorization } from "./worker-token.mjs";
 import {
   completionExitDelayMs,
   controlMode,
@@ -99,31 +100,16 @@ function issueSession(username) {
 }
 
 function issueWorkerToken(sessionId, ttlMs = 5 * 60_000) {
-  const payload = base64url(JSON.stringify({
-    audience: "multiagent-session-worker",
-    sessionId,
-    expiresAt: Date.now() + ttlMs,
-    nonce: crypto.randomBytes(12).toString("hex"),
-  }));
-  const signature = crypto.createHmac("sha256", authConfig.sessionSecret).update(payload).digest("base64url");
-  return `${payload}.${signature}`;
+  return createWorkerToken({ sessionSecret: authConfig.sessionSecret, sessionId, ttlMs });
 }
 
 function verifyWorkerToken(request, sessionId) {
-  if (!workerMode) return false;
-  const authorization = String(request.headers.authorization || "");
-  if (!authorization.startsWith("Bearer ")) return false;
-  const token = authorization.slice(7);
-  const [payload, signature] = token.split(".", 2);
-  if (!payload || !signature) return false;
-  const expected = crypto.createHmac("sha256", authConfig.sessionSecret).update(payload).digest();
-  let supplied;
-  try { supplied = Buffer.from(signature, "base64url"); } catch { return false; }
-  if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) return false;
-  try {
-    const value = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-    return value.audience === "multiagent-session-worker" && value.sessionId === sessionId && value.expiresAt > Date.now();
-  } catch { return false; }
+  return verifyWorkerAuthorization({
+    serverMode: mode,
+    authorization: String(request.headers.authorization || ""),
+    sessionSecret: authConfig.sessionSecret,
+    sessionId,
+  });
 }
 
 function verifySession(token) {
