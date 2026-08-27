@@ -17,7 +17,7 @@ export function renderSessionTemplate(value, replacements) {
   return rendered;
 }
 
-export function sessionSecret(id, namespace, task, actor) {
+export function sessionSecret(id, namespace, task, actor, threadId = id, leaseGeneration = 1, authorizingEventId = id) {
   return {
     apiVersion: "v1",
     kind: "Secret",
@@ -27,6 +27,7 @@ export function sessionSecret(id, namespace, task, actor) {
       labels: {
         "app.kubernetes.io/name": "multiagent-session",
         "multiagent.movement.io/session": id,
+        "multiagent.movement.io/thread": threadId,
       },
     },
     immutable: true,
@@ -34,6 +35,9 @@ export function sessionSecret(id, namespace, task, actor) {
     data: {
       "task.md": Buffer.from(task, "utf8").toString("base64"),
       actor: Buffer.from(actor, "utf8").toString("base64"),
+      "thread-id": Buffer.from(threadId, "utf8").toString("base64"),
+      "lease-generation": Buffer.from(String(leaseGeneration), "utf8").toString("base64"),
+      "authorizing-event-id": Buffer.from(authorizingEventId, "utf8").toString("base64"),
     },
   };
 }
@@ -103,10 +107,13 @@ export class KubernetesSessionClient {
     return `/api/v1/namespaces/${encodeURIComponent(this.namespace)}/${resource}${name ? `/${encodeURIComponent(name)}` : ""}${query}`;
   }
 
-  async createSession({ id, task, actor, repositoryName, repositoryUrl, resume, template }) {
-    const secret = sessionSecret(id, this.namespace, task, actor);
+  async createSession({ id, threadId = id, leaseGeneration = 1, authorizingEventId = id, task, actor, repositoryName, repositoryUrl, resume, template }) {
+    const secret = sessionSecret(id, this.namespace, task, actor, threadId, leaseGeneration, authorizingEventId);
     const job = renderSessionTemplate(template, {
       SESSION_ID: id,
+      THREAD_ID: threadId,
+      LEASE_GENERATION: leaseGeneration,
+      AUTHORIZING_EVENT_ID: authorizingEventId,
       SESSION_SECRET_NAME: secret.metadata.name,
       REPOSITORY_NAME: repositoryName,
       REPOSITORY_URL: repositoryUrl,

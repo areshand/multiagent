@@ -735,6 +735,12 @@ fn build_request(
         "target": target,
         "taskId": task_id
     });
+    if let Some(execution_context) = execution_context_from_environment()? {
+        request
+            .as_object_mut()
+            .expect("operation request is an object")
+            .insert("executionContext".into(), execution_context);
+    }
     if let Some(change_ticket) = object.get("changeTicket") {
         request
             .as_object_mut()
@@ -1475,6 +1481,38 @@ fn required_env(name: &str) -> Result<String, String> {
         .ok_or_else(|| format!("{name} is required"))
 }
 
+fn execution_context_from_environment() -> Result<Option<Value>, String> {
+    const NAMES: [&str; 4] = [
+        "MULTIAGENT_THREAD_ID",
+        "MULTIAGENT_SESSION",
+        "MULTIAGENT_LEASE_GENERATION",
+        "MULTIAGENT_AUTHORIZING_EVENT_ID",
+    ];
+    let values = NAMES.map(|name| env::var(name).ok().filter(|value| !value.is_empty()));
+    if values.iter().all(Option::is_none) {
+        return Ok(None);
+    }
+    if values.iter().any(Option::is_none) {
+        return Err("thread execution attribution requires thread, session, lease generation, and authorizing event together".into());
+    }
+    let [thread_id, session_id, lease_generation, authorizing_event_id] = values.map(Option::unwrap);
+    validate_id("thread ID", &thread_id)?;
+    validate_id("session ID", &session_id)?;
+    validate_id("authorizing event ID", &authorizing_event_id)?;
+    let lease_generation = lease_generation
+        .parse::<u64>()
+        .map_err(|_| "MULTIAGENT_LEASE_GENERATION must be a positive integer")?;
+    if lease_generation == 0 {
+        return Err("MULTIAGENT_LEASE_GENERATION must be a positive integer".into());
+    }
+    Ok(Some(json!({
+        "threadId": thread_id,
+        "sessionId": session_id,
+        "leaseGeneration": lease_generation,
+        "authorizingEventId": authorizing_event_id,
+    })))
+}
+
 fn canonical(value: &Value) -> Result<Vec<u8>, String> {
     serde_json::to_vec(value).map_err(|error| error.to_string())
 }
@@ -1740,6 +1778,7 @@ mod tests {
         );
         assert_eq!(request["operation"]["version"], "1.1.0");
         assert_eq!(request["runbook"]["version"], "1.1.0");
+        assert_eq!(request["executionContext"]["threadId"], "thread-contract-1");
         assert!(String::from_utf8(canonical(request).unwrap())
             .unwrap()
             .contains("\"authorityProxy\""));

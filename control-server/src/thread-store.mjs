@@ -1,0 +1,363 @@
+const acceptingSessionStates = new Set(["queued", "starting", "running", "waiting_for_user"]);
+const terminalSessionStates = new Set(["completed", "failed", "interrupted", "cancelled"]);
+const publicEventTypes = new Set([
+  "user_message",
+  "assistant_message",
+  "progress",
+  "question",
+  "artifact_available",
+  "session_started",
+  "session_completed",
+  "session_interrupted",
+]);
+
+const clone = (value) => structuredClone(value);
+
+function requiredString(value, name, max = 32768) {
+  if (typeof value !== "string" || !value.trim() || value.length > max) {
+    throw new Error(`${name} must contain 1 to ${max} characters`);
+  }
+  return value.trim();
+}
+
+function boundedPayload(payload) {
+  const value = payload === undefined ? {} : clone(payload);
+  if (Buffer.byteLength(JSON.stringify(value), "utf8") > 64 * 1024) {
+    throw new Error("event payload exceeds 64 KiB");
+  }
+  return value;
+}
+
+function notFound() {
+  const error = new Error("thread not found");
+  error.statusCode = 404;
+  return error;
+}
+
+function conflict(message) {
+  const error = new Error(message);
+  error.statusCode = 409;
+  return error;
+}
+
+export class InMemoryThreadStore {
+  constructor() {
+    this.threads = new Map();
+    this.sessions = new Map();
+    this.events = new Map();
+    this.idempotency = new Map();
+    this.checkpoints = new Map();
+    this.artifacts = new Map();
+  }
+
+  createThread({ id, ownerSubject, repository, title = "", now = new Date().toISOString() }) {
+    requiredString(id, "thread id", 63);
+    requiredString(ownerSubject, "owner subject", 256);
+    requiredString(repository, "repository", 128);
+    if (this.threads.has(id)) throw conflict("thread already exists");
+    const thread = {
+      id,
+      ownerSubject,
+      repository,
+      title: String(title || "").trim().slice(0, 256),
+      state: "idle",
+      headSequence: 0,
+      activeSessionId: null,
+      queuedSessionId: null,
+      leaseGeneration: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.threads.set(id, thread);
+    this.events.set(id, []);
+    this.artifacts.set(id, []);
+    return clone(thread);
+  }
+
+  listThreadsForActor(actor) {
+    return [...this.threads.values()]
+      .filter((thread) => thread.ownerSubject === actor)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+      .map(clone);
+  }
+
+  getThreadForActor(threadId, actor) {
+    return clone(this.#authorizedThread(threadId, actor));
+  }
+
+  appendUserMessageAndRoute({
+    threadId,
+    actor,
+    messageId,
+    text,
+    newSessionId,
+    now = new Date().toISOString(),
+    leaseTtlMs = 60_000,
+  }) {
+    const thread = this.#authorizedThread(threadId, actor);
+    requiredString(messageId, "message id", 128);
+    const message = requiredString(text, "message");
+    const key = `${threadId}:${actor}:${messageId}`;
+    const existing = this.idempotency.get(key);
+    if (existing) return clone(existing);
+
+    let session = thread.activeSessionId ? this.sessions.get(thread.activeSessionId) : null;
+    if (session && !acceptingSessionStates.has(session.status) && thread.queuedSessionId) {
+      session = this.sessions.get(thread.queuedSessionId);
+    }
+    let createdSession = false;
+    if (!session || !acceptingSessionStates.has(session.status)) {
+      requiredString(newSessionId, "new session id", 63);
+      if (this.sessions.has(newSessionId)) throw conflict("session already exists");
+      const activateNow = !thread.activeSessionId;
+      const generation = activateNow ? thread.leaseGeneration + 1 : null;
+      session = {
+        id: newSessionId,
+        threadId,
+        ordinal: [...this.sessions.values()].filter((candidate) => candidate.threadId === threadId).length + 1,
+        actorSubject: actor,
+        triggerMessageId: messageId,
+        status: "queued",
+        leaseGeneration: generation,
+        leaseExpiresAt: activateNow ? new Date(Date.parse(now) + leaseTtlMs).toISOString() : null,
+        inboxHeadSequence: 0,
+        inboxAckSequence: 0,
+        contextHeadSequence: thread.headSequence,
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.sessions.set(session.id, session);
+      if (activateNow) {
+        thread.activeSessionId = session.id;
+        thread.leaseGeneration = generation;
+        thread.state = "starting";
+      } else {
+        thread.queuedSessionId = session.id;
+      }
+      createdSession = true;
+    }
+
+    const event = this.#appendEvent(thread, {
+      eventId: messageId,
+      sessionId: session.id,
+      actorSubject: actor,
+      type: "user_message",
+      payload: { text: message },
+      createdAt: now,
+    });
+    session.inboxHeadSequence = event.sequence;
+    session.updatedAt = now;
+    thread.updatedAt = now;
+    const result = { event, session: clone(session), createdSession };
+    this.idempotency.set(key, result);
+    return clone(result);
+  }
+
+  markSessionRunning({ threadId, sessionId, generation, now = new Date().toISOString() }) {
+    const { thread, session } = this.#currentSession(threadId, sessionId, generation);
+    if (!new Set(["queued", "starting"]).has(session.status)) throw conflict("session cannot enter running state");
+    session.status = "running";
+    session.updatedAt = now;
+    thread.state = "running";
+    thread.updatedAt = now;
+    return clone(session);
+  }
+
+  acknowledgeInbox({ threadId, sessionId, generation, throughSequence, now = new Date().toISOString() }) {
+    const { session } = this.#currentSession(threadId, sessionId, generation);
+    if (!Number.isSafeInteger(throughSequence) || throughSequence < session.inboxAckSequence || throughSequence > session.inboxHeadSequence) {
+      throw new Error("invalid inbox acknowledgement sequence");
+    }
+    session.inboxAckSequence = throughSequence;
+    session.updatedAt = now;
+    return clone(session);
+  }
+
+  markSessionFinishing({ threadId, sessionId, generation, now = new Date().toISOString() }) {
+    const { thread, session } = this.#currentSession(threadId, sessionId, generation);
+    if (session.inboxAckSequence !== session.inboxHeadSequence) {
+      return { finishing: false, reason: "pending_input", session: clone(session) };
+    }
+    if (!new Set(["running", "waiting_for_user"]).has(session.status)) throw conflict("session cannot enter finishing state");
+    session.status = "finishing";
+    session.updatedAt = now;
+    thread.state = "running";
+    thread.updatedAt = now;
+    return { finishing: true, session: clone(session) };
+  }
+
+  appendFencedSessionEvent({
+    threadId,
+    sessionId,
+    generation,
+    eventId,
+    type,
+    payload,
+    now = new Date().toISOString(),
+  }) {
+    const { thread, session } = this.#currentSession(threadId, sessionId, generation);
+    requiredString(eventId, "event id", 128);
+    if (!publicEventTypes.has(type) || type === "user_message") throw new Error("unsupported public session event type");
+    const event = this.#appendEvent(thread, {
+      eventId,
+      sessionId,
+      actorSubject: session.actorSubject,
+      type,
+      payload: boundedPayload(payload),
+      createdAt: now,
+    });
+    session.updatedAt = now;
+    thread.updatedAt = now;
+    return clone(event);
+  }
+
+  renewSessionLease({ threadId, sessionId, generation, now = new Date().toISOString(), leaseTtlMs = 60_000 }) {
+    const { session } = this.#currentSession(threadId, sessionId, generation);
+    session.leaseExpiresAt = new Date(Date.parse(now) + leaseTtlMs).toISOString();
+    session.updatedAt = now;
+    return clone(session);
+  }
+
+  finalizeSession({ threadId, sessionId, generation, status = "completed", now = new Date().toISOString() }) {
+    if (!terminalSessionStates.has(status)) throw new Error("invalid terminal session status");
+    const { thread, session } = this.#currentSession(threadId, sessionId, generation);
+    if (session.status !== "finishing" && status === "completed") throw conflict("completed session must be finishing");
+    session.status = status;
+    session.completedAt = now;
+    session.updatedAt = now;
+    let activatedSession = null;
+    if (thread.queuedSessionId) {
+      activatedSession = this.sessions.get(thread.queuedSessionId);
+      activatedSession.leaseGeneration = thread.leaseGeneration + 1;
+      activatedSession.leaseExpiresAt = new Date(Date.parse(now) + 60_000).toISOString();
+      activatedSession.updatedAt = now;
+      thread.leaseGeneration = activatedSession.leaseGeneration;
+      thread.activeSessionId = activatedSession.id;
+      thread.queuedSessionId = null;
+      thread.state = "starting";
+    } else {
+      thread.activeSessionId = null;
+      thread.state = status === "completed" ? "idle" : "interrupted";
+    }
+    thread.updatedAt = now;
+    return clone({ session, activatedSession });
+  }
+
+  publishCheckpoint({ threadId, sessionId, generation, throughSequence, content, sourceDigest, now = new Date().toISOString() }) {
+    const { thread } = this.#currentSession(threadId, sessionId, generation);
+    if (!Number.isSafeInteger(throughSequence) || throughSequence < 0 || throughSequence > thread.headSequence) {
+      throw new Error("invalid checkpoint sequence");
+    }
+    const checkpoint = {
+      threadId,
+      sessionId,
+      throughSequence,
+      content: requiredString(content, "checkpoint", 64 * 1024),
+      sourceDigest: requiredString(sourceDigest, "source digest", 128),
+      createdAt: now,
+    };
+    this.checkpoints.set(threadId, checkpoint);
+    return clone(checkpoint);
+  }
+
+  registerArtifact({ threadId, sessionId, generation, artifact, now = new Date().toISOString() }) {
+    this.#currentSession(threadId, sessionId, generation);
+    const entry = {
+      artifactId: requiredString(artifact?.artifactId, "artifact id", 128),
+      threadId,
+      sourceSessionId: sessionId,
+      contentDigest: requiredString(artifact?.contentDigest, "artifact digest", 128),
+      size: Number(artifact?.size),
+      contentType: requiredString(artifact?.contentType, "artifact content type", 128),
+      classification: requiredString(artifact?.classification, "artifact classification", 64),
+      storageReference: requiredString(artifact?.storageReference, "artifact storage reference", 1024),
+      redactionStatus: requiredString(artifact?.redactionStatus, "artifact redaction status", 64),
+      createdAt: now,
+    };
+    if (!Number.isSafeInteger(entry.size) || entry.size < 0) throw new Error("invalid artifact size");
+    const entries = this.artifacts.get(threadId);
+    if (entries.some((candidate) => candidate.artifactId === entry.artifactId)) throw conflict("artifact already exists");
+    entries.push(entry);
+    return clone(entry);
+  }
+
+  readEventsAfter({ threadId, actor, afterSequence = 0, limit = 200 }) {
+    this.#authorizedThread(threadId, actor);
+    const boundedLimit = Math.min(Math.max(Number(limit) || 1, 1), 500);
+    return this.events.get(threadId)
+      .filter((event) => event.sequence > afterSequence)
+      .slice(0, boundedLimit)
+      .map(clone);
+  }
+
+  listSessionsForActor({ threadId, actor }) {
+    this.#authorizedThread(threadId, actor);
+    return [...this.sessions.values()]
+      .filter((session) => session.threadId === threadId)
+      .sort((left, right) => left.ordinal - right.ordinal)
+      .map(clone);
+  }
+
+  contextEnvelope({ threadId, actor, sessionId, recentLimit = 40 }) {
+    const thread = this.#authorizedThread(threadId, actor);
+    const session = this.sessions.get(sessionId);
+    if (!session || session.threadId !== threadId) throw notFound();
+    const checkpoint = this.checkpoints.get(threadId) || null;
+    const afterSequence = checkpoint?.throughSequence || 0;
+    const recentEvents = this.events.get(threadId).filter((event) => event.sequence > afterSequence).slice(-recentLimit);
+    return clone({
+      threadId,
+      sessionId,
+      throughSequence: thread.headSequence,
+      checkpoint,
+      recentEvents,
+      artifacts: this.artifacts.get(threadId),
+    });
+  }
+
+  #authorizedThread(threadId, actor) {
+    const thread = this.threads.get(threadId);
+    if (!thread || thread.ownerSubject !== actor) throw notFound();
+    return thread;
+  }
+
+  #currentSession(threadId, sessionId, generation) {
+    const thread = this.threads.get(threadId);
+    const session = this.sessions.get(sessionId);
+    if (!thread || !session || session.threadId !== threadId || thread.activeSessionId !== sessionId || session.leaseGeneration !== generation) {
+      throw conflict("stale session fence");
+    }
+    return { thread, session };
+  }
+
+  #appendEvent(thread, value) {
+    const events = this.events.get(thread.id);
+    if (events.some((event) => event.eventId === value.eventId)) throw conflict("event already exists");
+    const event = {
+      threadId: thread.id,
+      sequence: thread.headSequence + 1,
+      eventId: value.eventId,
+      sessionId: value.sessionId,
+      actorSubject: value.actorSubject,
+      type: value.type,
+      payload: boundedPayload(value.payload),
+      createdAt: value.createdAt,
+    };
+    thread.headSequence = event.sequence;
+    events.push(event);
+    return event;
+  }
+}
+
+export async function createThreadStore({ backend = process.env.MULTIAGENT_THREAD_STORE_BACKEND || "memory" } = {}) {
+  if (backend === "memory") return new InMemoryThreadStore();
+  if (backend === "dynamodb") {
+    const { DynamoThreadStore } = await import("./dynamo-thread-store.mjs");
+    return new DynamoThreadStore({
+      tableName: process.env.MULTIAGENT_THREAD_STORE_TABLE,
+      region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION,
+      endpoint: process.env.MULTIAGENT_THREAD_STORE_ENDPOINT,
+    });
+  }
+  throw new Error(`unsupported thread store backend: ${backend}`);
+}

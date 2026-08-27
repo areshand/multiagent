@@ -19,6 +19,12 @@
     "delegatedRole": "runbook-operator",
     "delegatedSubject": "multiagent-supervisor",
     "expiresAt": "2026-08-23T00:04:00.000Z",
+    "executionContext": {
+      "authorizingEventId": "message-contract-1",
+      "leaseGeneration": 2,
+      "sessionId": "session-contract-1",
+      "threadId": "thread-contract-1"
+    },
     "historySha256": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
     "intentSha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
     "issuedAt": "2026-08-23T00:00:00.000Z",

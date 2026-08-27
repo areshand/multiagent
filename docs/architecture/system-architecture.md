@@ -38,9 +38,9 @@ hard-coded orchestration logic.
 Website and authenticated user
               |
               v
-Control server and session gateway
+Control server, durable thread store, and session gateway
               |
-              | creates or resumes one session
+              | appends to one durable thread and creates an execution session
               v
 Multiagent session runtime
   +-----------------------------------------------+
@@ -71,7 +71,7 @@ storage configuration shown above.
 | Component | Owns | Must not own or know |
 | --- | --- | --- |
 | Website | User authentication, user intent, session initiation | Runbook implementation, KMS signing, production credentials |
-| Control server | Treating the authenticated website caller as the user, session creation/resume, message transport, result streaming | Provider lifecycle logic, Grafana procedures, operation IDs, runbook steps, production credentials |
+| Control server | Treating the authenticated website caller as the user, durable thread ownership and history, execution-session creation, message transport, event replay, result streaming | Provider lifecycle logic, Grafana procedures, operation IDs, runbook steps, production credentials |
 | Supervisor | One session's authority, role bootstrap, role confinement, privileged-request mediation, KMS signing | Service-specific operational procedures |
 | Orchestrator | Goal decomposition, role routing, workflow coordination | Grafana/Loki knowledge, concrete production operations, `prod-mcp` parameters, provider-specific prompts |
 | Ops agent | Reading a selected Markdown runbook, planning and requesting its steps, reporting evidence | Deployment secrets, KMS private authority, infrastructure provisioning |
@@ -94,16 +94,57 @@ The control server may have high authority because access to it is already
 restricted to authenticated users. That authority remains attributable to the
 authenticated user and session.
 
-### AD-002: There is one supervisor per session
+### AD-002: There is one supervisor per execution session
 
-Every session has its own supervisor authority and role process tree. A shared
-supervisor across unrelated sessions would mix authority, context, failures,
-and audit evidence.
+Every execution session has its own supervisor authority and role process tree.
+A shared supervisor across execution sessions would mix authority, failures,
+and audit evidence. A durable user thread may contain multiple sequential
+execution sessions, each with a fresh supervisor.
 
 The target deployment separates the long-lived control gateway from dedicated
 session runtimes. A session runtime may be implemented as a Kubernetes Pod or
 Job. Moving to this target must preserve the existing bootstrap model in which
 the supervisor creates role processes and confines them after creation.
+
+### AD-014: Threads outlive execution sessions
+
+A thread is the durable, user-owned task and conversation shown by the website.
+An execution session is one isolated runtime instance created to make progress
+on that thread. The control server owns thread authorization, an append-only
+user-visible event timeline, context checkpoints, artifact references, and the
+mapping to sequential execution sessions.
+
+Only one execution session may hold the active fenced lease for a thread. A
+follow-up after a session finishes creates a new session ID, Pod or Job,
+supervisor, provider session, writable workspace, reviewer decisions, and
+permits. It receives bounded thread context and verified immutable artifact
+references, not the previous session's credentials, permits, raw trace, or
+writable filesystem.
+
+User messages are durably and idempotently appended before acknowledgement.
+Structured redacted events are the conversation source of truth. WebSocket is
+a replay and live-delivery transport with stable event IDs and thread-local
+sequence numbers; raw orchestrator stdout is not durable conversation history.
+
+`multiagent` owns the thread schemas and transactional storage semantics.
+`InternalServices` provisions the selected durable backend, IAM, encryption,
+endpoints, and retention configuration.
+
+### AD-015: Session fences do not revoke issued permits
+
+The active thread lease controls which execution session may append
+authoritative thread state and issue new production permits. Losing that lease
+prevents new issuance and fenced writes, but it does not revoke a permit that
+was validly issued earlier.
+
+An issued permit remains valid until it is consumed or reaches its encoded
+expiry. `prod-mcp` verifies its signature, bearer authentication, attribution,
+operation bounds, nonce or operation identity, and expiry without consulting
+the current thread lease. A later execution session may issue its own permits,
+so short-lived permits from sequential sessions may overlap. Each remains
+attributable to its original thread, session, authorizing user event, reviewer
+decision, and operation. Replay protection prevents a one-shot permit from
+executing the same operation twice.
 
 ### AD-003: Role boundaries are enforced after bootstrap
 
@@ -262,10 +303,11 @@ roles and dependencies, not provider credentials, model names, or prices.
 
 ## End-to-end request flow
 
-1. The website authenticates a user and submits a goal to the control server.
-2. The control server records the current authenticated actor and creates or
-   resumes the user's session.
-3. The session supervisor bootstraps the orchestrator and confined role agents.
+1. The website authenticates a user and appends a goal or follow-up to a thread.
+2. The control server records the actor, durably appends the user event, and
+   routes it to the active execution session or creates a fresh one.
+3. The execution-session supervisor bootstraps the orchestrator and confined
+   role agents with bounded thread context.
 4. The orchestrator delegates production work without encoding the procedure.
 5. The ops agent selects and reads the exact versioned Markdown runbook.
 6. The ops agent proposes the next operation and supplies runbook evidence.
@@ -293,7 +335,7 @@ The desired production topology is:
 | Workload | Lifetime | Network exposure | Credentials |
 | --- | --- | --- | --- |
 | Control server | Long-lived | Reverse proxy or approved private ingress | Website/session authentication only |
-| Session runtime | One per session | Private | Model keys as needed, supervisor KMS and `prod-mcp` client authority |
+| Session runtime | One per execution session | Private | Model keys as needed, supervisor KMS and `prod-mcp` client authority |
 | Trace sidecar | Same lifetime as session | S3 egress | Narrow S3 write role |
 | `prod-mcp` | Long-lived central service | Private service endpoint | Grafana token and narrow cross-account execution roles |
 
@@ -435,8 +477,9 @@ yet be fully implemented:
 
 - Split the long-lived control gateway from Kubernetes session runtimes while
   preserving one supervisor per session.
-- Add durable session-to-runtime mapping, workflow state, approval state,
-  resume behavior, stale runtime cleanup, and child-process reaping.
+- Add the deployment-backed durable thread store, execution-session mapping,
+  fenced leases, structured replay, context hydration, artifact materialization,
+  stale runtime cleanup, and child-process reaping.
 - Harden filesystem operations against descriptor-relative path and race
   attacks where pathname policy is insufficient.
 - Complete cross-account Route53, ACM validation, load balancer routing, and

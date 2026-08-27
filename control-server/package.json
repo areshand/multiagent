@@ -6,9 +6,12 @@
   "scripts": {
     "start": "node src/server.mjs",
     "test": "node --test test/*.test.mjs",
-    "test:e2e:github": "node test/github-unreviewed-pr.e2e.mjs"
+    "test:e2e:github": "node test/github-unreviewed-pr.e2e.mjs",
+    "test:e2e:thread": "node test/github-thread-resume.e2e.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.0.0",
+    "@aws-sdk/lib-dynamodb": "^3.0.0",
     "ws": "8.21.3"
   }
 }
