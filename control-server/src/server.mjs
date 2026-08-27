@@ -6,11 +6,13 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { WebSocket, WebSocketServer } from "ws";
 import { jobPhase, KubernetesSessionClient } from "./kubernetes-session.mjs";
+import { createThreadStore } from "./thread-store.mjs";
 import {
   completionExitDelayMs,
   controlMode,
   findActiveSession,
   normalizeWorkerReport,
+  scopedThreadTranscript,
   selectFinalMessage,
   sessionControlInvocation,
   sessionLaunchInvocation,
@@ -44,6 +46,10 @@ const sessionJobTemplateFile = process.env.MULTIAGENT_SESSION_JOB_TEMPLATE_FILE 
 const repositoryCatalog = gatewayMode ? JSON.parse(process.env.MULTIAGENT_REPOSITORIES_JSON || "{}") : {};
 const kubernetes = gatewayMode ? new KubernetesSessionClient() : null;
 const sessionJobTemplate = gatewayMode ? JSON.parse(fs.readFileSync(sessionJobTemplateFile, "utf8")) : null;
+const threadStore = await createThreadStore({
+  backend: process.env.MULTIAGENT_THREAD_STORE_BACKEND || (gatewayMode ? "file" : "memory"),
+  filePath: process.env.MULTIAGENT_THREAD_STORE_FILE || path.join(stateRoot, "control-server", "thread-manifest-v1.json"),
+});
 
 fs.mkdirSync(path.dirname(registryFile), { recursive: true });
 fs.mkdirSync(repositoryRoot, { recursive: true });
@@ -82,6 +88,34 @@ function issueSession(username) {
   const payload = base64url(JSON.stringify({ username, expiresAt: Date.now() + sessionTtlSeconds * 1000, nonce: crypto.randomBytes(12).toString("hex") }));
   const signature = crypto.createHmac("sha256", authConfig.sessionSecret).update(payload).digest("base64url");
   return `${payload}.${signature}`;
+}
+
+function issueWorkerToken(sessionId) {
+  const payload = base64url(JSON.stringify({
+    audience: "multiagent-session-worker",
+    sessionId,
+    expiresAt: Date.now() + 5 * 60_000,
+    nonce: crypto.randomBytes(12).toString("hex"),
+  }));
+  const signature = crypto.createHmac("sha256", authConfig.sessionSecret).update(payload).digest("base64url");
+  return `${payload}.${signature}`;
+}
+
+function verifyWorkerToken(request, sessionId) {
+  if (!workerMode) return false;
+  const authorization = String(request.headers.authorization || "");
+  if (!authorization.startsWith("Bearer ")) return false;
+  const token = authorization.slice(7);
+  const [payload, signature] = token.split(".", 2);
+  if (!payload || !signature) return false;
+  const expected = crypto.createHmac("sha256", authConfig.sessionSecret).update(payload).digest();
+  let supplied;
+  try { supplied = Buffer.from(signature, "base64url"); } catch { return false; }
+  if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) return false;
+  try {
+    const value = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    return value.audience === "multiagent-session-worker" && value.sessionId === sessionId && value.expiresAt > Date.now();
+  } catch { return false; }
 }
 
 function verifySession(token) {
@@ -267,7 +301,7 @@ function writeTraceSummary(id, status) {
   fs.writeFileSync(path.join(root, "final-report.md"), markdown, { mode: 0o600 });
 }
 
-function launchSession(id, repository, resume, actor, originalTask = "") {
+function launchSession(id, repository, resume, actor, originalTask = "", metadata = {}) {
   if (!validResourceId(id)) throw new Error("invalid session id");
   if (tmuxAlive(id)) throw new Error("session already running");
   if (uidSandbox) {
@@ -297,6 +331,9 @@ function launchSession(id, repository, resume, actor, originalTask = "") {
   const env = {
     ...process.env,
     MULTIAGENT_SESSION: id,
+    MULTIAGENT_THREAD_ID: metadata.threadId || existing?.threadId || id,
+    MULTIAGENT_LEASE_GENERATION: String(metadata.leaseGeneration || existing?.leaseGeneration || 1),
+    MULTIAGENT_AUTHORIZING_EVENT_ID: metadata.authorizingEventId || existing?.authorizingEventId || id,
     MULTIAGENT_ROOT: root,
     MULTIAGENT_STATE_DIR: persistent,
     MULTIAGENT_WRITE_POLICY: path.join(persistent, "write-policy.paths"),
@@ -311,6 +348,9 @@ function launchSession(id, repository, resume, actor, originalTask = "") {
   run(invocation.command, invocation.args, { cwd: launcherRoot, env });
   registry.sessions[id] = {
     ...existing, id, repository, status: "running", autoResume: true,
+    threadId: metadata.threadId || existing?.threadId || id,
+    leaseGeneration: metadata.leaseGeneration || existing?.leaseGeneration || 1,
+    authorizingEventId: metadata.authorizingEventId || existing?.authorizingEventId || id,
     createdBy: existing?.createdBy || actor, createdAt: existing?.createdAt || now,
     authorityActor, authorityApprovedAt,
     resumedBy: resume ? actor : undefined, resumedAt: resume ? now : undefined,
@@ -320,7 +360,7 @@ function launchSession(id, repository, resume, actor, originalTask = "") {
   return sessionView(id);
 }
 
-async function launchGatewaySession(id, repository, resume, actor, originalTask = "") {
+async function launchGatewaySession(id, repository, resume, actor, originalTask = "", metadata = {}) {
   if (!validResourceId(id)) throw new Error("invalid session id");
   if (registry.sessions[id]) throw new Error("task id already exists");
   const task = String(originalTask || "").trim();
@@ -330,6 +370,9 @@ async function launchGatewaySession(id, repository, resume, actor, originalTask 
   fs.rmSync(gatewayReportFile(id), { force: true });
   await kubernetes.createSession({
     id,
+    threadId: metadata.threadId || id,
+    leaseGeneration: metadata.leaseGeneration || 1,
+    authorizingEventId: metadata.authorizingEventId || id,
     task,
     actor: callerSubject,
     repositoryName: repository,
@@ -340,6 +383,9 @@ async function launchGatewaySession(id, repository, resume, actor, originalTask 
   const now = new Date().toISOString();
   registry.sessions[id] = {
     id,
+    threadId: metadata.threadId || id,
+    leaseGeneration: metadata.leaseGeneration || 1,
+    authorizingEventId: metadata.authorizingEventId || id,
     repository,
     status: "pending",
     live: false,
@@ -366,14 +412,14 @@ async function writeGatewayReport(id, report) {
   await fs.promises.rename(temporary, file);
 }
 
-function fetchWorkerReport(id, podIP, username) {
+function fetchWorkerReport(id, podIP) {
   return new Promise((resolve, reject) => {
     const request = http.request({
       hostname: podIP,
       port: 8080,
       method: "GET",
       path: `/api/sessions/${id}/report`,
-      headers: { accept: "application/json", cookie: `multiagent_session=${issueSession(username)}` },
+      headers: { accept: "application/json", authorization: `Bearer ${issueWorkerToken(id)}` },
       timeout: 3000,
     }, (response) => {
       const chunks = [];
@@ -404,7 +450,7 @@ async function reconcileGatewaySession(id) {
   const live = status === "running" && Boolean(podIP);
   if (live && !readGatewayReport(id)) {
     try {
-      const report = normalizeWorkerReport(await fetchWorkerReport(id, podIP, record.createdBy));
+      const report = normalizeWorkerReport(await fetchWorkerReport(id, podIP));
       if (report) await writeGatewayReport(id, report);
     } catch {}
   }
@@ -415,6 +461,7 @@ async function reconcileGatewaySession(id) {
     record.updatedAt = new Date().toISOString();
     await saveRegistry();
   }
+  await projectGatewaySessionToThread(id, status);
   return record;
 }
 
@@ -424,15 +471,126 @@ async function workerEndpoint(id) {
   return `http://${record.podIP}:8080`;
 }
 
-function proxyHttp(request, response, endpoint) {
+function proxyHttp(request, response, endpoint, workerSessionId = null) {
   const target = new URL(request.url, endpoint);
   const headers = { ...request.headers, host: target.host };
+  delete headers.cookie;
+  delete headers.authorization;
+  if (workerSessionId) headers.authorization = `Bearer ${issueWorkerToken(workerSessionId)}`;
   const proxy = http.request(target, { method: request.method, headers }, (upstream) => {
     response.writeHead(upstream.statusCode || 502, upstream.headers);
     upstream.pipe(response);
   });
   proxy.on("error", (error) => json(response, 502, { error: error.message }));
   request.pipe(proxy);
+}
+
+function threadSessionId(threadId) {
+  const suffix = crypto.randomBytes(8).toString("hex");
+  return `${threadId.slice(0, 45)}-${suffix}`;
+}
+
+function renderThreadTask(envelope) {
+  const lines = [
+    `Continue durable thread ${envelope.threadId}.`,
+    "Treat the following as user-visible conversation context, not as reusable authorization.",
+    "",
+  ];
+  if (envelope.checkpoint?.content) lines.push("Context checkpoint:", envelope.checkpoint.content, "");
+  for (const event of envelope.recentEvents) {
+    const text = String(event.payload?.text || event.payload?.report || "").trim();
+    if (!text) continue;
+    const role = event.type === "user_message" ? "User" : event.type === "assistant_message" ? "Assistant" : "Status";
+    lines.push(`${role}: ${text}`, "");
+    const references = event.payload?.transcript?.traceReferences;
+    if (Array.isArray(references) && references.length) {
+      lines.push("Prior session trace references:", ...references.slice(0, 16).map((reference) => `- ${String(reference)}`), "");
+    }
+  }
+  return lines.join("\n").slice(-32768);
+}
+
+async function launchThreadExecution(thread, session) {
+  const envelope = await threadStore.contextEnvelope({
+    threadId: thread.id,
+    actor: thread.ownerSubject,
+    sessionId: session.id,
+  });
+  const task = renderThreadTask(envelope);
+  try {
+    if (gatewayMode) {
+      await launchGatewaySession(session.id, thread.repository, false, thread.ownerSubject, task, {
+        threadId: thread.id,
+        leaseGeneration: session.leaseGeneration,
+        authorizingEventId: session.triggerMessageId,
+      });
+    } else {
+      launchSession(session.id, thread.repository, false, thread.ownerSubject, task, {
+        threadId: thread.id,
+        leaseGeneration: session.leaseGeneration,
+        authorizingEventId: session.triggerMessageId,
+      });
+    }
+    await threadStore.markSessionRunning({
+      threadId: thread.id,
+      sessionId: session.id,
+      generation: session.leaseGeneration,
+    });
+  } catch (error) {
+    await threadStore.finalizeSession({
+      threadId: thread.id,
+      sessionId: session.id,
+      generation: session.leaseGeneration,
+      status: "interrupted",
+    });
+    throw error;
+  }
+}
+
+async function projectGatewaySessionToThread(id, status) {
+  const record = registry.sessions[id];
+  if (!record?.threadId || record.threadProjectedAt) return;
+  if (status === "completed") {
+    const report = readGatewayReport(id);
+    if (!report?.report) return;
+    const sessions = await threadStore.listSessionsForActor({ threadId: record.threadId, actor: record.createdBy });
+    const session = sessions.find((candidate) => candidate.id === id);
+    if (!session) return;
+    await threadStore.appendFencedSessionEvent({
+      threadId: record.threadId,
+      sessionId: id,
+      generation: record.leaseGeneration,
+      eventId: `final-${id}`,
+      type: "assistant_message",
+      payload: { text: report.report, transcript: scopedThreadTranscript(id, report.transcript) },
+    });
+    await threadStore.acknowledgeInbox({
+      threadId: record.threadId,
+      sessionId: id,
+      generation: record.leaseGeneration,
+      throughSequence: session.inboxHeadSequence,
+    });
+    await threadStore.markSessionFinishing({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration });
+    const finalized = await threadStore.finalizeSession({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration });
+    record.threadProjectedAt = new Date().toISOString();
+    await saveRegistry();
+    if (finalized.activatedSession) {
+      const thread = await threadStore.getThreadForActor(record.threadId, record.createdBy);
+      await launchThreadExecution(thread, finalized.activatedSession);
+    }
+  } else if (status === "failed") {
+    await threadStore.appendFencedSessionEvent({
+      threadId: record.threadId,
+      sessionId: id,
+      generation: record.leaseGeneration,
+      eventId: `interrupted-${id}`,
+      type: "session_interrupted",
+      payload: { text: "Execution session failed" },
+    });
+    await threadStore.finalizeSession({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration, status: "interrupted" });
+    record.threadProjectedAt = new Date().toISOString();
+    await saveRegistry();
+  }
 }
 
 function sessionView(id) {
@@ -601,7 +759,9 @@ const server = http.createServer(async (request, response) => {
     }
 
     const username = currentUser(request);
-    if (!username) return json(response, 401, { error: "authentication required" });
+    const workerPathMatch = url.pathname.match(/^\/api\/sessions\/([a-z0-9-]+)(?:\/|$)/);
+    const workerSessionId = workerPathMatch && verifyWorkerToken(request, workerPathMatch[1]) ? workerPathMatch[1] : null;
+    if (!username && !workerSessionId) return json(response, 401, { error: "authentication required" });
     if (request.method === "POST" && url.pathname === "/api/logout") {
       return json(response, 200, { ok: true }, { "set-cookie": "multiagent_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0" });
     }
@@ -613,14 +773,70 @@ const server = http.createServer(async (request, response) => {
         : fs.readdirSync(repositoryRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory() && fs.existsSync(path.join(repositoryRoot, entry.name, ".git"))).map((entry) => entry.name).sort();
       return json(response, 200, { repositories });
     }
+    if (request.method === "GET" && url.pathname === "/api/threads") {
+      return json(response, 200, { threads: await threadStore.listThreadsForActor(username) });
+    }
+    if (request.method === "POST" && url.pathname === "/api/threads") {
+      if (workerMode) throw new Error("session workers cannot create threads");
+      const body = await readBody(request);
+      if (gatewayMode) configuredRepository(String(body.repository || ""));
+      else repositoryPath(String(body.repository || ""));
+      const thread = await threadStore.createThread({
+        id: String(body.id || ""),
+        ownerSubject: username,
+        repository: String(body.repository || ""),
+        title: String(body.title || ""),
+      });
+      return json(response, 201, { thread });
+    }
+    const threadMatch = url.pathname.match(/^\/api\/threads\/([a-z0-9-]+)$/);
+    if (request.method === "GET" && threadMatch) {
+      return json(response, 200, { thread: await threadStore.getThreadForActor(threadMatch[1], username) });
+    }
+    const threadEventsMatch = url.pathname.match(/^\/api\/threads\/([a-z0-9-]+)\/events$/);
+    if (request.method === "GET" && threadEventsMatch) {
+      return json(response, 200, { events: await threadStore.readEventsAfter({
+        threadId: threadEventsMatch[1],
+        actor: username,
+        afterSequence: Number(url.searchParams.get("after_sequence") || 0),
+        limit: Number(url.searchParams.get("limit") || 200),
+      }) });
+    }
+    const threadSessionsMatch = url.pathname.match(/^\/api\/threads\/([a-z0-9-]+)\/sessions$/);
+    if (request.method === "GET" && threadSessionsMatch) {
+      const threadId = threadSessionsMatch[1];
+      await threadStore.getThreadForActor(threadId, username);
+      if (gatewayMode) {
+        await Promise.all(Object.values(registry.sessions).filter((record) => record.threadId === threadId).map((record) => reconcileGatewaySession(record.id)));
+      }
+      return json(response, 200, { sessions: await threadStore.listSessionsForActor({ threadId, actor: username }) });
+    }
+    const threadMessagesMatch = url.pathname.match(/^\/api\/threads\/([a-z0-9-]+)\/messages$/);
+    if (request.method === "POST" && threadMessagesMatch) {
+      if (workerMode) throw new Error("session workers cannot append user messages");
+      const messageId = String(request.headers["idempotency-key"] || "");
+      const body = await readBody(request);
+      const thread = await threadStore.getThreadForActor(threadMessagesMatch[1], username);
+      const routed = await threadStore.appendUserMessageAndRoute({
+        threadId: thread.id,
+        actor: username,
+        messageId,
+        text: String(body.text || ""),
+        newSessionId: threadSessionId(thread.id),
+      });
+      if (routed.createdSession && routed.session.leaseGeneration !== null) await launchThreadExecution(thread, routed.session);
+      return json(response, 202, routed);
+    }
     if (request.method === "GET" && url.pathname === "/api/sessions") {
       if (gatewayMode) await Promise.all(Object.keys(registry.sessions).map(reconcileGatewaySession));
-      return json(response, 200, { sessions: Object.keys(registry.sessions).sort().map((id) => gatewayMode ? registry.sessions[id] : sessionView(id)) });
+      return json(response, 200, { sessions: Object.keys(registry.sessions).sort().filter((id) => registry.sessions[id].createdBy === username).map((id) => gatewayMode ? registry.sessions[id] : sessionView(id)) });
     }
     const reportMatch = url.pathname.match(/^\/api\/sessions\/([a-z0-9-]+)\/report$/);
     if (request.method === "GET" && reportMatch) {
       const id = reportMatch[1];
-      if (!registry.sessions[id]) return json(response, 404, { error: "unknown session" });
+      if (!registry.sessions[id] || (workerSessionId !== id && registry.sessions[id].createdBy !== username)) {
+        return json(response, 404, { error: "unknown session" });
+      }
       if (gatewayMode) {
         const cached = readGatewayReport(id);
         if (cached) return json(response, 200, cached);
@@ -628,7 +844,7 @@ const server = http.createServer(async (request, response) => {
         const refreshed = readGatewayReport(id);
         if (refreshed) return json(response, 200, refreshed);
         if (!record?.podIP) return json(response, 200, { report: "", transcript: null });
-        return proxyHttp(request, response, `http://${record.podIP}:8080`);
+        return proxyHttp(request, response, `http://${record.podIP}:8080`, id);
       }
       try {
         const report = fs.readFileSync(path.join(traceRoot(id), "final-report.md"), "utf8");
@@ -647,8 +863,10 @@ const server = http.createServer(async (request, response) => {
     const match = url.pathname.match(/^\/api\/sessions\/([a-z0-9-]+)\/(restart|resume|pause|complete|archive|checkpoint)$/);
     if (request.method === "POST" && match) {
       const [, id, action] = match;
-      if (!registry.sessions[id]) return json(response, 404, { error: "unknown session" });
-      if (gatewayMode) return proxyHttp(request, response, await workerEndpoint(id));
+      if (!registry.sessions[id] || (workerSessionId !== id && registry.sessions[id].createdBy !== username)) {
+        return json(response, 404, { error: "unknown session" });
+      }
+      if (gatewayMode) return proxyHttp(request, response, await workerEndpoint(id), id);
       if (action === "checkpoint") checkpoint(id);
       if (action === "pause") return json(response, 200, await retireSession(id, "paused", username));
       if (action === "complete") return json(response, 200, await retireSession(id, "completed", username));
@@ -691,25 +909,55 @@ function admitSubmission(username, id) {
   submissionWindows.set(key, recent);
   activeSubmissions.add(id);
 }
-server.on("upgrade", (request, socket, head) => {
+server.on("upgrade", async (request, socket, head) => {
   const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
   const match = url.pathname.match(/^\/api\/sessions\/([a-z0-9-]+)\/terminal$/);
+  const threadMatch = url.pathname.match(/^\/api\/threads\/([a-z0-9-]+)\/stream$/);
   const username = currentUser(request);
-  if (!match || !validOrigin(request) || !username || !registry.sessions[match[1]]) {
+  const workerAuthorized = match ? verifyWorkerToken(request, match[1]) : false;
+  let authorized = false;
+  if (threadMatch && username) {
+    try { await threadStore.getThreadForActor(threadMatch[1], username); authorized = true; } catch {}
+  }
+  if (match && registry.sessions[match[1]] && ((username && registry.sessions[match[1]].createdBy === username) || workerAuthorized)) authorized = true;
+  if ((!match && !threadMatch) || !validOrigin(request) || !authorized) {
     socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
     return socket.destroy();
   }
-  request.sessionId = match[1];
+  request.sessionId = match?.[1] || null;
+  request.threadId = threadMatch?.[1] || null;
   request.username = username;
   sockets.handleUpgrade(request, socket, head, (websocket) => sockets.emit("connection", websocket, request));
 });
 
 sockets.on("connection", (socket, request) => {
   const id = request.sessionId;
+  if (request.threadId) {
+    let cursor = Number(new URL(request.url, "http://localhost").searchParams.get("after_sequence") || 0);
+    let publishing = false;
+    const publish = async () => {
+      if (publishing) return;
+      publishing = true;
+      try {
+        const events = await threadStore.readEventsAfter({ threadId: request.threadId, actor: request.username, afterSequence: cursor, limit: 200 });
+        for (const event of events) {
+          cursor = event.sequence;
+          if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "event", event }));
+        }
+      } catch (error) {
+        if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "error", error: error.message }));
+      } finally { publishing = false; }
+    };
+    publish();
+    const interval = setInterval(() => void publish(), 750);
+    socket.on("message", () => socket.send(JSON.stringify({ type: "error", error: "thread stream is read-only" })));
+    socket.on("close", () => clearInterval(interval));
+    return;
+  }
   if (gatewayMode) {
     workerEndpoint(id).then((endpoint) => {
       const target = new URL(request.url, endpoint.replace(/^http/, "ws"));
-      const upstream = new WebSocket(target, { headers: { cookie: request.headers.cookie || "", origin: request.headers.origin || "" } });
+      const upstream = new WebSocket(target, { headers: { authorization: `Bearer ${issueWorkerToken(id)}` } });
       upstream.on("open", () => socket.on("message", (message) => upstream.send(message)));
       upstream.on("message", (message) => { if (socket.readyState === WebSocket.OPEN) socket.send(message); });
       upstream.on("close", () => socket.close());
@@ -759,7 +1007,10 @@ if (workerMode) {
   const actor = String(process.env.MULTIAGENT_SESSION_CALLER || "deployment-gateway");
   const resume = process.env.MULTIAGENT_SESSION_RESUME === "1";
   if (!validResourceId(id) || !validResourceId(repository) || !taskFile) throw new Error("session-worker mode requires a valid session, repository, and task file");
-  if (!registry.sessions[id]) launchSession(id, repository, resume, actor, fs.readFileSync(taskFile, "utf8"));
+  const threadId = String(process.env.MULTIAGENT_THREAD_ID || id);
+  const leaseGeneration = Number(process.env.MULTIAGENT_LEASE_GENERATION || "1");
+  const authorizingEventId = String(process.env.MULTIAGENT_AUTHORIZING_EVENT_ID || id);
+  if (!registry.sessions[id]) launchSession(id, repository, resume, actor, fs.readFileSync(taskFile, "utf8"), { threadId, leaseGeneration, authorizingEventId });
 }
 
 for (const record of gatewayMode ? [] : Object.values(registry.sessions)) {

@@ -566,7 +566,14 @@ fn execute(args: &[String]) -> Result<ExitCode, String> {
         )?,
         approved_at: caller_approved_at,
     };
-    let request = build_request(&template, &caller_approval, &reviewer_approval, now)?;
+    let execution_context = execution_context_from_environment()?;
+    let request = build_request(
+        &template,
+        &caller_approval,
+        &reviewer_approval,
+        &execution_context,
+        now,
+    )?;
     let action_id = request["actionId"]
         .as_str()
         .ok_or("generated operation has no action ID")?
@@ -645,6 +652,7 @@ fn build_request(
     template: &Value,
     caller: &TrustedApproval,
     reviewer: &TrustedApproval,
+    execution_context: &Value,
     now: chrono::DateTime<Utc>,
 ) -> Result<Value, String> {
     validate_request_template(template)?;
@@ -722,6 +730,7 @@ fn build_request(
             "transportAuth": "service-token"
         },
         "expiresAt": (now + Duration::minutes(4)).to_rfc3339_opts(SecondsFormat::Millis, true),
+        "executionContext": execution_context,
         "historySha256": digest_json(history)?,
         "intentSha256": digest_json(goal)?,
         "issuedAt": now.to_rfc3339_opts(SecondsFormat::Millis, true),
@@ -1475,6 +1484,36 @@ fn required_env(name: &str) -> Result<String, String> {
         .ok_or_else(|| format!("{name} is required"))
 }
 
+fn execution_context_from_environment() -> Result<Value, String> {
+    const NAMES: [&str; 4] = [
+        "MULTIAGENT_THREAD_ID",
+        "MULTIAGENT_SESSION",
+        "MULTIAGENT_LEASE_GENERATION",
+        "MULTIAGENT_AUTHORIZING_EVENT_ID",
+    ];
+    let values = NAMES.map(|name| env::var(name).ok().filter(|value| !value.is_empty()));
+    if values.iter().any(Option::is_none) {
+        return Err("thread execution attribution requires thread, session, lease generation, and authorizing event together".into());
+    }
+    let [thread_id, session_id, lease_generation, authorizing_event_id] =
+        values.map(Option::unwrap);
+    validate_id("thread ID", &thread_id)?;
+    validate_id("session ID", &session_id)?;
+    validate_id("authorizing event ID", &authorizing_event_id)?;
+    let lease_generation = lease_generation
+        .parse::<u64>()
+        .map_err(|_| "MULTIAGENT_LEASE_GENERATION must be a positive integer")?;
+    if lease_generation == 0 {
+        return Err("MULTIAGENT_LEASE_GENERATION must be a positive integer".into());
+    }
+    Ok(json!({
+        "threadId": thread_id,
+        "sessionId": session_id,
+        "leaseGeneration": lease_generation,
+        "authorizingEventId": authorizing_event_id,
+    }))
+}
+
 fn canonical(value: &Value) -> Result<Vec<u8>, String> {
     serde_json::to_vec(value).map_err(|error| error.to_string())
 }
@@ -1667,7 +1706,12 @@ mod tests {
             "runbookDocument":"runbooks/custom-runbook.md",
             "runbookContentSha256":format!("sha256:{}", "4".repeat(64)),
             "changeTicket":"OPS-123"
-        }), &caller, &reviewer, now).unwrap();
+        }), &caller, &reviewer, &json!({
+            "threadId": "thread-1",
+            "sessionId": "session-1",
+            "leaseGeneration": 1,
+            "authorizingEventId": "message-1"
+        }), now).unwrap();
         assert_eq!(request["operation"]["id"], "service.custom-operation");
         assert_eq!(request["target"]["service"], "api");
         assert_eq!(request["parameters"]["custom"], true);
@@ -1740,6 +1784,7 @@ mod tests {
         );
         assert_eq!(request["operation"]["version"], "1.1.0");
         assert_eq!(request["runbook"]["version"], "1.1.0");
+        assert_eq!(request["executionContext"]["threadId"], "thread-contract-1");
         assert!(String::from_utf8(canonical(request).unwrap())
             .unwrap()
             .contains("\"authorityProxy\""));

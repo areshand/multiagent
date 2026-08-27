@@ -47,3 +47,15 @@ export function normalizeWorkerReport(value) {
   if (Buffer.byteLength(JSON.stringify(transcript), "utf8") > 64 * 1024) return null;
   return { report: value.report, transcript };
 }
+
+export function scopedThreadTranscript(sessionId, transcript) {
+  if (!transcript || typeof transcript !== "object") return null;
+  const traceReferences = Array.isArray(transcript.traceReferences)
+    ? transcript.traceReferences.map((reference) => {
+      const normalized = path.posix.normalize(path.posix.join("logs", String(reference)));
+      if (path.posix.isAbsolute(normalized) || normalized === ".." || normalized.startsWith("../")) return null;
+      return `trace://session/${sessionId}/${normalized}`;
+    }).filter(Boolean)
+    : [];
+  return { ...transcript, traceReferences };
+}
