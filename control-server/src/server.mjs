@@ -758,7 +758,6 @@ const server = http.createServer(async (request, response) => {
       return json(response, ready ? 200 : 503, { ready, traceExport });
     }
     if (request.method === "GET" && url.pathname === "/") return staticFile(response, "index.html", "text/html; charset=utf-8");
-    if (request.method === "GET" && url.pathname === "/app.js") return staticFile(response, "app.js", "text/javascript; charset=utf-8");
     if (request.method === "GET" && url.pathname === "/styles.css") return staticFile(response, "styles.css", "text/css; charset=utf-8");
 
     if (!validOrigin(request)) return json(response, 403, { error: "origin rejected" });

@@ -604,9 +604,9 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
     let mut agent_prompt = prompt_bundle.clone();
     if let Some(user_message_file) = env_path("MULTIAGENT_USER_MESSAGE_FILE") {
         let user_message = fs::read_to_string(&user_message_file)
-            .map_err(io_error("read authenticated website user message"))?;
+            .map_err(io_error("read authenticated client user message"))?;
         if user_message.is_empty() || user_message.len() > 32_768 {
-            return Err("authenticated website user message must contain 1 to 32768 bytes".into());
+            return Err("authenticated client user message must contain 1 to 32768 bytes".into());
         }
         if orchestrator_resume_session.is_some() {
             atomic_write(
@@ -628,7 +628,7 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
             )?;
         }
         fs::remove_file(&user_message_file)
-            .map_err(io_error("consume authenticated website user message"))?;
+            .map_err(io_error("consume authenticated client user message"))?;
     } else if orchestrator_resume_session.is_some() {
         atomic_write(
             &user_turn,
