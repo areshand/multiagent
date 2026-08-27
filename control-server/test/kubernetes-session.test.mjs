@@ -12,12 +12,14 @@ test("deployment-owned session templates accept only named bounded substitutions
   assert.throws(() => renderSessionTemplate("{{session}}", {}), /invalid placeholder/);
 });
 
-test("session bootstrap secrets bind thread and execution lease without placing task data in Job arguments", () => {
-  const secret = sessionSecret("task-1", "multiagent", "summarize general", "caller-123", "thread-1", 4);
+test("session bootstrap secrets bind thread, execution lease, and scoped gateway token", () => {
+  const secret = sessionSecret("task-1", "multiagent", "summarize general", "caller-123", "thread-1", 4, "message-1", "scoped.token");
   assert.equal(secret.metadata.name, "multiagent-session-task-1");
   assert.equal(Buffer.from(secret.data["task.md"], "base64").toString("utf8"), "summarize general");
   assert.equal(Buffer.from(secret.data["thread-id"], "base64").toString("utf8"), "thread-1");
   assert.equal(Buffer.from(secret.data["lease-generation"], "base64").toString("utf8"), "4");
+  assert.equal(Buffer.from(secret.data["authorizing-event-id"], "base64").toString("utf8"), "message-1");
+  assert.equal(Buffer.from(secret.data["gateway-token"], "base64").toString("utf8"), "scoped.token");
   assert.equal(secret.immutable, true);
 });
 

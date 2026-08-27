@@ -178,20 +178,35 @@ async function githubJson(url, headers) {
 }
 
 async function request(path, options = {}) {
-  const headers = { accept: "application/json", origin: baseUrl.origin, ...(options.headers || {}) };
-  if (options.body) headers["content-type"] = "application/json";
-  if (options.cookie) headers.cookie = options.cookie;
-  const response = await fetch(new URL(path, baseUrl), {
-    method: options.method || "GET",
-    headers,
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
-  const body = await response.json().catch(() => ({}));
-  const expectedStatus = options.expectedStatus || 200;
-  if (response.status !== expectedStatus) {
-    throw new Error(`${options.method || "GET"} ${path} returned ${response.status}: ${JSON.stringify(body)}`);
+  const method = options.method || "GET";
+  const retryDeadline = Date.now() + 60_000;
+  while (true) {
+    const headers = { accept: "application/json", origin: baseUrl.origin, ...(options.headers || {}) };
+    if (options.body) headers["content-type"] = "application/json";
+    if (options.cookie) headers.cookie = options.cookie;
+    let response;
+    try {
+      response = await fetch(new URL(path, baseUrl), {
+        method,
+        headers,
+        body: options.body ? JSON.stringify(options.body) : undefined,
+      });
+    } catch (error) {
+      if (method === "GET" && Date.now() < retryDeadline) {
+        await sleep(2000);
+        continue;
+      }
+      throw error;
+    }
+    const body = await response.json().catch(() => ({}));
+    const expectedStatus = options.expectedStatus || 200;
+    if (response.status === expectedStatus) return { response, headers: response.headers, body };
+    if (method === "GET" && [502, 503, 504].includes(response.status) && Date.now() < retryDeadline) {
+      await sleep(2000);
+      continue;
+    }
+    throw new Error(`${method} ${path} returned ${response.status}: ${JSON.stringify(body)}`);
   }
-  return { response, headers: response.headers, body };
 }
 
 function required(name) {

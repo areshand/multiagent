@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { WebSocket, WebSocketServer } from "ws";
 import { jobPhase, KubernetesSessionClient } from "./kubernetes-session.mjs";
 import { createThreadStore } from "./thread-store.mjs";
+import { deliverWorkerReport, reportDeliveryTimeoutMs } from "./worker-report-delivery.mjs";
 import {
   completionExitDelayMs,
   controlMode,
@@ -37,10 +38,17 @@ const captureLines = Math.min(Number(process.env.MULTIAGENT_CAPTURE_LINES || "12
 const snapshotIntervalMs = Math.max(Number(process.env.MULTIAGENT_SNAPSHOT_INTERVAL_SECONDS || "60"), 15) * 1000;
 const idleTimeoutMs = Math.max(Number(process.env.MULTIAGENT_IDLE_TIMEOUT_SECONDS || "86400"), 300) * 1000;
 const completionGraceMs = completionExitDelayMs();
+const workerReportDeliveryTimeoutMs = reportDeliveryTimeoutMs();
+const sessionWorkerTokenTtlMs = Math.min(
+  Math.max(Number(process.env.MULTIAGENT_SESSION_WORKER_TOKEN_TTL_SECONDS || "86400"), 3600),
+  86400,
+) * 1000;
 const uidSandbox = process.env.MULTIAGENT_UID_SANDBOX === "1";
 const mode = controlMode();
 const gatewayMode = mode === "gateway";
 const workerMode = mode === "session-worker";
+const workerReportGatewayUrl = workerMode ? String(process.env.MULTIAGENT_GATEWAY_URL || "") : "";
+const workerReportTokenFile = workerMode ? String(process.env.MULTIAGENT_GATEWAY_TOKEN_FILE || "") : "";
 const registryFile = path.join(stateRoot, "control-server", "sessions.json");
 const sessionJobTemplateFile = process.env.MULTIAGENT_SESSION_JOB_TEMPLATE_FILE || "/etc/multiagent-session/job-template.json";
 const repositoryCatalog = gatewayMode ? JSON.parse(process.env.MULTIAGENT_REPOSITORIES_JSON || "{}") : {};
@@ -90,11 +98,11 @@ function issueSession(username) {
   return `${payload}.${signature}`;
 }
 
-function issueWorkerToken(sessionId) {
+function issueWorkerToken(sessionId, ttlMs = 5 * 60_000) {
   const payload = base64url(JSON.stringify({
     audience: "multiagent-session-worker",
     sessionId,
-    expiresAt: Date.now() + 5 * 60_000,
+    expiresAt: Date.now() + ttlMs,
     nonce: crypto.randomBytes(12).toString("hex"),
   }));
   const signature = crypto.createHmac("sha256", authConfig.sessionSecret).update(payload).digest("base64url");
@@ -373,6 +381,7 @@ async function launchGatewaySession(id, repository, resume, actor, originalTask 
     threadId: metadata.threadId || id,
     leaseGeneration: metadata.leaseGeneration || 1,
     authorizingEventId: metadata.authorizingEventId || id,
+    gatewayToken: issueWorkerToken(id, sessionWorkerTokenTtlMs),
     task,
     actor: callerSubject,
     repositoryName: repository,
@@ -410,6 +419,29 @@ async function writeGatewayReport(id, report) {
   const temporary = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
   await fs.promises.writeFile(temporary, JSON.stringify(report) + "\n", { mode: 0o600 });
   await fs.promises.rename(temporary, file);
+}
+
+function readLocalWorkerReport(id) {
+  try {
+    return normalizeWorkerReport({
+      report: fs.readFileSync(path.join(traceRoot(id), "final-report.md"), "utf8"),
+      transcript: JSON.parse(fs.readFileSync(path.join(traceRoot(id), "transcript-index.json"), "utf8")),
+    });
+  } catch { return null; }
+}
+
+async function deliverCompletedWorkerReport(id) {
+  if (!workerMode || !workerReportGatewayUrl || !workerReportTokenFile) return;
+  const report = readLocalWorkerReport(id);
+  if (!report) throw new Error(`completed session ${id} has no normalized report`);
+  const token = fs.readFileSync(workerReportTokenFile, "utf8").trim();
+  await deliverWorkerReport({
+    gatewayUrl: workerReportGatewayUrl,
+    sessionId: id,
+    token,
+    report,
+    timeoutMs: workerReportDeliveryTimeoutMs,
+  });
 }
 
 function fetchWorkerReport(id, podIP) {
@@ -832,6 +864,16 @@ const server = http.createServer(async (request, response) => {
       return json(response, 200, { sessions: Object.keys(registry.sessions).sort().filter((id) => registry.sessions[id].createdBy === username).map((id) => gatewayMode ? registry.sessions[id] : sessionView(id)) });
     }
     const reportMatch = url.pathname.match(/^\/api\/sessions\/([a-z0-9-]+)\/report$/);
+    if (request.method === "POST" && reportMatch) {
+      const id = reportMatch[1];
+      if (!gatewayMode || workerSessionId !== id || !registry.sessions[id]) {
+        return json(response, 404, { error: "unknown session" });
+      }
+      const report = normalizeWorkerReport(await readBody(request));
+      if (!report) return json(response, 400, { error: "invalid session report" });
+      await writeGatewayReport(id, report);
+      return json(response, 202, { accepted: true });
+    }
     if (request.method === "GET" && reportMatch) {
       const id = reportMatch[1];
       if (!registry.sessions[id] || (workerSessionId !== id && registry.sessions[id].createdBy !== username)) {
@@ -846,11 +888,7 @@ const server = http.createServer(async (request, response) => {
         if (!record?.podIP) return json(response, 200, { report: "", transcript: null });
         return proxyHttp(request, response, `http://${record.podIP}:8080`, id);
       }
-      try {
-        const report = fs.readFileSync(path.join(traceRoot(id), "final-report.md"), "utf8");
-        const transcript = JSON.parse(fs.readFileSync(path.join(traceRoot(id), "transcript-index.json"), "utf8"));
-        return json(response, 200, { report, transcript });
-      } catch { return json(response, 200, { report: "", transcript: null }); }
+      return json(response, 200, readLocalWorkerReport(id) || { report: "", transcript: null });
     }
     if (request.method === "POST" && url.pathname === "/api/sessions") {
       const body = await readBody(request);
@@ -1023,7 +1061,11 @@ for (const record of gatewayMode ? [] : Object.values(registry.sessions)) {
     record.updatedAt = now;
     writeTraceSummary(record.id, "completed");
     saveRegistry();
-    if (workerMode) setTimeout(() => process.exit(0), completionGraceMs);
+    if (workerMode) {
+      deliverCompletedWorkerReport(record.id)
+        .catch((error) => console.error(`worker report delivery failed for ${record.id}`, error))
+        .finally(() => setTimeout(() => process.exit(0), completionGraceMs));
+    }
   } else if (record.status === "running" && record.autoResume && !tmuxAlive(record.id)) {
     try { launchSession(record.id, record.repository, true, "system"); } catch (error) { console.error(`restore failed for ${record.id}`, error); }
   }
@@ -1037,8 +1079,12 @@ const retirementTimer = setInterval(() => {
   const now = Date.now();
   for (const record of Object.values(registry.sessions)) {
     if (record.status === "running" && workflowPhase(record.id) === "complete") {
-      retireSession(record.id, "completed", "workflow-supervisor").then(() => {
-        if (workerMode) setTimeout(() => process.exit(0), completionGraceMs);
+      retireSession(record.id, "completed", "workflow-supervisor").then(async () => {
+        if (workerMode) {
+          try { await deliverCompletedWorkerReport(record.id); }
+          catch (error) { console.error(`worker report delivery failed for ${record.id}`, error); }
+          setTimeout(() => process.exit(0), completionGraceMs);
+        }
       }).catch((error) => console.error(`completion retirement failed for ${record.id}`, error));
       continue;
     }
