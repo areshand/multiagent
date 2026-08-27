@@ -15,4 +15,5 @@ test("browser keeps legacy sessions addressable without treating them as threads
   assert.match(app, /function legacySessions\(\)/);
   assert.match(app, /selectLegacySession\(id\)/);
   assert.match(app, /api\(`\/api\/sessions\/\$\{id\}\/report`\)/);
+  assert.doesNotMatch(app, /api\/sessions\/\$\{id\}\/terminal/);
 });

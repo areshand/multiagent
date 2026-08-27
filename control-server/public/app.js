@@ -213,33 +213,16 @@ async function selectLegacySession(id) {
   if (!session) return clearSelection();
   renderTaskList();
   updateLegacyHeader(session);
-  showLegacyActions(true);
-  configureLegacyActions(session);
-  $("#message").disabled = !session.live;
-  $("#send").disabled = !session.live;
+  showLegacyActions(false);
+  $("#message").disabled = true;
+  $("#send").disabled = true;
   $("#report").textContent = "";
   api(`/api/sessions/${id}/report`).then(({ report, transcript }) => {
     $("#report").textContent = report || (transcript ? `Trace references\n${(transcript.traceReferences || []).join("\n")}` : "");
   }).catch((error) => { $("#report").textContent = `[report unavailable] ${error.message}`; });
-  if (!session.live) {
-    $("#terminal").textContent = "This legacy execution has stopped. Its retained report is shown above.";
-    return;
-  }
-  $("#terminal").textContent = "Connecting to orchestrator…";
-  const protocol = location.protocol === "https:" ? "wss" : "ws";
-  socket = new WebSocket(`${protocol}://${location.host}/api/sessions/${id}/terminal`);
-  socket.onmessage = ({ data }) => {
-    const message = JSON.parse(data);
-    if (message.type === "output") {
-      const terminal = $("#terminal");
-      const atBottom = terminal.scrollHeight - terminal.scrollTop - terminal.clientHeight < 80;
-      terminal.textContent = message.output || "No retained terminal output.";
-      $("#live-dot").classList.toggle("live", message.live);
-      if (atBottom) terminal.scrollTop = terminal.scrollHeight;
-    }
-    if (message.type === "error") $("#terminal").textContent += `\n[control error] ${message.error}`;
-  };
-  socket.onclose = () => $("#live-dot").classList.remove("live");
+  $("#terminal").textContent = session.live
+    ? "This pre-thread execution is marked live, but its worker terminal is not part of the durable task view. Its retained report is shown above when available."
+    : "This pre-thread execution has stopped. Its retained report is shown above.";
 }
 
 function messageId() {
