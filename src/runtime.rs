@@ -907,11 +907,18 @@ fn launch_environment(
 }
 
 fn git_safe_directory_environment(root: &Path) -> BTreeMap<String, String> {
-    BTreeMap::from([
-        ("GIT_CONFIG_COUNT".into(), "1".into()),
-        ("GIT_CONFIG_KEY_0".into(), "safe.directory".into()),
-        ("GIT_CONFIG_VALUE_0".into(), root.display().to_string()),
-    ])
+    git_safe_directory_values(root)
+        .into_iter()
+        .map(|(key, value)| (key.into(), value))
+        .collect()
+}
+
+fn git_safe_directory_values(root: &Path) -> [(&'static str, String); 3] {
+    [
+        ("GIT_CONFIG_COUNT", "1".into()),
+        ("GIT_CONFIG_KEY_0", "safe.directory".into()),
+        ("GIT_CONFIG_VALUE_0", root.display().to_string()),
+    ]
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3499,6 +3506,7 @@ fn subagent_shell_command(
         ("MULTIAGENT_CODEX_EXEC", u8::from(cfg.code_exec).to_string()),
         ("PATH", path),
     ];
+    values.extend(git_safe_directory_values(&cfg.root));
     if restored {
         values.push(("MULTIAGENT_SUBAGENT_RESTORED", "1".into()));
     }
@@ -3867,6 +3875,7 @@ fn capture_window(session: &str, name: &str, lines: usize) -> Result<String, Str
         "-t",
         &format!("{session}:{name}"),
         "-p",
+        "-J",
         "-S",
         &format!("-{lines}"),
     ])?;
@@ -4341,6 +4350,39 @@ mod tests {
             values.get("GIT_CONFIG_VALUE_0").map(String::as_str),
             Some("/var/lib/multiagent/repositories/multiagent")
         );
+    }
+
+    #[test]
+    fn subagents_inherit_the_session_scoped_git_safe_directory() {
+        let root = PathBuf::from("/var/lib/multiagent/repositories/multiagent");
+        let cfg = RuntimeConfig {
+            session: "session-1".into(),
+            root: root.clone(),
+            state: PathBuf::from("/state"),
+            logs: PathBuf::from("/logs"),
+            policy: PathBuf::from("/policy"),
+            prompt_root: PathBuf::from("/prompts"),
+            worker_cli: "claude".into(),
+            subagent_cli: "claude".into(),
+            verifier_cli: "codex".into(),
+            codex_bin: "codex".into(),
+            claude_bin: "claude".into(),
+            qwen_bin: "qwen".into(),
+            code_exec: true,
+            agent_headless: true,
+        };
+        let command = subagent_shell_command(
+            &cfg,
+            "reader-1",
+            "claude",
+            Path::new("/opt/multiagent/bin/multiagent"),
+            "claude-command",
+            CodexAccess::ReadOnly,
+            false,
+        );
+        assert!(command.contains("GIT_CONFIG_COUNT=1"));
+        assert!(command.contains("GIT_CONFIG_KEY_0=safe.directory"));
+        assert!(command.contains("GIT_CONFIG_VALUE_0=/var/lib/multiagent/repositories/multiagent"));
     }
 
     #[test]

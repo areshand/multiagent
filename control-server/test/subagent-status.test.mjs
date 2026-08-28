@@ -37,3 +37,29 @@ test("subagent snapshots expose bounded structured progress with active agents f
 test("missing subagent state produces an empty snapshot", () => {
   assert.deepEqual(readSubagentSnapshot("/path/that/does/not/exist"), []);
 });
+
+test("provider JSON and terminal markers fall back to the explicit task assignment", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "multiagent-subagent-provider-status-"));
+  await mkdir(path.join(root, "subagents", "acceptance-reader"), { recursive: true });
+  await writeFile(path.join(root, "subagents", "acceptance-reader", "status"), "done\n");
+  await writeFile(path.join(root, "subagents", "acceptance-reader", "instruction.txt"), [
+    "# Contract Scout Role Prompt",
+    "",
+    "## Task Assignment",
+    "",
+    "Inspect the repository HEAD without modifying files.",
+    "",
+    "## Mandatory Final Artifact Contract",
+    "",
+    "Internal details",
+  ].join("\n"));
+  await writeFile(path.join(root, "subagents", "acceptance-reader", "current.txt"), [
+    JSON.stringify({ type: "result", result: "long provider result", uuid: "provider-id" }),
+    "final status: coding agent exited rc=0",
+  ].join("\n"));
+
+  const [agent] = readSubagentSnapshot(root);
+  assert.equal(agent.assignment, "Inspect the repository HEAD without modifying files.");
+  assert.equal(agent.workingOn, "Inspect the repository HEAD without modifying files.");
+  assert.doesNotMatch(agent.workingOn, /provider|uuid|final status/);
+});
