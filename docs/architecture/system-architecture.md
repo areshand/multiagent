@@ -128,6 +128,10 @@ the supervisor creates role processes and confines them after creation.
 The orchestrator and role processes run with the thread-selected repository as
 their working tree; session state and trace directories remain separate and
 must not replace the repository working directory.
+Headless orchestrators do not accept terminal-style live input. A follow-up
+therefore remains in the same execution session but is delivered by a native
+resume, and incomplete lifecycle passes are retried by the session worker with
+a deployment-bounded automatic-resume limit.
 
 ### AD-016: Deployment repository preparation is isolated from agent authority
 
