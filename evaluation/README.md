@@ -8,7 +8,8 @@ the runner.
 ## Concepts
 
 - **Adapter**: loads evaluation tasks, prepares each task workspace, and
-  scores completed work. Current adapters are `ponytail` and `orchestration`.
+  scores completed work. Current adapters are `ponytail`, `orchestration`, and
+  `ops-trace`.
 - **Task**: a single assignment with a prompt, seed files, and a scorer.
 - **Arm**: an instruction profile to compare, such as `baseline` or
   `ponytail-full`. Adapters may load the worker rules or the full orchestrator
@@ -31,6 +32,7 @@ Validate an adapter without model/API spend:
 ```bash
 python3 -m evaluation.cli --adapter ponytail --selftest
 python3 -m evaluation.cli --adapter orchestration --selftest
+python3 -m evaluation.cli --adapter ops-trace --selftest
 ```
 
 Generate a no-agent reference report:
@@ -38,6 +40,7 @@ Generate a no-agent reference report:
 ```bash
 python3 -m evaluation.cli --adapter ponytail --reference-report --run-root /tmp/multiagent-eval
 python3 -m evaluation.cli --adapter orchestration --reference-report --run-root /tmp/multiagent-eval
+python3 -m evaluation.cli --adapter ops-trace --reference-report --run-root /tmp/multiagent-eval
 ```
 
 Run a small live evaluation:
@@ -58,6 +61,98 @@ python3 -m evaluation.cli \
   --workers 1
 ```
 
+## Trace-derived operations benchmark
+
+The `ops-trace` adapter evaluates multiagent production-operations planning.
+It rewards the architecture contract rather than AWS command recall. Scoring
+contract v2 makes the following semantics explicit:
+
+- the orchestrator routes but does not execute production procedures;
+- the ops agent selects a versioned runbook and proposes bounded operations;
+- the ops reviewer independently checks goal/runbook/evidence alignment;
+- the supervisor mediates bearer-token and signed-permit authority;
+- `prod-mcp` remains the only executable production boundary;
+- independent read discovery may run in parallel, but conservative serial reads
+  are valid; any declared parallel scope must be limited to observed services;
+- a present CloudTrail/time correlation is `heuristic`, while absent correlation
+  is `unverified`; neither is proof of causation;
+- required architecture controls are scored semantically across the structured
+  plan, including roles and completion gates, rather than by field location.
+
+The contract version and scorer SHA-256 belong in comparison provenance.
+Rescoring an archived run with a newer contract is a new interpretation of the
+same artifacts and must not overwrite the original report.
+
+Generate a private pseudonymized dataset from a redacted trace export:
+
+```bash
+python3 -m evaluation.ops_trace_dataset \
+  --traces "$HOME/projects/traces" \
+  --output "$HOME/projects/traces/benchmark/ops-trace-cases.json" \
+  --max-cases 24
+```
+
+The generator records source hashes but does not copy raw commands, raw tool
+outputs, account IDs, ARNs, emails, or local paths into cases. The result is
+still marked `private` and `publishable: false` because request prose may
+contain organization-specific context. Do not commit the generated dataset.
+
+The adapter automatically uses that default dataset path when it exists and
+runs the held-out `test` split by default:
+
+```bash
+python3 -m evaluation.cli --adapter ops-trace --selftest
+
+python3 -m evaluation.cli \
+  --adapter ops-trace \
+  --agent-cli codex \
+  --model gpt-5.6-sol \
+  --arms baseline,multiagent \
+  --runs 1 \
+  --workers 1
+```
+
+`baseline` is one ordinary Codex CLI invocation. `multiagent` runs the current
+production Rust/tmux lifecycle in Linux, including its contract scout,
+authority reviewers, workers, verifiers, and final reviews. Build the exact
+checkout before a live multiagent comparison:
+
+```bash
+docker build -t multiagent:ops-trace-current .
+```
+
+Override that image with `MULTIAGENT_OPS_TRACE_IMAGE`. The optional
+`orchestrator` arm remains a prompt-only, single-Codex diagnostic; it is not a
+measurement of the production multiagent runtime. The production arm currently
+requires `--agent-cli codex` and mounts a temporary copy of local Codex
+authentication into each isolated benchmark container.
+
+To evaluate every private case instead of the held-out test split:
+
+```bash
+MULTIAGENT_OPS_TRACE_SPLIT=all python3 -m evaluation.cli \
+  --adapter ops-trace \
+  --agent-cli codex \
+  --model gpt-5.6-sol \
+  --arms baseline,multiagent \
+  --runs 1 \
+  --workers 4 \
+  --timeout 900
+```
+
+Override the source or split explicitly when needed:
+
+```bash
+MULTIAGENT_OPS_TRACE_DATASET=/path/to/ops-trace-cases.json \
+MULTIAGENT_OPS_TRACE_SPLIT=validation \
+python3 -m evaluation.cli --adapter ops-trace --selftest
+```
+
+Valid split values are `train`, `validation`, `test`, and `all`. When no local
+dataset exists, the adapter falls back to three synthetic contract cases so CI
+can verify scorer behavior without private data. Set
+`MULTIAGENT_OPS_TRACE_DATASET=synthetic` to force that fallback explicitly.
+
 Use `--agent-cli claude` for Claude Code or `--agent-cli codex` for Codex. The
 Codex path uses the local Codex configuration and default model unless
 `--model` is supplied. Live agent runs may create commits inside their isolated
@@ -69,6 +164,7 @@ Rescore a saved run without another model call:
 ```bash
 python3 -m evaluation.cli --adapter ponytail --rescore evaluation/runs/ponytail/<stamp>
 python3 -m evaluation.cli --adapter orchestration --rescore evaluation/runs/orchestration/<stamp>
+python3 -m evaluation.cli --adapter ops-trace --rescore evaluation/runs/ops-trace/<stamp>
 ```
 
 ## Outputs

@@ -471,9 +471,12 @@ for the exact live final diff. Build acceptance remains a separate build
 verifier artifact. A missing verdict, stale hash, or unbound acceptance is
 blocking at the framework gate.
 
-Also include `review-record: type=technical verdict=pass diff=DIFF_HASH` on its
-own line for `ACCEPTED`, or
-`review-record: type=technical verdict=findings diff=DIFF_HASH` for `BLOCKING`.
+The task assignment may bind this verifier to a persisted review obligation by
+giving an exact `review-record:` marker and type. When it does, reproduce that
+assigned type and exact diff hash; do not substitute the default `technical`
+type. Otherwise include `review-record: type=technical verdict=pass
+diff=DIFF_HASH` on its own line for `ACCEPTED`, or `review-record:
+type=technical verdict=findings diff=DIFF_HASH` for `BLOCKING`.
 
 Prefer the exact line marker above. If structured JSON is also emitted, use
 `final_diff_sha256`, `compile_clean: true`, and a non-empty `commands` array

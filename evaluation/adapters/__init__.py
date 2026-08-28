@@ -14,8 +14,12 @@ def load_adapter(name: str) -> Adapter:
         from evaluation.adapters.orchestration import ADAPTER
 
         return ADAPTER
+    if name in ("ops-trace", "multiagent-ops"):
+        from evaluation.adapters.ops_trace import ADAPTER
+
+        return ADAPTER
     raise KeyError(name)
 
 
 def adapter_names() -> list[str]:
-    return ["orchestration", "ponytail"]
+    return ["ops-trace", "orchestration", "ponytail"]

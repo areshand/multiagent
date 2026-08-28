@@ -153,6 +153,10 @@ def git_snapshot(workdir: Path) -> None:
         die(f"git snapshot failed in {workdir}: {result.stderr.strip()}")
     base = run_git(workdir, "rev-parse", "HEAD")
     if base.returncode == 0:
+        exclude = workdir / ".git" / "info" / "exclude"
+        existing = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
+        if "_base_commit" not in existing.splitlines():
+            exclude.write_text(existing.rstrip("\n") + "\n_base_commit\n", encoding="utf-8")
         (workdir / "_base_commit").write_text(base.stdout.strip() + "\n", encoding="utf-8")
 
 
@@ -412,6 +416,7 @@ def run_agent_cell(
     cmd = build_agent_command(agent_cli, task.prompt, system_for_adapter_arm(adapter, arm), model, workdir)
     stderr_path = workdir / "_agent.stderr.txt"
     stdout_path = workdir / ("_agent.json" if agent_cli == "claude" else "_agent.stdout.jsonl")
+    started = dt.datetime.now(dt.timezone.utc)
     with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
         proc = subprocess.Popen(
             cmd,
@@ -432,6 +437,10 @@ def run_agent_cell(
 
     row = score_workspace(adapter, task_id, arm, model, run_id, workdir)
     row["agent_cli"] = agent_cli
+    if row.get("duration_ms") is None:
+        row["duration_ms"] = round(
+            (dt.datetime.now(dt.timezone.utc) - started).total_seconds() * 1000
+        )
     return row
 
 
@@ -612,9 +621,11 @@ def run_matrix(
     ]
     print(f"\nrunning {len(matrix)} cells in {run_dir} with {workers} worker(s)")
 
+    adapter_runner = getattr(adapter, "run_cell", None)
+    cell_runner = adapter_runner if callable(adapter_runner) else run_agent_cell
     results: list[dict[str, Any]] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-        future_map = {pool.submit(run_agent_cell, *cell): cell for cell in matrix}
+        future_map = {pool.submit(cell_runner, *cell): cell for cell in matrix}
         for future in concurrent.futures.as_completed(future_map):
             _adapter, task, arm, _model, run_id, _run_dir, _timeout, _agent_cli = future_map[future]
             try:

@@ -981,6 +981,25 @@ assert_file_contains "$ROOT/prompts/playbooks/finding-todo-loop.md" "resolution-
 assert_file_contains "$ROOT/prompts/playbooks/finding-todo-loop.md" "todo-close"
 assert_file_contains "$ROOT/prompts/playbooks/finding-todo-loop.md" "gate-check"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Agent Spawning Playbook"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "launcher automatically injects the canonical worker role prompt"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" 'Lifecycle-enforced workers must use `--instruction-file`'
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "git branch --show-current"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" 'Do not load, copy, or include'
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "decision-authority-reviewer-01"
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "exact target-repository paths"
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" 'Only after `record-review` succeeds'
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "Spawn all mutually"
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "technical-verifier-01"
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "do not spawn another final verifier"
+assert_file_contains "$ROOT/prompts/verifier.md" 'do not substitute the default `technical`'
+assert_file_contains "$ROOT/prompts/roles/decision-authority-reviewer.md" "pre-implementation authority review"
+assert_file_contains "$ROOT/prompts/roles/decision-authority-reviewer.md" "never require implementation"
+assert_file_contains "$ROOT/prompts/roles/decision-authority-reviewer.md" "denial is not insufficient context"
+assert_file_contains "$ROOT/prompts/roles/decision-authority-reviewer.md" "instruction file's location never changes"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Skip the scout when the public task"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" '`/app/_base_commit` is immutable adapter metadata'
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" '`ops_plan.json` means'
+assert_file_not_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Before implementation, run a read-only contract scout"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Ponytail implementation discipline"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Ponytail over-engineering pass"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "hidden-contract probes"
@@ -1232,6 +1251,7 @@ assert_file_contains "$TMPDIR/swe-bench-pro-config.json" '"framework": "multiage
 python3 -m evaluation.cli --list >"$TMPDIR/evaluation-list.out"
 assert_file_contains "$TMPDIR/evaluation-list.out" "ponytail"
 assert_file_contains "$TMPDIR/evaluation-list.out" "orchestration"
+assert_file_contains "$TMPDIR/evaluation-list.out" "ops-trace"
 python3 -c "from evaluation.core import system_for_arm; print(system_for_arm('baseline'))" >"$TMPDIR/evaluation-baseline-arm.out"
 assert_file_contains "$TMPDIR/evaluation-baseline-arm.out" "Evaluation Worker Launch Context"
 assert_file_contains "$TMPDIR/evaluation-baseline-arm.out" "Stay in your assigned files only."
@@ -1282,6 +1302,8 @@ assert stats["src_files"] == 1, stats
 PY
 python3 -m evaluation.cli --adapter orchestration --selftest >"$TMPDIR/orchestration-selftest.out"
 assert_file_contains "$TMPDIR/orchestration-selftest.out" "selftest[orchestration]: all scorers valid"
+MULTIAGENT_OPS_TRACE_DATASET=synthetic python3 -m evaluation.cli --adapter ops-trace --selftest >"$TMPDIR/ops-trace-selftest.out"
+assert_file_contains "$TMPDIR/ops-trace-selftest.out" "selftest[ops-trace]: all scorers valid"
 python3 -m evaluation.cli --adapter orchestration --task large-update-300 --reference-report --run-root "$TMPDIR/eval-runs" >"$TMPDIR/orchestration-reference-report.out"
 assert_file_contains "$TMPDIR/orchestration-reference-report.out" "wrote $TMPDIR/eval-runs/orchestration/"
 orchestration_results="$(find "$TMPDIR/eval-runs/orchestration" -name results.json -print -quit)"
