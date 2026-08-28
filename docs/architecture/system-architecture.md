@@ -126,7 +126,8 @@ the supervisor creates role processes and confines them after creation.
 
 A thread is the durable, user-owned task and conversation shown by the client.
 An execution session is one isolated runtime instance created to make progress
-on that thread. The control server owns thread authorization, a small append-only
+on that thread. The control server assigns both thread and execution-session IDs
+and owns thread authorization, a small append-only
 user-visible manifest, context checkpoints, S3 trace references, and the mapping
 to sequential execution sessions. Detailed model and agent histories remain in
 the session traces already exported to S3; the control server does not duplicate
@@ -141,12 +142,22 @@ checkpoints, and verified S3 trace references, not the previous session's
 credentials, permits, unbounded raw trace, provider home, or writable filesystem.
 
 User messages are durably and idempotently appended before acknowledgement.
+When a thread still has a live execution session, the gateway forwards each
+newly appended follow-up through the session-scoped worker channel and advances
+the inbox acknowledgement only after that worker accepts the supervisor-resume
+request. Once an execution session has finished, the next follow-up creates the
+fresh isolated session described above.
 The public manifest is the client conversation source of truth, while S3
 session traces are the detailed audit and context-recovery source. The HTTP
 event API provides replay with stable event IDs and thread-local sequence
-numbers; WebSocket remains an optional live-delivery transport. Raw orchestrator
-stdout is never streamed into a new model context without bounded deterministic
-projection.
+numbers. While a thread is open, the interactive client maintains an
+authenticated, read-only thread WebSocket for live events, thread state,
+heartbeats, and bounded structured subagent-status snapshots. It reconnects
+with its last sequence cursor and uses HTTP replay to repair gaps. A separate
+session-scoped WebSocket presents raw orchestrator terminal output only while
+that execution is active. Terminal output and subagent status are presentation
+data; raw orchestrator stdout is never streamed into a new model context
+without bounded deterministic projection.
 
 Before a completed session runtime exits, it sends its bounded final report to
 the control gateway through a deployment-provided endpoint using a

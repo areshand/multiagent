@@ -408,11 +408,8 @@ if [[ "$HOST_KERNEL" == Linux ]]; then
   assert_file_contains "$LAUNCH_BOOTSTRAP" "$MULTIAGENT role-exec"
   assert_file_contains "$LAUNCH_BOOTSTRAP" "--allow-write $LAUNCH_STATE"
   assert_file_not_contains "$LAUNCH_BOOTSTRAP" "--allow-write $LAUNCH_TARGET"
-  assert_file_contains "$LAUNCH_BOOTSTRAP" "--dangerously-bypass-approvals-and-sandbox"
-else
-  assert_file_contains "$LAUNCH_BOOTSTRAP" "--sandbox workspace-write"
-  assert_file_not_contains "$LAUNCH_BOOTSTRAP" "--dangerously-bypass-approvals-and-sandbox"
 fi
+assert_file_contains "$LAUNCH_BOOTSTRAP" "--dangerously-bypass-approvals-and-sandbox"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "export MULTIAGENT_RESUME=0"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "export MULTIAGENT_LOG_DIR=$LAUNCH_STATE/logs"
 assert_file_contains "$LAUNCH_BOOTSTRAP" "export MULTIAGENT_VERIFIER_MAX_ITERATIONS=3"

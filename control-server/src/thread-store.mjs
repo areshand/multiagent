@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -15,6 +16,10 @@ const publicEventTypes = new Set([
 ]);
 
 const clone = (value) => structuredClone(value);
+
+export function generateThreadId({ now = Date.now(), randomBytes = crypto.randomBytes } = {}) {
+  return `thread-${Number(now).toString(36)}-${randomBytes(5).toString("hex")}`;
+}
 
 function requiredString(value, name, max = 32768) {
   if (typeof value !== "string" || !value.trim() || value.length > max) {

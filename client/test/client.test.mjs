@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { ControlClient, main } from "../src/client.mjs";
+import { ControlClient, main, renderAgentPane, terminalDelta, terminalProgressView } from "../src/client.mjs";
 
 function writer() {
   return { output: "", write(value) { this.output += String(value); } };
@@ -25,6 +26,53 @@ async function sessionFixture() {
     username: "operator",
   }), { mode: 0o600 });
   return file;
+}
+
+function terminalSocketFactory(outputs = []) {
+  return (url) => {
+    const socket = new EventEmitter();
+    let closed = false;
+    socket.close = () => {
+      if (closed) return;
+      closed = true;
+      queueMicrotask(() => socket.emit("close"));
+    };
+    queueMicrotask(() => {
+      if (String(url).includes("/stream")) {
+        socket.emit("message", Buffer.from(JSON.stringify({ type: "heartbeat" })));
+      } else {
+        for (const output of outputs) socket.emit("message", Buffer.from(JSON.stringify({ type: "output", output, live: true })));
+      }
+    });
+    return socket;
+  };
+}
+
+function retryingTerminalSocketFactory() {
+  const state = { attempts: 0 };
+  state.factory = (url) => {
+    const isThread = String(url).includes("/stream");
+    if (!isThread) state.attempts += 1;
+    const attempt = state.attempts;
+    const socket = new EventEmitter();
+    let closed = false;
+    socket.close = () => {
+      if (closed) return;
+      closed = true;
+      queueMicrotask(() => socket.emit("close"));
+    };
+    queueMicrotask(() => {
+      if (isThread) {
+        socket.emit("message", Buffer.from(JSON.stringify({ type: "heartbeat" })));
+      } else if (attempt === 1) {
+        socket.emit("message", Buffer.from(JSON.stringify({ type: "error", error: "session worker is not ready" })));
+      } else {
+        socket.emit("message", Buffer.from(JSON.stringify({ type: "output", output: "Worker connected\nInvestigating", live: true })));
+      }
+    });
+    return socket;
+  };
+  return state;
 }
 
 test("client login stores only the scoped session cookie with mode 0600", async () => {
@@ -70,13 +118,13 @@ test("users can list durable threads through the terminal client", async () => {
   assert.deepEqual(JSON.parse(output.output), [{ id: "thread-1", state: "idle", repository: "multiagent" }]);
 });
 
-test("thread creation lets the server generate the execution session ID", async () => {
+test("thread creation lets the server generate both the thread and execution session IDs", async () => {
   const sessionFile = await sessionFixture();
   const output = writer();
   const requests = [];
   await main([
     "--server", "https://control.example", "--session-file", sessionFile,
-    "threads", "create", "thread-1", "--repository", "multiagent", "--message", "Investigate the incident",
+    "threads", "create", "--repository", "multiagent", "--message", "Investigate the incident",
   ], {
     stdout: output,
     fetchImpl: async (url, options) => {
@@ -86,7 +134,7 @@ test("thread creation lets the server generate the execution session ID", async 
     },
   });
   assert.equal(requests.length, 2);
-  assert.deepEqual(JSON.parse(requests[0].options.body), { id: "thread-1", repository: "multiagent", title: "thread-1" });
+  assert.deepEqual(JSON.parse(requests[0].options.body), { repository: "multiagent", title: "" });
   assert.equal(requests[1].url, "https://control.example/api/threads/thread-1/messages");
   assert.deepEqual(JSON.parse(requests[1].options.body), { text: "Investigate the incident" });
   assert.ok(requests[1].options.headers["idempotency-key"]);
@@ -123,7 +171,7 @@ test("client refuses to send authentication over non-local plaintext HTTP", () =
 test("interactive terminal lists, opens, and continues durable threads", async () => {
   const sessionFile = await sessionFixture();
   const output = writer();
-  const answers = ["/open missing", "/open 1", "Continue the investigation", "/quit"];
+  const answers = ["/open missing", "/open 1", "Continue the investigation", "/wait", "/quit"];
   const requests = [];
   await main([
     "--server", "https://control.example", "--session-file", sessionFile,
@@ -132,6 +180,7 @@ test("interactive terminal lists, opens, and continues durable threads", async (
     stdout: output,
     sleep: async () => {},
     createInterface: () => ({ question: async () => answers.shift(), close() {} }),
+    createWebSocket: terminalSocketFactory(["Planning", "Planning\nDelegating"]),
     fetchImpl: async (url, options) => {
       const value = String(url);
       requests.push({ url: value, options });
@@ -161,6 +210,227 @@ test("interactive terminal lists, opens, and continues durable threads", async (
   assert.match(output.output, /1\. thread-1 — Incident/);
   assert.match(output.output, /\[error\] thread not found/);
   assert.match(output.output, /Opened thread-1/);
+  assert.match(output.output, /\[orchestrator thread-1-generated-session\]/);
+  assert.match(output.output, /Planning\nDelegating/);
   assert.match(output.output, /assistant> Investigation complete/);
   assert.ok(requests.some((request) => request.url.endsWith("/api/threads/thread-1/messages")));
+});
+
+test("interactive new asks only for a repository and streams its first execution", async () => {
+  const sessionFile = await sessionFixture();
+  const output = writer();
+  const answers = ["/new multiagent Incident triage", "Investigate now", "/wait", "/quit"];
+  let created = null;
+  await main([
+    "--server", "https://control.example", "--session-file", sessionFile,
+  ], {
+    stdin: { isTTY: true },
+    stdout: output,
+    sleep: async () => {},
+    createInterface: () => ({ question: async () => answers.shift(), close() {} }),
+    createWebSocket: terminalSocketFactory(["Starting orchestrator", "Starting orchestrator\nReader assigned"]),
+    fetchImpl: async (url, options) => {
+      const value = String(url);
+      if (value.endsWith("/api/threads") && options.method === "POST") {
+        assert.deepEqual(JSON.parse(options.body), { repository: "multiagent", title: "Incident triage" });
+        created = { id: "thread-generated", title: "Incident triage", state: "idle", repository: "multiagent" };
+        return jsonResponse({ thread: created }, { status: 201 });
+      }
+      if (value.endsWith("/api/threads")) return jsonResponse({ threads: created ? [created] : [] });
+      if (value.endsWith("/api/threads/thread-generated/messages")) {
+        return jsonResponse({
+          event: { sequence: 1, type: "user_message", payload: { text: "Investigate now" } },
+          session: { id: "session-generated", status: "running" },
+        }, { status: 202 });
+      }
+      if (value.includes("after_sequence=1")) {
+        return jsonResponse({ events: [{ sequence: 2, type: "assistant_message", payload: { text: "Done" } }] });
+      }
+      throw new Error(`unexpected request: ${value}`);
+    },
+  });
+  assert.match(output.output, /No threads\. Create one with \/new REPOSITORY \[TITLE\]/);
+  assert.match(output.output, /Opened thread-generated\. Enter its first message/);
+  assert.match(output.output, /Starting orchestrator\nReader assigned/);
+  assert.match(output.output, /assistant> Done/);
+});
+
+test("interactive streaming retries while the session worker starts", async () => {
+  const sessionFile = await sessionFixture();
+  const output = writer();
+  const answers = ["/open 1", "Investigate", "/wait", "/quit"];
+  const sockets = retryingTerminalSocketFactory();
+  let eventPolls = 0;
+  await main([
+    "--server", "https://control.example", "--session-file", sessionFile,
+  ], {
+    stdin: { isTTY: true },
+    stdout: output,
+    sleep: async () => {},
+    createInterface: () => ({ question: async () => answers.shift(), close() {} }),
+    createWebSocket: sockets.factory,
+    fetchImpl: async (url) => {
+      const value = String(url);
+      if (value.endsWith("/api/threads")) {
+        return jsonResponse({ threads: [{ id: "thread-1", state: "idle", repository: "multiagent" }] });
+      }
+      if (value.endsWith("/api/threads/thread-1")) {
+        return jsonResponse({ thread: { id: "thread-1", state: "idle", repository: "multiagent" } });
+      }
+      if (value.includes("after_sequence=0")) return jsonResponse({ events: [] });
+      if (value.endsWith("/api/threads/thread-1/messages")) {
+        return jsonResponse({
+          event: { sequence: 1, type: "user_message", payload: { text: "Investigate" } },
+          session: { id: "session-starting", status: "running" },
+        }, { status: 202 });
+      }
+      if (value.includes("after_sequence=1")) {
+        eventPolls += 1;
+        return jsonResponse({ events: eventPolls < 3 ? [] : [
+          { sequence: 2, type: "assistant_message", payload: { text: "Finished" } },
+        ] });
+      }
+      throw new Error(`unexpected request: ${value}`);
+    },
+  });
+  assert.ok(sockets.attempts >= 2);
+  assert.match(output.output, /waiting for session worker: session worker is not ready/);
+  assert.match(output.output, /Worker connected\nInvestigating/);
+  assert.match(output.output, /assistant> Finished/);
+});
+
+test("interactive terminal accepts another request while the open thread is streaming", async () => {
+  const sessionFile = await sessionFixture();
+  const output = writer();
+  const answers = ["/open 1", "First request", "Second request", "/wait", "/quit"];
+  const messages = [];
+  let eventPolls = 0;
+  await main([
+    "--server", "https://control.example", "--session-file", sessionFile,
+  ], {
+    stdin: { isTTY: true },
+    stdout: output,
+    sleep: async () => new Promise((resolve) => setImmediate(resolve)),
+    createInterface: () => ({ question: async () => answers.shift(), close() {} }),
+    createWebSocket: terminalSocketFactory(["Working", "Working\nApplying follow-up"]),
+    fetchImpl: async (url, options) => {
+      const value = String(url);
+      if (value.endsWith("/api/threads")) {
+        return jsonResponse({ threads: [{ id: "thread-1", state: "idle", repository: "multiagent" }] });
+      }
+      if (value.endsWith("/api/threads/thread-1")) {
+        return jsonResponse({ thread: { id: "thread-1", state: "idle", repository: "multiagent" } });
+      }
+      if (value.includes("after_sequence=0")) return jsonResponse({ events: [] });
+      if (value.endsWith("/api/threads/thread-1/messages")) {
+        const text = JSON.parse(options.body).text;
+        messages.push(text);
+        const sequence = messages.length;
+        return jsonResponse({
+          event: { sequence, type: "user_message", payload: { text } },
+          session: { id: "session-active", status: "running" },
+          delivery: { mode: sequence === 1 ? "initial-context" : "supervisor-resume" },
+        }, { status: 202 });
+      }
+      if (value.includes("/events?after_sequence=")) {
+        eventPolls += 1;
+        return jsonResponse({ events: messages.length < 2 || eventPolls < 2 ? [] : [
+          { sequence: 3, type: "assistant_message", payload: { text: "Both requests handled" } },
+        ] });
+      }
+      throw new Error(`unexpected request: ${value}`);
+    },
+  });
+  assert.deepEqual(messages, ["First request", "Second request"]);
+  assert.match(output.output, /Applying follow-up/);
+  assert.match(output.output, /assistant> Both requests handled/);
+});
+
+test("terminal snapshots render only newly appended or rolled output", () => {
+  assert.equal(terminalDelta("Planning", "Planning\nDelegating"), "Delegating");
+  assert.equal(terminalDelta("old\nPlanning\nDelegating", "Planning\nDelegating\nDone"), "Done");
+  assert.equal(terminalDelta("same", "same"), "");
+});
+
+test("Codex terminal projection keeps progress and drops prompt chrome and spinners", () => {
+  const snapshot = [
+    "╭────────────────╮",
+    "│ >_ OpenAI Codex",
+    "╰────────────────╯",
+    "› ----- BEGIN ORCHESTRATOR ROLE -----",
+    "  # Multi-Agent Orchestrator",
+    "  - internal prompt detail",
+    "• Working (12s • esc to interrupt)",
+    "• The orchestrator is checking the workflow.",
+    "  It will keep this explanation concise.",
+    "• Ran multiagent workflow context run-1",
+    "  │ ignored command wrapping",
+    "  └ phase=pre-implementation",
+    "• READY_FOR_FOLLOWUP",
+    "  gpt-5.6-sol high · /tmp/session",
+  ].join("\n");
+  assert.equal(terminalProgressView(snapshot), [
+    "• The orchestrator is checking the workflow.",
+    "  It will keep this explanation concise.",
+    "• Ran multiagent workflow context run-1",
+    "  └ phase=pre-implementation",
+    "• READY_FOR_FOLLOWUP",
+  ].join("\n"));
+  assert.equal(terminalProgressView("Planning\nDelegating"), "Planning\nDelegating");
+});
+
+test("interactive client keeps a scoped thread WebSocket open until exit", async () => {
+  const sessionFile = await sessionFixture();
+  const output = writer();
+  const answers = ["/open 1", "/quit"];
+  const connections = [];
+  await main([
+    "--server", "https://control.example", "--session-file", sessionFile,
+  ], {
+    stdin: { isTTY: true },
+    stdout: output,
+    sleep: async () => {},
+    createInterface: () => ({ question: async () => answers.shift(), close() {} }),
+    createWebSocket: (url, options) => {
+      const socket = new EventEmitter();
+      socket.closed = false;
+      socket.close = () => {
+        if (socket.closed) return;
+        socket.closed = true;
+        queueMicrotask(() => socket.emit("close"));
+      };
+      connections.push({ url: String(url), options, socket });
+      queueMicrotask(() => socket.emit("message", Buffer.from(JSON.stringify({
+        type: "agents",
+        sessionId: null,
+        agents: [],
+      }))));
+      return socket;
+    },
+    fetchImpl: async (url) => {
+      const value = String(url);
+      if (value.endsWith("/api/threads")) return jsonResponse({ threads: [{ id: "thread-1", state: "idle", repository: "multiagent" }] });
+      if (value.endsWith("/api/threads/thread-1")) return jsonResponse({ thread: { id: "thread-1", state: "idle", repository: "multiagent" } });
+      if (value.includes("/events?after_sequence=0")) return jsonResponse({ events: [] });
+      throw new Error(`unexpected request: ${value}`);
+    },
+  });
+  assert.equal(connections.length, 1);
+  assert.equal(connections[0].url, "wss://control.example/api/threads/thread-1/stream?after_sequence=0");
+  assert.deepEqual(connections[0].options.headers, {
+    cookie: "multiagent_session=signed-cookie",
+    origin: "https://control.example",
+  });
+  assert.equal(connections[0].socket.closed, true);
+});
+
+test("subagent pane includes status, role, and current work within its width", () => {
+  const lines = renderAgentPane([
+    { name: "reader", status: "working", role: "investigator", workingOn: "Tracing the session lifecycle" },
+    { name: "tester", status: "done", role: "verification", workingOn: "Ran the client tests" },
+  ], { columns: 72, maxRows: 4, connectionState: "connected" });
+  assert.equal(lines[0], "Subagents | connected | 1 active, 2 total");
+  assert.match(lines[1], /> reader \[working\] \(investigator\): Tracing the session lifecycle/);
+  assert.match(lines[2], /- tester \[done\] \(verification\): Ran the client tests/);
+  assert.ok(lines.every((line) => line.length <= 72));
 });

@@ -251,6 +251,8 @@ impl AgentBackend for CodexBackend {
                 for value in codex_safety_args(request.access, true) {
                     args.push(value.into());
                 }
+                args.push("-c".into());
+                args.push(codex_shell_environment_config().into());
                 if let Some(path) = &request.final_output {
                     args.push("--output-last-message".into());
                     args.push(path.as_os_str().into());
@@ -269,7 +271,29 @@ impl AgentBackend for CodexBackend {
                 for value in codex_safety_args(request.access, false) {
                     args.push(value.into());
                 }
+                args.push("-c".into());
+                args.push(codex_shell_environment_config().into());
+                args.push("-c".into());
+                args.push("check_for_update_on_startup=false".into());
+                // Interactive server sessions run from a newly created,
+                // control-server-owned state directory rather than a Git
+                // checkout. Mark that exact directory trusted for this
+                // invocation so Codex cannot block unattended bootstrap on
+                // its first-run project trust prompt.
+                let trusted_cwd = request
+                    .cwd
+                    .to_string_lossy()
+                    .replace('\\', "\\\\")
+                    .replace('"', "\\\"");
+                args.push("-c".into());
+                args.push(
+                    format!("projects={{\"{trusted_cwd}\"={{trust_level=\"trusted\"}}}}").into(),
+                );
                 args.push("--no-alt-screen".into());
+                // The prompt bundle starts with a delimiter line. Terminate
+                // option parsing so a leading `-` in that prompt cannot be
+                // interpreted as another Codex CLI flag.
+                args.push("--".into());
                 Ok(CommandSpec {
                     program: self.executable.clone(),
                     args,
@@ -280,6 +304,36 @@ impl AgentBackend for CodexBackend {
             }
         }
     }
+}
+
+fn codex_shell_environment_config() -> String {
+    const ALLOWED: &[&str] = &[
+        "PATH",
+        "HOME",
+        "USER",
+        "SHELL",
+        "TMPDIR",
+        "TERM",
+        "COLORTERM",
+        "LANG",
+        "LC_ALL",
+        "MULTIAGENT_*",
+        "ORCHESTRATOR_CLI",
+        "WORKER_CLI",
+        "SUBAGENT_CLI",
+        "VERIFIER_CLI",
+        "CODEX_BIN",
+        "CLAUDE_BIN",
+        "QWEN_BIN",
+    ];
+    format!(
+        "shell_environment_policy.include_only=[{}]",
+        ALLOWED
+            .iter()
+            .map(|value| format!("\"{value}\""))
+            .collect::<Vec<_>>()
+            .join(",")
+    )
 }
 
 impl AgentBackend for ClaudeBackend {
@@ -404,11 +458,13 @@ fn codex_safety_args(_access: RoleAccess, _headless: bool) -> Vec<&'static str> 
 
 #[cfg(not(target_os = "linux"))]
 fn codex_safety_args(access: RoleAccess, headless: bool) -> Vec<&'static str> {
-    if headless {
-        vec!["--sandbox", access.as_str(), "-c", "approval_policy=never"]
-    } else {
-        vec!["--sandbox", access.as_str(), "--ask-for-approval", "never"]
+    if !headless {
+        // The interactive orchestrator must reach the tmux server so it can
+        // create and coordinate role-isolated subagent windows. Headless role
+        // processes retain their requested Codex sandbox below.
+        return vec!["--dangerously-bypass-approvals-and-sandbox"];
     }
+    vec!["--sandbox", access.as_str(), "-c", "approval_policy=never"]
 }
 
 pub fn run(args: &[String]) -> Result<ExitCode, String> {
@@ -1322,6 +1378,24 @@ mod tests {
             Some(PathBuf::from("/tmp/prompt file"))
         );
         assert!(interactive.args.iter().any(|arg| arg == "--no-alt-screen"));
+        assert!(interactive
+            .args
+            .iter()
+            .any(|arg| arg == "--dangerously-bypass-approvals-and-sandbox"));
+        assert_eq!(interactive.args.last(), Some(&OsString::from("--")));
+        assert!(interactive.args.iter().any(|arg| {
+            arg == &OsString::from(
+                "projects={\"/tmp/project with spaces\"={trust_level=\"trusted\"}}",
+            )
+        }));
+        assert!(interactive.args.iter().any(|arg| {
+            arg.to_string_lossy()
+                .starts_with("shell_environment_policy.include_only=[")
+        }));
+        assert!(interactive
+            .args
+            .iter()
+            .any(|arg| arg == "check_for_update_on_startup=false"));
     }
 
     #[test]

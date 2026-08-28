@@ -10,6 +10,7 @@ import {
   selectFinalMessage,
   sessionControlInvocation,
   sessionLaunchInvocation,
+  submitLocalFollowup,
   validResourceId,
 } from "../src/session-runtime.mjs";
 
@@ -79,4 +80,37 @@ test("session completion grace is bounded and has a stable default", () => {
   assert.equal(completionExitDelayMs("1"), 10_000);
   assert.equal(completionExitDelayMs("999"), 120_000);
   assert.equal(completionExitDelayMs("invalid"), 30_000);
+});
+
+test("live local follow-ups stay in the active execution instead of restarting it", async () => {
+  const calls = [];
+  const accepted = await submitLocalFollowup({
+    id: "session-a",
+    text: "continue",
+    actor: "user-a",
+    live: true,
+    sendInput: (...args) => calls.push(["input", ...args]),
+    restart: (...args) => calls.push(["restart", ...args]),
+    sessionView: (id) => ({ id, live: true }),
+  });
+  assert.deepEqual(accepted, { mode: "live-input", session: { id: "session-a", live: true } });
+  assert.deepEqual(calls, [["input", "session-a", "continue"]]);
+});
+
+test("stopped local executions resume only when a follow-up arrives", async () => {
+  const calls = [];
+  const accepted = await submitLocalFollowup({
+    id: "session-a",
+    text: "continue",
+    actor: "user-a",
+    live: false,
+    sendInput: (...args) => calls.push(["input", ...args]),
+    restart: (...args) => {
+      calls.push(["restart", ...args]);
+      return { id: args[0], live: true };
+    },
+    sessionView: () => null,
+  });
+  assert.deepEqual(accepted, { mode: "supervisor-resume", session: { id: "session-a", live: true } });
+  assert.deepEqual(calls, [["restart", "session-a", "continue", "user-a"]]);
 });

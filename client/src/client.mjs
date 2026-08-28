@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { createInterface } from "node:readline/promises";
+import { WebSocket } from "ws";
 
 export const usage = `Usage: multiagent-client [global options] [connect [THREAD_ID] | <command>]
 
@@ -19,7 +20,7 @@ Commands:
   repositories list
   threads list
   threads show THREAD_ID
-  threads create THREAD_ID --repository NAME [--title TITLE] (--message TEXT | --message-file PATH)
+  threads create --repository NAME [--title TITLE] (--message TEXT | --message-file PATH)
   threads send THREAD_ID (--message TEXT | --message-file PATH)
   threads watch THREAD_ID [--after SEQUENCE] [--once]
   sessions list THREAD_ID
@@ -33,9 +34,10 @@ interactive terminal client.`;
 const interactiveHelp = `Commands:
   /threads                 List threads
   /open THREAD_ID          Open a thread
-  /new THREAD_ID REPO      Create and open a thread
+  /new REPO [TITLE]        Create and open a server-assigned thread
   /sessions                List execution sessions for the open thread
   /refresh                 Replay new events
+  /wait                    Wait for the current execution to reply
   /help                    Show this help
   /quit                    Exit
 
@@ -87,6 +89,7 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
   const sleep = dependencies.sleep || ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
   const readPassword = dependencies.readPassword || (() => readSecret(stdin, stderr));
   const createInterfaceImpl = dependencies.createInterface || createInterface;
+  const createWebSocketImpl = dependencies.createWebSocket || ((url, options) => new WebSocket(url, options));
   const parsed = parseGlobalOptions(argv);
   const sessionFile = path.resolve(parsed.sessionFile || environment.MULTIAGENT_CLIENT_SESSION_FILE || defaultSessionFile());
   const stored = await loadSession(sessionFile);
@@ -105,7 +108,7 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
     if (!client.cookie) throw new ClientError(`not logged in to ${normalizedServer}; run the login command first`);
     const initialThreadId = command === "connect" ? parsed.args.shift() || "" : "";
     rejectExtraArguments(parsed.args);
-    return runInteractive({ client, stdin, stdout, sleep, createInterfaceImpl, initialThreadId });
+    return runInteractive({ client, stdin, stdout, sleep, createInterfaceImpl, createWebSocketImpl, initialThreadId });
   }
 
   if (command === "login") {
@@ -158,17 +161,28 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
   throw new ClientError(`unknown command: ${command}\n\n${usage}`);
 }
 
-export async function runInteractive({ client, stdin, stdout, sleep, createInterfaceImpl = createInterface, initialThreadId = "" }) {
+export async function runInteractive({
+  client,
+  stdin,
+  stdout,
+  sleep,
+  createInterfaceImpl = createInterface,
+  createWebSocketImpl = (url, options) => new WebSocket(url, options),
+  initialThreadId = "",
+}) {
   if (!stdin?.isTTY) throw new ClientError("interactive mode requires a terminal; use a JSON command for non-interactive calls");
   const terminal = createInterfaceImpl({ input: stdin, output: stdout, terminal: true });
   let threads = [];
   let current = null;
   let cursor = 0;
+  let monitor = null;
+  let threadConnection = null;
+  const agentPane = createAgentPane(stdout);
 
   const listThreads = async () => {
     threads = (await client.request("/api/threads")).value.threads || [];
     if (!threads.length) {
-      stdout.write("\nNo threads. Create one with /new THREAD_ID REPOSITORY.\n");
+      stdout.write("\nNo threads. Create one with /new REPOSITORY [TITLE].\n");
       return;
     }
     stdout.write("\nThreads\n");
@@ -185,26 +199,99 @@ export async function runInteractive({ client, stdin, stdout, sleep, createInter
     const events = response.value.events || [];
     if (all) cursor = 0;
     for (const event of events) {
-      cursor = Math.max(cursor, Number(event.sequence) || 0);
+      const sequence = Number(event.sequence) || 0;
+      if (sequence <= cursor) continue;
+      cursor = sequence;
       renderInteractiveEvent(stdout, event);
     }
     return events;
   };
 
+  const stopMonitor = async () => {
+    const active = monitor;
+    if (!active) return;
+    active.controller.abort();
+    await active.promise;
+    if (monitor === active) monitor = null;
+  };
+
+  const stopThreadConnection = async () => {
+    const active = threadConnection;
+    if (!active) return;
+    active.controller.abort();
+    await active.promise;
+    if (threadConnection === active) threadConnection = null;
+    agentPane.render([], "disconnected");
+  };
+
+  const startThreadConnection = (threadId) => {
+    if (!threadId || threadConnection?.threadId === threadId) return;
+    const controller = new AbortController();
+    const active = { threadId, controller, promise: null };
+    threadConnection = active;
+    active.promise = streamThread({
+      client,
+      threadId,
+      getCursor: () => cursor,
+      sleep,
+      signal: controller.signal,
+      createWebSocketImpl,
+      onState: (state) => agentPane.setConnectionState(state),
+      onThread: (thread) => {
+        if (current?.id === threadId) current = thread;
+      },
+      onAgents: (agents) => agentPane.render(agents),
+      onEvent: (event) => {
+        if (current?.id !== threadId) return;
+        const sequence = Number(event.sequence) || 0;
+        if (sequence <= cursor) return;
+        cursor = sequence;
+        renderInteractiveEvent(stdout, event);
+        if (new Set(["assistant_message", "question", "session_interrupted"]).has(event.type)) {
+          monitor?.controller.abort();
+        }
+      },
+    }).finally(() => {
+      if (threadConnection === active) threadConnection = null;
+    });
+  };
+
+  const startMonitor = async (sessionId) => {
+    if (!sessionId || monitor?.sessionId === sessionId) return;
+    await stopMonitor();
+    const controller = new AbortController();
+    const active = { sessionId, controller, promise: null };
+    monitor = active;
+    active.promise = (async () => {
+      const stream = streamSessionTerminal({ client, sessionId, stdout, sleep, signal: controller.signal, createWebSocketImpl });
+      try {
+        while (!controller.signal.aborted) {
+          const events = await replay();
+          if (events.some((event) => new Set(["assistant_message", "question", "session_interrupted"]).has(event.type))) return;
+          await waitUntilRetry(sleep, controller.signal, 1000);
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) stdout.write(`[monitor error] ${error.message}\n`);
+      } finally {
+        controller.abort();
+        await stream;
+        if (monitor === active) monitor = null;
+      }
+    })();
+  };
+
   const openThread = async (selector) => {
     const selected = selectThread(threads, selector);
     const response = await client.request(`/api/threads/${encodeURIComponent(selected)}`);
+    await stopMonitor();
+    await stopThreadConnection();
     current = response.value.thread;
     cursor = 0;
     stdout.write(`\nOpened ${current.id} [${current.state}] — ${current.repository}\n`);
     await replay({ all: true });
-  };
-
-  const waitForReply = async () => {
-    while (true) {
-      const events = await replay();
-      if (events.some((event) => new Set(["assistant_message", "question", "session_interrupted"]).has(event.type))) return;
-      await sleep(1000);
+    startThreadConnection(current.id);
+    if (current.activeSessionId && new Set(["starting", "running"]).has(current.state)) {
+      await startMonitor(current.activeSessionId);
     }
   };
 
@@ -222,6 +309,11 @@ export async function runInteractive({ client, stdin, stdout, sleep, createInter
         if (line === "/help") { stdout.write(`\n${interactiveHelp}\n`); continue; }
         if (line === "/threads") { await listThreads(); continue; }
         if (line === "/refresh") { await replay(); continue; }
+        if (line === "/wait") {
+          if (!monitor) stdout.write("No execution is currently running.\n");
+          else await monitor.promise;
+          continue;
+        }
         if (line === "/sessions") {
           if (!current) { stdout.write("Open a thread first.\n"); continue; }
           const sessions = (await client.request(`/api/threads/${encodeURIComponent(current.id)}/sessions`)).value.sessions || [];
@@ -230,15 +322,18 @@ export async function runInteractive({ client, stdin, stdout, sleep, createInter
           continue;
         }
         if (line.startsWith("/open ")) { await openThread(line.slice(6).trim()); continue; }
-        if (line.startsWith("/new ")) {
-          const [threadId, repository, ...titleParts] = line.slice(5).trim().split(/\s+/);
-          if (!threadId || !repository) { stdout.write("Usage: /new THREAD_ID REPOSITORY [TITLE]\n"); continue; }
+        if (line === "/new" || line.startsWith("/new ")) {
+          const [repository, ...titleParts] = line.slice(4).trim().split(/\s+/);
+          if (!repository) { stdout.write("Usage: /new REPOSITORY [TITLE]\n"); continue; }
           const created = await client.request("/api/threads", {
             method: "POST",
-            body: { id: threadId, repository, title: titleParts.join(" ") || threadId },
+            body: { repository, title: titleParts.join(" ") },
           });
+          await stopMonitor();
+          await stopThreadConnection();
           current = created.value.thread;
           cursor = 0;
+          startThreadConnection(current.id);
           await listThreads();
           stdout.write(`\nOpened ${current.id}. Enter its first message.\n`);
           continue;
@@ -251,20 +346,334 @@ export async function runInteractive({ client, stdin, stdout, sleep, createInter
         if (line.length > 32768) { stdout.write("Message exceeds 32768 characters.\n"); continue; }
         const routed = await sendThreadMessage(client, current.id, line);
         if (routed.event) {
-          cursor = Math.max(cursor, Number(routed.event.sequence) || 0);
-          renderInteractiveEvent(stdout, routed.event);
+          const sequence = Number(routed.event.sequence) || 0;
+          if (sequence > cursor) {
+            cursor = sequence;
+            renderInteractiveEvent(stdout, routed.event);
+          }
         }
         const session = routed.session;
         if (session) stdout.write(`[execution ${session.status}] ${session.id}\n`);
-        await waitForReply();
+        await startMonitor(session?.id || "");
       } catch (error) {
         if (!(error instanceof ClientError)) throw error;
         stdout.write(`[error] ${error.message}\n`);
       }
     }
   } finally {
+    await stopMonitor();
+    await stopThreadConnection();
+    agentPane.close();
     terminal.close();
   }
+}
+
+async function streamThread({ client, threadId, getCursor, sleep, signal, createWebSocketImpl, onState, onThread, onAgents, onEvent }) {
+  while (!signal.aborted) {
+    onState("connecting");
+    await streamThreadConnection({
+      client,
+      threadId,
+      afterSequence: getCursor(),
+      signal,
+      createWebSocketImpl,
+      onMessage(payload) {
+        onState("connected");
+        if (payload.type === "event" && payload.event) onEvent(payload.event);
+        else if (payload.type === "thread" && payload.thread) onThread(payload.thread);
+        else if (payload.type === "agents") onAgents(Array.isArray(payload.agents) ? payload.agents : []);
+      },
+    });
+    if (signal.aborted) return;
+    onState("reconnecting");
+    await waitUntilRetry(sleep, signal, 1000);
+  }
+}
+
+function streamThreadConnection({ client, threadId, afterSequence, signal, createWebSocketImpl, onMessage }) {
+  return new Promise((resolve) => {
+    const url = new URL(`/api/threads/${encodeURIComponent(threadId)}/stream`, client.server);
+    url.searchParams.set("after_sequence", String(Math.max(0, Number(afterSequence) || 0)));
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    let socket;
+    let error = "";
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", abort);
+      resolve({ error });
+    };
+    const abort = () => {
+      try { socket?.close(); } catch {}
+      finish();
+    };
+    try {
+      socket = createWebSocketImpl(url, {
+        headers: { cookie: client.cookie, origin: client.server.origin },
+      });
+      signal.addEventListener("abort", abort, { once: true });
+      socket.on("message", (data) => {
+        try {
+          const payload = JSON.parse(data.toString());
+          if (payload.type === "error") {
+            error = String(payload.error || "thread stream failed");
+            try { socket.close(); } catch {}
+            return;
+          }
+          onMessage(payload);
+        } catch {
+          error = "thread stream returned invalid JSON";
+          try { socket.close(); } catch {}
+        }
+      });
+      socket.on("error", (cause) => {
+        error = cause?.message || "thread stream failed";
+        try { socket.close(); } catch {}
+        finish();
+      });
+      socket.on("close", finish);
+    } catch (cause) {
+      error = cause?.message || "thread stream failed";
+      finish();
+    }
+  });
+}
+
+async function streamSessionTerminal({ client, sessionId, stdout, sleep, signal, createWebSocketImpl }) {
+  let previousProgress = "";
+  let announced = false;
+  let waitingAnnounced = false;
+  stdout.write(`[orchestrator] connecting to execution ${sessionId}...\n`);
+  while (!signal.aborted) {
+    const result = await streamTerminalConnection({
+      client,
+      sessionId,
+      signal,
+      createWebSocketImpl,
+      onOutput(output) {
+        const nextProgress = terminalProgressView(output);
+        const delta = previousProgress
+          ? terminalDelta(previousProgress, nextProgress)
+          : nextProgress.split("\n").slice(-20).join("\n");
+        previousProgress = nextProgress;
+        if (!delta.trim()) return;
+        if (!announced) {
+          stdout.write(`\n[orchestrator ${sessionId}]\n`);
+          announced = true;
+        }
+        stdout.write(delta + (delta.endsWith("\n") ? "" : "\n"));
+      },
+    });
+    if (signal.aborted) return;
+    if (!waitingAnnounced && result.error) {
+      stdout.write(`[orchestrator] waiting for session worker: ${result.error}\n`);
+      waitingAnnounced = true;
+    }
+    await waitUntilRetry(sleep, signal, 1000);
+  }
+}
+
+function streamTerminalConnection({ client, sessionId, signal, createWebSocketImpl, onOutput }) {
+  return new Promise((resolve) => {
+    const url = new URL(`/api/sessions/${encodeURIComponent(sessionId)}/terminal`, client.server);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    let socket;
+    let error = "";
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", abort);
+      resolve({ error });
+    };
+    const abort = () => {
+      try { socket?.close(); } catch {}
+      finish();
+    };
+    try {
+      socket = createWebSocketImpl(url, {
+        headers: { cookie: client.cookie, origin: client.server.origin },
+      });
+      signal.addEventListener("abort", abort, { once: true });
+      socket.on("message", (data) => {
+        try {
+          const payload = JSON.parse(data.toString());
+          if (payload.type === "output") onOutput(payload.output);
+          else if (payload.type === "error") {
+            error = String(payload.error || "terminal stream failed");
+            try { socket.close(); } catch {}
+          }
+        } catch {
+          error = "terminal stream returned invalid JSON";
+        }
+      });
+      socket.on("error", (cause) => {
+        error = cause?.message || "terminal stream failed";
+        try { socket.close(); } catch {}
+        finish();
+      });
+      socket.on("close", finish);
+    } catch (cause) {
+      error = cause?.message || "terminal stream failed";
+      finish();
+    }
+  });
+}
+
+function waitUntilRetry(sleep, signal, milliseconds) {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    signal.addEventListener("abort", finish, { once: true });
+    Promise.resolve(sleep(milliseconds)).then(finish, finish);
+  });
+}
+
+function normalizeTerminalOutput(value) {
+  return String(value || "").replaceAll("\r\n", "\n").replace(/[ \t\n]+$/, "");
+}
+
+export function terminalDelta(previous, next) {
+  const before = normalizeTerminalOutput(previous);
+  const after = normalizeTerminalOutput(next);
+  if (!after || before === after) return "";
+  if (!before) return after;
+  if (after.startsWith(before)) return after.slice(before.length).replace(/^\n/, "");
+  const beforeLines = before.split("\n");
+  const afterLines = after.split("\n");
+  let commonPrefix = 0;
+  while (commonPrefix < beforeLines.length
+    && commonPrefix < afterLines.length
+    && beforeLines[commonPrefix] === afterLines[commonPrefix]) {
+    commonPrefix += 1;
+  }
+  if (commonPrefix > 0) return afterLines.slice(commonPrefix).join("\n");
+  for (let overlap = Math.min(beforeLines.length, afterLines.length); overlap > 0; overlap -= 1) {
+    if (beforeLines.slice(-overlap).every((line, index) => line === afterLines[index])) {
+      return afterLines.slice(overlap).join("\n");
+    }
+  }
+  return after;
+}
+
+export function terminalProgressView(value) {
+  const normalized = normalizeTerminalOutput(value);
+  const lines = normalized.split("\n");
+  const looksLikeCodexTui = lines.some((line) => /^╭|^│ >_ OpenAI Codex|^› |^\s+gpt-[^ ]+|^[•◦] (?:Working|Starting MCP servers)/.test(line));
+  if (!looksLikeCodexTui) return normalized;
+
+  const progress = [];
+  let continuationBudget = 0;
+  const append = (line) => {
+    const value = line.trimEnd();
+    if (value && progress.at(-1) !== value) progress.push(value);
+  };
+  for (const line of lines) {
+    if (/^⚠ /.test(line)) {
+      append(line);
+      continuationBudget = 1;
+      continue;
+    }
+    if (/^• /.test(line)) {
+      if (/^• (?:Working|Starting MCP servers|You have \d+ usage limit reset)/.test(line)) {
+        continuationBudget = 0;
+        continue;
+      }
+      append(line);
+      continuationBudget = 4;
+      continue;
+    }
+    if (continuationBudget > 0 && /^  \S/.test(line) && !/^  (?:gpt-|│)/.test(line)) {
+      append(line);
+      continuationBudget -= 1;
+      continue;
+    }
+    if (!line.trim()) continuationBudget = 0;
+  }
+  return progress.join("\n");
+}
+
+const inactiveAgentStatuses = new Set(["done", "completed", "closed", "cancelled", "canceled", "failed", "released", "skipped", "finalized", "killed", "missing"]);
+
+export function renderAgentPane(agents, { columns = 80, maxRows = 6, connectionState = "connected" } = {}) {
+  const values = Array.isArray(agents) ? agents : [];
+  const active = values.filter((agent) => !inactiveAgentStatuses.has(String(agent.status || "").toLowerCase())).length;
+  const header = `Subagents | ${connectionState} | ${active} active, ${values.length} total`;
+  const rows = values.slice(0, Math.max(0, maxRows - 1)).map((agent) => {
+    const status = String(agent.status || "unknown");
+    const role = agent.role ? ` (${agent.role})` : "";
+    const work = String(agent.workingOn || agent.assignment || "waiting");
+    return `${inactiveAgentStatuses.has(status.toLowerCase()) ? "-" : ">"} ${agent.name || "agent"} [${status}]${role}: ${work}`;
+  });
+  if (values.length > rows.length) rows.push(`... ${values.length - rows.length} more`);
+  if (!rows.length && maxRows > 1) rows.push("  No subagents reported yet");
+  return [header, ...rows].slice(0, maxRows).map((line) => truncateTerminalLine(line, columns));
+}
+
+function truncateTerminalLine(value, columns) {
+  const width = Math.max(8, Number(columns) || 80);
+  const line = String(value || "").replace(/[\r\n\t]+/g, " ");
+  if (line.length <= width) return line;
+  return width <= 3 ? line.slice(0, width) : `${line.slice(0, width - 3)}...`;
+}
+
+function createAgentPane(stdout) {
+  const enabled = Boolean(stdout?.isTTY && Number(stdout.rows) >= 8);
+  let agents = [];
+  let connectionState = "disconnected";
+  let panel = null;
+  let lastFrame = "";
+
+  const clear = () => {
+    if (!enabled || !panel) return;
+    let output = "\u001b7\u001b[r";
+    for (let row = panel.start; row <= panel.rows; row += 1) output += `\u001b[${row};1H\u001b[2K`;
+    output += "\u001b8";
+    stdout.write(output);
+    panel = null;
+    lastFrame = "";
+  };
+
+  const draw = () => {
+    if (!enabled) return;
+    const rows = Math.max(8, Number(stdout.rows) || 24);
+    const columns = Math.max(20, Number(stdout.columns) || 80);
+    const height = Math.min(7, Math.max(3, Math.floor(rows / 3)));
+    const start = rows - height + 1;
+    const mainBottom = start - 1;
+    if (panel && (panel.rows !== rows || panel.start !== start)) clear();
+    panel = { rows, start };
+    const lines = renderAgentPane(agents, { columns, maxRows: height, connectionState });
+    const frame = JSON.stringify({ rows, columns, height, lines });
+    if (frame === lastFrame) return;
+    lastFrame = frame;
+    let output = `\u001b7\u001b[1;${mainBottom}r`;
+    for (let index = 0; index < height; index += 1) {
+      output += `\u001b[${start + index};1H\u001b[2K${lines[index] || ""}`;
+    }
+    output += "\u001b8";
+    stdout.write(output);
+  };
+
+  return {
+    render(nextAgents, nextConnectionState) {
+      agents = Array.isArray(nextAgents) ? nextAgents : [];
+      if (nextConnectionState) connectionState = nextConnectionState;
+      draw();
+    },
+    setConnectionState(next) {
+      connectionState = next;
+      draw();
+    },
+    close: clear,
+  };
 }
 
 function selectThread(threads, selector) {
@@ -307,14 +716,14 @@ async function runThreads({ client, args, stdout, stdin, sleep }) {
     return 0;
   }
   if (action === "create") {
-    const threadId = requiredArgument(args.shift(), "thread ID");
     const options = parseOptions(args, new Set(["--repository", "--title", "--message", "--message-file"]));
     const repository = requiredOption(options, "--repository");
     const message = await readMessage(options, stdin);
     const created = await client.request("/api/threads", {
       method: "POST",
-      body: { id: threadId, repository, title: options.get("--title") || threadId },
+      body: { repository, title: options.get("--title") || "" },
     });
+    const threadId = created.value.thread.id;
     try {
       const routed = await sendThreadMessage(client, threadId, message);
       writeJson(stdout, { thread: created.value.thread, route: routed });

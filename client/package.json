@@ -10,6 +10,9 @@
     "client": "node bin/client.mjs",
     "test": "node --test test/*.test.mjs"
   },
+  "dependencies": {
+    "ws": "8.21.3"
+  },
   "engines": {
     "node": ">=18"
   }

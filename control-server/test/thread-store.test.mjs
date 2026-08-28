@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { InMemoryThreadStore } from "../src/thread-store.mjs";
+import { generateThreadId, InMemoryThreadStore } from "../src/thread-store.mjs";
 
 const now = "2026-08-27T00:00:00.000Z";
 
@@ -9,6 +9,13 @@ function storeWithThread() {
   store.createThread({ id: "thread-1", ownerSubject: "user-a", repository: "multiagent", title: "Long task", now });
   return store;
 }
+
+test("control server thread IDs are valid and independently generated", () => {
+  const first = generateThreadId({ now: 1_777_777_777_777, randomBytes: () => Buffer.from("0000000001", "hex") });
+  const second = generateThreadId({ now: 1_777_777_777_777, randomBytes: () => Buffer.from("0000000002", "hex") });
+  assert.match(first, /^thread-[a-z0-9]+-[a-f0-9]{10}$/);
+  assert.notEqual(first, second);
+});
 
 test("thread ownership scopes list, history, and direct lookup", () => {
   const store = storeWithThread();
@@ -30,11 +37,14 @@ test("messages are idempotent and route across fresh execution sessions", () => 
   }), first);
 
   store.markSessionRunning({ threadId: "thread-1", sessionId: "session-a", generation: 1, now });
+  store.acknowledgeInbox({ threadId: "thread-1", sessionId: "session-a", generation: 1, throughSequence: 1, now });
   const followUp = store.appendUserMessageAndRoute({
     threadId: "thread-1", actor: "user-a", messageId: "message-2", text: "More detail", newSessionId: "unused", now,
   });
   assert.equal(followUp.createdSession, false);
   assert.equal(followUp.session.id, "session-a");
+  assert.equal(followUp.session.inboxAckSequence, 1);
+  assert.equal(followUp.session.inboxHeadSequence, 2);
   assert.equal(store.markSessionFinishing({ threadId: "thread-1", sessionId: "session-a", generation: 1, now }).reason, "pending_input");
 
   store.acknowledgeInbox({ threadId: "thread-1", sessionId: "session-a", generation: 1, throughSequence: 2, now });

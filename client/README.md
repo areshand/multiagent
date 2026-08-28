@@ -15,9 +15,19 @@ npm run client --
 
 Running without a command opens a persistent, Claude Code-style terminal. It
 lists durable threads, accepts `/open THREAD_ID` or a list number, and sends
-ordinary input to the open thread. Use `/new THREAD_ID REPOSITORY` to create a
-thread and `/help` to see the complete interactive command set. The server,
-not the user, creates execution-session IDs.
+ordinary input to the open thread. Use `/new REPOSITORY [TITLE]` to create a
+thread and `/help` to see the complete interactive command set. The server
+assigns both thread IDs and execution-session IDs. After a message starts an
+execution session, the client streams the orchestrator terminal without locking
+the prompt. Additional ordinary input is durably appended and delivered as a
+follow-up to that open thread's active orchestrator. Use `/wait` when you want
+to stop entering commands until the current execution replies. While a thread
+is open, the client maintains an authenticated WebSocket to receive conversation
+events, thread state, heartbeats, and bounded subagent status. A separate
+session WebSocket carries live orchestrator terminal output only while an
+execution is active. The interactive TTY reserves a small bottom pane for each
+subagent's state, role, and current work; HTTP event replay repairs gaps after a
+disconnect.
 
 The first command securely prompts for the password. For a non-interactive
 caller, provide the password on stdin. Do not put it in a command argument:
@@ -41,7 +51,7 @@ connect [THREAD_ID]
 repositories list
 threads list
 threads show THREAD_ID
-threads create THREAD_ID --repository NAME [--title TITLE] (--message TEXT | --message-file PATH)
+threads create --repository NAME [--title TITLE] (--message TEXT | --message-file PATH)
 threads send THREAD_ID (--message TEXT | --message-file PATH)
 threads watch THREAD_ID [--after SEQUENCE] [--once]
 sessions list THREAD_ID
