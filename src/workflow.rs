@@ -43,6 +43,8 @@ const ENV_ORDER: &[&str] = &[
     "implementation_context",
     "implementation_context_sha256",
     "authority_review_id",
+    "iteration_plan_sha256",
+    "iteration_worker_count",
     "candidate_diff_hash",
     "reviewed_diff_hash",
     "resume_count",
@@ -60,6 +62,7 @@ const USAGE: &str = r#"Usage:
   multiagent workflow status WORKFLOW_ID
   multiagent workflow context WORKFLOW_ID
   multiagent workflow contract-register WORKFLOW_ID --scout NAME
+  multiagent workflow seal-iteration WORKFLOW_ID --plan-sha256 SHA256 --worker-count COUNT
   multiagent workflow prepare-implementation WORKFLOW_ID --decision-id ID --plan-id ID --decision-revision REV --implementation-context PATH --authority-review ID
   multiagent workflow transition WORKFLOW_ID PHASE [--diff-hash HASH]
   multiagent workflow add-todo WORKFLOW_ID TODO_ID --kind KIND --summary TEXT [--origin TEXT]
@@ -86,6 +89,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         "status" => status(&args[1..]),
         "context" => context(&args[1..]),
         "contract-register" => register_contract(&args[1..]),
+        "seal-iteration" => seal_iteration(&args[1..]),
         "prepare-implementation" => prepare(&args[1..]),
         "transition" => transition(&args[1..]),
         "add-todo" => add_todo(&args[1..]),
@@ -120,6 +124,20 @@ pub struct DecisionAuthorityCapsule {
     pub decision_id: String,
     pub plan_id: String,
     pub revision: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingReviewObligation {
+    pub id: String,
+    pub kind: String,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ActiveTodo {
+    pub id: String,
+    pub kind: String,
+    pub summary: String,
 }
 
 pub fn assignment_context(
@@ -194,6 +212,10 @@ pub fn decision_authority_capsule(
         "kind": "DecisionAuthorityCapsule",
         "workflowId": workflow_id,
         "revision": revision,
+        "iterationPlan": {
+            "sha256": state_value(&state, "iteration_plan_sha256"),
+            "workerCount": state_value(&state, "iteration_worker_count"),
+        },
         "originalTaskSha256": state_value(&state, "original_task_sha256"),
         "contractArtifactSha256": state_value(&state, "contract_artifact_sha256"),
         "decision": {
@@ -234,6 +256,75 @@ pub fn decision_authority_capsule(
         plan_id: plan_id.into(),
         revision: revision.into(),
     })
+}
+
+pub fn pending_review_obligations(
+    workflow_id: &str,
+    diff_hash: &str,
+) -> Result<Vec<PendingReviewObligation>, String> {
+    let store = Store::configured()?;
+    let paths = store.paths(workflow_id)?;
+    let state = read_env(&paths.state, workflow_id)?;
+    if state_value(&state, "phase") != "post-implementation" {
+        return Err("pending reviews require phase=post-implementation".into());
+    }
+    if diff_hash.is_empty() || state_value(&state, "candidate_diff_hash") != diff_hash {
+        return Err("pending reviews require the frozen candidate diff hash".into());
+    }
+    let iteration = state_value(&state, "iteration");
+    Ok(read_review_obligations(&paths.review_obligations)?
+        .into_iter()
+        .filter(|row| row.get(3) == diff_hash && row.get(5) == iteration && row.get(6) == "pending")
+        .map(|row| PendingReviewObligation {
+            id: row.get(0).to_string(),
+            kind: row.get(1).to_string(),
+            reason: row.get(4).to_string(),
+        })
+        .collect())
+}
+
+pub fn active_todos(workflow_id: &str) -> Result<Vec<ActiveTodo>, String> {
+    let store = Store::configured()?;
+    let paths = store.paths(workflow_id)?;
+    read_env(&paths.state, workflow_id)?;
+    Ok(read_todos(&paths.todos)?
+        .into_iter()
+        .filter(|row| active(row.get(4)))
+        .map(|row| ActiveTodo {
+            id: row.get(0).to_string(),
+            kind: row.get(1).to_string(),
+            summary: row.get(2).to_string(),
+        })
+        .collect())
+}
+
+pub fn passing_review_recorded(
+    workflow_id: &str,
+    review_id: &str,
+    kind: &str,
+) -> Result<bool, String> {
+    let store = Store::configured()?;
+    let paths = store.paths(workflow_id)?;
+    let state = read_env(&paths.state, workflow_id)?;
+    let iteration = state_value(&state, "iteration");
+    Ok(read_reviews(&paths.reviews)?.iter().any(|row| {
+        row.get(0) == review_id
+            && row.get(1) == kind
+            && row.get(2) == "pass"
+            && row.get(5) == iteration
+    }))
+}
+
+pub fn committed_decision_matches(decision_id: &str, plan_id: &str) -> Result<bool, String> {
+    let decision = config::state_dir()?
+        .join("decisions")
+        .join(decision_id)
+        .join("decision.env");
+    if !decision.is_file() {
+        return Ok(false);
+    }
+    validate_committed_decision(decision_id, plan_id)?;
+    Ok(true)
 }
 
 pub fn contract_or_approved_context(workflow_id: &str) -> Result<bool, String> {
@@ -438,6 +529,8 @@ fn initialize_id(id: &str, resume: bool) -> Result<(), String> {
         ("implementation_context", ""),
         ("implementation_context_sha256", ""),
         ("authority_review_id", ""),
+        ("iteration_plan_sha256", ""),
+        ("iteration_worker_count", ""),
         ("candidate_diff_hash", ""),
         ("reviewed_diff_hash", ""),
         ("resume_count", "0"),
@@ -529,6 +622,53 @@ fn register_contract(args: &[String]) -> Result<(), String> {
         &format!("scout={scout}\tartifact_sha256={digest}"),
     )?;
     println!("contract registered\t{id}\t{scout}\t{digest}");
+    Ok(())
+}
+
+fn seal_iteration(args: &[String]) -> Result<(), String> {
+    if args.is_empty() {
+        return Err("seal-iteration requires WORKFLOW_ID".into());
+    }
+    let id = &args[0];
+    let values = options(&args[1..])?;
+    let digest = required(&values, "--plan-sha256")?;
+    let worker_count = required(&values, "--worker-count")?;
+    if digest.len() != 64 || !digest.chars().all(|value| value.is_ascii_hexdigit()) {
+        return Err("seal-iteration --plan-sha256 must be a 64-character SHA-256".into());
+    }
+    let worker_count = worker_count
+        .parse::<usize>()
+        .ok()
+        .filter(|count| (1..=32).contains(count))
+        .ok_or("seal-iteration --worker-count must be between 1 and 32")?;
+    let store = Store::configured()?;
+    let paths = store.paths(id)?;
+    let _lock = store.lock(&paths)?;
+    let mut state = read_env(&paths.state, id)?;
+    if state_value(&state, "phase") != "pre-implementation" {
+        return Err("seal-iteration requires phase=pre-implementation".into());
+    }
+    let existing = state_value(&state, "iteration_plan_sha256");
+    if !existing.is_empty() && existing != digest {
+        return Err("current iteration already has a different sealed plan".into());
+    }
+    state.insert("iteration_plan_sha256".into(), digest.to_ascii_lowercase());
+    state.insert("iteration_worker_count".into(), worker_count.to_string());
+    state.insert("updated_at".into(), timestamp());
+    write_env(&paths.state, &state)?;
+    event(
+        &paths.events,
+        "iteration_plan_sealed",
+        &format!(
+            "iteration={}\tplan_sha256={}\tworker_count={worker_count}",
+            state_value(&state, "iteration"),
+            digest.to_ascii_lowercase()
+        ),
+    )?;
+    println!(
+        "iteration plan sealed\t{id}\t{}",
+        digest.to_ascii_lowercase()
+    );
     Ok(())
 }
 
@@ -865,15 +1005,17 @@ fn transition(args: &[String]) -> Result<(), String> {
             "source diff requires independent technical validation",
             iteration,
         )?;
-        ensure_review_obligation(
-            &mut obligations,
-            &format!("auto-{iteration}-decision-drift"),
-            "decision-drift",
-            "candidate-diff",
-            diff,
-            "source diff must remain within the authorized implementation context",
-            iteration,
-        )?;
+        if decision_drift_required(&store.state_dir, state_value(&state, "decision_id"))? {
+            ensure_review_obligation(
+                &mut obligations,
+                &format!("auto-{iteration}-decision-drift"),
+                "decision-drift",
+                "candidate-diff",
+                diff,
+                "material alternatives or assumptions require an independent drift check",
+                iteration,
+            )?;
+        }
         if iteration.parse::<u64>().unwrap_or(1) > 1 {
             ensure_review_obligation(
                 &mut obligations,
@@ -898,6 +1040,8 @@ fn transition(args: &[String]) -> Result<(), String> {
             "implementation_context",
             "implementation_context_sha256",
             "authority_review_id",
+            "iteration_plan_sha256",
+            "iteration_worker_count",
             "candidate_diff_hash",
             "reviewed_diff_hash",
         ] {
@@ -919,6 +1063,16 @@ fn transition(args: &[String]) -> Result<(), String> {
     )?;
     println!("workflow transitioned\t{id}\t{current}\t{target}");
     Ok(())
+}
+
+fn decision_drift_required(state_dir: &Path, decision_id: &str) -> Result<bool, String> {
+    if decision_id.is_empty() {
+        return Ok(true);
+    }
+    let directory = state_dir.join("decisions").join(decision_id);
+    let alternatives = read_lines(&directory.join("alternatives.tsv"))?.len();
+    let assumptions = read_lines(&directory.join("assumptions.tsv"))?.len();
+    Ok(alternatives > 1 || assumptions > 0)
 }
 
 fn add_todo(args: &[String]) -> Result<(), String> {
@@ -2314,6 +2468,47 @@ mod tests {
             &format!("evidence includes {marker}"),
             marker
         ));
+    }
+
+    #[test]
+    fn decision_drift_policy_tracks_material_choice_or_assumption() {
+        let root = std::env::temp_dir().join(format!(
+            "multiagent-drift-policy-test-{}",
+            std::process::id()
+        ));
+        let decision = root.join("decisions/decision-1");
+        fs::create_dir_all(&decision).unwrap();
+        fs::write(
+            decision.join("alternatives.tsv"),
+            "plan_id\tsummary\nplan-1\tone\n",
+        )
+        .unwrap();
+        fs::write(
+            decision.join("assumptions.tsv"),
+            "assumption_id\tstatement\n",
+        )
+        .unwrap();
+        assert!(!decision_drift_required(&root, "decision-1").unwrap());
+
+        fs::write(
+            decision.join("alternatives.tsv"),
+            "plan_id\tsummary\nplan-1\tone\nplan-2\ttwo\n",
+        )
+        .unwrap();
+        assert!(decision_drift_required(&root, "decision-1").unwrap());
+
+        fs::write(
+            decision.join("alternatives.tsv"),
+            "plan_id\tsummary\nplan-1\tone\n",
+        )
+        .unwrap();
+        fs::write(
+            decision.join("assumptions.tsv"),
+            "assumption_id\tstatement\na-1\tmaterial unknown\n",
+        )
+        .unwrap();
+        assert!(decision_drift_required(&root, "decision-1").unwrap());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

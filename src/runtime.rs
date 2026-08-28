@@ -6,6 +6,7 @@ use crate::{
 };
 use chrono::{Local, Utc};
 use fs2::FileExt;
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -35,6 +36,55 @@ struct RuntimeConfig {
     qwen_bin: String,
     code_exec: bool,
     agent_headless: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct IterationPlan {
+    api_version: String,
+    kind: String,
+    workflow_id: String,
+    iteration: u64,
+    decision: IterationDecision,
+    implementation_context: String,
+    workers: Vec<IterationWorker>,
+    #[serde(default)]
+    resolves_todos: Vec<String>,
+    #[serde(default)]
+    additional_reviews: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct IterationDecision {
+    id: String,
+    title: String,
+    selected_plan: String,
+    reason: String,
+    #[serde(default)]
+    rollback_policy: String,
+    alternatives: Vec<IterationAlternative>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct IterationAlternative {
+    id: String,
+    summary: String,
+    #[serde(default)]
+    expected_outcome: String,
+    #[serde(default)]
+    risk: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct IterationWorker {
+    id: String,
+    owned_paths: Vec<String>,
+    instruction: String,
+    #[serde(default)]
+    depends_on: Vec<String>,
 }
 
 type CodexAccess = RoleAccess;
@@ -1498,6 +1548,7 @@ pub fn subagent(args: &[String]) -> Result<ExitCode, String> {
         "restore" => restore(&cfg, &args[1..])?,
         "restore-all" => restore_all(&cfg, &args[1..])?,
         "reviewed-ops-cycle" => reviewed_ops_cycle(&cfg, &args[1..])?,
+        "execute-iteration" => execute_iteration(&cfg, &args[1..])?,
         "finalize" => finalize(&cfg, &args[1..])?,
         "kill" => kill(&cfg, &args[1..])?,
         command => return Err(format!("unknown command: {command}")),
@@ -1507,7 +1558,7 @@ pub fn subagent(args: &[String]) -> Result<ExitCode, String> {
 
 fn print_subagent_usage() {
     println!(
-        "Usage:\n  multiagent subagent spawn NAME [--own PATH[,PATH...] ...] [--assignment-id ID] [--workflow-id ID --decision-id ID --plan-id ID --decision-revision REV] [--branch BRANCH] [--start-commit COMMIT] [--role ROLE] [--instruction TEXT | --instruction-file PATH | -- TEXT]\n  multiagent subagent restore NAME [--force] [--instruction TEXT | --instruction-file PATH]\n  multiagent subagent reviewed-ops-cycle OPS_NAME --request-file PATH --reviewer NAME [--timeout SECONDS]\n  multiagent subagent list|recover-plan|restore-all|gate-check\n  multiagent subagent poll|inspect|finalize|kill NAME [OPTIONS]\n  multiagent subagent wait NAME [--timeout SECONDS] [--poll-interval SECONDS]\n\nAll durable state and tmux subprocess orchestration are implemented by the Rust CLI."
+        "Usage:\n  multiagent subagent spawn NAME [--own PATH[,PATH...] ...] [--assignment-id ID] [--workflow-id ID --decision-id ID --plan-id ID --decision-revision REV] [--branch BRANCH] [--start-commit COMMIT] [--role ROLE] [--instruction TEXT | --instruction-file PATH | -- TEXT]\n  multiagent subagent restore NAME [--force] [--instruction TEXT | --instruction-file PATH]\n  multiagent subagent reviewed-ops-cycle OPS_NAME --request-file PATH --reviewer NAME [--timeout SECONDS]\n  multiagent subagent execute-iteration --plan-file PATH [--timeout SECONDS]\n  multiagent subagent list|recover-plan|restore-all|gate-check\n  multiagent subagent poll|inspect|finalize|kill NAME [OPTIONS]\n  multiagent subagent wait NAME [--timeout SECONDS] [--poll-interval SECONDS]\n\nAll durable state and tmux subprocess orchestration are implemented by the Rust CLI."
     );
 }
 
@@ -1931,6 +1982,811 @@ const REVIEWED_OPS_RUNTIME_CONTRACT: &str = r#"<reviewed-ops-runtime phase="inte
 const FRESH_CONTEXT_CONTRACT: &str =
     r#"<model-context kind="fresh" prior-transcript="excluded" />"#;
 const REVIEWED_OPS_TERMINAL_FILE: &str = "reviewed-ops-terminal";
+
+const ITERATION_PLAN_API_VERSION: &str = "multiagent.moveindustries.io/v1";
+const ITERATION_PLAN_KIND: &str = "IterationPlan";
+
+fn execute_iteration(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
+    let mut plan_file = None::<PathBuf>;
+    let mut timeout = "900".to_string();
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--plan-file" => {
+                plan_file = Some(PathBuf::from(required_value(
+                    args,
+                    index,
+                    "execute-iteration --plan-file",
+                )?));
+                index += 2;
+            }
+            "--timeout" => {
+                timeout = required_value(args, index, "execute-iteration --timeout")?.to_string();
+                let parsed = timeout.parse::<f64>().map_err(|_| {
+                    "execute-iteration --timeout must be a non-negative number".to_string()
+                })?;
+                if !parsed.is_finite() || parsed < 0.0 {
+                    return Err("execute-iteration --timeout must be a non-negative number".into());
+                }
+                index += 2;
+            }
+            other => return Err(format!("unknown execute-iteration argument: {other}")),
+        }
+    }
+    let plan_file = plan_file.ok_or("execute-iteration requires --plan-file PATH")?;
+    let state_root = fs::canonicalize(&cfg.state).map_err(io_error("resolve state directory"))?;
+    let plan_file = fs::canonicalize(&plan_file).map_err(io_error("resolve iteration plan"))?;
+    if !plan_file.starts_with(&state_root) || !plan_file.is_file() {
+        return Err("iteration plan must be a regular file under MULTIAGENT_STATE_DIR".into());
+    }
+    let plan_bytes = fs::read(&plan_file).map_err(io_error("read iteration plan"))?;
+    if plan_bytes.len() > 256 * 1024 {
+        return Err("iteration plan exceeds the 256 KiB limit".into());
+    }
+    let plan: IterationPlan = serde_json::from_slice(&plan_bytes)
+        .map_err(|error| format!("decode iteration plan JSON: {error}"))?;
+    let owned_paths = validate_iteration_plan(cfg, &plan)?;
+    let active_workflow = env_nonempty("MULTIAGENT_WORKFLOW_ID")
+        .ok_or("execute-iteration requires MULTIAGENT_WORKFLOW_ID")?;
+    if plan.workflow_id != active_workflow {
+        return Err(format!(
+            "iteration plan workflow mismatch: plan={} active={active_workflow}",
+            plan.workflow_id
+        ));
+    }
+    let current_iteration = run_self_text(&[
+        "workflow".into(),
+        "value".into(),
+        plan.workflow_id.clone(),
+        "iteration".into(),
+    ])?;
+    if current_iteration != plan.iteration.to_string() {
+        return Err(format!(
+            "iteration plan revision mismatch: plan={} active={current_iteration}",
+            plan.iteration
+        ));
+    }
+    let active_todos = validate_iteration_todos(&plan)?;
+
+    let plan_sha256 = format!("{:x}", Sha256::digest(&plan_bytes));
+    let execution_dir = cfg
+        .state
+        .join("runtime_state")
+        .join("iteration-executor")
+        .join(format!("{}-{}", plan.workflow_id, plan.iteration));
+    fs::create_dir_all(&execution_dir).map_err(io_error("create iteration execution directory"))?;
+    atomic_write(
+        &execution_dir.join("sealed-plan.json"),
+        std::str::from_utf8(&plan_bytes)
+            .map_err(|_| "iteration plan must be UTF-8 JSON".to_string())?,
+        "seal iteration plan copy",
+    )?;
+
+    run_self_owned(&[
+        "workflow".into(),
+        "seal-iteration".into(),
+        plan.workflow_id.clone(),
+        "--plan-sha256".into(),
+        plan_sha256.clone(),
+        "--worker-count".into(),
+        plan.workers.len().to_string(),
+    ])?;
+    materialize_iteration_decision(&plan)?;
+
+    let authority_name = format!("decision-authority-reviewer-{:02}", plan.iteration);
+    let selected = plan
+        .decision
+        .alternatives
+        .iter()
+        .find(|alternative| alternative.id == plan.decision.selected_plan)
+        .expect("validated selected iteration plan");
+    let authority_instruction = format!(
+        "Review sealed iteration plan sha256={plan_sha256}. Selected outcome: {}. Implementation context: {}. Worker graph: {}. Exact owned paths: {}. Direct TODOs this plan claims to resolve after passing review: {}. Confirm that this bounded plan follows the authenticated task, addresses those TODOs, preserves authority boundaries, and contains no unauthorized operation or scope expansion.",
+        selected.expected_outcome,
+        plan.implementation_context,
+        plan.workers
+            .iter()
+            .map(|worker| format!("{}<-{}", worker.id, if worker.depends_on.is_empty() { "ready".into() } else { worker.depends_on.join(",") }))
+            .collect::<Vec<_>>()
+            .join("; "),
+        owned_paths.join(","),
+        if active_todos.is_empty() { "none".into() } else { active_todos.iter().map(|todo| format!("{}: {}", todo.id, todo.summary)).collect::<Vec<_>>().join("; ") },
+    );
+    let authority_review_id = format!("iteration-{}-authority", plan.iteration);
+    if !workflow::passing_review_recorded(
+        &plan.workflow_id,
+        &authority_review_id,
+        "decision-authority",
+    )? {
+        spawn(
+            cfg,
+            &[
+                authority_name.clone(),
+                "--role".into(),
+                "reviewer".into(),
+                "--workflow-id".into(),
+                plan.workflow_id.clone(),
+                "--decision-id".into(),
+                plan.decision.id.clone(),
+                "--plan-id".into(),
+                plan.decision.selected_plan.clone(),
+                "--decision-revision".into(),
+                plan.iteration.to_string(),
+                "--instruction".into(),
+                authority_instruction,
+            ],
+        )?;
+        wait(
+            cfg,
+            &[authority_name.clone(), "--timeout".into(), timeout.clone()],
+        )?;
+        let authority_message = agent_final_message(cfg, &authority_name)?;
+        finalize(cfg, std::slice::from_ref(&authority_name))?;
+        let authority_verdict =
+            review_output_verdict(&authority_message, "decision-authority", "-").ok_or_else(
+                || {
+                    format!(
+                        "authority reviewer output is missing the required structured marker: {authority_name}"
+                    )
+                },
+            )?;
+        record_iteration_review(
+            &plan.workflow_id,
+            &authority_review_id,
+            "decision-authority",
+            authority_verdict,
+            "-",
+            &authority_name,
+        )?;
+        if authority_verdict == "findings" {
+            emit_iteration_result(
+                "needs_replan",
+                &plan,
+                &plan_sha256,
+                "decision-authority-findings",
+                None,
+            )?;
+            return Ok(());
+        }
+    }
+
+    let implementation_context = format!(
+        "# Sealed Implementation Context\n\niteration-plan-sha256={plan_sha256}\nworkflow={}\niteration={}\ndecision={}\nselected-plan={}\n\n{}\n",
+        plan.workflow_id,
+        plan.iteration,
+        plan.decision.id,
+        plan.decision.selected_plan,
+        plan.implementation_context,
+    );
+    let context_file = execution_dir.join("implementation-context.md");
+    atomic_write(
+        &context_file,
+        &implementation_context,
+        "write sealed implementation context",
+    )?;
+    run_self_owned(&[
+        "workflow".into(),
+        "prepare-implementation".into(),
+        plan.workflow_id.clone(),
+        "--decision-id".into(),
+        plan.decision.id.clone(),
+        "--plan-id".into(),
+        plan.decision.selected_plan.clone(),
+        "--decision-revision".into(),
+        plan.iteration.to_string(),
+        "--implementation-context".into(),
+        context_file.display().to_string(),
+        "--authority-review".into(),
+        authority_review_id,
+    ])?;
+    run_self_owned(&[
+        "workflow".into(),
+        "transition".into(),
+        plan.workflow_id.clone(),
+        "implementation".into(),
+    ])?;
+
+    if let Some(reason) = execute_worker_graph(
+        cfg,
+        &plan,
+        &implementation_context,
+        &execution_dir,
+        &timeout,
+    )? {
+        emit_iteration_result("needs_replan", &plan, &plan_sha256, &reason, None)?;
+        return Ok(());
+    }
+
+    let diff = crate::snapshot::canonical_diff(&cfg.root, "HEAD")?;
+    let diff_hash = format!("{:x}", Sha256::digest(&diff));
+    let changed_paths = diff_changed_paths(&diff);
+    if changed_paths.is_empty() {
+        emit_iteration_result(
+            "needs_replan",
+            &plan,
+            &plan_sha256,
+            "workers-produced-no-candidate-diff",
+            Some(&diff_hash),
+        )?;
+        return Ok(());
+    }
+    for changed in &changed_paths {
+        if !owned_paths
+            .iter()
+            .any(|owned| path_contains(owned, changed))
+        {
+            return Err(format!(
+                "sealed iteration produced a path outside worker ownership: {changed}"
+            ));
+        }
+    }
+    run_self_owned(&[
+        "workflow".into(),
+        "transition".into(),
+        plan.workflow_id.clone(),
+        "post-implementation".into(),
+        "--diff-hash".into(),
+        diff_hash.clone(),
+    ])?;
+
+    add_iteration_review_requests(&plan, &diff_hash)?;
+    let obligations = workflow::pending_review_obligations(&plan.workflow_id, &diff_hash)?;
+    let mut reviewers = Vec::new();
+    for obligation in &obligations {
+        let reviewer = iteration_reviewer_name(&obligation.kind, plan.iteration);
+        let marker = format!(
+            "review-record: type={} verdict=pass diff={diff_hash}",
+            obligation.kind
+        );
+        let instruction = format!(
+            "{marker}\nReview only the frozen candidate diff sha256={diff_hash} for obligation {}: {}. Local read-only repository inspection and non-networked validation commands are required and are not production operations; inspect the live changed paths {}. Emit the same type and hash with verdict=pass only if accepted, otherwise emit verdict=findings. The sealed iteration plan sha256 is {plan_sha256}.",
+            obligation.id,
+            obligation.reason,
+            changed_paths.join(",")
+        );
+        let mut spawn_args = vec![reviewer.clone(), "--role".into(), "reviewer".into()];
+        for path in &changed_paths {
+            spawn_args.push("--own".into());
+            spawn_args.push(path.clone());
+        }
+        spawn_args.extend([
+            "--workflow-id".into(),
+            plan.workflow_id.clone(),
+            "--instruction".into(),
+            instruction,
+        ]);
+        spawn(cfg, &spawn_args)?;
+        reviewers.push((obligation.clone(), reviewer));
+    }
+
+    let mut review_findings = Vec::new();
+    for (obligation, reviewer) in &reviewers {
+        wait(
+            cfg,
+            &[reviewer.clone(), "--timeout".into(), timeout.clone()],
+        )?;
+        let message = agent_final_message(cfg, reviewer)?;
+        finalize(cfg, std::slice::from_ref(reviewer))?;
+        let verdict =
+            review_output_verdict(&message, &obligation.kind, &diff_hash).ok_or_else(|| {
+                format!("reviewer output is missing its required structured marker: {reviewer}")
+            })?;
+        let review_id = format!("iteration-{}-{}", plan.iteration, obligation.id);
+        record_iteration_review(
+            &plan.workflow_id,
+            &review_id,
+            &obligation.kind,
+            verdict,
+            &diff_hash,
+            reviewer,
+        )?;
+        if verdict == "findings" {
+            review_findings.push(obligation.kind.clone());
+        }
+    }
+    if !review_findings.is_empty() {
+        emit_iteration_result(
+            "needs_replan",
+            &plan,
+            &plan_sha256,
+            &format!("review-findings:{}", review_findings.join(",")),
+            Some(&diff_hash),
+        )?;
+        return Ok(());
+    }
+
+    for todo in &plan.resolves_todos {
+        run_self_owned(&[
+            "workflow".into(),
+            "resolve-todo".into(),
+            plan.workflow_id.clone(),
+            todo.clone(),
+            "--resolution".into(),
+            "completed".into(),
+            "--evidence".into(),
+            format!(
+                "sealed iteration {} passed all reviews for diff {diff_hash}",
+                plan.iteration
+            ),
+        ])?;
+    }
+
+    run_self_owned(&[
+        "workflow".into(),
+        "gate".into(),
+        plan.workflow_id.clone(),
+        "completion".into(),
+    ])?;
+    run_self_owned(&["orchestrator".into(), "complete".into()])?;
+    emit_iteration_result(
+        "completed",
+        &plan,
+        &plan_sha256,
+        "all-supervisor-gates-passed",
+        Some(&diff_hash),
+    )
+}
+
+fn validate_iteration_plan(
+    cfg: &RuntimeConfig,
+    plan: &IterationPlan,
+) -> Result<Vec<String>, String> {
+    if plan.api_version != ITERATION_PLAN_API_VERSION || plan.kind != ITERATION_PLAN_KIND {
+        return Err(format!(
+            "iteration plan must use apiVersion={ITERATION_PLAN_API_VERSION} kind={ITERATION_PLAN_KIND}"
+        ));
+    }
+    if plan.iteration == 0 {
+        return Err("iteration plan iteration must be positive".into());
+    }
+    if plan.implementation_context.trim().is_empty()
+        || plan.implementation_context.len() > 64 * 1024
+    {
+        return Err("iteration plan implementationContext must contain 1..65536 bytes".into());
+    }
+    for (label, value) in [
+        ("decision.id", plan.decision.id.as_str()),
+        ("decision.title", plan.decision.title.as_str()),
+        (
+            "decision.selectedPlan",
+            plan.decision.selected_plan.as_str(),
+        ),
+        ("decision.reason", plan.decision.reason.as_str()),
+        (
+            "decision.rollbackPolicy",
+            plan.decision.rollback_policy.as_str(),
+        ),
+    ] {
+        if value.is_empty() || value.contains(['\n', '\r', '\t']) {
+            return Err(format!(
+                "iteration plan {label} must be a non-empty single-line value"
+            ));
+        }
+    }
+    if plan.decision.alternatives.is_empty() || plan.decision.alternatives.len() > 8 {
+        return Err("iteration plan requires 1..8 decision alternatives".into());
+    }
+    let mut alternatives = BTreeSet::new();
+    for alternative in &plan.decision.alternatives {
+        if alternative.id.is_empty()
+            || alternative.summary.is_empty()
+            || alternative.id.contains(['\n', '\r', '\t'])
+            || alternative.summary.contains(['\n', '\r', '\t'])
+            || alternative.expected_outcome.contains(['\n', '\r', '\t'])
+            || alternative.risk.contains(['\n', '\r', '\t'])
+        {
+            return Err(
+                "iteration decision alternatives must use non-empty single-line IDs and summaries"
+                    .into(),
+            );
+        }
+        if !alternatives.insert(alternative.id.as_str()) {
+            return Err(format!(
+                "duplicate iteration alternative: {}",
+                alternative.id
+            ));
+        }
+    }
+    if !alternatives.contains(plan.decision.selected_plan.as_str()) {
+        return Err("iteration selectedPlan does not name an alternative".into());
+    }
+    if plan.workers.is_empty() || plan.workers.len() > 32 {
+        return Err("iteration plan requires 1..32 workers".into());
+    }
+    let ids = plan
+        .workers
+        .iter()
+        .map(|worker| worker.id.as_str())
+        .collect::<BTreeSet<_>>();
+    if ids.len() != plan.workers.len() {
+        return Err("iteration worker IDs must be unique".into());
+    }
+    let mut all_paths = Vec::<String>::new();
+    for worker in &plan.workers {
+        validate_name(&worker.id)?;
+        if !worker.id.starts_with("worker-") {
+            return Err(format!(
+                "iteration worker ID must start with worker-: {}",
+                worker.id
+            ));
+        }
+        if worker.instruction.trim().is_empty() || worker.instruction.len() > 64 * 1024 {
+            return Err(format!(
+                "iteration worker instruction is empty or too large: {}",
+                worker.id
+            ));
+        }
+        if worker.owned_paths.is_empty() {
+            return Err(format!("iteration worker has no ownedPaths: {}", worker.id));
+        }
+        for dependency in &worker.depends_on {
+            if dependency == &worker.id || !ids.contains(dependency.as_str()) {
+                return Err(format!(
+                    "invalid dependency {dependency} for worker {}",
+                    worker.id
+                ));
+            }
+        }
+        for requested in &worker.owned_paths {
+            let normalized = normalize_repo_path(&cfg.root, requested)?;
+            if all_paths.iter().any(|existing| {
+                path_contains(existing, &normalized) || path_contains(&normalized, existing)
+            }) {
+                return Err(format!(
+                    "iteration worker ownership overlaps another worker: {normalized}"
+                ));
+            }
+            all_paths.push(normalized);
+        }
+    }
+    let mut completed = BTreeSet::<&str>::new();
+    while completed.len() < plan.workers.len() {
+        let ready = plan
+            .workers
+            .iter()
+            .filter(|worker| {
+                !completed.contains(worker.id.as_str())
+                    && worker
+                        .depends_on
+                        .iter()
+                        .all(|dependency| completed.contains(dependency.as_str()))
+            })
+            .map(|worker| worker.id.as_str())
+            .collect::<Vec<_>>();
+        if ready.is_empty() {
+            return Err("iteration worker dependency graph contains a cycle".into());
+        }
+        completed.extend(ready);
+    }
+    let allowed_reviews = ["decision-drift", "scope", "reflection"];
+    if plan
+        .additional_reviews
+        .iter()
+        .any(|kind| !allowed_reviews.contains(&kind.as_str()))
+    {
+        return Err(
+            "additionalReviews may contain only decision-drift, scope, or reflection".into(),
+        );
+    }
+    for todo in &plan.resolves_todos {
+        if todo.is_empty()
+            || !todo
+                .chars()
+                .all(|value| value.is_ascii_alphanumeric() || matches!(value, '_' | '.' | '-'))
+        {
+            return Err(format!("invalid resolvesTodos ID: {todo}"));
+        }
+    }
+    Ok(all_paths)
+}
+
+fn validate_iteration_todos(plan: &IterationPlan) -> Result<Vec<workflow::ActiveTodo>, String> {
+    let active = workflow::active_todos(&plan.workflow_id)?;
+    let non_direct = active
+        .iter()
+        .filter(|todo| todo.kind != "direct")
+        .map(|todo| format!("{}:{}", todo.id, todo.kind))
+        .collect::<Vec<_>>();
+    if !non_direct.is_empty() {
+        return Err(format!(
+            "resolve active evidence or decision TODOs before executing an iteration: {}",
+            non_direct.join(",")
+        ));
+    }
+    let declared = plan
+        .resolves_todos
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    if declared.len() != plan.resolves_todos.len() {
+        return Err("resolvesTodos must not contain duplicates".into());
+    }
+    let expected = active
+        .iter()
+        .map(|todo| todo.id.as_str())
+        .collect::<BTreeSet<_>>();
+    if declared != expected {
+        return Err(format!(
+            "resolvesTodos must exactly name the active direct TODOs: expected={} declared={}",
+            expected.into_iter().collect::<Vec<_>>().join(","),
+            declared.into_iter().collect::<Vec<_>>().join(",")
+        ));
+    }
+    Ok(active)
+}
+
+fn materialize_iteration_decision(plan: &IterationPlan) -> Result<(), String> {
+    if workflow::committed_decision_matches(&plan.decision.id, &plan.decision.selected_plan)? {
+        return Ok(());
+    }
+    run_self_owned(&[
+        "decision".into(),
+        "init".into(),
+        plan.decision.id.clone(),
+        "--title".into(),
+        plan.decision.title.clone(),
+        "--owner".into(),
+        "orchestrator".into(),
+    ])?;
+    for alternative in &plan.decision.alternatives {
+        run_self_owned(&[
+            "decision".into(),
+            "add-alternative".into(),
+            plan.decision.id.clone(),
+            "--plan-id".into(),
+            alternative.id.clone(),
+            "--summary".into(),
+            alternative.summary.clone(),
+            "--proposed-by".into(),
+            "orchestrator".into(),
+            "--expected-outcome".into(),
+            alternative.expected_outcome.clone(),
+            "--risk".into(),
+            alternative.risk.clone(),
+        ])?;
+    }
+    run_self_owned(&[
+        "decision".into(),
+        "commit".into(),
+        plan.decision.id.clone(),
+        "--selected-plan".into(),
+        plan.decision.selected_plan.clone(),
+        "--reason".into(),
+        plan.decision.reason.clone(),
+        "--rollback-policy".into(),
+        plan.decision.rollback_policy.clone(),
+    ])
+}
+
+fn execute_worker_graph(
+    cfg: &RuntimeConfig,
+    plan: &IterationPlan,
+    implementation_context: &str,
+    execution_dir: &Path,
+    timeout: &str,
+) -> Result<Option<String>, String> {
+    let mut completed = BTreeSet::<String>::new();
+    while completed.len() < plan.workers.len() {
+        let ready = plan
+            .workers
+            .iter()
+            .filter(|worker| {
+                !completed.contains(&worker.id)
+                    && worker
+                        .depends_on
+                        .iter()
+                        .all(|dependency| completed.contains(dependency))
+            })
+            .collect::<Vec<_>>();
+        if ready.is_empty() {
+            return Err("iteration worker dependency graph became unschedulable".into());
+        }
+        let prior_parallel = env::var_os("MULTIAGENT_ALLOW_PARALLEL_WORKERS");
+        env::set_var("MULTIAGENT_ALLOW_PARALLEL_WORKERS", "1");
+        let mut spawned = Vec::<String>::new();
+        let spawn_result = (|| {
+            for worker in &ready {
+                let instruction_file = execution_dir.join(format!("{}.md", worker.id));
+                atomic_write(
+                    &instruction_file,
+                    &format!(
+                        "{implementation_context}\n## Sealed Worker Node\n\nnode={}\ndepends-on={}\n\n{}\n",
+                        worker.id,
+                        worker.depends_on.join(","),
+                        worker.instruction
+                    ),
+                    "write sealed worker instruction",
+                )?;
+                let mut spawn_args = vec![worker.id.clone(), "--role".into(), "worker".into()];
+                for path in &worker.owned_paths {
+                    spawn_args.push("--own".into());
+                    spawn_args.push(path.clone());
+                }
+                spawn_args.extend([
+                    "--workflow-id".into(),
+                    plan.workflow_id.clone(),
+                    "--decision-id".into(),
+                    plan.decision.id.clone(),
+                    "--plan-id".into(),
+                    plan.decision.selected_plan.clone(),
+                    "--decision-revision".into(),
+                    plan.iteration.to_string(),
+                    "--instruction-file".into(),
+                    instruction_file.display().to_string(),
+                ]);
+                spawn(cfg, &spawn_args)?;
+                spawned.push(worker.id.clone());
+            }
+            Ok::<(), String>(())
+        })();
+        match prior_parallel {
+            Some(value) => env::set_var("MULTIAGENT_ALLOW_PARALLEL_WORKERS", value),
+            None => env::remove_var("MULTIAGENT_ALLOW_PARALLEL_WORKERS"),
+        }
+        if let Err(error) = spawn_result {
+            for name in &spawned {
+                let _ = kill(cfg, std::slice::from_ref(name));
+            }
+            return Err(error);
+        }
+        for worker in ready {
+            wait(
+                cfg,
+                &[worker.id.clone(), "--timeout".into(), timeout.to_string()],
+            )?;
+            let status = read_trimmed(&cfg.state.join("subagents").join(&worker.id).join("status"))
+                .unwrap_or_else(|| "unknown".into());
+            let message = agent_final_message(cfg, &worker.id).unwrap_or_default();
+            finalize(cfg, std::slice::from_ref(&worker.id))?;
+            if !matches!(status.as_str(), "done" | "exited") || message.trim().is_empty() {
+                return Ok(Some(format!("worker-incomplete:{}:{status}", worker.id)));
+            }
+            completed.insert(worker.id.clone());
+        }
+    }
+    Ok(None)
+}
+
+fn add_iteration_review_requests(plan: &IterationPlan, diff_hash: &str) -> Result<(), String> {
+    let existing = workflow::pending_review_obligations(&plan.workflow_id, diff_hash)?
+        .into_iter()
+        .map(|obligation| obligation.kind)
+        .collect::<BTreeSet<_>>();
+    for kind in plan
+        .additional_reviews
+        .iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter(|kind| !existing.contains(*kind))
+    {
+        run_self_owned(&[
+            "workflow".into(),
+            "require-review".into(),
+            plan.workflow_id.clone(),
+            format!("plan-{}-{kind}", plan.iteration),
+            "--type".into(),
+            kind.clone(),
+            "--trigger".into(),
+            "sealed-iteration-plan".into(),
+            "--artifact-digest".into(),
+            diff_hash.into(),
+            "--reason".into(),
+            "orchestrator requested additional independent review".into(),
+        ])?;
+    }
+    Ok(())
+}
+
+fn record_iteration_review(
+    workflow_id: &str,
+    review_id: &str,
+    kind: &str,
+    verdict: &str,
+    diff_hash: &str,
+    reviewer: &str,
+) -> Result<(), String> {
+    let mut args = vec![
+        "workflow".into(),
+        "record-review".into(),
+        workflow_id.into(),
+        review_id.into(),
+        "--type".into(),
+        kind.into(),
+        "--verdict".into(),
+        verdict.into(),
+    ];
+    if kind != "decision-authority" {
+        args.push("--diff-hash".into());
+        args.push(diff_hash.into());
+    }
+    args.extend([
+        "--evidence".into(),
+        reviewer.into(),
+        "--reviewer".into(),
+        reviewer.into(),
+    ]);
+    run_self_owned(&args)
+}
+
+fn review_output_verdict(message: &str, kind: &str, diff: &str) -> Option<&'static str> {
+    let pass = format!("review-record: type={kind} verdict=pass diff={diff}");
+    let findings = format!("review-record: type={kind} verdict=findings diff={diff}");
+    let has_pass = message
+        .lines()
+        .any(|line| normalize_report_line(line) == pass);
+    let has_findings = message
+        .lines()
+        .any(|line| normalize_report_line(line) == findings);
+    match (has_pass, has_findings) {
+        (true, false) => Some("pass"),
+        (false, true) => Some("findings"),
+        _ => None,
+    }
+}
+
+fn iteration_reviewer_name(kind: &str, iteration: u64) -> String {
+    if kind == "technical" {
+        format!("technical-verifier-{iteration:02}")
+    } else {
+        format!("{kind}-reviewer-{iteration:02}")
+    }
+}
+
+fn agent_final_message(cfg: &RuntimeConfig, name: &str) -> Result<String, String> {
+    fs::read_to_string(
+        cfg.state
+            .join("subagents")
+            .join(name)
+            .join("last-message.txt"),
+    )
+    .map_err(|_| format!("agent final message is missing: {name}"))
+}
+
+fn diff_changed_paths(diff: &[u8]) -> Vec<String> {
+    let mut paths = BTreeSet::new();
+    for line in String::from_utf8_lossy(diff).lines() {
+        let Some(rest) = line.strip_prefix("diff --git a/") else {
+            continue;
+        };
+        let Some((old, new)) = rest.split_once(" b/") else {
+            continue;
+        };
+        for path in [old, new.split('\t').next().unwrap_or("").trim()] {
+            if !path.is_empty() && path != "/dev/null" {
+                paths.insert(path.to_string());
+            }
+        }
+    }
+    paths.into_iter().collect()
+}
+
+fn path_contains(base: &str, candidate: &str) -> bool {
+    candidate == base || candidate.starts_with(&format!("{base}/"))
+}
+
+fn emit_iteration_result(
+    status: &str,
+    plan: &IterationPlan,
+    plan_sha256: &str,
+    reason: &str,
+    diff_hash: Option<&str>,
+) -> Result<(), String> {
+    println!(
+        "{}",
+        serde_json::to_string(&serde_json::json!({
+            "apiVersion": ITERATION_PLAN_API_VERSION,
+            "kind": "IterationExecutionResult",
+            "status": status,
+            "workflowId": plan.workflow_id,
+            "iteration": plan.iteration,
+            "planSha256": plan_sha256,
+            "candidateDiffSha256": diff_hash,
+            "reason": reason,
+        }))
+        .map_err(|error| format!("encode iteration execution result: {error}"))?
+    );
+    Ok(())
+}
 
 fn fresh_context_instruction() -> String {
     format!(
@@ -4113,6 +4969,17 @@ fn run_self_quiet(args: &[&str]) -> Result<(), String> {
     run_self_output(args).map(|_| ())
 }
 
+fn run_self_owned(args: &[String]) -> Result<(), String> {
+    let borrowed = args.iter().map(String::as_str).collect::<Vec<_>>();
+    run_self_quiet(&borrowed)
+}
+
+fn run_self_text(args: &[String]) -> Result<String, String> {
+    let borrowed = args.iter().map(String::as_str).collect::<Vec<_>>();
+    let output = run_self_output(&borrowed)?;
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 fn validate_cli(value: &str) -> Result<(), String> {
     BackendId::parse(value).map(|_| ())
 }
@@ -4602,6 +5469,102 @@ review-record: type=decision-authority verdict=pass diff=-\n";
         assert!(accepted_report(
             "**review-record: type=decision-authority verdict=pass diff=-**"
         ));
+    }
+
+    #[test]
+    fn iteration_review_output_requires_one_exact_structured_verdict() {
+        let pass = "ACCEPTED\nreview-record: type=technical verdict=pass diff=abc\n";
+        assert_eq!(
+            review_output_verdict(pass, "technical", "abc"),
+            Some("pass")
+        );
+        let findings =
+            "BLOCKING\n**review-record: type=decision-drift verdict=findings diff=abc**\n";
+        assert_eq!(
+            review_output_verdict(findings, "decision-drift", "abc"),
+            Some("findings")
+        );
+        assert_eq!(review_output_verdict("ACCEPTED", "technical", "abc"), None);
+        assert_eq!(
+            review_output_verdict(
+                "review-record: type=technical verdict=pass diff=abc\nreview-record: type=technical verdict=findings diff=abc",
+                "technical",
+                "abc"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn iteration_plan_validation_rejects_cycles_and_overlapping_ownership() {
+        let root = std::env::temp_dir().join(format!(
+            "multiagent-iteration-plan-test-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let cfg = RuntimeConfig {
+            session: "test".into(),
+            root: root.clone(),
+            state: root.join("state"),
+            logs: root.join("logs"),
+            policy: root.join("policy"),
+            prompt_root: root.join("prompts"),
+            worker_cli: "codex".into(),
+            subagent_cli: "codex".into(),
+            verifier_cli: "codex".into(),
+            codex_bin: "codex".into(),
+            claude_bin: "claude".into(),
+            qwen_bin: "qwen".into(),
+            code_exec: true,
+            agent_headless: true,
+        };
+        let worker = |id: &str, path: &str, depends_on: Vec<String>| IterationWorker {
+            id: id.into(),
+            owned_paths: vec![path.into()],
+            instruction: "produce the bounded artifact".into(),
+            depends_on,
+        };
+        let mut plan = IterationPlan {
+            api_version: ITERATION_PLAN_API_VERSION.into(),
+            kind: ITERATION_PLAN_KIND.into(),
+            workflow_id: "workflow-1".into(),
+            iteration: 1,
+            decision: IterationDecision {
+                id: "decision-1".into(),
+                title: "Bounded change".into(),
+                selected_plan: "plan-1".into(),
+                reason: "Task specifies the exact output".into(),
+                rollback_policy: "Revert the bounded artifact".into(),
+                alternatives: vec![IterationAlternative {
+                    id: "plan-1".into(),
+                    summary: "Write the exact artifact".into(),
+                    expected_outcome: "Artifact matches the contract".into(),
+                    risk: "Low".into(),
+                }],
+            },
+            implementation_context: "Write only the authenticated artifact.".into(),
+            workers: vec![worker("worker-a", "one.json", vec![])],
+            resolves_todos: vec![],
+            additional_reviews: vec![],
+        };
+        assert!(validate_iteration_plan(&cfg, &plan).is_ok());
+
+        plan.workers = vec![
+            worker("worker-a", "one", vec!["worker-b".into()]),
+            worker("worker-b", "two", vec!["worker-a".into()]),
+        ];
+        assert!(validate_iteration_plan(&cfg, &plan)
+            .unwrap_err()
+            .contains("cycle"));
+
+        plan.workers = vec![
+            worker("worker-a", "nested", vec![]),
+            worker("worker-b", "nested/output.json", vec![]),
+        ];
+        assert!(validate_iteration_plan(&cfg, &plan)
+            .unwrap_err()
+            .contains("overlaps"));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

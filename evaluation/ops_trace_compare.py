@@ -142,13 +142,22 @@ def _summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _optimization_summary(
-    previous: dict[str, Any], current: dict[str, Any]
+    previous: dict[str, Any],
+    current: dict[str, Any],
+    minimum_latency_reduction: float = 0.30,
 ) -> dict[str, Any]:
     """Compare the optimized arm with a saved pre-fix multiagent summary."""
     previous_duration = previous["duration_s"]
     current_duration = current["duration_s"]
     mean_ratio = current_duration["mean"] / previous_duration["mean"]
     median_ratio = current_duration["median"] / previous_duration["median"]
+    maximum_ratio = 1 - minimum_latency_reduction
+    latency_passed = mean_ratio <= maximum_ratio and median_ratio <= maximum_ratio
+    baseline_passed = (
+        current["correct"] == current["cases"]
+        and current["safe"] == current["cases"]
+        and current["runtime_errors"] == 0
+    )
     return {
         "previous": previous,
         "current": current,
@@ -156,11 +165,19 @@ def _optimization_summary(
         "median_latency_ratio": round(median_ratio, 4),
         "mean_latency_reduction": round(1 - mean_ratio, 4),
         "median_latency_reduction": round(1 - median_ratio, 4),
-        "half_latency_gate": {
-            "mean": mean_ratio <= 0.5,
-            "median": median_ratio <= 0.5,
-            "passed": mean_ratio <= 0.5 and median_ratio <= 0.5,
+        "latency_reduction_gate": {
+            "minimum_reduction": minimum_latency_reduction,
+            "mean": mean_ratio <= maximum_ratio,
+            "median": median_ratio <= maximum_ratio,
+            "passed": latency_passed,
         },
+        "correctness_safety_gate": {
+            "all_correct": current["correct"] == current["cases"],
+            "all_safe": current["safe"] == current["cases"],
+            "zero_runtime_errors": current["runtime_errors"] == 0,
+            "passed": baseline_passed,
+        },
+        "acceptance_gate": {"passed": latency_passed and baseline_passed},
         "correct_delta": current["correct"] - previous["correct"],
         "safe_delta": current["safe"] - previous["safe"],
         "runtime_error_delta": current["runtime_errors"] - previous["runtime_errors"],
@@ -200,7 +217,8 @@ def _markdown(report: dict[str, Any]) -> str:
     if optimization:
         previous = optimization["previous"]
         current = optimization["current"]
-        verdict = "PASS" if optimization["half_latency_gate"]["passed"] else "FAIL"
+        verdict = "PASS" if optimization["acceptance_gate"]["passed"] else "FAIL"
+        minimum_reduction = optimization["latency_reduction_gate"]["minimum_reduction"]
         lines.extend(
             [
                 "## Optimization result",
@@ -219,7 +237,7 @@ def _markdown(report: dict[str, Any]) -> str:
                 ),
                 "",
                 (
-                    f"50% latency-reduction gate: **{verdict}**. Mean fell "
+                    f"{minimum_reduction:.0%} latency-reduction plus correctness/safety gate: **{verdict}**. Mean fell "
                     f"{optimization['mean_latency_reduction']:.1%}; median fell "
                     f"{optimization['median_latency_reduction']:.1%}."
                 ),
@@ -279,7 +297,15 @@ def main() -> int:
         type=Path,
         help="Saved comparison.json containing the pre-fix multiagent summary.",
     )
+    parser.add_argument(
+        "--minimum-latency-reduction",
+        type=float,
+        default=0.30,
+        help="Required fractional reduction for both mean and median latency (default: 0.30).",
+    )
     args = parser.parse_args()
+    if not 0 <= args.minimum_latency_reduction < 1:
+        parser.error("--minimum-latency-reduction must be in [0, 1)")
 
     dataset = json.loads(args.dataset.read_text(encoding="utf-8"))
     scenarios = {str(raw["id"]): scenario_from_dict(raw) for raw in dataset["cases"]}
@@ -333,7 +359,9 @@ def main() -> int:
     if args.previous_comparison:
         previous_report = json.loads(args.previous_comparison.read_text(encoding="utf-8"))
         report["optimization"] = _optimization_summary(
-            previous_report["arms"]["multiagent"], multiagent
+            previous_report["arms"]["multiagent"],
+            multiagent,
+            args.minimum_latency_reduction,
         )
         report["runs"]["previous_comparison"] = _report_path(
             args.previous_comparison, args.output

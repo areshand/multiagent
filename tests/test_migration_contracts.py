@@ -723,6 +723,8 @@ class MigrationCliContractTest(unittest.TestCase):
                 "implementation_context",
                 "implementation_context_sha256",
                 "authority_review_id",
+                "iteration_plan_sha256",
+                "iteration_worker_count",
                 "candidate_diff_hash",
                 "reviewed_diff_hash",
                 "resume_count",

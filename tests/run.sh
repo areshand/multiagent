@@ -986,22 +986,19 @@ assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "launcher autom
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" 'Lifecycle-enforced workers must use `--instruction-file`'
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "git branch --show-current"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" 'Do not load, copy, or include'
-assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "decision-authority-reviewer-01"
-assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "exact target-repository paths"
-assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" 'Only after `record-review` succeeds'
-assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" 'WORKFLOW_ID` and `REVIEW_ID` are the two required positional arguments'
-assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "Spawn all mutually"
-assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "technical-verifier-01"
-assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" '--role reviewer --own CHANGED_PATHS'
-assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" '--evidence REVIEWER_NAME --reviewer REVIEWER_NAME'
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" '"kind": "IterationPlan"'
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" 'multiagent subagent execute-iteration --plan-file'
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" 'worker-ops-plan-01'
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" 'The supervisor always requires an independent decision-authority review'
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" 'launches independent reviewers in'
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" 'status=needs_replan'
 assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "do not spawn another final verifier"
 assert_file_contains "$ROOT/prompts/verifier.md" 'do not substitute the default `technical`'
 assert_file_contains "$ROOT/prompts/roles/decision-authority-reviewer.md" "pre-implementation authority review"
 assert_file_contains "$ROOT/prompts/roles/decision-authority-reviewer.md" "never require implementation"
 assert_file_contains "$ROOT/prompts/roles/decision-authority-reviewer.md" "Supervisor-Generated Decision Authority Capsule"
 assert_file_contains "$ROOT/prompts/roles/decision-authority-reviewer.md" "decision-review: capsule-sha256="
-assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "--decision-revision REVISION"
-assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "orchestrator must never manufacture or edit that capsule"
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "Neither the orchestrator nor a worker may manufacture or edit it"
 assert_file_contains "$ROOT/prompts/roles/decision-authority-reviewer.md" "instruction file's location never changes"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Skip the scout when the public task"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" '`/app/_base_commit` is immutable adapter metadata'

@@ -67,6 +67,9 @@ bindings, independent review, and phase completion.
   `prompts/playbooks/agent-spawning.md` for spawning mechanics.
 - Source changes follow
   `$MULTIAGENT_FRAMEWORK_ROOT/prompts/playbooks/implementation-lifecycle.md`.
+  Submit one complete `IterationPlan` to `subagent execute-iteration`; once it
+  starts, the runtime owns ready-node scheduling, waits, finalization, review
+  evidence, and lifecycle transitions until completion or `needs_replan`.
 - External-only work skips the source lifecycle and uses reviewed ops requests.
 - For ops, load only
   `$MULTIAGENT_FRAMEWORK_ROOT/prompts/playbooks/reviewed-ops-cycle.md`. Keep one

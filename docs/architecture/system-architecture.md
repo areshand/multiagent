@@ -401,6 +401,21 @@ identity, or evidence boundary. The Claude headless adapter therefore disables
 its built-in `Agent` and legacy `Task` tools; delegated work must enter through
 the registered `multiagent subagent` lifecycle.
 
+For source implementation, adaptivity happens at iteration boundaries. The
+orchestrator submits one complete iteration plan containing the committed
+decision, worker dependency graph, bounded ownership, and any additional
+review requests. The supervisor records the plan digest, adds review
+obligations derived from policy and persisted artifacts, and binds the
+decision-authority capsule to that digest. Once sealed, the runtime—not the
+orchestrator—advances ready nodes, launches mutually independent agents, waits,
+finalizes durable evidence, freezes the candidate diff, and submits lifecycle
+transitions for that iteration. The runtime may report `needs_replan`, but it
+must not revise the graph or reinterpret a semantic finding. A substantive
+finding, changed assumption, expanded scope, user decision, or risk change ends
+the iteration and returns control to the orchestrator for a newly sealed plan.
+This keeps routing adaptive between iterations and deterministic within one
+authorized iteration without granting the runtime semantic decision authority.
+
 ## End-to-end request flow
 
 1. The terminal client authenticates a user and appends a goal or follow-up to a thread.

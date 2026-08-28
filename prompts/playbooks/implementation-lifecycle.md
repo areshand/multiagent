@@ -1,146 +1,123 @@
 # Implementation Lifecycle Playbook
 
 This mandatory lifecycle applies to source implementation. Production actions
-use the selected Markdown runbook and ops review path instead.
+use the selected Markdown runbook and reviewed ops path instead.
 
 Do not use this lifecycle for an external-only task that does not modify
-repository source. In particular, do not create an implementation context,
-spawn a decision-authority reviewer, or transition to `implementation` before
-starting ops. Spawn the session's persistent ops identity directly and use
-`prompts/playbooks/reviewed-ops-cycle.md` for its immutable requests.
+repository source. Such work uses `prompts/playbooks/reviewed-ops-cycle.md`.
 
-## State Machine
+## Iteration Contract
 
-Read persisted state with:
+Adapt the role graph at the beginning of an iteration, then let the runtime
+execute that sealed graph. The orchestrator makes semantic choices between
+iterations; it does not drive routine transitions between nodes within one
+iteration.
 
-    multiagent workflow status "$MULTIAGENT_WORKFLOW_ID"
+Normal lifecycle phases remain:
 
-Normal transitions are:
+    pre-implementation -> implementation -> post-implementation -> complete
+    post-implementation -> pre-implementation  when a repair TODO remains
 
-    pre-implementation -> implementation -> post-implementation
-    post-implementation -> pre-implementation  when TODOs remain
-    post-implementation -> complete            when supervisor gates pass
+A substantive finding, changed assumption, expanded scope, risk change, or
+needed user choice ends the current iteration. It must produce a newly reviewed
+plan; never mutate a sealed plan in place.
 
-Never infer phase from conversation history or route a finding directly back
-to implementation.
+## Build One Complete Plan
 
-## Pre-Implementation
+Read the authenticated task once through `multiagent workflow context`. Choose
+the smallest worker dependency graph that can satisfy it. Skip a contract scout
+when the task already gives an exact bounded artifact schema and values. Add a
+scout only when an unknown can materially change the plan.
+The explicit task contract is already approved; ask the user only when
+materially different outcomes remain consistent with it.
 
-Clarify the intended outcome, required evidence, material choices, and bounded
-ownership. The explicit task contract is already approved; ask the user only
-when materially different outcomes remain consistent with it.
+Write one UTF-8 JSON plan under `MULTIAGENT_STATE_DIR`, using exactly this
+schema:
 
-The orchestrator chooses whether a scout is useful. Skip it when the original
-task already specifies an exact bounded artifact schema and values and there is
-no material source-visible uncertainty that can change the plan. A scout
-artifact, once registered, is immutable input. With or without a scout, one
-independent decision-authority reviewer must accept the proposed plan before
-the supervisor can approve implementation. User-owned security,
-public-contract, destructive, or difficult-to-reverse choices require user
-approval.
+```json
+{
+  "apiVersion": "multiagent.moveindustries.io/v1",
+  "kind": "IterationPlan",
+  "workflowId": "WORKFLOW_ID",
+  "iteration": 1,
+  "decision": {
+    "id": "DECISION_ID",
+    "title": "single-line title",
+    "selectedPlan": "PLAN_ID",
+    "reason": "single-line reason",
+    "rollbackPolicy": "single-line rollback condition",
+    "alternatives": [
+      {
+        "id": "PLAN_ID",
+        "summary": "single-line bounded plan",
+        "expectedOutcome": "single-line exact outcome",
+        "risk": "single-line residual risk"
+      }
+    ]
+  },
+  "implementationContext": "Complete goal, authority basis, constraints, exact target paths, ownership, prohibitions, acceptance criteria, and unresolved risks.",
+  "workers": [
+    {
+      "id": "worker-primary-01",
+      "ownedPaths": ["exact/repository/path"],
+      "instruction": "Exact node output and acceptance contract.",
+      "dependsOn": []
+    }
+  ],
+  "resolvesTodos": [],
+  "additionalReviews": []
+}
+```
 
-Use this order exactly:
+Use `worker-ops-plan-01` for a bounded repository artifact whose deliverable is
+an operations plan so the launcher selects the focused planning role. Use
+ordinary `worker-*` identities for other source work. Include all genuinely
+material alternatives; do not add a fake alternative merely to populate the
+decision ledger. Worker ownership must be non-overlapping. Dependencies name
+other worker IDs. Put only `decision-drift`, `scope`, or `reflection` in
+`additionalReviews`, and only when that extra review can affect acceptance.
+On a repair iteration, `resolvesTodos` must exactly list every active direct
+TODO that the sealed worker graph will address. Resolve evidence or decision
+TODOs before submitting the plan; the runtime marks declared direct TODOs
+complete only after the candidate passes every supervisor review.
 
-1. Initialize the decision, add its alternative or alternatives, and commit the
-   selected plan.
-2. Spawn exactly one reviewer named `decision-authority-reviewer-01` with
-   `--role reviewer --workflow-id WORKFLOW_ID --decision-id DECISION_ID
-   --plan-id PLAN_ID --decision-revision REVISION` and a concise task-specific
-   instruction that enumerates
-   the selected plan's exact outcome, constraints, owned paths, and prohibitions
-   rather than only naming its decision ID. Do not pass worker assignment flags
-   such as `--own`; the launcher injects the canonical decision-authority role
-   prompt and semantic envelope.
-3. Wait for and finalize that reviewer.
-4. Confirm its accepted report contains the supervisor-supplied
-   `decision-review: capsule-sha256=SHA256 verdict=pass` marker, then record its
-   accepted evidence with this exact argument order (replace only the uppercase
-   placeholders):
+The supervisor always requires an independent decision-authority review and a
+technical review for a produced diff. It also derives decision-drift review
+when the committed decision contains multiple alternatives or assumptions, and
+may add other obligations from persisted artifacts. The orchestrator may add
+review but cannot remove supervisor obligations.
 
-       multiagent workflow record-review "$MULTIAGENT_WORKFLOW_ID" REVIEW_ID --type decision-authority --verdict pass --evidence decision-authority-reviewer-01 --reviewer decision-authority-reviewer-01
+## Execute the Sealed Iteration
 
-   `WORKFLOW_ID` and `REVIEW_ID` are the two required positional arguments. Do
-   not probe alternate argument orders after the reviewer has passed.
-5. Only after `record-review` succeeds, prepare the implementation context and
-   transition to implementation.
+Make one blocking runtime call after the plan file is complete:
 
-The supervisor generates the immutable decision capsule, seals it with the
-reviewer evidence, and rejects a review or implementation permit when the
-decision ID, selected plan, workflow revision, or capsule digest differs. The
-orchestrator must never manufacture or edit that capsule.
+    multiagent subagent execute-iteration --plan-file PLAN_PATH --timeout 900
 
-Do not call `prepare-implementation` as a probe before the decision is committed
-or the review is recorded. Do not spawn a replacement reviewer solely because
-the first identity, role, or output was assembled incorrectly; correct the
-orchestration command or report the concrete blocker. A semantic finding may
-require a revised decision and a new reviewer.
+The runtime validates and records the plan digest, materializes the committed
+decision, launches exactly one digest-bound decision-authority reviewer, and
+stops on authority findings. After acceptance it prepares the complete
+implementation context, schedules ready worker nodes, waits and finalizes them,
+checks the candidate against the union of owned paths, freezes the diff, asks
+the supervisor for review obligations, launches independent reviewers in
+parallel, records their structured evidence, and requests supervisor
+completion. Do not duplicate any of these commands around the executor.
 
-Prepare an implementation context containing the goal, selected plan,
-authority basis, constraints, exact target-repository paths, owned paths, and
-unresolved risks. A control-plane context or instruction path never becomes an
-implementation output path. If a contract
-artifact exists, include its exact bytes and supervisor digest; never
-paraphrase it.
+The authority capsule is supervisor-generated and includes the sealed plan
+digest. Neither the orchestrator nor a worker may manufacture or edit it.
+Reviewer access remains mechanically read-only, and worker writes remain
+bounded by assignments.
 
-    multiagent workflow prepare-implementation "$MULTIAGENT_WORKFLOW_ID" --decision-id DECISION_ID --plan-id PLAN_ID --decision-revision REVISION --implementation-context CONTEXT_PATH --authority-review REVIEW_ID
-    multiagent workflow transition "$MULTIAGENT_WORKFLOW_ID" implementation
+The executor returns one `IterationExecutionResult` JSON object:
 
-The supervisor rejects missing review evidence, changed context, or active
-evidence and decision TODOs.
+- `status=completed` means all supervisor correctness and safety gates passed.
+- `status=needs_replan` means semantic control returns to the orchestrator. Read
+  its reason and the durable finding artifacts, create or route the required
+  TODO, transition through the documented repair loop, and submit a new plan
+  for the next iteration.
+- A command error is an infrastructure or invalid-contract failure. Inspect it
+  once and correct the plan or environment; never launch a replacement reviewer
+  merely because the first output or command was malformed.
 
-## Implementation
-
-Spawn bounded workers only after the implementation permit passes. Include the
-active workflow, decision, plan, complete approved context, and owned paths.
-New uncertainty or a changed plan becomes a TODO and returns to
-pre-implementation.
-
-When writers stop, freeze the candidate and enter post-implementation:
-
-    multiagent workflow transition "$MULTIAGENT_WORKFLOW_ID" post-implementation --diff-hash DIFF_HASH
-
-## Post-Implementation
-
-Query persisted obligations once after freezing the diff and run exactly the
-pending independent reviews against that same diff. Spawn all mutually
-independent pending reviewers before waiting for any of them; then wait,
-finalize, and record each result. Name each identity for its obligation and use
-`--role reviewer --own CHANGED_PATHS`, for example
-`technical-verifier-01` and `decision-drift-reviewer-01`. Reviewer access stays
-mechanically read-only; `--own` binds assignment metadata to the frozen
-candidate and is required by the launcher. Do not first attempt a spawn without
-it. Do not serialize independent reviews, and do not launch a replacement merely
-to correct a role metadata mismatch. Record only finalized reviewer evidence
-with the exact required marker. Put the literal obligation marker and frozen
-hash in each first instruction: `review-record: type=technical verdict=pass
-diff=DIFF_HASH` for the technical verifier and `review-record:
-type=decision-drift verdict=pass diff=DIFF_HASH` for the drift reviewer. The
-role prompt must reproduce the assigned type.
-
-Use these command shapes without exploratory variants:
-
-    multiagent workflow status "$MULTIAGENT_WORKFLOW_ID"
-    multiagent subagent spawn REVIEWER_NAME --role reviewer --own CHANGED_PATHS --workflow-id "$MULTIAGENT_WORKFLOW_ID" --instruction "REQUIRED_MARKER and bounded review scope"
-    multiagent workflow record-review "$MULTIAGENT_WORKFLOW_ID" REVIEW_ID --type TYPE --verdict pass --diff-hash DIFF_HASH --evidence REVIEWER_NAME --reviewer REVIEWER_NAME
-
-The technical verifier's acceptance is the final verifier acceptance. When the
-persisted obligations and `gate-check` pass, do not spawn another final verifier.
-A finding cannot be replaced by a later pass; add accepted findings to the TODO
-queue and use finding-todo-loop.md for repair evidence.
-
-If TODOs remain:
-
-    multiagent workflow transition "$MULTIAGENT_WORKFLOW_ID" pre-implementation
-
-This invalidates the prior permit and begins a new reviewed iteration.
-
-## Completion
-
-Request completion only when TODOs are resolved, user-owned decisions are
-answered, and every supervisor obligation passes against the current diff:
-
-    multiagent orchestrator complete
-
-The supervisor atomically accepts or rejects completion. Direct transition to
-complete, post-completion writers, and acceptance based on iteration count are
-forbidden.
+Do not poll individual agents while `execute-iteration` is running, do not
+replay its internal transitions, and do not spawn another final verifier after
+it reports completion.
