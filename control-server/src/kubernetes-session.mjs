@@ -108,7 +108,7 @@ export class KubernetesSessionClient {
     return `/api/v1/namespaces/${encodeURIComponent(this.namespace)}/${resource}${name ? `/${encodeURIComponent(name)}` : ""}${query}`;
   }
 
-  async createSession({ id, threadId = id, leaseGeneration = 1, authorizingEventId = id, gatewayToken = "", task, actor, repositoryName, repositoryUrl, resume, template }) {
+  async createSession({ id, threadId = id, leaseGeneration = 1, authorizingEventId = id, gatewayToken = "", task, actor, repositoryName, repositoryUrl, repositoryAuthentication = "anonymous", resume, template }) {
     const secret = sessionSecret(id, this.namespace, task, actor, threadId, leaseGeneration, authorizingEventId, gatewayToken);
     const job = renderSessionTemplate(template, {
       SESSION_ID: id,
@@ -118,6 +118,7 @@ export class KubernetesSessionClient {
       SESSION_SECRET_NAME: secret.metadata.name,
       REPOSITORY_NAME: repositoryName,
       REPOSITORY_URL: repositoryUrl,
+      REPOSITORY_AUTHENTICATION: repositoryAuthentication,
       CALLER_SUBJECT: actor,
       RESUME: resume ? "1" : "0",
     });

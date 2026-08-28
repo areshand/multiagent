@@ -81,6 +81,10 @@ storage configuration shown above.
 | `InternalServices` | Images, deployments, secrets, IAM, KMS, service accounts, endpoints, ingress, DNS, certificates, S3 trace export | Agent reasoning and runbook procedures |
 | Markdown runbooks | Human-readable operational procedure, operation version, allowed phase progression | Credentials and environment-specific secrets |
 
+The deployment may also place a trusted repository-preparation init container
+in front of a session runtime. That init container is not an agent and is not
+part of the orchestrator's production-operation path.
+
 ## Accepted architecture decisions
 
 ### AD-001: The authenticated client user is the authorizing user
@@ -121,6 +125,30 @@ The target deployment separates the long-lived control gateway from dedicated
 session runtimes. A session runtime may be implemented as a Kubernetes Pod or
 Job. Moving to this target must preserve the existing bootstrap model in which
 the supervisor creates role processes and confines them after creation.
+
+### AD-016: Deployment repository preparation is isolated from agent authority
+
+`InternalServices` may mount a deployment-owned GitHub App credential into a
+trusted repository-preparation init container for a session Job. The init
+container may use that credential only to discover the installation for the
+catalog-selected GitHub repository, mint a short-lived token restricted to
+that one repository and `contents:read`, clone the repository into the
+session's empty workspace, remove its temporary authentication helper, and
+exit before the agent runtime starts.
+
+The long-lived App credential and short-lived installation token must not be
+mounted into or passed to the control gateway, session worker, supervisor,
+orchestrator, role agents, trace exporter, or model harnesses. The repository
+catalog and credential source are deployment configuration owned by
+`InternalServices`; the control server only validates the selected catalog
+entry and substitutes its bounded clone configuration into the deployment-
+owned Job template. The gateway's Kubernetes role must not grant read access
+to namespace Secrets. Repository contents remain untrusted session input.
+
+This bootstrap exception does not grant agents a general GitHub credential and
+does not replace `prod-mcp` for agent-requested GitHub reads, materialization,
+publishing, or other production operations governed by a runbook and signed
+permit.
 
 ### AD-014: Threads outlive execution sessions
 

@@ -12,6 +12,7 @@ import { issueWorkerToken as createWorkerToken, verifyWorkerAuthorization } from
 import { readSubagentSnapshot } from "./subagent-status.mjs";
 import { renderThreadTask } from "./thread-execution-context.mjs";
 import { fetchWorkerSubagents } from "./worker-subagent-client.mjs";
+import { configuredRepository, parseRepositoryCatalog } from "./repository-catalog.mjs";
 import {
   completionExitDelayMs,
   controlMode,
@@ -55,7 +56,7 @@ const workerReportGatewayUrl = workerMode ? String(process.env.MULTIAGENT_GATEWA
 const workerReportTokenFile = workerMode ? String(process.env.MULTIAGENT_GATEWAY_TOKEN_FILE || "") : "";
 const registryFile = path.join(stateRoot, "control-server", "sessions.json");
 const sessionJobTemplateFile = process.env.MULTIAGENT_SESSION_JOB_TEMPLATE_FILE || "/etc/multiagent-session/job-template.json";
-const repositoryCatalog = gatewayMode ? JSON.parse(process.env.MULTIAGENT_REPOSITORIES_JSON || "{}") : {};
+const repositoryCatalog = gatewayMode ? parseRepositoryCatalog(process.env.MULTIAGENT_REPOSITORIES_JSON || "{}") : {};
 const kubernetes = gatewayMode ? new KubernetesSessionClient() : null;
 const sessionJobTemplate = gatewayMode ? JSON.parse(fs.readFileSync(sessionJobTemplateFile, "utf8")) : null;
 const threadStore = await createThreadStore({
@@ -210,13 +211,6 @@ function repositoryPath(name) {
   return candidate;
 }
 
-function configuredRepository(name) {
-  if (!validResourceId(name) || typeof repositoryCatalog[name] !== "string" || !repositoryCatalog[name]) {
-    throw new Error(`repository is not configured: ${name}`);
-  }
-  return repositoryCatalog[name];
-}
-
 function sessionStateDir(id) {
   return path.join(stateRoot, "sessions", id);
 }
@@ -362,7 +356,7 @@ async function launchGatewaySession(id, repository, resume, actor, originalTask 
   if (registry.sessions[id]) throw new Error("task id already exists");
   const task = String(originalTask || "").trim();
   if (!task || task.length > 32768) throw new Error("task must contain 1 to 32768 characters");
-  const repositoryUrl = configuredRepository(repository);
+  const repositoryConfig = configuredRepository(repositoryCatalog, repository);
   const callerSubject = `caller-${crypto.createHash("sha256").update(actor).digest("hex").slice(0, 32)}`;
   fs.rmSync(gatewayReportFile(id), { force: true });
   await kubernetes.createSession({
@@ -374,7 +368,8 @@ async function launchGatewaySession(id, repository, resume, actor, originalTask 
     task,
     actor: callerSubject,
     repositoryName: repository,
-    repositoryUrl,
+    repositoryUrl: repositoryConfig.url,
+    repositoryAuthentication: repositoryConfig.authentication,
     resume,
     template: sessionJobTemplate,
   });
@@ -896,7 +891,7 @@ const server = http.createServer(async (request, response) => {
       if (workerMode) throw new Error("session workers cannot create threads");
       const body = await readBody(request);
       if (body.id !== undefined) return json(response, 400, { error: "thread IDs are assigned by the control server" });
-      if (gatewayMode) configuredRepository(String(body.repository || ""));
+      if (gatewayMode) configuredRepository(repositoryCatalog, String(body.repository || ""));
       else repositoryPath(String(body.repository || ""));
       const thread = await threadStore.createThread({
         id: generateThreadId(),

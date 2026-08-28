@@ -12,7 +12,10 @@
 
 Read or materialize one repository authorized by the original goal and, when
 explicitly requested, publish a bounded set of reviewed file changes as a new
-pull request. GitHub credentials remain inside prod-mcp.
+pull request. GitHub credentials used by agents remain inside prod-mcp. A
+deployment-owned session init container may separately prepare the repository
+selected from the deployment catalog under AD-016; agents never receive that
+container's GitHub App credential or token.
 
 ## Read phase
 
