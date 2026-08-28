@@ -125,6 +125,9 @@ The target deployment separates the long-lived control gateway from dedicated
 session runtimes. A session runtime may be implemented as a Kubernetes Pod or
 Job. Moving to this target must preserve the existing bootstrap model in which
 the supervisor creates role processes and confines them after creation.
+The orchestrator and role processes run with the thread-selected repository as
+their working tree; session state and trace directories remain separate and
+must not replace the repository working directory.
 
 ### AD-016: Deployment repository preparation is isolated from agent authority
 

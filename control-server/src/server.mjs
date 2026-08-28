@@ -18,6 +18,7 @@ import {
   controlMode,
   findActiveSession,
   normalizeWorkerReport,
+  ownsThreadProjection,
   scopedThreadTranscript,
   selectFinalMessage,
   sessionControlInvocation,
@@ -800,7 +801,7 @@ async function retireSession(id, status, actor) {
   record[`${status}By`] = actor;
   await saveRegistry();
   writeTraceSummary(id, status);
-  await projectSessionToThread(id, status, readLocalWorkerReport);
+  if (ownsThreadProjection(mode)) await projectSessionToThread(id, status, readLocalWorkerReport);
   return sessionView(id);
 }
 

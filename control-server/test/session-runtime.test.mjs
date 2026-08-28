@@ -6,6 +6,7 @@ import {
   controlMode,
   findActiveSession,
   normalizeWorkerReport,
+  ownsThreadProjection,
   scopedThreadTranscript,
   selectFinalMessage,
   sessionControlInvocation,
@@ -13,6 +14,12 @@ import {
   submitLocalFollowup,
   validResourceId,
 } from "../src/session-runtime.mjs";
+
+test("session workers report outcomes to the gateway instead of projecting a private thread store", () => {
+  assert.equal(ownsThreadProjection("session-worker"), false);
+  assert.equal(ownsThreadProjection("gateway"), true);
+  assert.equal(ownsThreadProjection("local"), true);
+});
 
 test("control server session IDs match the shared Rust contract", async () => {
   const vectors = JSON.parse(

@@ -403,7 +403,7 @@ assert_file_contains "$TMPDIR/launch.out" "Dashboard: MULTIAGENT_SESSION=launch-
 LAUNCH_BOOTSTRAP="$LAUNCH_STATE/orchestrator-bootstrap.sh"
 assert_file_contains "$MOCK_TMUX_LOG" "$(printf '%q' "$LAUNCH_BOOTSTRAP")"
 assert_file_contains "$MOCK_TMUX_LOG" "pipe-pane launch-cross-repo:orchestrator cat >> $LAUNCH_STATE/logs/orchestrator.log"
-assert_file_contains "$LAUNCH_BOOTSTRAP" "--cd $LAUNCH_STATE"
+assert_file_contains "$LAUNCH_BOOTSTRAP" "--cd $LAUNCH_TARGET"
 if [[ "$HOST_KERNEL" == Linux ]]; then
   assert_file_contains "$LAUNCH_BOOTSTRAP" "$MULTIAGENT role-exec"
   assert_file_contains "$LAUNCH_BOOTSTRAP" "--allow-write $LAUNCH_STATE"
