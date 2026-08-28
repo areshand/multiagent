@@ -241,6 +241,13 @@ Agents must receive only the capabilities and environment necessary for their
 role. A role must not gain credentials merely because its prompt says not to
 misuse them.
 
+Shared role prompts contain only cross-cutting responsibility and safety
+guidance. Language-, framework-, interface-, and scenario-specific instructions
+belong in the registered contract or bounded task assignment. Specialized roles
+receive a smaller prompt when the generic role prompt contains knowledge they do
+not need. This least-knowledge rule reduces ambiguity and latency; mechanical
+runtime controls remain the authority boundary.
+
 ### AD-004: The orchestrator routes; it does not operate production
 
 The orchestrator can recognize that a request requires production operations
@@ -457,7 +464,7 @@ share mutable authority across sessions.
 | Orchestrator | Role routing, decomposition, workflow coordination, generic production delegation | Grafana queries, Loki labels, operation IDs, runbook steps, provider lifecycle, credentials |
 | Ops agent | How to interpret and follow a Markdown runbook, how to report evidence and blockers | Hard-coded service procedures, deployment secrets, direct KMS use |
 | Ops reviewer | Goal-alignment criteria, runbook-phase verification, rejection behavior | Independent execution instructions and credentials |
-| Other role prompts | Role-specific reasoning boundaries | Production operations unrelated to the role |
+| Other role prompts | Cross-cutting responsibility and safety boundaries needed by that role | Unrelated production operations, language/framework recipes, and scenario-specific procedures |
 
 Model-provider instructions belong in deployment or provider adapters. Prompts
 must not prefer Claude, OpenAI, Codex, or another provider unless a role's

@@ -26,6 +26,19 @@ def _write_jsonl(path: Path, records: list[dict]) -> None:
 
 
 class OpsTraceScorerTest(unittest.TestCase):
+    def test_ops_plan_worker_uses_small_role_specific_prompt(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        shared = (root / "prompts/worker.md").read_text(encoding="utf-8")
+        ops_plan = (root / "prompts/roles/ops-plan-worker.md").read_text(encoding="utf-8")
+
+        self.assertLess(len(shared.encode("utf-8")), 10_000)
+        self.assertLess(len(ops_plan.encode("utf-8")), 4_000)
+        self.assertLess(len(ops_plan), len(shared) // 2)
+        self.assertNotIn("For Go", shared)
+        self.assertNotIn("UI/component", shared)
+        self.assertIn("runtime, supervisor, permit checks", ops_plan)
+        self.assertIn("one valid JSON document", ops_plan)
+
     def test_snapshot_marker_is_hidden_harness_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workdir = Path(tmp)

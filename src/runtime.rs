@@ -2932,6 +2932,8 @@ fn role_prompt_name(name: &str, role: &str) -> Option<&'static str> {
         "prompts/roles/acceptance-scout.md"
     } else if lower.contains("build-verifier") {
         "prompts/roles/build-verifier.md"
+    } else if role == "worker" && lower.contains("ops-plan") {
+        "prompts/roles/ops-plan-worker.md"
     } else if matches!(role, "verifier" | "reviewer")
         || lower.contains("verifier")
         || lower.contains("review")
@@ -4611,6 +4613,22 @@ review-record: type=decision-authority verdict=pass diff=-\n";
         assert_eq!(
             assignment_role_for_spawn("contract-scout-01-api", "reviewer"),
             "scout"
+        );
+    }
+
+    #[test]
+    fn ops_plan_worker_uses_bounded_planning_prompt() {
+        assert_eq!(
+            role_prompt_name("worker-01-ops-plan", "worker"),
+            Some("prompts/roles/ops-plan-worker.md")
+        );
+        assert_eq!(
+            assignment_role_for_spawn("worker-01-ops-plan", "worker"),
+            "exploitation"
+        );
+        assert_eq!(
+            role_prompt_name("worker-01-source", "worker"),
+            Some("prompts/worker.md")
         );
     }
 
