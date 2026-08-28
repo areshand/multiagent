@@ -30,6 +30,21 @@ export function ownsThreadProjection(serverMode) {
   return serverMode !== "session-worker";
 }
 
+export function acceptsLiveInput(live, headless) {
+  return Boolean(live) && !headless;
+}
+
+export function automaticResumeLimit(value = process.env.MULTIAGENT_SESSION_MAX_AUTO_RESUMES) {
+  const parsed = value === undefined || value === "" ? 3 : Number(value);
+  return Number.isInteger(parsed) ? Math.min(Math.max(parsed, 0), 10) : 3;
+}
+
+export function shouldAutomaticallyResume(record, limit) {
+  return record?.status === "running"
+    && record.autoResume === true
+    && Number(record.automaticResumeAttempts || 0) < limit;
+}
+
 export function findActiveSession(sessionIds, candidate, isAlive) {
   return sessionIds.find((id) => id !== candidate && isAlive(id)) || null;
 }

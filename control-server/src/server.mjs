@@ -14,6 +14,8 @@ import { renderThreadTask } from "./thread-execution-context.mjs";
 import { fetchWorkerSubagents } from "./worker-subagent-client.mjs";
 import { configuredRepository, parseRepositoryCatalog } from "./repository-catalog.mjs";
 import {
+  acceptsLiveInput,
+  automaticResumeLimit,
   completionExitDelayMs,
   controlMode,
   findActiveSession,
@@ -23,6 +25,7 @@ import {
   selectFinalMessage,
   sessionControlInvocation,
   sessionLaunchInvocation,
+  shouldAutomaticallyResume,
   submitLocalFollowup,
   validResourceId,
 } from "./session-runtime.mjs";
@@ -44,6 +47,7 @@ const captureLines = Math.min(Number(process.env.MULTIAGENT_CAPTURE_LINES || "12
 const snapshotIntervalMs = Math.max(Number(process.env.MULTIAGENT_SNAPSHOT_INTERVAL_SECONDS || "60"), 15) * 1000;
 const idleTimeoutMs = Math.max(Number(process.env.MULTIAGENT_IDLE_TIMEOUT_SECONDS || "86400"), 300) * 1000;
 const completionGraceMs = completionExitDelayMs();
+const maxAutomaticResumes = automaticResumeLimit();
 const workerReportDeliveryTimeoutMs = reportDeliveryTimeoutMs();
 const sessionWorkerTokenTtlMs = Math.min(
   Math.max(Number(process.env.MULTIAGENT_SESSION_WORKER_TOKEN_TTL_SECONDS || "86400"), 3600),
@@ -338,6 +342,7 @@ function launchSession(id, repository, resume, actor, originalTask = "", metadat
     MULTIAGENT_CALLER_APPROVED_AT: authorityApprovedAt,
   };
   run(invocation.command, invocation.args, { cwd: launcherRoot, env });
+  if (env.MULTIAGENT_USER_MESSAGE_FILE) fs.rmSync(env.MULTIAGENT_USER_MESSAGE_FILE, { force: true });
   registry.sessions[id] = {
     ...existing, id, repository, status: "running", autoResume: true,
     threadId: metadata.threadId || existing?.threadId || id,
@@ -345,6 +350,7 @@ function launchSession(id, repository, resume, actor, originalTask = "", metadat
     authorizingEventId: metadata.authorizingEventId || existing?.authorizingEventId || id,
     createdBy: existing?.createdBy || actor, createdAt: existing?.createdAt || now,
     authorityActor, authorityApprovedAt,
+    automaticResumeAttempts: resume ? Number(existing?.automaticResumeAttempts || 0) : 0,
     resumedBy: resume ? actor : undefined, resumedAt: resume ? now : undefined,
     updatedAt: now, lastActivityAt: now,
   };
@@ -557,7 +563,7 @@ async function deliverThreadFollowup(thread, routed) {
             id: sessionId,
             text: routed.event.payload.text,
             actor: thread.ownerSubject,
-            live: tmuxAlive(sessionId),
+            live: acceptsLiveInput(tmuxAlive(sessionId), process.env.MULTIAGENT_AGENT_HEADLESS === "1"),
             sendInput,
             restart: restartWithUserMessage,
             sessionView,
@@ -751,6 +757,7 @@ function restartWithUserMessage(id, text, actor) {
     if (uidSandbox) runSessionControl(id, "stop");
     else runTmux(id, ["kill-session", "-t", id]);
   }
+  registry.sessions[id].automaticResumeAttempts = 0;
   return launchSession(id, registry.sessions[id].repository, true, actor);
 }
 
@@ -1154,7 +1161,7 @@ sockets.on("connection", (socket, request) => {
           id,
           text: payload.text,
           actor: request.username,
-          live: tmuxAlive(id),
+          live: acceptsLiveInput(tmuxAlive(id), process.env.MULTIAGENT_AGENT_HEADLESS === "1"),
           sendInput,
           restart: restartWithUserMessage,
           sessionView,
@@ -1219,6 +1226,17 @@ const retirementTimer = setInterval(() => {
       continue;
     }
     if (record.status === "running" && !tmuxAlive(record.id)) {
+      if (process.env.MULTIAGENT_AGENT_HEADLESS === "1" && shouldAutomaticallyResume(record, maxAutomaticResumes)) {
+        record.automaticResumeAttempts = Number(record.automaticResumeAttempts || 0) + 1;
+        record.updatedAt = new Date().toISOString();
+        saveRegistry();
+        try {
+          launchSession(record.id, record.repository, true, "system");
+          continue;
+        } catch (error) {
+          console.error(`automatic resume failed for ${record.id}`, error);
+        }
+      }
       retireSession(record.id, "failed", "process-exit").then(() => {
         if (workerMode) setTimeout(() => process.exit(1), 1000);
       }).catch((error) => console.error(`failed retirement failed for ${record.id}`, error));
