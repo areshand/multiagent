@@ -989,8 +989,11 @@ assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" 'Do not load, c
 assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "decision-authority-reviewer-01"
 assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "exact target-repository paths"
 assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" 'Only after `record-review` succeeds'
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" 'WORKFLOW_ID` and `REVIEW_ID` are the two required positional arguments'
 assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "Spawn all mutually"
 assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "technical-verifier-01"
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" '--role reviewer --own CHANGED_PATHS'
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" '--evidence REVIEWER_NAME --reviewer REVIEWER_NAME'
 assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "do not spawn another final verifier"
 assert_file_contains "$ROOT/prompts/verifier.md" 'do not substitute the default `technical`'
 assert_file_contains "$ROOT/prompts/roles/decision-authority-reviewer.md" "pre-implementation authority review"
@@ -1005,6 +1008,7 @@ assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_ap
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" '`ops_plan.json` means'
 assert_file_not_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Before implementation, run a read-only contract scout"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Ponytail implementation discipline"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" '`--own` is mandatory assignment metadata for post-implementation reviewers'
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Ponytail over-engineering pass"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "hidden-contract probes"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" 'MAX_ITERATIONS` is an escalation threshold'

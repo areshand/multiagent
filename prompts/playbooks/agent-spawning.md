@@ -137,8 +137,15 @@ finding artifacts before the orchestrator turns them into bounded repair todos.
 
 ```bash
 SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn technical-verifier-01-task \
-  --role reviewer --instruction "TASK_SPECIFIC_REVIEW_INSTRUCTION"
+  --role reviewer \
+  --own CHANGED_PATH[,CHANGED_PATH...] \
+  --workflow-id "$MULTIAGENT_WORKFLOW_ID" \
+  --instruction "TASK_SPECIFIC_REVIEW_INSTRUCTION"
 ```
+
+`--own` is mandatory assignment metadata for post-implementation reviewers; it
+does not grant write access. Supply the frozen candidate's changed paths and
+spawn every independent pending reviewer before waiting for any result.
 
 Use a `verifier-` identity for the technical obligation so the durable
 acceptance also satisfies `multiagent subagent gate-check`; do not add a second

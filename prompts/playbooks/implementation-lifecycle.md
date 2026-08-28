@@ -54,9 +54,13 @@ Use this order exactly:
 3. Wait for and finalize that reviewer.
 4. Confirm its accepted report contains the supervisor-supplied
    `decision-review: capsule-sha256=SHA256 verdict=pass` marker, then record its
-   accepted evidence with `multiagent workflow record-review ...
-   --type decision-authority --verdict pass --reviewer
-   decision-authority-reviewer-01`.
+   accepted evidence with this exact argument order (replace only the uppercase
+   placeholders):
+
+       multiagent workflow record-review "$MULTIAGENT_WORKFLOW_ID" REVIEW_ID --type decision-authority --verdict pass --evidence decision-authority-reviewer-01 --reviewer decision-authority-reviewer-01
+
+   `WORKFLOW_ID` and `REVIEW_ID` are the two required positional arguments. Do
+   not probe alternate argument orders after the reviewer has passed.
 5. Only after `record-review` succeeds, prepare the implementation context and
    transition to implementation.
 
@@ -101,17 +105,27 @@ Query persisted obligations once after freezing the diff and run exactly the
 pending independent reviews against that same diff. Spawn all mutually
 independent pending reviewers before waiting for any of them; then wait,
 finalize, and record each result. Name each identity for its obligation and use
-`--role reviewer`, for example `technical-verifier-01` and
-`decision-drift-reviewer-01`. Do not serialize independent reviews, and do not
-launch a replacement merely to correct a role metadata mismatch. Record only
-finalized reviewer evidence with the exact required marker. Put the literal
-obligation marker and frozen hash in each first instruction: `review-record:
-type=technical verdict=pass diff=DIFF_HASH` for the technical verifier and
-`review-record: type=decision-drift verdict=pass diff=DIFF_HASH` for the drift
-reviewer. The role prompt must reproduce the assigned type. The technical
-verifier's acceptance is the final verifier acceptance; when the persisted
-obligations and `gate-check` pass, do not spawn another final verifier. A
-finding cannot be replaced by a later pass; add accepted findings to the TODO
+`--role reviewer --own CHANGED_PATHS`, for example
+`technical-verifier-01` and `decision-drift-reviewer-01`. Reviewer access stays
+mechanically read-only; `--own` binds assignment metadata to the frozen
+candidate and is required by the launcher. Do not first attempt a spawn without
+it. Do not serialize independent reviews, and do not launch a replacement merely
+to correct a role metadata mismatch. Record only finalized reviewer evidence
+with the exact required marker. Put the literal obligation marker and frozen
+hash in each first instruction: `review-record: type=technical verdict=pass
+diff=DIFF_HASH` for the technical verifier and `review-record:
+type=decision-drift verdict=pass diff=DIFF_HASH` for the drift reviewer. The
+role prompt must reproduce the assigned type.
+
+Use these command shapes without exploratory variants:
+
+    multiagent workflow status "$MULTIAGENT_WORKFLOW_ID"
+    multiagent subagent spawn REVIEWER_NAME --role reviewer --own CHANGED_PATHS --workflow-id "$MULTIAGENT_WORKFLOW_ID" --instruction "REQUIRED_MARKER and bounded review scope"
+    multiagent workflow record-review "$MULTIAGENT_WORKFLOW_ID" REVIEW_ID --type TYPE --verdict pass --diff-hash DIFF_HASH --evidence REVIEWER_NAME --reviewer REVIEWER_NAME
+
+The technical verifier's acceptance is the final verifier acceptance. When the
+persisted obligations and `gate-check` pass, do not spawn another final verifier.
+A finding cannot be replaced by a later pass; add accepted findings to the TODO
 queue and use finding-todo-loop.md for repair evidence.
 
 If TODOs remain:
