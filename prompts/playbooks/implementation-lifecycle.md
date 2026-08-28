@@ -44,17 +44,26 @@ Use this order exactly:
 1. Initialize the decision, add its alternative or alternatives, and commit the
    selected plan.
 2. Spawn exactly one reviewer named `decision-authority-reviewer-01` with
-   `--role reviewer` and a concise task-specific instruction that enumerates
+   `--role reviewer --workflow-id WORKFLOW_ID --decision-id DECISION_ID
+   --plan-id PLAN_ID --decision-revision REVISION` and a concise task-specific
+   instruction that enumerates
    the selected plan's exact outcome, constraints, owned paths, and prohibitions
    rather than only naming its decision ID. Do not pass worker assignment flags
    such as `--own`; the launcher injects the canonical decision-authority role
    prompt and semantic envelope.
 3. Wait for and finalize that reviewer.
-4. Record its accepted evidence with `multiagent workflow record-review ...
+4. Confirm its accepted report contains the supervisor-supplied
+   `decision-review: capsule-sha256=SHA256 verdict=pass` marker, then record its
+   accepted evidence with `multiagent workflow record-review ...
    --type decision-authority --verdict pass --reviewer
    decision-authority-reviewer-01`.
 5. Only after `record-review` succeeds, prepare the implementation context and
    transition to implementation.
+
+The supervisor generates the immutable decision capsule, seals it with the
+reviewer evidence, and rejects a review or implementation permit when the
+decision ID, selected plan, workflow revision, or capsule digest differs. The
+orchestrator must never manufacture or edit that capsule.
 
 Do not call `prepare-implementation` as a probe before the decision is committed
 or the review is recorded. Do not spawn a replacement reviewer solely because

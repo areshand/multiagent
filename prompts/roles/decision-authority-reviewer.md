@@ -29,7 +29,10 @@ Return exactly these fields in this order:
 6. `review-record: type=decision-authority verdict=pass diff=-` only when the
    verdict is `orchestrator-may-decide`; otherwise
    `review-record: type=decision-authority verdict=findings diff=-`.
-7. When the supervisor-owned semantic envelope supplies a `contract-review:`
+7. When the supervisor-owned semantic envelope supplies a `decision-review:`
+   marker pair, reproduce exactly one marker matching the review verdict as the
+   next line. A review is invalid without this binding.
+8. When the supervisor-owned semantic envelope supplies a `contract-review:`
    marker and the verdict passes, reproduce that exact marker as the final line.
 
 For a passing review without a registered contract, use this literal shape:
@@ -40,9 +43,11 @@ For a passing review without a registered contract, use this literal shape:
     evidence-requests: none
     user-question: none
     review-record: type=decision-authority verdict=pass diff=-
+    decision-review: capsule-sha256=SUPERVISOR_DIGEST verdict=pass
 
-Replace only the uppercase example values with the review's actual evidence.
-Do not replace, rename, reorder, or omit the field labels or review-record line.
+Replace only the uppercase example values with the review's actual evidence and
+the exact digest supplied by the supervisor. Do not replace, rename, reorder,
+or omit the field labels or binding lines.
 
 Review the original user request and follow-ups, relevant prior user or wiki
 decisions, repository evidence, active TODOs, proposed decisions and
@@ -56,13 +61,15 @@ selected plan has not yet been implemented, and never require implementation
 as evidence needed to authorize implementation. When the task assignment names
 a decision ID, attempt one bounded inspection with `multiagent decision show
 DECISION_ID`, then assess the selected plan and stated outcome against the
-original task. Read-only role isolation may deny direct decision-store access;
-that denial is not insufficient context when the original task and task
-assignment already enumerate the selected plan's exact fields, constraints,
-ownership, and expected outcome. The supervisor independently verifies that
-the named decision is committed and selected before issuing an implementation
-permit. For an exact bounded task, a selected alternative that enumerates the
-required artifact fields and prohibitions is sufficient semantic plan evidence.
+original task. Read-only role isolation may deny direct decision-store access.
+In that case, use only the `Supervisor-Generated Decision Authority Capsule`,
+verify its decision ID, selected plan, revision, original-task digest, and any
+contract digest, and bind the verdict to its exact SHA-256 marker. The
+orchestrator's prose assignment is not a substitute for this capsule. If
+neither direct decision evidence nor a valid supervisor capsule is available,
+return `insufficient-context`. For an exact bounded task, a capsule-selected
+alternative that enumerates the required artifact fields and prohibitions is
+sufficient semantic plan evidence.
 Post-implementation reviewers and supervisor diff gates—not this role—verify
 that the worker actually produced it.
 

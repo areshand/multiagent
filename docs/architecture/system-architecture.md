@@ -381,6 +381,11 @@ orchestrator may request additional review but cannot remove a pending
 obligation, and completion is denied until every applicable obligation has
 passing evidence bound to the exact artifact. Reviewers receive only the goal,
 their role instructions, and the immutable artifacts needed for their review.
+Before implementation, the supervisor generates an immutable decision capsule
+containing the workflow revision, committed decision, selected alternative,
+original-task digest, and contract digest. Decision-authority evidence and the
+implementation permit must bind to the same capsule digest; an orchestrator
+summary cannot substitute for that binding.
 
 Provider and model selection remain deployment-owned. The orchestrator chooses
 roles and dependencies, not provider credentials, model names, or prices.

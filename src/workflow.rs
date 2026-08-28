@@ -38,6 +38,8 @@ const ENV_ORDER: &[&str] = &[
     "decision_id",
     "plan_id",
     "decision_revision",
+    "decision_capsule",
+    "decision_capsule_sha256",
     "implementation_context",
     "implementation_context_sha256",
     "authority_review_id",
@@ -112,6 +114,14 @@ pub struct SemanticEnvelope {
     pub candidate_diff_hash: String,
 }
 
+pub struct DecisionAuthorityCapsule {
+    pub content: String,
+    pub sha256: String,
+    pub decision_id: String,
+    pub plan_id: String,
+    pub revision: String,
+}
+
 pub fn assignment_context(
     workflow_id: &str,
     decision_id: &str,
@@ -139,6 +149,90 @@ pub fn semantic_envelope(workflow_id: &str) -> Result<SemanticEnvelope, String> 
         contract_artifact: read_optional_artifact(state_value(&state, "contract_artifact"))?,
         contract_artifact_sha256: state_value(&state, "contract_artifact_sha256").to_string(),
         candidate_diff_hash: state_value(&state, "candidate_diff_hash").to_string(),
+    })
+}
+
+pub fn decision_authority_capsule(
+    workflow_id: &str,
+    decision_id: &str,
+    plan_id: &str,
+    revision: &str,
+) -> Result<DecisionAuthorityCapsule, String> {
+    valid_id("workflow ID", workflow_id)?;
+    valid_id("decision ID", decision_id)?;
+    valid_id("plan ID", plan_id)?;
+    if revision.is_empty() || !revision.chars().all(|value| value.is_ascii_digit()) {
+        return Err(format!("invalid decision revision: {revision}"));
+    }
+
+    let store = Store::configured()?;
+    let paths = store.paths(workflow_id)?;
+    let state = read_env(&paths.state, workflow_id)?;
+    if state_value(&state, "phase") != "pre-implementation" {
+        return Err("decision capsule requires phase=pre-implementation".into());
+    }
+    validate_original_task(&state)?;
+    validate_contract(&state)?;
+    if revision != state_value(&state, "iteration") {
+        return Err(format!(
+            "decision revision does not match workflow iteration: requested={revision} current={}",
+            state_value(&state, "iteration")
+        ));
+    }
+    validate_committed_decision(decision_id, plan_id)?;
+
+    let decision_dir = store.state_dir.join("decisions").join(decision_id);
+    let decision = read_simple_env(&decision_dir.join("decision.env"))?;
+    let outcome = read_simple_env(&decision_dir.join("outcome.env"))?;
+    let selected = read_lines(&decision_dir.join("alternatives.tsv"))?
+        .into_iter()
+        .map(|line| parse_fields::<8>(&line))
+        .find(|row| row[0] == plan_id)
+        .ok_or_else(|| format!("selected decision alternative is missing: {plan_id}"))?;
+    let value = serde_json::json!({
+        "apiVersion": "multiagent.moveindustries.io/v1",
+        "kind": "DecisionAuthorityCapsule",
+        "workflowId": workflow_id,
+        "revision": revision,
+        "originalTaskSha256": state_value(&state, "original_task_sha256"),
+        "contractArtifactSha256": state_value(&state, "contract_artifact_sha256"),
+        "decision": {
+            "id": decision_id,
+            "title": state_value(&decision, "title"),
+            "owner": state_value(&decision, "owner"),
+            "status": state_value(&decision, "status"),
+        },
+        "selectedPlan": {
+            "id": selected[0],
+            "summary": selected[1],
+            "proposedBy": selected[2],
+            "branch": selected[3],
+            "assignmentName": selected[4],
+            "expectedOutcome": selected[5],
+            "risk": selected[6],
+            "addedAt": selected[7],
+        },
+        "outcome": {
+            "selectedPlan": state_value(&outcome, "selected_plan"),
+            "reason": state_value(&outcome, "reason"),
+            "rollbackPolicy": state_value(&outcome, "rollback_policy"),
+            "reflectionDue": state_value(&outcome, "reflection_due"),
+            "committedAt": state_value(&outcome, "committed_at"),
+            "status": state_value(&outcome, "status"),
+        },
+    });
+    let content = format!(
+        "{}\n",
+        serde_json::to_string(&value)
+            .map_err(|error| format!("encode decision authority capsule: {error}"))?
+    );
+    let sha256 = format!("{:x}", Sha256::digest(content.as_bytes()));
+    Ok(DecisionAuthorityCapsule {
+        content,
+        sha256,
+        decision_id: decision_id.into(),
+        plan_id: plan_id.into(),
+        revision: revision.into(),
     })
 }
 
@@ -598,7 +692,6 @@ fn prepare(args: &[String]) -> Result<(), String> {
     valid_id("decision ID", decision)?;
     valid_id("plan ID", plan)?;
     valid_id("review ID", authority)?;
-    validate_committed_decision(decision, plan)?;
     let store = Store::configured()?;
     let p = store.paths(id)?;
     let _lock = store.lock(&p)?;
@@ -607,11 +700,20 @@ fn prepare(args: &[String]) -> Result<(), String> {
         return Err("prepare-implementation requires phase=pre-implementation".into());
     }
     let reviews = read_reviews(&p.reviews)?;
-    if !reviews
+    let authority_review = reviews
         .iter()
-        .any(|r| r.get(0) == authority && r.get(1) == "decision-authority" && r.get(2) == "pass")
-    {
-        return Err("prepare-implementation requires a passing decision-authority review".into());
+        .find(|r| r.get(0) == authority && r.get(1) == "decision-authority" && r.get(2) == "pass")
+        .ok_or_else(|| {
+            "prepare-implementation requires a passing decision-authority review".to_string()
+        })?;
+    let capsule = decision_authority_capsule(id, decision, plan, revision)?;
+    if secure_reviewer_evidence() {
+        validate_decision_authority_capsule_evidence(
+            &store,
+            id,
+            authority_review.get(7),
+            &capsule,
+        )?;
     }
     let todos = read_todos(&p.todos)?;
     let blockers: Vec<&str> = todos
@@ -680,11 +782,15 @@ fn prepare(args: &[String]) -> Result<(), String> {
             ));
         }
     }
+    let capsule_path = p.base.join("decision-authority-capsule.json");
+    atomic_write(&capsule_path, &capsule.content)?;
     for (key, value) in [
         ("preimplementation_gate", "passed".to_string()),
         ("decision_id", decision.to_string()),
         ("plan_id", plan.to_string()),
         ("decision_revision", revision.to_string()),
+        ("decision_capsule", capsule_path.display().to_string()),
+        ("decision_capsule_sha256", capsule.sha256.clone()),
         ("implementation_context", context.display().to_string()),
         ("implementation_context_sha256", sha256(&context)?),
         ("authority_review_id", authority.to_string()),
@@ -696,7 +802,10 @@ fn prepare(args: &[String]) -> Result<(), String> {
     event(
         &p.events,
         "implementation_prepared",
-        &format!("decision_id={decision}\tplan_id={plan}\treview_id={authority}"),
+        &format!(
+            "decision_id={decision}\tplan_id={plan}\trevision={revision}\tcapsule_sha256={}\treview_id={authority}",
+            capsule.sha256
+        ),
     )?;
     println!("implementation prepared\t{id}\t{decision}\t{plan}");
     Ok(())
@@ -784,6 +893,8 @@ fn transition(args: &[String]) -> Result<(), String> {
         let iteration = state_value(&state, "iteration").parse::<u64>().unwrap_or(1) + 1;
         for key in [
             "decision_revision",
+            "decision_capsule",
+            "decision_capsule_sha256",
             "implementation_context",
             "implementation_context_sha256",
             "authority_review_id",
@@ -1358,6 +1469,8 @@ fn source_implementation_started(state: &BTreeMap<String, String>) -> bool {
             "decision_id",
             "plan_id",
             "decision_revision",
+            "decision_capsule",
+            "decision_capsule_sha256",
             "implementation_context",
             "implementation_context_sha256",
             "authority_review_id",
@@ -1672,6 +1785,30 @@ fn validate_reviewer_evidence(
             "reviewer {reviewer} final message is missing marker: {marker}"
         ));
     }
+    if secure && kind == "decision-authority" {
+        let capsule_hash = state_value(&metadata, "decision_capsule_sha256");
+        if capsule_hash.is_empty() {
+            return Err(format!(
+                "decision-authority reviewer evidence has no supervisor decision capsule: {reviewer}"
+            ));
+        }
+        let capsule_marker =
+            format!("decision-review: capsule-sha256={capsule_hash} verdict={verdict}");
+        if !message
+            .lines()
+            .any(|line| review_marker_matches(line, &capsule_marker))
+        {
+            return Err(format!(
+                "reviewer {reviewer} final message is missing marker: {capsule_marker}"
+            ));
+        }
+        let capsule_path = dir.join("decision-capsule.json");
+        if !capsule_path.is_file() || sha256(&capsule_path)? != capsule_hash {
+            return Err(format!(
+                "decision-authority reviewer capsule evidence is missing or changed: {reviewer}"
+            ));
+        }
+    }
     if matches!(kind, "decision-authority" | "technical") {
         let p = store.paths(workflow_id)?;
         let state = read_env(&p.state, workflow_id)?;
@@ -1691,6 +1828,36 @@ fn validate_reviewer_evidence(
                 ));
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_decision_authority_capsule_evidence(
+    store: &Store,
+    workflow_id: &str,
+    reviewer: &str,
+    capsule: &DecisionAuthorityCapsule,
+) -> Result<(), String> {
+    valid_id("reviewer name", reviewer)?;
+    let directory = store.state_dir.join("reviewer-evidence").join(reviewer);
+    let metadata = read_simple_env(&directory.join("evidence.env"))?;
+    for (key, expected) in [
+        ("workflow_id", workflow_id),
+        ("decision_id", capsule.decision_id.as_str()),
+        ("plan_id", capsule.plan_id.as_str()),
+        ("decision_revision", capsule.revision.as_str()),
+        ("decision_capsule_sha256", capsule.sha256.as_str()),
+    ] {
+        if state_value(&metadata, key) != expected {
+            return Err(format!(
+                "decision-authority review binding mismatch: {key} expected={expected} actual={}",
+                state_value(&metadata, key)
+            ));
+        }
+    }
+    let capsule_path = directory.join("decision-capsule.json");
+    if !capsule_path.is_file() || sha256(&capsule_path)? != capsule.sha256 {
+        return Err("decision-authority review capsule does not match committed decision".into());
     }
     Ok(())
 }

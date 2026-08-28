@@ -172,6 +172,49 @@ fn register_launch(args: &[String], renew: bool) -> Result<(), String> {
         return Err("register-launch binary does not match the launch manifest".into());
     }
     let state = config::state_dir()?;
+    let workflow_id = env::var("MULTIAGENT_WORKFLOW_ID").unwrap_or_default();
+    let directory = state.join("launch-authorizations").join(name);
+    let decision_authority = role == "reviewer" && name.contains("decision-authority-reviewer");
+    let prior = if renew && directory.join("launch.env").is_file() {
+        read_env_file(&directory.join("launch.env"))?
+    } else {
+        BTreeMap::new()
+    };
+    let decision_value = |flag: &str, key: &str| {
+        options
+            .get(flag)
+            .cloned()
+            .or_else(|| prior.get(key).cloned())
+            .unwrap_or_default()
+    };
+    let decision_id = decision_value("--decision-id", "decision_id");
+    let plan_id = decision_value("--plan-id", "plan_id");
+    let decision_revision = decision_value("--decision-revision", "decision_revision");
+    let decision_capsule = if decision_authority {
+        if workflow_id.is_empty()
+            || decision_id.is_empty()
+            || plan_id.is_empty()
+            || decision_revision.is_empty()
+        {
+            return Err("decision-authority launch requires workflow, decision, plan, and revision metadata".into());
+        }
+        Some(crate::workflow::decision_authority_capsule(
+            &workflow_id,
+            &decision_id,
+            &plan_id,
+            &decision_revision,
+        )?)
+    } else {
+        if options.contains_key("--decision-id")
+            || options.contains_key("--plan-id")
+            || options.contains_key("--decision-revision")
+        {
+            return Err(
+                "decision capsule metadata is reserved for the decision-authority reviewer".into(),
+            );
+        }
+        None
+    };
     let expected_instruction = state.join("subagents").join(name).join(if renew {
         "restore-instruction.txt"
     } else {
@@ -190,7 +233,6 @@ fn register_launch(args: &[String], renew: bool) -> Result<(), String> {
     } else {
         "read-only"
     };
-    let workflow_id = env::var("MULTIAGENT_WORKFLOW_ID").unwrap_or_default();
     let assignment = state.join("assignments").join(name);
     let owned_paths = if access == "workspace-write" {
         if !assignment.join("assignment.env").is_file() {
@@ -206,7 +248,6 @@ fn register_launch(args: &[String], renew: bool) -> Result<(), String> {
     } else {
         Vec::new()
     };
-    let directory = state.join("launch-authorizations").join(name);
     if directory.exists() {
         if !renew {
             return Err(format!("launch authorization already exists: {name}"));
@@ -223,18 +264,48 @@ fn register_launch(args: &[String], renew: bool) -> Result<(), String> {
                 "renewed launch cannot change role or coding-agent identity: {name}"
             ));
         }
+        if decision_authority
+            && current.get("decision_capsule_sha256").map(String::as_str)
+                != decision_capsule
+                    .as_ref()
+                    .map(|capsule| capsule.sha256.as_str())
+        {
+            return Err("renewed decision-authority launch changed the decision capsule".into());
+        }
     } else if renew {
         return Err(format!("launch authorization does not exist: {name}"));
     }
     fs::create_dir_all(&directory)
         .map_err(|error| format!("create launch authorization: {error}"))?;
-    let instruction = fs::read(&instruction_source)
+    let mut instruction = fs::read(&instruction_source)
         .map_err(|error| format!("read registered instruction: {error}"))?;
+    if let Some(capsule) = &decision_capsule {
+        instruction.extend_from_slice(
+            format!(
+                "\n\n## Supervisor-Generated Decision Authority Capsule\n\n\
+This immutable capsule is the only selected-plan artifact authorized for this review. \
+Independently compare it with the original task. Include exactly one standalone decision-review marker matching your verdict.\n\n\
+decision-capsule-sha256={}\n{}\n\
+Passing marker: decision-review: capsule-sha256={} verdict=pass\n\
+Findings marker: decision-review: capsule-sha256={} verdict=findings\n",
+                capsule.sha256, capsule.content, capsule.sha256, capsule.sha256
+            )
+            .as_bytes(),
+        );
+        atomic_write_bytes(
+            &directory.join("decision-capsule.json"),
+            capsule.content.as_bytes(),
+        )?;
+    }
     let instruction_path = directory.join("instruction.txt");
     atomic_write_bytes(&instruction_path, &instruction)?;
     let metadata = format!(
-        "name={name}\nrole={role}\naccess={access}\nworkflow_id={workflow_id}\ncli={cli}\ncli_bin={cli_bin}\ninstruction_sha256={:x}\nstate=registered\n",
-        Sha256::digest(&instruction)
+        "name={name}\nrole={role}\naccess={access}\nworkflow_id={workflow_id}\ncli={cli}\ncli_bin={cli_bin}\ninstruction_sha256={:x}\ndecision_id={decision_id}\nplan_id={plan_id}\ndecision_revision={decision_revision}\ndecision_capsule_sha256={}\nstate=registered\n",
+        Sha256::digest(&instruction),
+        decision_capsule
+            .as_ref()
+            .map(|capsule| capsule.sha256.as_str())
+            .unwrap_or("")
     );
     atomic_write_bytes(&directory.join("launch.env"), metadata.as_bytes())?;
     if !owned_paths.is_empty() {
@@ -362,6 +433,7 @@ pub fn seal_role_output(
         atomic_write_bytes(&directory.join("last-message.txt"), &bytes)?;
         let completed_at = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
         let mut binding_metadata = String::new();
+        let mut decision_metadata = String::new();
         if role == "reviewer" {
             let binding_path = trace_dir.join("review-binding.json");
             if binding_path.exists() {
@@ -381,9 +453,34 @@ pub fn seal_role_output(
                 atomic_write_bytes(&directory.join("review-binding.json"), &binding)?;
                 binding_metadata = format!("binding_sha256={:x}\n", Sha256::digest(&binding));
             }
+            let launch_directory = state.join("launch-authorizations").join(name);
+            let launch = read_env_file(&launch_directory.join("launch.env"))?;
+            let capsule_hash = launch
+                .get("decision_capsule_sha256")
+                .map(String::as_str)
+                .unwrap_or("");
+            if !capsule_hash.is_empty() {
+                let capsule = fs::read(launch_directory.join("decision-capsule.json"))
+                    .map_err(|error| format!("read supervisor decision capsule: {error}"))?;
+                if format!("{:x}", Sha256::digest(&capsule)) != capsule_hash {
+                    return Err(
+                        "supervisor decision capsule changed before evidence sealing".into(),
+                    );
+                }
+                atomic_write_bytes(&directory.join("decision-capsule.json"), &capsule)?;
+                decision_metadata = format!(
+                    "decision_id={}\nplan_id={}\ndecision_revision={}\ndecision_capsule_sha256={capsule_hash}\n",
+                    launch.get("decision_id").map(String::as_str).unwrap_or(""),
+                    launch.get("plan_id").map(String::as_str).unwrap_or(""),
+                    launch
+                        .get("decision_revision")
+                        .map(String::as_str)
+                        .unwrap_or("")
+                );
+            }
         }
         let metadata = format!(
-            "name={name}\nrole={role}\naccess=read-only\nworkflow_id={workflow_id}\nstate=completed\ncompleted_at={completed_at}\noutput_sha256={:x}\n{binding_metadata}",
+            "name={name}\nrole={role}\naccess=read-only\nworkflow_id={workflow_id}\nstate=completed\ncompleted_at={completed_at}\noutput_sha256={:x}\n{binding_metadata}{decision_metadata}",
             Sha256::digest(&bytes)
         );
         atomic_write_bytes(&directory.join("evidence.env"), metadata.as_bytes())?;
@@ -427,6 +524,17 @@ fn write_launch_state(
             .map(String::as_str)
             .unwrap_or("")
     ));
+    for key in [
+        "decision_id",
+        "plan_id",
+        "decision_revision",
+        "decision_capsule_sha256",
+    ] {
+        text.push_str(&format!(
+            "{key}={}\n",
+            metadata.get(key).map(String::as_str).unwrap_or("")
+        ));
+    }
     text.push_str(&format!("state={state}\n"));
     atomic_write_bytes(&directory.join("launch.env"), text.as_bytes())
 }
@@ -467,7 +575,13 @@ fn parse_options(args: &[String]) -> Result<BTreeMap<String, String>, String> {
     for pair in args.chunks_exact(2) {
         if !matches!(
             pair[0].as_str(),
-            "--role" | "--cli" | "--cli-bin" | "--instruction-file"
+            "--role"
+                | "--cli"
+                | "--cli-bin"
+                | "--instruction-file"
+                | "--decision-id"
+                | "--plan-id"
+                | "--decision-revision"
         ) || pair[1].contains(['\n', '\r'])
         {
             return Err(format!("invalid register-launch option: {}", pair[0]));

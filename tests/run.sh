@@ -994,7 +994,10 @@ assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "do n
 assert_file_contains "$ROOT/prompts/verifier.md" 'do not substitute the default `technical`'
 assert_file_contains "$ROOT/prompts/roles/decision-authority-reviewer.md" "pre-implementation authority review"
 assert_file_contains "$ROOT/prompts/roles/decision-authority-reviewer.md" "never require implementation"
-assert_file_contains "$ROOT/prompts/roles/decision-authority-reviewer.md" "denial is not insufficient context"
+assert_file_contains "$ROOT/prompts/roles/decision-authority-reviewer.md" "Supervisor-Generated Decision Authority Capsule"
+assert_file_contains "$ROOT/prompts/roles/decision-authority-reviewer.md" "decision-review: capsule-sha256="
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "--decision-revision REVISION"
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "orchestrator must never manufacture or edit that capsule"
 assert_file_contains "$ROOT/prompts/roles/decision-authority-reviewer.md" "instruction file's location never changes"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Skip the scout when the public task"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" '`/app/_base_commit` is immutable adapter metadata'
