@@ -3,11 +3,12 @@ import test from "node:test";
 import { jobPhase, renderSessionTemplate, sessionSecret } from "../src/kubernetes-session.mjs";
 
 test("deployment-owned session templates accept only named bounded substitutions", () => {
-  const rendered = renderSessionTemplate({ metadata: { name: "session-{{SESSION_ID}}" }, value: "{{RESUME}}" }, {
+  const rendered = renderSessionTemplate({ metadata: { name: "session-{{SESSION_ID}}" }, value: "{{RESUME}}", authentication: "{{REPOSITORY_AUTHENTICATION}}" }, {
     SESSION_ID: "task-1",
     RESUME: "0",
+    REPOSITORY_AUTHENTICATION: "github-app",
   });
-  assert.deepEqual(rendered, { metadata: { name: "session-task-1" }, value: "0" });
+  assert.deepEqual(rendered, { metadata: { name: "session-task-1" }, value: "0", authentication: "github-app" });
   assert.throws(() => renderSessionTemplate("{{IMAGE}}", {}), /unknown placeholder/);
   assert.throws(() => renderSessionTemplate("{{session}}", {}), /invalid placeholder/);
 });
