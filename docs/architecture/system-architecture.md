@@ -396,6 +396,10 @@ summary cannot substitute for that binding.
 
 Provider and model selection remain deployment-owned. The orchestrator chooses
 roles and dependencies, not provider credentials, model names, or prices.
+Provider-native delegation tools do not establish the supervisor-owned role,
+identity, or evidence boundary. The Claude headless adapter therefore disables
+its built-in `Agent` and legacy `Task` tools; delegated work must enter through
+the registered `multiagent subagent` lifecycle.
 
 ## End-to-end request flow
 

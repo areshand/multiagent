@@ -14,10 +14,11 @@ These items are explicitly deferred while the production deployment is brought t
 4. Harden session path resolution against all parent-directory replacement races. The current helper validates a fixed state root, session identifier, socket type, ownership, group, and mode before dropping privileges.
 ## Provider-native subagent enforcement
 
-- Deny or remove provider-native `Agent`, `Task`, team, and background-agent
-  tools from the supervisor tool surface instead of relying only on prompt
-  instructions. These processes do not establish the multiagent Linux role,
-  Landlock policy, credential scope, or lifecycle evidence.
+- Claude headless sessions deny the provider-native `Agent` and legacy `Task`
+  tools. Extend equivalent executable enforcement to every configured provider
+  and to any remaining team or background-agent entry point. These processes
+  do not establish the multiagent Linux role, Landlock policy, credential
+  scope, or lifecycle evidence.
 - Add a workflow-gate assertion that every accepted scout, worker, ops, and
   reviewer result names a registered `multiagent subagent` assignment and role.
 
