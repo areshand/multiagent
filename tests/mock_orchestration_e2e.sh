@@ -117,9 +117,17 @@ ma workflow init "$MULTIAGENT_WORKFLOW_ID" >/dev/null
 mkdir -p "$STATE/runtime_state"
 printf '%s\n' "$MULTIAGENT_WORKFLOW_ID" >"$STATE/runtime_state/active-workflow-id"
 
+ma decision init DEC-MOCK --title "Mock source update" --owner orchestrator >/dev/null
+ma decision add-alternative DEC-MOCK --plan-id PLAN-MOCK \
+  --summary "Apply the authenticated bounded update" --proposed-by orchestrator >/dev/null
+ma decision commit DEC-MOCK --selected-plan PLAN-MOCK \
+  --reason "Submit the bounded plan for independent authority review" >/dev/null
+
 AUTH_REVIEWER="decision-authority-reviewer-mock"
 printf 'Claude prompt ready\n' >"$MOCK_CAPTURES/$AUTH_REVIEWER.txt"
 ma subagent spawn "$AUTH_REVIEWER" --role reviewer \
+  --workflow-id "$MULTIAGENT_WORKFLOW_ID" \
+  --decision-id DEC-MOCK --plan-id PLAN-MOCK --decision-revision 1 \
   --instruction "Review the bounded implementation plan and authority." >/dev/null
 cat >"$MOCK_CAPTURES/$AUTH_REVIEWER.txt" <<'EOF'
 verdict: orchestrator-may-decide
@@ -129,11 +137,6 @@ EOF
 cp "$MOCK_CAPTURES/$AUTH_REVIEWER.txt" "$STATE/subagents/$AUTH_REVIEWER/last-message.txt"
 ma subagent finalize "$AUTH_REVIEWER" >/dev/null
 
-ma decision init DEC-MOCK --title "Mock source update" --owner orchestrator >/dev/null
-ma decision add-alternative DEC-MOCK --plan-id PLAN-MOCK \
-  --summary "Apply the authenticated bounded update" --proposed-by orchestrator >/dev/null
-ma decision commit DEC-MOCK --selected-plan PLAN-MOCK \
-  --reason "The independent authority reviewer accepted the bounded plan" >/dev/null
 ma workflow record-review "$MULTIAGENT_WORKFLOW_ID" AUTH-MOCK \
   --type decision-authority --verdict pass --evidence "mock authority review passed" \
   --reviewer "$AUTH_REVIEWER" >/dev/null

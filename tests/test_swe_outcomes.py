@@ -100,6 +100,79 @@ class NativeOutcomeTest(unittest.TestCase):
         self.assertIn("command=... returncode=0", verifier)
         self.assertIn("validation lease for the narrowest visible behavior test", routing)
 
+    def test_authority_reviewer_requires_runtime_parseable_output(self):
+        root = Path(__file__).resolve().parents[1]
+        reviewer = (root / "prompts/roles/decision-authority-reviewer.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("Your final response is parsed by the workflow runtime", reviewer)
+        self.assertIn("first non-empty line\nmust be exactly one of", reviewer)
+        self.assertIn("Do not write generic verdicts such as `ACCEPTED`", reviewer)
+        self.assertIn("Return exactly these fields in this order", reviewer)
+        self.assertIn("Do not replace, rename, reorder,\nor omit", reviewer)
+        self.assertIn("pre-implementation authority review", reviewer)
+        self.assertIn("never require implementation\nas evidence needed to authorize implementation", reviewer)
+        self.assertIn("multiagent decision show\nDECISION_ID", reviewer)
+        self.assertIn("Supervisor-Generated Decision Authority Capsule", reviewer)
+        self.assertIn("orchestrator's prose assignment is not a substitute", reviewer)
+        self.assertIn("decision-review: capsule-sha256=", reviewer)
+        self.assertIn("Post-implementation reviewers and supervisor diff gates", reviewer)
+        self.assertIn("instruction file's location never changes the\ndeliverable target", reviewer)
+        self.assertIn(
+            "review-record: type=decision-authority verdict=pass diff=-",
+            reviewer,
+        )
+
+    def test_lifecycle_uses_minimal_canonical_parallel_role_graph(self):
+        root = Path(__file__).resolve().parents[1]
+        autonomous = (
+            root / "evaluation/native_solver/templates/swe_autonomous_appendix.md"
+        ).read_text(encoding="utf-8")
+        lifecycle = (root / "prompts/playbooks/implementation-lifecycle.md").read_text(
+            encoding="utf-8"
+        )
+        spawning = (root / "prompts/playbooks/agent-spawning.md").read_text(
+            encoding="utf-8"
+        )
+        orchestrator = (root / "orchestrator_prompt.md").read_text(encoding="utf-8")
+
+        self.assertIn("Skip the scout when the public task", autonomous)
+        self.assertIn("`/app/_base_commit` is immutable adapter metadata", autonomous)
+        self.assertIn("not a\nworker output, owned path, candidate diff, cleanup target, or TODO trigger", autonomous)
+        self.assertIn("`ops_plan.json` means\n`/app/ops_plan.json`", autonomous)
+        self.assertIn("Never redirect a requested repository artifact there", autonomous)
+        self.assertNotIn("Before implementation, run a read-only contract scout", autonomous)
+        self.assertIn("decision-authority-reviewer-01", lifecycle)
+        self.assertIn("--decision-revision REVISION", lifecycle)
+        self.assertIn("instruction that enumerates\n   the selected plan's exact outcome", lifecycle)
+        self.assertIn("orchestrator must never manufacture or edit that capsule", lifecycle)
+        self.assertIn("exact target-repository paths", lifecycle)
+        self.assertIn("Only after `record-review` succeeds", lifecycle)
+        self.assertIn("Spawn all mutually\nindependent pending reviewers before waiting", lifecycle)
+        self.assertIn("use\n`--role reviewer --own CHANGED_PATHS`", lifecycle)
+        self.assertIn("WORKFLOW_ID` and `REVIEW_ID` are the two required positional arguments", lifecycle)
+        self.assertIn("--evidence REVIEWER_NAME --reviewer REVIEWER_NAME", lifecycle)
+        self.assertIn("technical-verifier-01", lifecycle)
+        self.assertIn("type=decision-drift verdict=pass diff=DIFF_HASH", lifecycle)
+        self.assertIn("do not spawn another final verifier", lifecycle)
+        self.assertIn("launcher automatically injects the canonical worker role prompt", spawning)
+        self.assertIn("Lifecycle-enforced workers must use `--instruction-file`", spawning)
+        self.assertIn("git branch --show-current", spawning)
+        self.assertIn("never use a\nplaceholder such as `workspace`", spawning)
+        self.assertIn("Do not load, copy, or include\n`prompts/verifier.md`", spawning)
+        self.assertIn("--role reviewer", spawning)
+        self.assertIn("technical-verifier-01-task", spawning)
+        self.assertIn("do not add a second\nfinal verifier", spawning)
+        self.assertIn("do not read or paste role prompt files", orchestrator)
+        self.assertIn("read-only reviewer instructions inline with `--instruction`", orchestrator)
+        self.assertIn("file under `MULTIAGENT_STATE_DIR`", orchestrator)
+        self.assertIn("never against the\n  instruction file's directory", orchestrator)
+
+        verifier = (root / "prompts/verifier.md").read_text(encoding="utf-8")
+        self.assertIn("persisted review obligation", verifier)
+        self.assertIn("do not substitute the default `technical`", verifier)
+
     def test_runner_has_no_submission_rejection_path(self):
         self.assertFalse(hasattr(evalscope_multiagent_native_runner, "is_submission_gate_rejection"))
         self.assertFalse(hasattr(evalscope_multiagent_native_runner.MultiagentNativeRunner, "_score_no_submission"))

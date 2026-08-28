@@ -54,8 +54,17 @@ bindings, independent review, and phase completion.
 
 - Spawn roles with `multiagent subagent spawn`; provider-native agents do not
   establish the required Linux identity or evidence boundary.
-- Load reusable role and lifecycle modules from `MULTIAGENT_PROMPT_MODULE_ROOT`.
-  Use `prompts/playbooks/agent-spawning.md` for spawning mechanics.
+- Load lifecycle playbooks from `MULTIAGENT_PROMPT_MODULE_ROOT`. The launcher
+  selects and injects canonical role prompts, the original task, and approved
+  context; do not read or paste role prompt files into task instructions.
+  Keep bounded read-only reviewer instructions inline with `--instruction`.
+  Lifecycle-enforced workers use an instruction file containing the exact
+  approved implementation context as required by the supervisor gate; keep
+  that instruction file under `MULTIAGENT_STATE_DIR`, never in the target
+  repository. This location does not change output ownership: resolve task
+  deliverables against the authenticated target repository, never against the
+  instruction file's directory. Use
+  `prompts/playbooks/agent-spawning.md` for spawning mechanics.
 - Source changes follow
   `$MULTIAGENT_FRAMEWORK_ROOT/prompts/playbooks/implementation-lifecycle.md`.
 - External-only work skips the source lifecycle and uses reviewed ops requests.

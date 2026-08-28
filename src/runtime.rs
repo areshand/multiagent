@@ -1507,7 +1507,7 @@ pub fn subagent(args: &[String]) -> Result<ExitCode, String> {
 
 fn print_subagent_usage() {
     println!(
-        "Usage:\n  multiagent subagent spawn NAME [--own PATH[,PATH...] ...] [--assignment-id ID] [--workflow-id ID --decision-id ID --plan-id ID] [--branch BRANCH] [--start-commit COMMIT] [--role ROLE] [--instruction TEXT | --instruction-file PATH | -- TEXT]\n  multiagent subagent restore NAME [--force] [--instruction TEXT | --instruction-file PATH]\n  multiagent subagent reviewed-ops-cycle OPS_NAME --request-file PATH --reviewer NAME [--timeout SECONDS]\n  multiagent subagent list|recover-plan|restore-all|gate-check\n  multiagent subagent poll|inspect|finalize|kill NAME [OPTIONS]\n  multiagent subagent wait NAME [--timeout SECONDS] [--poll-interval SECONDS]\n\nAll durable state and tmux subprocess orchestration are implemented by the Rust CLI."
+        "Usage:\n  multiagent subagent spawn NAME [--own PATH[,PATH...] ...] [--assignment-id ID] [--workflow-id ID --decision-id ID --plan-id ID --decision-revision REV] [--branch BRANCH] [--start-commit COMMIT] [--role ROLE] [--instruction TEXT | --instruction-file PATH | -- TEXT]\n  multiagent subagent restore NAME [--force] [--instruction TEXT | --instruction-file PATH]\n  multiagent subagent reviewed-ops-cycle OPS_NAME --request-file PATH --reviewer NAME [--timeout SECONDS]\n  multiagent subagent list|recover-plan|restore-all|gate-check\n  multiagent subagent poll|inspect|finalize|kill NAME [OPTIONS]\n  multiagent subagent wait NAME [--timeout SECONDS] [--poll-interval SECONDS]\n\nAll durable state and tmux subprocess orchestration are implemented by the Rust CLI."
     );
 }
 
@@ -1541,7 +1541,12 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
                 }
                 index += 2;
             }
-            "--assignment-id" | "--workflow-id" | "--decision-id" | "--plan-id" | "--branch"
+            "--assignment-id"
+            | "--workflow-id"
+            | "--decision-id"
+            | "--plan-id"
+            | "--decision-revision"
+            | "--branch"
             | "--start-commit" => {
                 assignment_values.insert(
                     args[index].clone(),
@@ -1628,8 +1633,34 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
     }
     reject_parallel_generic_worker_spawn(cfg, name)?;
     reject_additional_ops_identity(&cfg.state, name, authority_role)?;
-    if owned.is_empty() && !assignment_values.is_empty() {
-        return Err("spawn assignment metadata requires --own PATH".into());
+    let decision_authority = authority_role == "reviewer"
+        && role_prompt_name(name, &role) == Some("prompts/roles/decision-authority-reviewer.md");
+    if owned.is_empty() {
+        let required = [
+            "--workflow-id",
+            "--decision-id",
+            "--plan-id",
+            "--decision-revision",
+        ];
+        let exact_decision_metadata = decision_authority
+            && assignment_values.len() == required.len()
+            && required
+                .iter()
+                .all(|flag| assignment_values.contains_key(*flag));
+        if decision_authority && !exact_decision_metadata {
+            return Err("decision-authority reviewer requires --workflow-id, --decision-id, --plan-id, and --decision-revision".into());
+        }
+        if !decision_authority && !assignment_values.is_empty() {
+            return Err("spawn assignment metadata requires --own PATH; only exact decision capsule metadata is allowed for the decision-authority reviewer".into());
+        }
+        if decision_authority {
+            let active_workflow = env_nonempty("MULTIAGENT_WORKFLOW_ID").unwrap_or_default();
+            if assignment_values.get("--workflow-id").map(String::as_str)
+                != Some(active_workflow.as_str())
+            {
+                return Err("decision-authority reviewer workflow metadata does not match the active workflow".into());
+            }
+        }
     }
     if !owned.is_empty() {
         let assignment_dir = cfg.state.join("assignments").join(name);
@@ -1751,19 +1782,33 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         let registered_prompt = prompt_file
             .as_deref()
             .ok_or_else(|| format!("secure subagent prompt is missing: {name}"))?;
-        run_self_quiet(&[
-            "supervisor",
-            "register-launch",
-            name,
-            "--role",
-            authority_role,
-            "--cli",
-            cli,
-            "--cli-bin",
-            binary,
-            "--instruction-file",
-            &registered_prompt.display().to_string(),
-        ])?;
+        let instruction_path = registered_prompt.display().to_string();
+        let mut command = vec![
+            "supervisor".to_string(),
+            "register-launch".to_string(),
+            name.to_string(),
+            "--role".to_string(),
+            authority_role.to_string(),
+            "--cli".to_string(),
+            cli.to_string(),
+            "--cli-bin".to_string(),
+            binary.to_string(),
+            "--instruction-file".to_string(),
+            instruction_path,
+        ];
+        if decision_authority {
+            for flag in ["--decision-id", "--plan-id", "--decision-revision"] {
+                command.push(flag.to_string());
+                command.push(
+                    assignment_values
+                        .get(flag)
+                        .cloned()
+                        .ok_or_else(|| format!("decision-authority spawn requires {flag}"))?,
+                );
+            }
+        }
+        let command = command.iter().map(String::as_str).collect::<Vec<_>>();
+        run_self_quiet(&command)?;
     }
     let cli_command = if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
         if !cfg.headless(cli) {
@@ -2787,7 +2832,9 @@ the exact standalone marker \
 `review-record: type=decision-authority verdict=pass diff=-`. Do not substitute \
 `approve`, `conditional`, or a supervisor-requested custom marker. When the \
 semantic envelope supplies a contract-review marker, reproduce that exact marker \
-after independently validating the registered contract.\n",
+after independently validating the registered contract. When the supervisor \
+supplies decision-review markers, reproduce exactly the marker matching your \
+verdict after independently validating the decision capsule.\n",
         );
     }
     Ok(composed)
@@ -2885,6 +2932,8 @@ fn role_prompt_name(name: &str, role: &str) -> Option<&'static str> {
         "prompts/roles/acceptance-scout.md"
     } else if lower.contains("build-verifier") {
         "prompts/roles/build-verifier.md"
+    } else if role == "worker" && lower.contains("ops-plan") {
+        "prompts/roles/ops-plan-worker.md"
     } else if matches!(role, "verifier" | "reviewer")
         || lower.contains("verifier")
         || lower.contains("review")
@@ -4564,6 +4613,22 @@ review-record: type=decision-authority verdict=pass diff=-\n";
         assert_eq!(
             assignment_role_for_spawn("contract-scout-01-api", "reviewer"),
             "scout"
+        );
+    }
+
+    #[test]
+    fn ops_plan_worker_uses_bounded_planning_prompt() {
+        assert_eq!(
+            role_prompt_name("worker-01-ops-plan", "worker"),
+            Some("prompts/roles/ops-plan-worker.md")
+        );
+        assert_eq!(
+            assignment_role_for_spawn("worker-01-ops-plan", "worker"),
+            "exploitation"
+        );
+        assert_eq!(
+            role_prompt_name("worker-01-source", "worker"),
+            Some("prompts/worker.md")
         );
     }
 

@@ -718,6 +718,8 @@ class MigrationCliContractTest(unittest.TestCase):
                 "decision_id",
                 "plan_id",
                 "decision_revision",
+                "decision_capsule",
+                "decision_capsule_sha256",
                 "implementation_context",
                 "implementation_context_sha256",
                 "authority_review_id",

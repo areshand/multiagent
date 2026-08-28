@@ -5,18 +5,22 @@ replace, verify, or finalize worker windows or named subagents.
 
 ## Worker First Instruction
 
-Before spawning a worker, load `prompts/worker.md` and prepend it to the
-task-specific assignment. Also pass assignment ID, branch, owned paths, task
-statement, and the relevant contract ledger. For high-risk coding tasks,
-include the contract scout's `must-preserve` list and validation plan. The
-worker module contains shared worker rules and Ponytail implementation discipline.
-For lifecycle-enforced exploitation work, also include the active workflow,
-decision, plan, decision revision, and the complete approved implementation context.
-When the scout emits `historical-contract-ledger:`, copy that block verbatim
-into every implementation, repair, and verifier assignment. Do not replace it
-with a narrower locked hypothesis. Worker ownership and done criteria must
-cover every listed mutated output or explicitly preserve an open blocking todo
-for outputs assigned elsewhere.
+The launcher automatically injects the canonical worker role prompt and the
+supervisor-owned semantic envelope. Do not load, copy, or prepend
+`prompts/worker.md`. Lifecycle-enforced workers must use `--instruction-file`
+with the complete approved implementation context followed by only a concise,
+task-specific assignment; an inline instruction cannot satisfy that mechanical
+gate. Pass assignment ID, owned paths, done criteria, and any execution detail
+not already present in the approved context. Before passing `--branch`, resolve
+the exact current branch with `git branch --show-current`; never use a
+placeholder such as `workspace`. Omit the optional flag if no branch is
+resolved. The launcher separately supplies the original task and any registered
+contract artifact. Never reconstruct, paraphrase, or paste a second copy of
+that artifact beyond the exact copy required inside the approved context. This
+includes every `historical-contract-ledger:` block. Worker ownership and done
+criteria must cover every required mutated output or explicitly preserve an
+open blocking todo for outputs assigned elsewhere. The injected worker module
+contains shared worker rules and Ponytail implementation discipline.
 
 Before creating assignment metadata, compare the worker's owned paths and hard
 constraints with the approved implementation context. The assignment may split
@@ -119,18 +123,33 @@ be registered.
 ## Verifier Agent Workflow
 
 Spawn a verifier after a worker reports final status or is otherwise ready for
-acceptance review. Load `prompts/verifier.md` and include it in the verifier's
-first instruction with worker name, assignment ID, branch, owned paths, relevant
-commit hash, task statement, contract ledger, and verifier iteration number.
-For tasks that used a contract scout, include the scout's contract ledger and
-validation plan as normative review input.
-Load `prompts/playbooks/finding-todo-loop.md` whenever the verifier may produce
+acceptance review. The launcher automatically injects the canonical verifier
+role prompt, supervisor-owned original task, approved context, registered
+contract, and frozen diff binding. Do not load, copy, or include
+`prompts/verifier.md` in the first instruction. Supply only the task-specific
+review type, worker or assignment identity, changed paths, relevant commit, and
+iteration. Use `--role reviewer` for every post-implementation reviewer whose
+evidence will be submitted with `multiagent workflow record-review`; the
+supervisor accepts review evidence only from that read-only role. Load
+`prompts/playbooks/finding-todo-loop.md` whenever a verifier may produce
 blocking repair work. Blocking verifier findings must be recorded as structured
 finding artifacts before the orchestrator turns them into bounded repair todos.
 
 ```bash
-SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn verifier-01-task --instruction "FIRST_INSTRUCTION_TEXT"
+SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn technical-verifier-01-task \
+  --role reviewer \
+  --own CHANGED_PATH[,CHANGED_PATH...] \
+  --workflow-id "$MULTIAGENT_WORKFLOW_ID" \
+  --instruction "TASK_SPECIFIC_REVIEW_INSTRUCTION"
 ```
+
+`--own` is mandatory assignment metadata for post-implementation reviewers; it
+does not grant write access. Supply the frozen candidate's changed paths and
+spawn every independent pending reviewer before waiting for any result.
+
+Use a `verifier-` identity for the technical obligation so the durable
+acceptance also satisfies `multiagent subagent gate-check`; do not add a second
+final verifier after the technical obligation passes.
 
 Run `multiagent subagent assignment-check WORKER_NAME` before relying on verifier
 results. Resolve branch or file ownership rejection before verification.

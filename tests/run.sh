@@ -908,17 +908,18 @@ assert_file_contains "$ROOT/prompts/contracts/orchestration-invariants.md" "prox
 assert_file_contains "$ROOT/orchestrator_prompt.md" "agent-spawning.md"
 assert_file_contains "$ROOT/prompts/worker.md" "Worker Role Prompt"
 assert_file_contains "$ROOT/prompts/worker.md" "Ponytail Implementation Discipline"
-assert_file_contains "$ROOT/prompts/worker.md" "return shape, or package placement"
-assert_file_contains "$ROOT/prompts/worker.md" "additive public surface"
 assert_file_contains "$ROOT/prompts/worker.md" "one expensive validation command"
 assert_file_contains "$ROOT/prompts/worker.md" "validation lease"
-assert_file_contains "$ROOT/prompts/worker.md" "validation-run"
-assert_file_contains "$ROOT/prompts/worker.md" "validation-lease-acquire"
-assert_file_contains "$ROOT/prompts/worker.md" "legitimate product or visible-test paths"
 assert_file_contains "$ROOT/prompts/worker.md" "validation-repair-needed:"
-assert_file_contains "$ROOT/prompts/worker.md" "structured worker"
-assert_file_contains "$ROOT/prompts/worker.md" "resolution-create"
 assert_file_contains "$ROOT/prompts/worker.md" "assembled production"
+assert_file_contains "$ROOT/prompts/worker.md" "Task-, repository-, language-, and framework-specific requirements"
+assert_file_not_contains "$ROOT/prompts/worker.md" "For Go"
+assert_file_not_contains "$ROOT/prompts/worker.md" "UI/component"
+assert_file_not_contains "$ROOT/prompts/worker.md" "go-package-validation-passed:"
+assert_file_contains "$ROOT/prompts/roles/ops-plan-worker.md" "Ops Plan Worker Role Prompt"
+assert_file_contains "$ROOT/prompts/roles/ops-plan-worker.md" "planning role, not a"
+assert_file_contains "$ROOT/prompts/roles/ops-plan-worker.md" "runtime, supervisor, permit checks, and operation gateway"
+assert_file_contains "$ROOT/prompts/roles/ops-plan-worker.md" "one valid JSON document"
 assert_file_contains "$ROOT/prompts/verifier.md" "Verifier Role Prompt"
 assert_file_contains "$ROOT/prompts/verifier.md" "Hidden Contract Verification"
 assert_file_contains "$ROOT/prompts/verifier.md" "unresolved risk"
@@ -940,8 +941,8 @@ assert_file_contains "$ROOT/prompts/verifier.md" "--affected PATH[,PATH...]"
 assert_file_contains "$ROOT/prompts/verifier.md" "--evidence-json"
 assert_file_contains "$ROOT/prompts/verifier.md" "do not invent"
 assert_file_contains "$ROOT/prompts/verifier.md" "assembled production"
-assert_file_contains "$ROOT/prompts/worker.md" 'Every entry in a `resolved` report'
-assert_file_contains "$ROOT/prompts/worker.md" 'must have `rc: 0`'
+assert_file_contains "$ROOT/prompts/worker.md" 'Every validation entry in a `resolved` report must have'
+assert_file_contains "$ROOT/prompts/worker.md" '`rc: 0`'
 assert_file_contains "$ROOT/prompts/playbooks/finding-todo-loop.md" 'All `validation-json` entries in a resolved report'
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "Contract Scout Role Prompt"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "must-preserve"
@@ -981,7 +982,33 @@ assert_file_contains "$ROOT/prompts/playbooks/finding-todo-loop.md" "resolution-
 assert_file_contains "$ROOT/prompts/playbooks/finding-todo-loop.md" "todo-close"
 assert_file_contains "$ROOT/prompts/playbooks/finding-todo-loop.md" "gate-check"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Agent Spawning Playbook"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "launcher automatically injects the canonical worker role prompt"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" 'Lifecycle-enforced workers must use `--instruction-file`'
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "git branch --show-current"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" 'Do not load, copy, or include'
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "decision-authority-reviewer-01"
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "exact target-repository paths"
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" 'Only after `record-review` succeeds'
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" 'WORKFLOW_ID` and `REVIEW_ID` are the two required positional arguments'
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "Spawn all mutually"
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "technical-verifier-01"
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" '--role reviewer --own CHANGED_PATHS'
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" '--evidence REVIEWER_NAME --reviewer REVIEWER_NAME'
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "do not spawn another final verifier"
+assert_file_contains "$ROOT/prompts/verifier.md" 'do not substitute the default `technical`'
+assert_file_contains "$ROOT/prompts/roles/decision-authority-reviewer.md" "pre-implementation authority review"
+assert_file_contains "$ROOT/prompts/roles/decision-authority-reviewer.md" "never require implementation"
+assert_file_contains "$ROOT/prompts/roles/decision-authority-reviewer.md" "Supervisor-Generated Decision Authority Capsule"
+assert_file_contains "$ROOT/prompts/roles/decision-authority-reviewer.md" "decision-review: capsule-sha256="
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "--decision-revision REVISION"
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "orchestrator must never manufacture or edit that capsule"
+assert_file_contains "$ROOT/prompts/roles/decision-authority-reviewer.md" "instruction file's location never changes"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Skip the scout when the public task"
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" '`/app/_base_commit` is immutable adapter metadata'
+assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" '`ops_plan.json` means'
+assert_file_not_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Before implementation, run a read-only contract scout"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Ponytail implementation discipline"
+assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" '`--own` is mandatory assignment metadata for post-implementation reviewers'
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "Ponytail over-engineering pass"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "hidden-contract probes"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" 'MAX_ITERATIONS` is an escalation threshold'
@@ -1045,12 +1072,10 @@ assert_file_contains "$ROOT/prompts/verifier.md" "route-integration-probe-passed
 assert_file_contains "$ROOT/prompts/verifier.md" "narrowest visible test file"
 assert_file_contains "$ROOT/prompts/verifier.md" "visible-test-replay-passed:"
 assert_file_contains "$ROOT/prompts/verifier.md" "exact boundary values"
-assert_file_contains "$ROOT/prompts/worker.md" "visible-test-replay-passed:"
 assert_file_contains "$ROOT/prompts/verifier.md" "Syntax checks, compile-only commands"
 assert_file_contains "$ROOT/prompts/verifier.md" "command=... returncode=0"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "partition contract"
 assert_file_contains "$ROOT/prompts/roles/contract-scout.md" "historical-contract-ledger:"
-assert_file_contains "$ROOT/prompts/worker.md" "historical-contract-ledger:"
 assert_file_contains "$ROOT/prompts/verifier.md" "historical-contract-ledger:"
 assert_file_contains "$ROOT/prompts/contracts/orchestration-invariants.md" "historical-contract-ledger:"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "historical-contract-ledger:"
@@ -1058,9 +1083,8 @@ assert_file_contains "$ROOT/prompts/contracts/orchestration-invariants.md" "hist
 assert_file_contains "$ROOT/prompts/verifier.md" "source review plus"
 assert_file_contains "$ROOT/prompts/verifier.md" "old/stale expectation"
 assert_file_contains "$ROOT/prompts/verifier.md" "git diff --name-only"
-assert_file_contains "$ROOT/prompts/worker.md" "stale hunk"
+assert_file_contains "$ROOT/prompts/worker.md" "stale or failed patch application"
 assert_file_contains "$ROOT/prompts/verifier.md" "stale-hunk"
-assert_file_contains "$ROOT/prompts/worker.md" "git diff --name-only"
 assert_file_contains "$ROOT/prompts/verifier.md" "replacement-probe-passed:"
 assert_file_contains "$ROOT/prompts/verifier.md" "multi-value-probe-passed:"
 assert_file_contains "$ROOT/prompts/verifier.md" "final-output-field="
@@ -1086,34 +1110,8 @@ assert_file_contains "$ROOT/prompts/verifier.md" "has no field or method"
 assert_file_contains "$ROOT/prompts/verifier.md" "go test -run TestNonExistent"
 assert_file_contains "$ROOT/prompts/verifier.md" "adapter-parity finding"
 assert_file_contains "$ROOT/prompts/verifier.md" "validation-repair-needed:"
-assert_file_contains "$ROOT/prompts/worker.md" "When you expand a parser/reader allowlist"
-assert_file_contains "$ROOT/prompts/worker.md" "no-test compile check"
-assert_file_contains "$ROOT/prompts/worker.md" "declared static type"
 assert_file_contains "$ROOT/prompts/worker.md" "validation-repair-needed:"
-assert_file_contains "$ROOT/prompts/worker.md" "multi-value-probe-passed:"
-assert_file_contains "$ROOT/prompts/worker.md" "route-integration-probe-passed:"
-assert_file_contains "$ROOT/prompts/worker.md" "actual-output-count=N"
-assert_file_contains "$ROOT/prompts/worker.md" "multi-value-probe.txt"
-assert_file_contains "$ROOT/prompts/worker.md" "source-symbol-map-passed:"
-assert_file_contains "$ROOT/prompts/worker.md" "struct field diffs"
-assert_file_contains "$ROOT/prompts/worker.md" "one single machine-readable"
-assert_file_contains "$ROOT/prompts/worker.md" "go-package-validation-passed:"
-assert_file_contains "$ROOT/prompts/worker.md" "owner-evidence="
-assert_file_contains "$ROOT/prompts/worker.md" "candidate-owner="
-assert_file_contains "$ROOT/prompts/worker.md" "source-owner-ledger:"
-assert_file_contains "$ROOT/prompts/worker.md" "normally limit yourself to three focused"
-assert_file_contains "$ROOT/prompts/worker.md" "Do not report blocked merely because a read-count limit was consumed"
-assert_file_contains "$ROOT/prompts/worker.md" 'JSON arguments include a `cmd` string'
-assert_file_contains "$ROOT/prompts/worker.md" "Do not finish with only a plan"
-assert_file_contains "$ROOT/prompts/worker.md" "A long-running worker with no materialized source diff"
-assert_file_contains "$ROOT/prompts/worker.md" "replacement worker over the same owned paths"
-assert_file_contains "$ROOT/prompts/worker.md" "request another same-scope exploratory worker"
-assert_file_contains "$ROOT/prompts/worker.md" "unable-to-verify-repository-state"
-assert_file_contains "$ROOT/prompts/worker.md" "constructor-dependency-checked:"
-assert_file_contains "$ROOT/prompts/worker.md" "provider-capability-checked:"
 assert_file_contains "$ROOT/prompts/worker.md" "required-path-outside-owned:"
-assert_file_contains "$ROOT/prompts/worker.md" "callsite="
-assert_file_contains "$ROOT/prompts/worker.md" "aggregate count"
 assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "multi-value-probe-passed:"
 assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "source-count=N"
 assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "multi-value-probe.txt"
@@ -1232,9 +1230,10 @@ assert_file_contains "$TMPDIR/swe-bench-pro-config.json" '"framework": "multiage
 python3 -m evaluation.cli --list >"$TMPDIR/evaluation-list.out"
 assert_file_contains "$TMPDIR/evaluation-list.out" "ponytail"
 assert_file_contains "$TMPDIR/evaluation-list.out" "orchestration"
+assert_file_contains "$TMPDIR/evaluation-list.out" "ops-trace"
 python3 -c "from evaluation.core import system_for_arm; print(system_for_arm('baseline'))" >"$TMPDIR/evaluation-baseline-arm.out"
 assert_file_contains "$TMPDIR/evaluation-baseline-arm.out" "Evaluation Worker Launch Context"
-assert_file_contains "$TMPDIR/evaluation-baseline-arm.out" "Stay in your assigned files only."
+assert_file_contains "$TMPDIR/evaluation-baseline-arm.out" "Work on the assigned branch and only within the owned paths."
 assert_file_contains "$TMPDIR/evaluation-baseline-arm.out" "Ponytail implementation discipline"
 assert_file_contains "$TMPDIR/evaluation-baseline-arm.out" "Worker Role Prompt"
 assert_file_contains "$TMPDIR/evaluation-baseline-arm.out" "Ponytail Implementation Discipline"
@@ -1282,6 +1281,8 @@ assert stats["src_files"] == 1, stats
 PY
 python3 -m evaluation.cli --adapter orchestration --selftest >"$TMPDIR/orchestration-selftest.out"
 assert_file_contains "$TMPDIR/orchestration-selftest.out" "selftest[orchestration]: all scorers valid"
+MULTIAGENT_OPS_TRACE_DATASET=synthetic python3 -m evaluation.cli --adapter ops-trace --selftest >"$TMPDIR/ops-trace-selftest.out"
+assert_file_contains "$TMPDIR/ops-trace-selftest.out" "selftest[ops-trace]: all scorers valid"
 python3 -m evaluation.cli --adapter orchestration --task large-update-300 --reference-report --run-root "$TMPDIR/eval-runs" >"$TMPDIR/orchestration-reference-report.out"
 assert_file_contains "$TMPDIR/orchestration-reference-report.out" "wrote $TMPDIR/eval-runs/orchestration/"
 orchestration_results="$(find "$TMPDIR/eval-runs/orchestration" -name results.json -print -quit)"
@@ -1740,25 +1741,25 @@ printf 'final status: codex exec exited rc=0\n' >"$MOCK_TMUX_CAPTURES/codex-exec
 codex_wait_output="$(MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$MULTIAGENT" subagent wait codex-exec-protocol --timeout 1 --poll-interval 0)"
 [[ "$codex_wait_output" == $'codex-exec-protocol\tdone' ]]
 
-printf 'Codex exec prompt ready\n' >"$MOCK_TMUX_CAPTURES/decision-authority-read-only.txt"
-MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$MULTIAGENT" subagent spawn decision-authority-read-only \
+printf 'Codex exec prompt ready\n' >"$MOCK_TMUX_CAPTURES/reviewer-read-only.txt"
+MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$MULTIAGENT" subagent spawn reviewer-read-only \
   --role reviewer --instruction "Review the proposed authority"
-authority_spawn_line="$(grep -F "new-window -d test-session decision-authority-read-only " "$MOCK_TMUX_LOG")"
+authority_spawn_line="$(grep -F "new-window -d test-session reviewer-read-only " "$MOCK_TMUX_LOG")"
 [[ "$authority_spawn_line" == *"$MULTIAGENT agent run --backend codex --cwd $ROOT"* ]]
 if [[ "$HOST_KERNEL" == Linux ]]; then
   [[ "$authority_spawn_line" == *"$MULTIAGENT role-exec"* ]]
   [[ "$authority_spawn_line" != *"--allow-write $ROOT"* ]]
 fi
 [[ "$authority_spawn_line" == *"--access read-only"* ]]
-assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/decision-authority-read-only/meta.env" "role=reviewer"
-assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/decision-authority-read-only/meta.env" "codex_access=read-only"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/reviewer-read-only/meta.env" "role=reviewer"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/reviewer-read-only/meta.env" "codex_access=read-only"
 
-printf 'Progress update: still running\n' >"$MOCK_TMUX_CAPTURES/decision-authority-read-only.txt"
-if MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$MULTIAGENT" subagent wait decision-authority-read-only --timeout 0 --poll-interval 0 >"$TMPDIR/authority-wait-timeout.out" 2>&1; then
+printf 'Progress update: still running\n' >"$MOCK_TMUX_CAPTURES/reviewer-read-only.txt"
+if MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$MULTIAGENT" subagent wait reviewer-read-only --timeout 0 --poll-interval 0 >"$TMPDIR/authority-wait-timeout.out" 2>&1; then
   echo "expected bounded subagent wait to time out for a running reviewer" >&2
   exit 1
 fi
-assert_file_contains "$TMPDIR/authority-wait-timeout.out" $'decision-authority-read-only\trunning'
+assert_file_contains "$TMPDIR/authority-wait-timeout.out" $'reviewer-read-only\trunning'
 assert_file_contains "$TMPDIR/authority-wait-timeout.out" "timed out after 0 seconds"
 
 printf 'Codex exec prompt ready\n' >"$MOCK_TMUX_CAPTURES/verifier-exec-role.txt"

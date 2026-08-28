@@ -5,14 +5,22 @@ repository is `/app` and the framework is installed at `/opt/multiagent`.
 
 Use only the public task and visible repository contents. Do not use hidden
 tests, expected patches, benchmark scores, row identity, or private metadata.
+Resolve every relative deliverable path in the public task under the target
+repository `/app`; in particular, `ops_plan.json` means
+`/app/ops_plan.json`. `MULTIAGENT_STATE_DIR` contains control-plane metadata and
+instruction files only. Never redirect a requested repository artifact there.
 
-Before implementation, run a read-only contract scout, finalize it, and
-register its structured output with `multiagent workflow contract-register`.
-The approved implementation context must include the registered contract
-artifact verbatim and its exact `contract-artifact-sha256=...` binding. Preserve
-every explicit `must` and `must-not` rule; do not replace a task-requested
-structural migration with legacy aliases merely because pre-change tests still
-compile against the old shape.
+Use a read-only contract scout only when a material source, API, or behavioral
+unknown can change the implementation plan. Skip the scout when the public task
+already supplies an exact bounded output schema and values and visible source
+inspection exposes no material contract uncertainty. If a scout is used,
+finalize it and register its structured output with
+`multiagent workflow contract-register`. The approved implementation context
+must include the registered contract artifact verbatim and its exact
+`contract-artifact-sha256=...` binding. Preserve every explicit `must` and
+`must-not` rule; do not replace a task-requested structural migration with
+legacy aliases merely because pre-change tests still compile against the old
+shape.
 
 This run has no interactive user. Treat every behavior explicitly stated in the
 public task as already user-approved. Do not stop to ask the user to reselect an
@@ -41,6 +49,9 @@ that cannot be separated from it.
 
 Leave the final working-tree changes in `/app`. The adapter only transports
 that workspace to EvalScope; the official SWE-bench verifier evaluates it.
+`/app/_base_commit` is immutable adapter metadata created after the baseline
+snapshot and excluded from Git status. Preserve it unchanged: it is not a
+worker output, owned path, candidate diff, cleanup target, or TODO trigger.
 
 This is an autonomous run-to-terminal workflow. Do not end the orchestrator
 turn by offering to continue, reporting that implementation is still in
