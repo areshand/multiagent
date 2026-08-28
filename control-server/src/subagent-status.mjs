@@ -31,12 +31,18 @@ function boundedStatusText(value, max = 180) {
 function lastProgressLine(text) {
   return String(text || "").split(/\r?\n/).reverse().map((line) => boundedStatusText(line)).find((line) => {
     if (!line || /^[─━│┃╭╮╰╯┌┐└┘═]+$/.test(line)) return false;
-    return !new Set([">", "❯", "Working…", "Working..."]).has(line);
+    if (new Set([">", "❯", "Working…", "Working..."]).has(line)) return false;
+    if (/^(?:final status:|Multiagent launch mode:)/i.test(line)) return false;
+    if (/[{,]\s*\\?"(?:type|session_id|uuid|usage|duration_ms)\\?"\s*:/.test(line)) return false;
+    try { if (typeof JSON.parse(line) === "object") return false; } catch {}
+    return true;
   }) || "";
 }
 
 function assignmentSummary(text) {
   const value = String(text || "");
+  const taskAssignment = value.match(/(?:^|\n)## Task Assignment\s*\n+([\s\S]*?)(?=\n## |$)/)?.[1];
+  if (taskAssignment?.trim()) return boundedStatusText(taskAssignment);
   const marker = value.lastIndexOf("----- BEGIN TASK APPENDIX");
   const section = marker >= 0 ? value.slice(marker) : value;
   const heading = section.split(/\r?\n/).map((line) => line.match(/^#{1,3}\s+(.+)/)?.[1] || "").find(Boolean);
@@ -64,7 +70,7 @@ export function readSubagentSnapshot(sessionRoot) {
       name: boundedStatusText(entry.name, 64),
       status,
       role: boundedStatusText(metadata.role || assignment.role || "", 48),
-      workingOn: progress || summary,
+      workingOn: terminalAgentStatuses.has(status.toLowerCase()) ? summary || progress : progress || summary,
       assignment: summary,
       updatedAt,
     };

@@ -317,6 +317,7 @@ fn codex_shell_environment_config() -> String {
         "COLORTERM",
         "LANG",
         "LC_ALL",
+        "GIT_CONFIG_*",
         "MULTIAGENT_*",
         "ORCHESTRATOR_CLI",
         "WORKER_CLI",
@@ -1392,6 +1393,10 @@ mod tests {
             arg.to_string_lossy()
                 .starts_with("shell_environment_policy.include_only=[")
         }));
+        assert!(interactive
+            .args
+            .iter()
+            .any(|arg| { arg.to_string_lossy().contains("\"GIT_CONFIG_*\"") }));
         assert!(interactive
             .args
             .iter()
