@@ -895,6 +895,7 @@ fn launch_environment(
     ] {
         values.insert(key.into(), value);
     }
+    values.extend(git_safe_directory_environment(root));
     if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
         if let Some(root) = env_nonempty("MULTIAGENT_CODEX_HOME_ROOT") {
             let home = Path::new(&root).join("orchestrator");
@@ -903,6 +904,14 @@ fn launch_environment(
         }
     }
     values
+}
+
+fn git_safe_directory_environment(root: &Path) -> BTreeMap<String, String> {
+    BTreeMap::from([
+        ("GIT_CONFIG_COUNT".into(), "1".into()),
+        ("GIT_CONFIG_KEY_0".into(), "safe.directory".into()),
+        ("GIT_CONFIG_VALUE_0".into(), root.display().to_string()),
+    ])
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4313,6 +4322,25 @@ mod tests {
         assert_eq!(shell_escape("plain/path"), "plain/path");
         assert_eq!(shell_escape("two words"), "'two words'");
         assert_eq!(shell_escape("it's"), "'it'\\''s'");
+    }
+
+    #[test]
+    fn launch_scopes_git_safe_directory_to_the_session_repository() {
+        let values = git_safe_directory_environment(Path::new(
+            "/var/lib/multiagent/repositories/multiagent",
+        ));
+        assert_eq!(
+            values.get("GIT_CONFIG_COUNT").map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            values.get("GIT_CONFIG_KEY_0").map(String::as_str),
+            Some("safe.directory")
+        );
+        assert_eq!(
+            values.get("GIT_CONFIG_VALUE_0").map(String::as_str),
+            Some("/var/lib/multiagent/repositories/multiagent")
+        );
     }
 
     #[test]
