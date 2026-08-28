@@ -48,6 +48,8 @@ jobs:
         run: cargo test --locked
       - name: Run control-server session contracts
         run: npm test --prefix control-server
+      - name: Run terminal-client contracts
+        run: npm test --prefix client
       - name: Run shell CLI and lifecycle contracts
         run: tests/run.sh
       - name: Run malicious orchestrator boundary contracts

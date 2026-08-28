@@ -1,0 +1,16 @@
+{
+  "name": "multiagent-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "multiagent-client": "bin/client.mjs"
+  },
+  "scripts": {
+    "client": "node bin/client.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

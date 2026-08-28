@@ -14,7 +14,7 @@ tradeoff.
 
 ## Intended outcome
 
-The system lets an authenticated website user start a multiagent session that
+The system lets an authenticated terminal-client user start a multiagent session that
 can investigate production systems and perform approved operations through
 versioned Markdown runbooks. One supervisor controls each session. Specialized
 agents perform their roles inside that session, an operations reviewer checks
@@ -35,7 +35,7 @@ hard-coded orchestration logic.
 ## System context
 
 ```text
-Website and authenticated user
+Terminal client and authenticated user
               |
               v
 Control server, durable thread store, and session gateway
@@ -70,8 +70,8 @@ storage configuration shown above.
 
 | Component | Owns | Must not own or know |
 | --- | --- | --- |
-| Website | User authentication, user intent, session initiation | Runbook implementation, KMS signing, production credentials |
-| Control server | Treating the authenticated website caller as the user, durable thread ownership and public history, execution-session creation, message transport, event replay, trace-derived context, result streaming | Provider lifecycle logic, agent/model turn storage, Grafana procedures, operation IDs, runbook steps, production credentials |
+| Terminal client | User login, local session-cookie storage, interactive durable-thread conversation, scriptable commands, result presentation | Runbook implementation, KMS signing, production credentials |
+| Control server | Treating the authenticated client caller as the user, durable thread ownership and public history, execution-session creation, message transport, event replay, trace-derived context, result streaming | Provider lifecycle logic, agent/model turn storage, Grafana procedures, operation IDs, runbook steps, production credentials |
 | Supervisor | One session's authority, role bootstrap, role confinement, privileged-request mediation, KMS signing | Service-specific operational procedures |
 | Orchestrator | Goal decomposition, role routing, workflow coordination | Grafana/Loki knowledge, concrete production operations, `prod-mcp` parameters, provider-specific prompts |
 | Ops agent | Reading a selected Markdown runbook, planning and requesting its steps, reporting evidence | Deployment secrets, KMS private authority, infrastructure provisioning |
@@ -83,16 +83,32 @@ storage configuration shown above.
 
 ## Accepted architecture decisions
 
-### AD-001: The website is the authorizing user
+### AD-001: The authenticated client user is the authorizing user
 
-The website authenticates the human user and submits that user's intent to the
-control server. The control server records the authenticated actor and approval
-time. It must not convert authorization into hidden prompt text or ask each role
-agent to authenticate the caller again.
+The terminal client authenticates the human user and submits that user's intent
+to the control server. It stores only the resulting session cookie in a local
+mode-`0600` file. Interactive mode presents durable thread conversation events;
+explicit subcommands emit thread state as JSON for automation. The control
+server records the authenticated actor and approval time. It must not convert
+authorization into hidden prompt text or ask each role agent to authenticate
+the caller again.
 
 The control server may have high authority because access to it is already
 restricted to authenticated users. That authority remains attributable to the
 authenticated user and session.
+
+The HTTP API is the client contract. There is no browser client and therefore no
+second thread/session state machine. The unauthenticated root route returns only
+JSON service metadata; health and readiness use their dedicated JSON routes.
+Human interaction and agent-driven testing use the same terminal client and API,
+preventing client-only ID or lifecycle behavior from drifting from the server
+contract.
+
+The terminal-client implementation lives in the top-level `client/` package.
+The `control-server/` package contains no client source or executable, and the
+control-server container image excludes `client/`. This filesystem and package
+boundary prevents the independently distributed caller from importing trusted
+server internals; the public HTTP API is their only integration surface.
 
 ### AD-002: There is one supervisor per execution session
 
@@ -108,7 +124,7 @@ the supervisor creates role processes and confines them after creation.
 
 ### AD-014: Threads outlive execution sessions
 
-A thread is the durable, user-owned task and conversation shown by the website.
+A thread is the durable, user-owned task and conversation shown by the client.
 An execution session is one isolated runtime instance created to make progress
 on that thread. The control server owns thread authorization, a small append-only
 user-visible manifest, context checkpoints, S3 trace references, and the mapping
@@ -125,11 +141,12 @@ checkpoints, and verified S3 trace references, not the previous session's
 credentials, permits, unbounded raw trace, provider home, or writable filesystem.
 
 User messages are durably and idempotently appended before acknowledgement.
-The public manifest is the website conversation source of truth, while S3
-session traces are the detailed audit and context-recovery source. WebSocket is
-a replay and live-delivery transport with stable event IDs and thread-local
-sequence numbers; raw orchestrator stdout is never streamed into a new model
-context without bounded deterministic projection.
+The public manifest is the client conversation source of truth, while S3
+session traces are the detailed audit and context-recovery source. The HTTP
+event API provides replay with stable event IDs and thread-local sequence
+numbers; WebSocket remains an optional live-delivery transport. Raw orchestrator
+stdout is never streamed into a new model context without bounded deterministic
+projection.
 
 Before a completed session runtime exits, it sends its bounded final report to
 the control gateway through a deployment-provided endpoint using a
@@ -321,7 +338,7 @@ roles and dependencies, not provider credentials, model names, or prices.
 
 ## End-to-end request flow
 
-1. The website authenticates a user and appends a goal or follow-up to a thread.
+1. The terminal client authenticates a user and appends a goal or follow-up to a thread.
 2. The control server records the actor, durably appends the user event, and
    routes it to the active execution session or creates a fresh one.
 3. The execution-session supervisor bootstraps the orchestrator and confined
@@ -343,7 +360,7 @@ roles and dependencies, not provider credentials, model names, or prices.
 14. The trace sidecar persists session evidence to S3.
 15. The session runtime delivers its bounded result to the gateway with its
     session-scoped token, and the gateway persists it before finalization.
-16. The control server streams user-safe progress and results to the website.
+16. The control server returns or streams user-safe progress and results to the terminal client.
 
 ## Deployment topology
 
@@ -354,7 +371,7 @@ The desired production topology is:
 
 | Workload | Lifetime | Network exposure | Credentials |
 | --- | --- | --- | --- |
-| Control server | Long-lived, one writer | Reverse proxy or approved private ingress | Website/session authentication only |
+| Control server | Long-lived, one writer | Reverse proxy or approved private ingress | Client/session authentication only |
 | Session runtime | One per execution session | Private | Model keys as needed, supervisor KMS and `prod-mcp` client authority |
 | Trace sidecar | Same lifetime as session | S3 egress | Narrow S3 write role |
 | `prod-mcp` | Long-lived central service | Private service endpoint | Grafana token and narrow cross-account execution roles |
@@ -473,7 +490,7 @@ Before opening a pull request, the author or agent must answer:
 
 The deployment is working only when a real test jointly verifies:
 
-1. The website or test caller authenticates and starts a multiagent session.
+1. The terminal client or test caller authenticates and starts a multiagent session.
 2. The control server records the correct current caller.
 3. A session supervisor creates the required confined roles.
 4. The orchestrator delegates a testnet log investigation to the ops role.
