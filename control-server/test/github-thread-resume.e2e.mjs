@@ -4,7 +4,6 @@ const baseUrl = new URL(process.env.MULTIAGENT_E2E_URL || "http://127.0.0.1:1808
 const repository = process.env.MULTIAGENT_E2E_REPOSITORY || "multiagent";
 const githubRepository = process.env.MULTIAGENT_E2E_GITHUB_REPOSITORY || "aptos-labs/aptos-core";
 const timeoutMs = Number(process.env.MULTIAGENT_E2E_TIMEOUT_MS || 45 * 60_000);
-const threadId = process.env.MULTIAGENT_E2E_THREAD_ID || `github-thread-e2e-${Date.now().toString(36)}`;
 
 const [unreviewed, merged] = await Promise.all([
   latestOpenPullRequestWithoutReviews(githubRepository),
@@ -26,12 +25,13 @@ if (!cookie) {
   assert.ok(cookie, "control server did not issue an authentication cookie");
 }
 
-await request("/api/threads", {
+const created = await request("/api/threads", {
   method: "POST",
   cookie,
-  body: { id: threadId, repository, title: "Aptos core pull-request investigation" },
+  body: { repository, title: "Aptos core pull-request investigation" },
   expectedStatus: 201,
 });
+const threadId = created.body.thread.id;
 
 const firstPrompt = [
   `Find the latest open pull request in ${githubRepository} that has no submitted pull-request reviews.`,

@@ -6,9 +6,10 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { WebSocket, WebSocketServer } from "ws";
 import { jobPhase, KubernetesSessionClient } from "./kubernetes-session.mjs";
-import { createThreadStore } from "./thread-store.mjs";
+import { createThreadStore, generateThreadId } from "./thread-store.mjs";
 import { deliverWorkerReport, reportDeliveryTimeoutMs } from "./worker-report-delivery.mjs";
 import { issueWorkerToken as createWorkerToken, verifyWorkerAuthorization } from "./worker-token.mjs";
+import { readSubagentSnapshot } from "./subagent-status.mjs";
 import {
   completionExitDelayMs,
   controlMode,
@@ -18,6 +19,7 @@ import {
   selectFinalMessage,
   sessionControlInvocation,
   sessionLaunchInvocation,
+  submitLocalFollowup,
   validResourceId,
 } from "./session-runtime.mjs";
 
@@ -488,6 +490,86 @@ async function workerEndpoint(id) {
   return `http://${record.podIP}:8080`;
 }
 
+const threadMessageDeliveries = new Map();
+
+function forwardWorkerFollowup(id, text) {
+  return workerEndpoint(id).then((endpoint) => new Promise((resolve, reject) => {
+    const target = new URL(`/api/sessions/${id}/terminal`, endpoint.replace(/^http/, "ws"));
+    const socket = new WebSocket(target, { headers: { authorization: `Bearer ${issueWorkerToken(id)}` } });
+    let settled = false;
+    const finish = (error = null, value = null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { socket.close(); } catch {}
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const timer = setTimeout(() => finish(new Error("session worker follow-up timed out")), 5000);
+    socket.on("open", () => socket.send(JSON.stringify({ type: "input", text })));
+    socket.on("message", (message) => {
+      try {
+        const payload = JSON.parse(message.toString());
+        if (payload.type === "accepted") finish(null, payload);
+        else if (payload.type === "error") finish(new Error(String(payload.error || "session worker rejected follow-up")));
+      } catch {
+        finish(new Error("session worker returned invalid follow-up acknowledgement"));
+      }
+    });
+    socket.on("error", (error) => finish(error));
+    socket.on("close", () => finish(new Error("session worker closed before acknowledging follow-up")));
+  }));
+}
+
+async function deliverThreadFollowup(thread, routed) {
+  const sessionId = routed.session.id;
+  const previous = threadMessageDeliveries.get(sessionId) || Promise.resolve();
+  const delivery = previous.catch(() => {}).then(async () => {
+    const sessions = await threadStore.listSessionsForActor({ threadId: thread.id, actor: thread.ownerSubject });
+    const current = sessions.find((session) => session.id === sessionId);
+    if (!current) throw new Error("thread execution session disappeared");
+    if (current.inboxAckSequence >= routed.event.sequence) return { mode: "already-delivered" };
+    const deadline = Date.now() + 30_000;
+    let lastError = null;
+    let accepted = null;
+    while (Date.now() < deadline) {
+      try {
+        if (gatewayMode) {
+          accepted = await forwardWorkerFollowup(sessionId, routed.event.payload.text);
+        } else {
+          accepted = await submitLocalFollowup({
+            id: sessionId,
+            text: routed.event.payload.text,
+            actor: thread.ownerSubject,
+            live: tmuxAlive(sessionId),
+            sendInput,
+            restart: restartWithUserMessage,
+            sessionView,
+          });
+        }
+        break;
+      } catch (error) {
+        lastError = error;
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
+    if (!accepted) throw lastError || new Error("session worker did not accept follow-up");
+    await threadStore.acknowledgeInbox({
+      threadId: thread.id,
+      sessionId,
+      generation: current.leaseGeneration,
+      throughSequence: routed.event.sequence,
+    });
+    return accepted;
+  });
+  threadMessageDeliveries.set(sessionId, delivery);
+  try {
+    return await delivery;
+  } finally {
+    if (threadMessageDeliveries.get(sessionId) === delivery) threadMessageDeliveries.delete(sessionId);
+  }
+}
+
 function proxyHttp(request, response, endpoint, workerSessionId = null) {
   const target = new URL(request.url, endpoint);
   const headers = { ...request.headers, host: target.host };
@@ -548,11 +630,22 @@ async function launchThreadExecution(thread, session) {
         authorizingEventId: session.triggerMessageId,
       });
     }
-    await threadStore.markSessionRunning({
+    const running = await threadStore.markSessionRunning({
       threadId: thread.id,
       sessionId: session.id,
       generation: session.leaseGeneration,
     });
+    const sessions = await threadStore.listSessionsForActor({ threadId: thread.id, actor: thread.ownerSubject });
+    const current = sessions.find((candidate) => candidate.id === session.id);
+    if (current && current.inboxAckSequence < session.inboxHeadSequence) {
+      await threadStore.acknowledgeInbox({
+        threadId: thread.id,
+        sessionId: session.id,
+        generation: session.leaseGeneration,
+        throughSequence: session.inboxHeadSequence,
+      });
+    }
+    return running;
   } catch (error) {
     await threadStore.finalizeSession({
       threadId: thread.id,
@@ -564,15 +657,16 @@ async function launchThreadExecution(thread, session) {
   }
 }
 
-async function projectGatewaySessionToThread(id, status) {
+async function projectSessionToThread(id, status, reportReader = readGatewayReport) {
   const record = registry.sessions[id];
   if (!record?.threadId || record.threadProjectedAt) return;
   if (status === "completed") {
-    const report = readGatewayReport(id);
+    const report = reportReader(id);
     if (!report?.report) return;
     const sessions = await threadStore.listSessionsForActor({ threadId: record.threadId, actor: record.createdBy });
     const session = sessions.find((candidate) => candidate.id === id);
     if (!session) return;
+    if (session.inboxAckSequence !== session.inboxHeadSequence) return;
     await threadStore.appendFencedSessionEvent({
       threadId: record.threadId,
       sessionId: id,
@@ -581,33 +675,34 @@ async function projectGatewaySessionToThread(id, status) {
       type: "assistant_message",
       payload: { text: report.report, transcript: scopedThreadTranscript(id, report.transcript) },
     });
-    await threadStore.acknowledgeInbox({
-      threadId: record.threadId,
-      sessionId: id,
-      generation: record.leaseGeneration,
-      throughSequence: session.inboxHeadSequence,
-    });
     await threadStore.markSessionFinishing({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration });
     const finalized = await threadStore.finalizeSession({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration });
     record.threadProjectedAt = new Date().toISOString();
     await saveRegistry();
-    if (finalized.activatedSession) {
-      const thread = await threadStore.getThreadForActor(record.threadId, record.createdBy);
-      await launchThreadExecution(thread, finalized.activatedSession);
-    }
-  } else if (status === "failed") {
+    if (finalized.activatedSession) await launchActivatedThreadSession(record, finalized.activatedSession);
+  } else if (status === "failed" || status === "paused") {
     await threadStore.appendFencedSessionEvent({
       threadId: record.threadId,
       sessionId: id,
       generation: record.leaseGeneration,
       eventId: `interrupted-${id}`,
       type: "session_interrupted",
-      payload: { text: "Execution session failed" },
+      payload: { text: status === "paused" ? "Execution session paused" : "Execution session failed" },
     });
-    await threadStore.finalizeSession({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration, status: "interrupted" });
+    const finalized = await threadStore.finalizeSession({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration, status: "interrupted" });
     record.threadProjectedAt = new Date().toISOString();
     await saveRegistry();
+    if (finalized.activatedSession) await launchActivatedThreadSession(record, finalized.activatedSession);
   }
+}
+
+async function launchActivatedThreadSession(record, session) {
+  const thread = await threadStore.getThreadForActor(record.threadId, record.createdBy);
+  await launchThreadExecution(thread, session);
+}
+
+async function projectGatewaySessionToThread(id, status) {
+  return projectSessionToThread(id, status, readGatewayReport);
 }
 
 function sessionView(id) {
@@ -624,7 +719,7 @@ function capture(id) {
   return runTmux(id, ["capture-pane", "-p", "-J", "-S", `-${captureLines}`, "-t", `${id}:orchestrator`], { maxBuffer: 8 * 1024 * 1024 });
 }
 
-function sendInput(id, text) {
+async function sendInput(id, text) {
   if (!tmuxAlive(id)) throw new Error("session is not running");
   if (typeof text !== "string" || !text.trim() || text.length > 32768) throw new Error("message must contain 1 to 32768 characters");
   if (uidSandbox) {
@@ -636,7 +731,11 @@ function sendInput(id, text) {
   }
   execFileSync("tmux", ["load-buffer", "-"], { input: text, timeout: 5000 });
   runTmux(id, ["paste-buffer", "-d", "-t", `${id}:orchestrator`]);
-  runTmux(id, ["send-keys", "-t", `${id}:orchestrator`, "Enter"]);
+  // Codex enables bracketed paste. Give the TUI one event-loop turn to commit
+  // the pasted buffer before submitting it; an immediate Enter can otherwise
+  // leave the follow-up visibly stranded in the input box.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  runTmux(id, ["send-keys", "-t", `${id}:orchestrator`, "C-m"]);
   registry.sessions[id].updatedAt = new Date().toISOString();
   registry.sessions[id].lastActivityAt = registry.sessions[id].updatedAt;
   saveRegistry();
@@ -706,6 +805,7 @@ async function retireSession(id, status, actor) {
   record[`${status}By`] = actor;
   await saveRegistry();
   writeTraceSummary(id, status);
+  await projectSessionToThread(id, status, readLocalWorkerReport);
   return sessionView(id);
 }
 
@@ -795,10 +895,11 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/api/threads") {
       if (workerMode) throw new Error("session workers cannot create threads");
       const body = await readBody(request);
+      if (body.id !== undefined) return json(response, 400, { error: "thread IDs are assigned by the control server" });
       if (gatewayMode) configuredRepository(String(body.repository || ""));
       else repositoryPath(String(body.repository || ""));
       const thread = await threadStore.createThread({
-        id: String(body.id || ""),
+        id: generateThreadId(),
         ownerSubject: username,
         repository: String(body.repository || ""),
         title: String(body.title || ""),
@@ -832,7 +933,11 @@ const server = http.createServer(async (request, response) => {
       if (workerMode) throw new Error("session workers cannot append user messages");
       const messageId = String(request.headers["idempotency-key"] || "");
       const body = await readBody(request);
-      const thread = await threadStore.getThreadForActor(threadMessagesMatch[1], username);
+      let thread = await threadStore.getThreadForActor(threadMessagesMatch[1], username);
+      if (gatewayMode && thread.activeSessionId) {
+        await reconcileGatewaySession(thread.activeSessionId);
+        thread = await threadStore.getThreadForActor(thread.id, username);
+      }
       const routed = await threadStore.appendUserMessageAndRoute({
         threadId: thread.id,
         actor: username,
@@ -841,7 +946,12 @@ const server = http.createServer(async (request, response) => {
         newSessionId: threadSessionId(thread.id),
       });
       if (routed.createdSession && routed.session.leaseGeneration !== null) await launchThreadExecution(thread, routed.session);
-      return json(response, 202, routed);
+      const delivery = routed.session.leaseGeneration === null
+        ? { mode: "queued-context" }
+        : routed.createdSession
+          ? { mode: "initial-context" }
+          : await deliverThreadFollowup(thread, routed);
+      return json(response, 202, { ...routed, delivery });
     }
     if (request.method === "GET" && url.pathname === "/api/sessions") {
       if (gatewayMode) await Promise.all(Object.keys(registry.sessions).map(reconcileGatewaySession));
@@ -948,7 +1058,7 @@ server.on("upgrade", async (request, socket, head) => {
   }
   request.sessionId = match?.[1] || null;
   request.threadId = threadMatch?.[1] || null;
-  request.username = username;
+  request.username = username || (match ? registry.sessions[match[1]]?.createdBy : null) || "deployment-gateway";
   sockets.handleUpgrade(request, socket, head, (websocket) => sockets.emit("connection", websocket, request));
 });
 
@@ -957,14 +1067,34 @@ sockets.on("connection", (socket, request) => {
   if (request.threadId) {
     let cursor = Number(new URL(request.url, "http://localhost").searchParams.get("after_sequence") || 0);
     let publishing = false;
+    let previousThread = "";
+    let previousAgents = "";
+    let lastHeartbeatAt = 0;
     const publish = async () => {
       if (publishing) return;
       publishing = true;
       try {
+        const thread = await threadStore.getThreadForActor(request.threadId, request.username);
         const events = await threadStore.readEventsAfter({ threadId: request.threadId, actor: request.username, afterSequence: cursor, limit: 200 });
         for (const event of events) {
           cursor = event.sequence;
           if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "event", event }));
+        }
+        const serializedThread = JSON.stringify(thread);
+        if (serializedThread !== previousThread && socket.readyState === WebSocket.OPEN) {
+          previousThread = serializedThread;
+          socket.send(JSON.stringify({ type: "thread", thread }));
+        }
+        const sessionId = thread.activeSessionId || null;
+        const agents = sessionId ? readSubagentSnapshot(sessionStateDir(sessionId)) : [];
+        const serializedAgents = JSON.stringify({ sessionId, agents });
+        if (serializedAgents !== previousAgents && socket.readyState === WebSocket.OPEN) {
+          previousAgents = serializedAgents;
+          socket.send(JSON.stringify({ type: "agents", sessionId, agents }));
+        }
+        if (Date.now() - lastHeartbeatAt >= 15_000 && socket.readyState === WebSocket.OPEN) {
+          lastHeartbeatAt = Date.now();
+          socket.send(JSON.stringify({ type: "heartbeat", at: new Date(lastHeartbeatAt).toISOString() }));
         }
       } catch (error) {
         if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "error", error: error.message }));
@@ -1005,14 +1135,21 @@ sockets.on("connection", (socket, request) => {
   };
   publish();
   const interval = setInterval(publish, 750);
-  socket.on("message", (message) => {
+  socket.on("message", async (message) => {
     try {
       const payload = JSON.parse(message.toString());
       if (payload.type !== "input") throw new Error("unsupported WebSocket message");
       admitSubmission(request.username, id);
       try {
-        const session = restartWithUserMessage(id, payload.text, request.username);
-        socket.send(JSON.stringify({ type: "accepted", mode: "supervisor-resume", session }));
+        socket.send(JSON.stringify({ type: "accepted", ...await submitLocalFollowup({
+          id,
+          text: payload.text,
+          actor: request.username,
+          live: tmuxAlive(id),
+          sendInput,
+          restart: restartWithUserMessage,
+          sessionView,
+        }) }));
       } finally {
         activeSubmissions.delete(id);
       }

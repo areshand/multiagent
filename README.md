@@ -54,7 +54,14 @@ persistent, Claude Code-style terminal for listing, selecting, creating, and
 continuing threads. Its explicit subcommands output JSON for agents, scripts,
 and debugging. Login stores only the scoped session cookie in a local file with
 mode `0600`; the password is read from a hidden prompt or stdin and is never
-accepted as a command-line option.
+accepted as a command-line option. The interactive prompt remains available
+while orchestrator output streams, so additional lines become durable
+follow-ups to the active execution; `/wait` explicitly waits for its reply. An
+authenticated thread WebSocket stays connected for the lifetime of the open
+thread and receives events, heartbeats, and bounded subagent status. During an
+active execution, a separate session WebSocket streams the orchestrator
+terminal. The TTY renders subagent state and current work in a compact bottom
+pane while preserving the input prompt above it.
 
 ```bash
 cd client
@@ -64,12 +71,12 @@ npm run client --
 # Non-interactive examples
 npm run client -- threads list
 npm run client -- repositories list
-npm run client -- threads create incident-123 \
-  --repository multiagent \
+npm run client -- threads create --repository multiagent \
   --message "Investigate the current incident"
-npm run client -- threads show incident-123
-npm run client -- threads watch incident-123
-npm run client -- threads send incident-123 --message "Check the latest logs"
+# Use the server-assigned thread ID returned above:
+npm run client -- threads show THREAD_ID
+npm run client -- threads watch THREAD_ID
+npm run client -- threads send THREAD_ID --message "Check the latest logs"
 ```
 
 Use `sessions list THREAD_ID` for execution details and `legacy list` or

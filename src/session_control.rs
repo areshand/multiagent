@@ -196,7 +196,10 @@ fn submit(socket: &Path, session: &str, input: &str) -> Result<ExitCode, String>
     if !pasted.success() {
         return Ok(status_code(pasted.code()));
     }
-    run_tmux(socket, &["send-keys", "-t", &target, "Enter"])
+    // Codex uses bracketed paste and may ignore a submit key delivered in the
+    // same instant as the paste. Let the TUI consume the buffer first.
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    run_tmux(socket, &["send-keys", "-t", &target, "C-m"])
 }
 
 fn status_code(code: Option<i32>) -> ExitCode {

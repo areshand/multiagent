@@ -40,6 +40,14 @@ export function selectFinalMessage(result, fallback) {
   return String(result || "").trim() || String(fallback || "").trim();
 }
 
+export async function submitLocalFollowup({ id, text, actor, live, sendInput, restart, sessionView }) {
+  if (live) {
+    await sendInput(id, text);
+    return { mode: "live-input", session: sessionView(id) };
+  }
+  return { mode: "supervisor-resume", session: restart(id, text, actor) };
+}
+
 export function normalizeWorkerReport(value) {
   if (!value || typeof value !== "object" || typeof value.report !== "string" || !value.report.trim()) return null;
   if (Buffer.byteLength(value.report, "utf8") > 64 * 1024) return null;
