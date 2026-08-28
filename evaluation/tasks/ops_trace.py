@@ -11,10 +11,10 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict
 
 
-Score = dict[str, Any]
+Score = Dict[str, Any]
 
 # Increment this whenever prompt/scorer semantics change. Saved reports retain
 # the scorer hash, while this human-readable version makes intentional contract

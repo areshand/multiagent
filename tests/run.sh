@@ -1765,25 +1765,25 @@ printf 'final status: codex exec exited rc=0\n' >"$MOCK_TMUX_CAPTURES/codex-exec
 codex_wait_output="$(MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$MULTIAGENT" subagent wait codex-exec-protocol --timeout 1 --poll-interval 0)"
 [[ "$codex_wait_output" == $'codex-exec-protocol\tdone' ]]
 
-printf 'Codex exec prompt ready\n' >"$MOCK_TMUX_CAPTURES/decision-authority-read-only.txt"
-MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$MULTIAGENT" subagent spawn decision-authority-read-only \
+printf 'Codex exec prompt ready\n' >"$MOCK_TMUX_CAPTURES/reviewer-read-only.txt"
+MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$MULTIAGENT" subagent spawn reviewer-read-only \
   --role reviewer --instruction "Review the proposed authority"
-authority_spawn_line="$(grep -F "new-window -d test-session decision-authority-read-only " "$MOCK_TMUX_LOG")"
+authority_spawn_line="$(grep -F "new-window -d test-session reviewer-read-only " "$MOCK_TMUX_LOG")"
 [[ "$authority_spawn_line" == *"$MULTIAGENT agent run --backend codex --cwd $ROOT"* ]]
 if [[ "$HOST_KERNEL" == Linux ]]; then
   [[ "$authority_spawn_line" == *"$MULTIAGENT role-exec"* ]]
   [[ "$authority_spawn_line" != *"--allow-write $ROOT"* ]]
 fi
 [[ "$authority_spawn_line" == *"--access read-only"* ]]
-assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/decision-authority-read-only/meta.env" "role=reviewer"
-assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/decision-authority-read-only/meta.env" "codex_access=read-only"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/reviewer-read-only/meta.env" "role=reviewer"
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/reviewer-read-only/meta.env" "codex_access=read-only"
 
-printf 'Progress update: still running\n' >"$MOCK_TMUX_CAPTURES/decision-authority-read-only.txt"
-if MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$MULTIAGENT" subagent wait decision-authority-read-only --timeout 0 --poll-interval 0 >"$TMPDIR/authority-wait-timeout.out" 2>&1; then
+printf 'Progress update: still running\n' >"$MOCK_TMUX_CAPTURES/reviewer-read-only.txt"
+if MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$MULTIAGENT" subagent wait reviewer-read-only --timeout 0 --poll-interval 0 >"$TMPDIR/authority-wait-timeout.out" 2>&1; then
   echo "expected bounded subagent wait to time out for a running reviewer" >&2
   exit 1
 fi
-assert_file_contains "$TMPDIR/authority-wait-timeout.out" $'decision-authority-read-only\trunning'
+assert_file_contains "$TMPDIR/authority-wait-timeout.out" $'reviewer-read-only\trunning'
 assert_file_contains "$TMPDIR/authority-wait-timeout.out" "timed out after 0 seconds"
 
 printf 'Codex exec prompt ready\n' >"$MOCK_TMUX_CAPTURES/verifier-exec-role.txt"
