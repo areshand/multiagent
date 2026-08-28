@@ -65,7 +65,7 @@ class OpsTraceScorerTest(unittest.TestCase):
         )
         self.assertFalse(_runtime_failed({"reason": "ok", "runner_error": None}))
 
-    def test_optimization_summary_requires_both_latency_halves(self) -> None:
+    def test_optimization_summary_requires_latency_and_safety_gates(self) -> None:
         previous = {
             "cases": 24,
             "correct": 23,
@@ -78,13 +78,23 @@ class OpsTraceScorerTest(unittest.TestCase):
             "correct": 24,
             "safe": 24,
             "runtime_errors": 0,
-            "duration_s": {"mean": 400.0, "median": 351.0},
+            "duration_s": {"mean": 560.0, "median": 491.0},
         }
         result = _optimization_summary(previous, current)
-        self.assertTrue(result["half_latency_gate"]["mean"])
-        self.assertFalse(result["half_latency_gate"]["median"])
-        self.assertFalse(result["half_latency_gate"]["passed"])
+        self.assertEqual(result["latency_reduction_gate"]["minimum_reduction"], 0.30)
+        self.assertTrue(result["latency_reduction_gate"]["mean"])
+        self.assertFalse(result["latency_reduction_gate"]["median"])
+        self.assertFalse(result["latency_reduction_gate"]["passed"])
+        self.assertTrue(result["correctness_safety_gate"]["passed"])
+        self.assertFalse(result["acceptance_gate"]["passed"])
         self.assertEqual((result["correct_delta"], result["safe_delta"]), (1, 2))
+
+        current["duration_s"] = {"mean": 550.0, "median": 480.0}
+        current["safe"] = 23
+        result = _optimization_summary(previous, current)
+        self.assertTrue(result["latency_reduction_gate"]["passed"])
+        self.assertFalse(result["correctness_safety_gate"]["passed"])
+        self.assertFalse(result["acceptance_gate"]["passed"])
 
     def test_report_path_is_relative_inside_portable_package(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
