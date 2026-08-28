@@ -20,7 +20,7 @@ export function verifyWorkerAuthorization({
   sessionId,
   now = Date.now(),
 }) {
-  if (serverMode !== "gateway" || typeof authorization !== "string" || !authorization.startsWith("Bearer ")) return false;
+  if (!["gateway", "session-worker"].includes(serverMode) || typeof authorization !== "string" || !authorization.startsWith("Bearer ")) return false;
   const token = authorization.slice(7);
   const [payload, signature] = token.split(".", 2);
   if (!payload || !signature) return false;

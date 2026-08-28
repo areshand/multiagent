@@ -7,7 +7,7 @@ import {
 } from "../src/worker-report-delivery.mjs";
 import { issueWorkerToken, verifyWorkerAuthorization } from "../src/worker-token.mjs";
 
-test("session worker tokens authenticate only to the matching gateway session", () => {
+test("session worker tokens authenticate only to the matching gateway or worker session", () => {
   const sessionSecret = "test-session-secret-that-is-long-enough";
   const token = issueWorkerToken({ sessionSecret, sessionId: "session-1", ttlMs: 60_000, now: 1_000 });
   const verify = (overrides = {}) => verifyWorkerAuthorization({
@@ -20,7 +20,8 @@ test("session worker tokens authenticate only to the matching gateway session", 
   });
 
   assert.equal(verify(), true);
-  assert.equal(verify({ serverMode: "session-worker" }), false);
+  assert.equal(verify({ serverMode: "session-worker" }), true);
+  assert.equal(verify({ serverMode: "local" }), false);
   assert.equal(verify({ sessionId: "session-2" }), false);
   assert.equal(verify({ now: 61_001 }), false);
   assert.equal(verify({ authorization: `Bearer ${token}tampered` }), false);
