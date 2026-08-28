@@ -14,14 +14,14 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Dict, Protocol
 
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNS_ROOT = ROOT / "evaluation" / "runs"
 CODE_EXT = {".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs", ".java", ".rb", ".sh"}
 
-Score = dict[str, Any]
+Score = Dict[str, Any]
 
 
 @dataclass(frozen=True)
