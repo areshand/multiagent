@@ -52,7 +52,7 @@ test("client login stores only the scoped session cookie with mode 0600", async 
   });
 });
 
-test("users can list durable threads through the client CLI", async () => {
+test("users can list durable threads through the terminal client", async () => {
   const sessionFile = await sessionFixture();
   const output = writer();
   let cookie = "";

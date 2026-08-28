@@ -3,6 +3,7 @@
 .worktrees
 InternalServices
 benchmarks
+client
 evaluation
 prod-mcp
 patch.txt

@@ -14,7 +14,7 @@ tradeoff.
 
 ## Intended outcome
 
-The system lets an authenticated client-CLI user start a multiagent session that
+The system lets an authenticated terminal-client user start a multiagent session that
 can investigate production systems and perform approved operations through
 versioned Markdown runbooks. One supervisor controls each session. Specialized
 agents perform their roles inside that session, an operations reviewer checks
@@ -35,7 +35,7 @@ hard-coded orchestration logic.
 ## System context
 
 ```text
-Client CLI and authenticated user
+Terminal client and authenticated user
               |
               v
 Control server, durable thread store, and session gateway
@@ -103,6 +103,12 @@ JSON service metadata; health and readiness use their dedicated JSON routes.
 Human interaction and agent-driven testing use the same terminal client and API,
 preventing client-only ID or lifecycle behavior from drifting from the server
 contract.
+
+The terminal-client implementation lives in the top-level `client/` package.
+The `control-server/` package contains no client source or executable, and the
+control-server container image excludes `client/`. This filesystem and package
+boundary prevents the independently distributed caller from importing trusted
+server internals; the public HTTP API is their only integration surface.
 
 ### AD-002: There is one supervisor per execution session
 
@@ -332,7 +338,7 @@ roles and dependencies, not provider credentials, model names, or prices.
 
 ## End-to-end request flow
 
-1. The client CLI authenticates a user and appends a goal or follow-up to a thread.
+1. The terminal client authenticates a user and appends a goal or follow-up to a thread.
 2. The control server records the actor, durably appends the user event, and
    routes it to the active execution session or creates a fresh one.
 3. The execution-session supervisor bootstraps the orchestrator and confined
@@ -354,7 +360,7 @@ roles and dependencies, not provider credentials, model names, or prices.
 14. The trace sidecar persists session evidence to S3.
 15. The session runtime delivers its bounded result to the gateway with its
     session-scoped token, and the gateway persists it before finalization.
-16. The control server returns or streams user-safe progress and results to the client CLI.
+16. The control server returns or streams user-safe progress and results to the terminal client.
 
 ## Deployment topology
 
@@ -484,7 +490,7 @@ Before opening a pull request, the author or agent must answer:
 
 The deployment is working only when a real test jointly verifies:
 
-1. The client CLI or test caller authenticates and starts a multiagent session.
+1. The terminal client or test caller authenticates and starts a multiagent session.
 2. The control server records the correct current caller.
 3. A session supervisor creates the required confined roles.
 4. The orchestrator delegates a testnet log investigation to the ops role.

@@ -5,7 +5,7 @@ does not implement another coding agent or model loop. It runs Codex, Claude
 Code, and Qwen Code in explicit roles, records durable workflow state, and
 accepts work only when reviewer evidence matches the exact final Git diff.
 
-## Stateful control server and client CLI
+## Stateful control server and terminal client
 
 The container image runs an authenticated HTTP/WebSocket gateway as PID 1. The
 repo-owned terminal client is the user and test interface; there is no browser
@@ -47,7 +47,7 @@ Important container variables:
 
 The PVC mounted at `/var/lib/multiagent` is the primary store for repositories, CLI conversation history, checkpoints, and session metadata. Final reports, a bounded terminal tail, and the transcript index live under each task's existing `logs` trace root. They reference immutable agent event traces instead of duplicating full transcripts. Deployment infrastructure may export this state to durable storage without coupling the control server to a storage provider.
 
-### Client CLI
+### Terminal client
 
 The client uses the public thread API directly. With no command it opens a
 persistent, Claude Code-style terminal for listing, selecting, creating, and
@@ -57,7 +57,7 @@ mode `0600`; the password is read from a hidden prompt or stdin and is never
 accepted as a command-line option.
 
 ```bash
-cd control-server
+cd client
 npm run client -- --server https://agent.example login operator
 npm run client --
 
