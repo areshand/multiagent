@@ -566,6 +566,8 @@ export function terminalDelta(previous, next) {
 export function terminalProgressView(value) {
   const normalized = normalizeTerminalOutput(value);
   const lines = normalized.split("\n");
+  const claude = claudeStreamProgress(lines);
+  if (claude.detected) return claude.progress;
   const looksLikeCodexTui = lines.some((line) => /^╭|^│ >_ OpenAI Codex|^› |^\s+gpt-[^ ]+|^[•◦] (?:Working|Starting MCP servers)/.test(line));
   if (!looksLikeCodexTui) return normalized;
 
@@ -598,6 +600,36 @@ export function terminalProgressView(value) {
     if (!line.trim()) continuationBudget = 0;
   }
   return progress.join("\n");
+}
+
+function claudeStreamProgress(lines) {
+  const progress = [];
+  let detected = false;
+  const append = (value) => {
+    const text = String(value || "").replace(/\s+/g, " ").trim().slice(0, 500);
+    if (text && progress.at(-1) !== text && !progress.includes(text)) progress.push(text);
+  };
+  for (const line of lines) {
+    let value;
+    try { value = JSON.parse(line.trim()); } catch { continue; }
+    if (!value || typeof value !== "object" || !new Set(["system", "assistant", "user", "result"]).has(value.type)) continue;
+    detected = true;
+    if (value.type === "result") {
+      append(value.result);
+      continue;
+    }
+    const content = Array.isArray(value.message?.content) ? value.message.content : [];
+    for (const item of content) {
+      if (item?.type === "text") append(item.text);
+      if (item?.type === "tool_use") {
+        const input = item.input && typeof item.input === "object" ? item.input : {};
+        const summary = input.description || input.summary || input.name || "";
+        append(`• ${String(item.name || "tool").slice(0, 60)}${summary ? `: ${String(summary).replace(/\s+/g, " ").trim().slice(0, 240)}` : ""}`);
+      }
+      if (item?.type === "tool_result" && item.is_error) append(`⚠ ${typeof item.content === "string" ? item.content : "Tool failed"}`);
+    }
+  }
+  return { detected, progress: progress.join("\n") };
 }
 
 const inactiveAgentStatuses = new Set(["done", "completed", "closed", "cancelled", "canceled", "failed", "released", "skipped", "finalized", "killed", "missing"]);

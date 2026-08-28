@@ -379,6 +379,28 @@ test("Codex terminal projection keeps progress and drops prompt chrome and spinn
   assert.equal(terminalProgressView("Planning\nDelegating"), "Planning\nDelegating");
 });
 
+test("Claude stream-json projection keeps concise progress without exposing provider envelopes", () => {
+  const snapshot = [
+    "Multiagent launch mode: MULTIAGENT_RESUME=0 (fresh)",
+    JSON.stringify({ type: "system", subtype: "init", tools: ["Task", "Bash"], session_id: "provider-session" }),
+    JSON.stringify({ type: "assistant", message: { content: [
+      { type: "text", text: "Checking the repository state." },
+      { type: "tool_use", name: "Task", input: { description: "Inspect HEAD", prompt: "Long internal prompt that should only appear as a compact summary" } },
+    ] } }),
+    JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", content: "thousands of raw tool output" }] } }),
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "DEPLOYED_CREATE_OK 9157586" }] } }),
+    JSON.stringify({ type: "result", result: "DEPLOYED_CREATE_OK 9157586", usage: { input_tokens: 50000 } }),
+  ].join("\n");
+
+  const projection = terminalProgressView(snapshot);
+  assert.equal(projection, [
+    "Checking the repository state.",
+    "• Task: Inspect HEAD",
+    "DEPLOYED_CREATE_OK 9157586",
+  ].join("\n"));
+  assert.doesNotMatch(projection, /session_id|input_tokens|raw tool output|Long internal prompt/);
+});
+
 test("interactive client keeps a scoped thread WebSocket open until exit", async () => {
   const sessionFile = await sessionFixture();
   const output = writer();
