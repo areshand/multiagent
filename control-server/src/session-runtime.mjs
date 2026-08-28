@@ -26,6 +26,10 @@ export function controlMode(value = process.env.MULTIAGENT_CONTROL_MODE) {
   return mode;
 }
 
+export function ownsThreadProjection(serverMode) {
+  return serverMode !== "session-worker";
+}
+
 export function findActiveSession(sessionIds, candidate, isAlive) {
   return sessionIds.find((id) => id !== candidate && isAlive(id)) || null;
 }

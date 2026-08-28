@@ -967,10 +967,10 @@ fn write_bootstrap(
         u8::from(resume),
         if resume { "resume" } else { "clean" }
     ));
-    let cwd = environment
-        .get("MULTIAGENT_STATE_DIR")
-        .map(Path::new)
-        .unwrap_or(root);
+    // State and traces live outside the checkout, but the orchestrator must
+    // reason from the repository selected by the thread. Role UID and
+    // write-policy confinement, not an unrelated cwd, enforce write access.
+    let cwd = orchestrator_working_directory(root);
     let codex_exec = environment.get("MULTIAGENT_CODEX_EXEC").map(String::as_str) == Some("1");
     let agent_headless = environment
         .get("MULTIAGENT_AGENT_HEADLESS")
@@ -1039,6 +1039,10 @@ fn write_bootstrap(
     atomic_write(path, &text, "orchestrator bootstrap")?;
     set_executable(path, 0o700)?;
     Ok(())
+}
+
+fn orchestrator_working_directory(root: &Path) -> &Path {
+    root
 }
 
 fn write_prompt_hashes<'a>(
@@ -4350,6 +4354,15 @@ mod tests {
             values.get("GIT_CONFIG_VALUE_0").map(String::as_str),
             Some("/var/lib/multiagent/repositories/multiagent")
         );
+    }
+
+    #[test]
+    fn headless_orchestrator_uses_the_selected_repository_as_cwd() {
+        let root = Path::new("/var/lib/multiagent/repositories/prod-mcp");
+        let state = Path::new("/var/lib/multiagent/state/sessions/session-1");
+        let cwd = orchestrator_working_directory(root);
+        assert_eq!(cwd, root);
+        assert_ne!(cwd, state);
     }
 
     #[test]
