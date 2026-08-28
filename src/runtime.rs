@@ -600,6 +600,16 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
     } else {
         None
     };
+    let resume_original_task = if orchestrator_resume_session.is_some() {
+        env_path("MULTIAGENT_ORIGINAL_TASK_FILE")
+            .filter(|path| path.is_file())
+            .map(|path| {
+                fs::read_to_string(&path).map_err(io_error("read original task for resume"))
+            })
+            .transpose()?
+    } else {
+        None
+    };
     let user_turn = state_dir.join("runtime_state/orchestrator-user-turn.md");
     let mut agent_prompt = prompt_bundle.clone();
     if let Some(user_message_file) = env_path("MULTIAGENT_USER_MESSAGE_FILE") {
@@ -611,7 +621,7 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
         if orchestrator_resume_session.is_some() {
             atomic_write(
                 &user_turn,
-                &format!("{}\n", user_message.trim()),
+                &resume_user_turn(resume_original_task.as_deref(), Some(user_message.trim())),
                 "orchestrator user turn",
             )?;
             agent_prompt = user_turn.clone();
@@ -632,7 +642,7 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
     } else if orchestrator_resume_session.is_some() {
         atomic_write(
             &user_turn,
-            "Continue the existing task from its persisted conversation and runtime state.\n",
+            &resume_user_turn(resume_original_task.as_deref(), None),
             "orchestrator continuation turn",
         )?;
         agent_prompt = user_turn.clone();
@@ -1043,6 +1053,28 @@ fn write_bootstrap(
 
 fn orchestrator_working_directory(root: &Path) -> &Path {
     root
+}
+
+fn resume_user_turn(original_task: Option<&str>, followup: Option<&str>) -> String {
+    let mut turn = String::from(
+        "Continue this same execution session after a prior headless pass exited before lifecycle completion.\n\
+         Reconcile the persisted workflow and subagent state against every unfinished requirement in the authenticated original task.\n\
+         A prior prose answer is not completion: finish the work, satisfy the required lifecycle gates, and produce the final answer.\n",
+    );
+    if let Some(task) = original_task.map(str::trim).filter(|task| !task.is_empty()) {
+        turn.push_str("\n## Authenticated Original Task\n\n");
+        turn.push_str(task);
+        turn.push('\n');
+    }
+    if let Some(message) = followup
+        .map(str::trim)
+        .filter(|message| !message.is_empty())
+    {
+        turn.push_str("\n## Latest Authenticated User Follow-up\n\n");
+        turn.push_str(message);
+        turn.push_str("\n\nTreat this follow-up as additive unless it explicitly replaces part of the original task.\n");
+    }
+    turn
 }
 
 fn write_prompt_hashes<'a>(
@@ -4363,6 +4395,20 @@ mod tests {
         let cwd = orchestrator_working_directory(root);
         assert_eq!(cwd, root);
         assert_ne!(cwd, state);
+    }
+
+    #[test]
+    fn native_resume_restates_original_requirements_and_additive_followup() {
+        let turn = resume_user_turn(
+            Some("Spawn scout-readme and report the repository status."),
+            Some("Also report the current branch."),
+        );
+        assert!(turn.contains("Authenticated Original Task"));
+        assert!(turn.contains("Spawn scout-readme"));
+        assert!(turn.contains("Latest Authenticated User Follow-up"));
+        assert!(turn.contains("Also report the current branch"));
+        assert!(turn.contains("additive unless it explicitly replaces"));
+        assert!(turn.contains("lifecycle gates"));
     }
 
     #[test]
