@@ -6,6 +6,10 @@ from evaluation.core import Adapter
 
 
 def load_adapter(name: str) -> Adapter:
+    if name in ("trace", "combined-trace"):
+        from evaluation.adapters.trace import ADAPTER
+
+        return ADAPTER
     if name in ("ponytail", "ponytail-safety"):
         from evaluation.adapters.ponytail import ADAPTER
 
@@ -26,4 +30,4 @@ def load_adapter(name: str) -> Adapter:
 
 
 def adapter_names() -> list[str]:
-    return ["conversation-trace", "ops-trace", "orchestration", "ponytail"]
+    return ["trace", "conversation-trace", "ops-trace", "orchestration", "ponytail"]

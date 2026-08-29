@@ -64,10 +64,16 @@ def _load_scenarios() -> tuple[dict[str, ConversationTraceScenario], str]:
 class ConversationTraceAdapter:
     name: str = "conversation-trace"
     default_arms: str = "legacy,shortcut"
+    scenarios_override: dict[str, ConversationTraceScenario] | None = None
+    source_override: str | None = None
     arms = CONVERSATION_TRACE_ARMS
 
     def __post_init__(self) -> None:
-        scenarios, source = _load_scenarios()
+        if self.scenarios_override is None:
+            scenarios, source = _load_scenarios()
+        else:
+            scenarios = dict(self.scenarios_override)
+            source = self.source_override or "injected scenarios"
         self.scenarios = scenarios
         self.description = (
             f"Conversation-trace contract v{CONVERSATION_TRACE_CONTRACT_VERSION}: compares "

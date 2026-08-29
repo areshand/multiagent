@@ -1230,6 +1230,7 @@ assert_file_contains "$TMPDIR/swe-bench-pro-config.json" '"framework": "multiage
 python3 -m evaluation.cli --list >"$TMPDIR/evaluation-list.out"
 assert_file_contains "$TMPDIR/evaluation-list.out" "ponytail"
 assert_file_contains "$TMPDIR/evaluation-list.out" "orchestration"
+assert_file_contains "$TMPDIR/evaluation-list.out" $'trace\tUnified private trace benchmark'
 assert_file_contains "$TMPDIR/evaluation-list.out" "ops-trace"
 python3 -c "from evaluation.core import system_for_arm; print(system_for_arm('baseline'))" >"$TMPDIR/evaluation-baseline-arm.out"
 assert_file_contains "$TMPDIR/evaluation-baseline-arm.out" "Evaluation Worker Launch Context"
@@ -1283,6 +1284,8 @@ python3 -m evaluation.cli --adapter orchestration --selftest >"$TMPDIR/orchestra
 assert_file_contains "$TMPDIR/orchestration-selftest.out" "selftest[orchestration]: all scorers valid"
 MULTIAGENT_OPS_TRACE_DATASET=synthetic python3 -m evaluation.cli --adapter ops-trace --selftest >"$TMPDIR/ops-trace-selftest.out"
 assert_file_contains "$TMPDIR/ops-trace-selftest.out" "selftest[ops-trace]: all scorers valid"
+MULTIAGENT_TRACE_DATASET=synthetic python3 -m evaluation.cli --adapter trace --selftest >"$TMPDIR/trace-selftest.out"
+assert_file_contains "$TMPDIR/trace-selftest.out" "selftest[trace]: all scorers valid"
 python3 -m evaluation.cli --adapter orchestration --task large-update-300 --reference-report --run-root "$TMPDIR/eval-runs" >"$TMPDIR/orchestration-reference-report.out"
 assert_file_contains "$TMPDIR/orchestration-reference-report.out" "wrote $TMPDIR/eval-runs/orchestration/"
 orchestration_results="$(find "$TMPDIR/eval-runs/orchestration" -name results.json -print -quit)"
