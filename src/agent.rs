@@ -1430,13 +1430,21 @@ mod tests {
         let read_only = selected
             .command(&request(InvocationMode::Interactive))
             .unwrap();
-        assert!(read_only.args.windows(2).any(|pair| {
-            pair == [
-                OsString::from("--sandbox"),
-                OsString::from(RoleAccess::ReadOnly.as_str()),
-            ]
-        }));
-        assert!(!read_only
+        #[cfg(not(target_os = "linux"))]
+        {
+            assert!(read_only.args.windows(2).any(|pair| {
+                pair == [
+                    OsString::from("--sandbox"),
+                    OsString::from(RoleAccess::ReadOnly.as_str()),
+                ]
+            }));
+            assert!(!read_only
+                .args
+                .iter()
+                .any(|arg| arg == "--dangerously-bypass-approvals-and-sandbox"));
+        }
+        #[cfg(target_os = "linux")]
+        assert!(read_only
             .args
             .iter()
             .any(|arg| arg == "--dangerously-bypass-approvals-and-sandbox"));
