@@ -14,6 +14,12 @@ named role/playbook modules own enforcement and procedure.
 - scope-guard.md owns scope review.
 - validation-coordinator.md owns duplicate validation prevention.
 - Spawn read-only roles through: SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn
+- Repository-only investigation uses `--role reader --access read-only`; a
+  reader never receives source ownership.
+- Direct-response completion permits no role launch, source diff, external
+  receipt, or active TODO.
+- Read-only completion requires a clean canonical diff and supervisor-sealed
+  `read-only-integrity` reviewer evidence.
 
 ## Routing And Repair Boundaries
 

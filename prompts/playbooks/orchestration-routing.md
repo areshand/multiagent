@@ -5,6 +5,20 @@ own role-specific procedure; this file does not repeat them.
 
 ## Select A Role
 
+- Answer directly, or ask one bounded clarification, when the authenticated
+  request can be handled from the current conversation without reading the
+  repository, calling an external service, or producing an artifact. Persist
+  the exact response under `MULTIAGENT_STATE_DIR`, then request
+  `multiagent orchestrator complete --direct-response --result-file PATH`.
+- Use a `reader` when answering requires repository inspection but no source
+  mutation. Readers run in the repository working directory with mechanically
+  read-only access. After readers finish, spawn one independent reviewer named
+  `read-only-integrity-reviewer-NN`; require it to inspect the live repository
+  diff, the supervisor launch manifests, and the sealed reader outputs, and to
+  emit exactly
+  `review-record: type=read-only-integrity verdict=pass diff=DIFF_SHA256` only
+  when all launches were read-only and the diff is empty. Then request
+  `multiagent orchestrator complete --read-only --result-file PATH --reviewer NAME`.
 - Use a worker when the required output is a bounded workspace change.
 - Use ops when the required output needs access to an external provider or
   deployed service covered by a Markdown runbook and prod-mcp contract. This
@@ -44,6 +58,12 @@ validation-scheduling.md and hold one validation lease per package. Give technic
 
 - A source worker needs an approved implementation context and active
   implementation permit.
+- Direct-response completion is rejected if any role was launched, any source
+  diff exists, any external receipt exists, or any workflow TODO remains.
+- Read-only completion is rejected unless every launch is a completed reader or
+  reviewer with supervisor-recorded read-only access, the repository diff is
+  empty, and the named independent reviewer has sealed passing integrity
+  evidence bound to that diff.
 - Ops execution needs finalized reviewer evidence bound to the exact request,
   goal, runbook metadata, and runbook bytes.
 - Post-implementation review types and diff bindings come from persisted

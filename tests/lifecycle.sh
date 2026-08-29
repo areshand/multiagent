@@ -51,8 +51,11 @@ printf '%s\n' \
 PROMPT_BUNDLE="$TEST_TMP/orchestrator-bundle.md"
 "$MULTIAGENT" prompt-bundle \
   --orchestrator "$FRAMEWORK_ROOT/orchestrator_prompt.md" \
+  --routing "$FRAMEWORK_ROOT/prompts/playbooks/orchestration-routing.md" \
   --lifecycle "$FRAMEWORK_ROOT/prompts/playbooks/implementation-lifecycle.md" \
   --output "$PROMPT_BUNDLE" >/dev/null
+assert_contains "$PROMPT_BUNDLE" "BEGIN ORCHESTRATION ROUTING CONTRACT"
+assert_contains "$PROMPT_BUNDLE" "--direct-response"
 assert_contains "$PROMPT_BUNDLE" "BEGIN MANDATORY IMPLEMENTATION LIFECYCLE"
 assert_contains "$PROMPT_BUNDLE" "post-implementation -> pre-implementation"
 
@@ -367,6 +370,92 @@ fi
 assert_contains "$TEST_TMP/complete.out" $'run completed\tRUN-LIFECYCLE'
 assert_contains "$LOOP_STATE/workflows/WF-LOOP/lifecycle/lifecycle.env" "phase=complete"
 assert_contains "$LOOP_STATE/workflows/WF-LOOP/lifecycle/events.log" "authority=supervisor"
+
+SHORTCUT_REPO="$TEST_TMP/shortcut-repo"
+mkdir -p "$SHORTCUT_REPO"
+git -C "$SHORTCUT_REPO" init -q
+git -C "$SHORTCUT_REPO" config user.email test@example.com
+git -C "$SHORTCUT_REPO" config user.name "Shortcut Test"
+git -C "$SHORTCUT_REPO" config commit.gpgsign false
+printf 'shortcut fixture\n' >"$SHORTCUT_REPO/README.md"
+git -C "$SHORTCUT_REPO" add README.md
+git -C "$SHORTCUT_REPO" commit -q -m initial
+SHORTCUT_TASK="$TEST_TMP/shortcut-task.md"
+printf 'Answer the bounded repository question.\n' >"$SHORTCUT_TASK"
+
+DIRECT_STATE="$TEST_TMP/direct-state"
+MULTIAGENT_STATE_DIR="$DIRECT_STATE" MULTIAGENT_ORIGINAL_TASK_FILE="$SHORTCUT_TASK" \
+  "$MULTIAGENT" workflow init WF-DIRECT >/dev/null
+DIRECT_RESULT="$DIRECT_STATE/direct-result.md"
+printf 'The direct conversational answer.\n' >"$DIRECT_RESULT"
+MULTIAGENT_ROOT="$SHORTCUT_REPO" MULTIAGENT_STATE_DIR="$DIRECT_STATE" \
+  MULTIAGENT_WORKFLOW_ID=WF-DIRECT MULTIAGENT_RUN_ID=RUN-DIRECT \
+  MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
+  "$MULTIAGENT" orchestrator complete --direct-response --result-file "$DIRECT_RESULT" \
+  >"$TEST_TMP/direct-shortcut.out"
+assert_contains "$DIRECT_STATE/workflows/WF-DIRECT/lifecycle/lifecycle.env" "phase=complete"
+assert_contains "$DIRECT_STATE/workflows/WF-DIRECT/lifecycle/events.log" "route=direct-response"
+assert_contains "$DIRECT_STATE/orchestrator-result.md" "The direct conversational answer."
+
+READ_ONLY_STATE="$TEST_TMP/read-only-state"
+MULTIAGENT_STATE_DIR="$READ_ONLY_STATE" MULTIAGENT_ORIGINAL_TASK_FILE="$SHORTCUT_TASK" \
+  "$MULTIAGENT" workflow init WF-READ-ONLY >/dev/null
+READER_NAME="reader-01"
+READ_ONLY_REVIEWER="read-only-integrity-reviewer-01"
+mkdir -p \
+  "$READ_ONLY_STATE/launch-authorizations/$READER_NAME" \
+  "$READ_ONLY_STATE/launch-authorizations/$READ_ONLY_REVIEWER" \
+  "$READ_ONLY_STATE/reviewer-evidence/$READ_ONLY_REVIEWER"
+printf '%s\n' \
+  "name=$READER_NAME" 'role=reader' 'access=read-only' \
+  'workflow_id=WF-READ-ONLY' 'state=completed' \
+  >"$READ_ONLY_STATE/launch-authorizations/$READER_NAME/launch.env"
+printf '%s\n' \
+  "name=$READ_ONLY_REVIEWER" 'role=reviewer' 'access=read-only' \
+  'workflow_id=WF-READ-ONLY' 'state=completed' \
+  >"$READ_ONLY_STATE/launch-authorizations/$READ_ONLY_REVIEWER/launch.env"
+printf '%s\n' \
+  "name=$READ_ONLY_REVIEWER" 'role=reviewer' 'access=read-only' \
+  'workflow_id=WF-READ-ONLY' 'state=completed' \
+  >"$READ_ONLY_STATE/reviewer-evidence/$READ_ONLY_REVIEWER/evidence.env"
+EMPTY_DIFF_SHA256="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+printf 'review-record: type=read-only-integrity verdict=pass diff=%s\n' \
+  "$EMPTY_DIFF_SHA256" \
+  >"$READ_ONLY_STATE/reviewer-evidence/$READ_ONLY_REVIEWER/last-message.txt"
+READ_ONLY_RESULT="$READ_ONLY_STATE/read-only-result.md"
+printf 'The repository evidence supports the bounded answer.\n' >"$READ_ONLY_RESULT"
+MULTIAGENT_ROOT="$SHORTCUT_REPO" MULTIAGENT_STATE_DIR="$READ_ONLY_STATE" \
+  MULTIAGENT_WORKFLOW_ID=WF-READ-ONLY MULTIAGENT_RUN_ID=RUN-READ-ONLY \
+  MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
+  "$MULTIAGENT" orchestrator complete --read-only --result-file "$READ_ONLY_RESULT" \
+    --reviewer "$READ_ONLY_REVIEWER" >"$TEST_TMP/read-only-shortcut.out"
+assert_contains "$READ_ONLY_STATE/workflows/WF-READ-ONLY/lifecycle/lifecycle.env" "phase=complete"
+assert_contains "$READ_ONLY_STATE/workflows/WF-READ-ONLY/lifecycle/events.log" "route=read-only"
+assert_contains "$READ_ONLY_STATE/workflows/WF-READ-ONLY/lifecycle/reviews.tsv" \
+  $'read-only-integrity\tpass'
+
+READ_ONLY_WRITE_STATE="$TEST_TMP/read-only-write-state"
+cp -R "$READ_ONLY_STATE" "$READ_ONLY_WRITE_STATE"
+sed -i.bak \
+  -e 's/phase=complete/phase=pre-implementation/' \
+  -e 's/^candidate_diff_hash=.*/candidate_diff_hash=/' \
+  -e 's/^reviewed_diff_hash=.*/reviewed_diff_hash=/' \
+  "$READ_ONLY_WRITE_STATE/workflows/WF-READ-ONLY/lifecycle/lifecycle.env"
+rm "$READ_ONLY_WRITE_STATE/workflows/WF-READ-ONLY/lifecycle/lifecycle.env.bak"
+mkdir -p "$READ_ONLY_WRITE_STATE/launch-authorizations/worker-unauthorized"
+printf '%s\n' \
+  'name=worker-unauthorized' 'role=worker' 'access=workspace-write' \
+  'workflow_id=WF-READ-ONLY' 'state=completed' \
+  >"$READ_ONLY_WRITE_STATE/launch-authorizations/worker-unauthorized/launch.env"
+if MULTIAGENT_ROOT="$SHORTCUT_REPO" MULTIAGENT_STATE_DIR="$READ_ONLY_WRITE_STATE" \
+  MULTIAGENT_WORKFLOW_ID=WF-READ-ONLY MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
+  "$MULTIAGENT" orchestrator complete --read-only \
+    --result-file "$READ_ONLY_WRITE_STATE/read-only-result.md" \
+    --reviewer "$READ_ONLY_REVIEWER" >"$TEST_TMP/read-only-write.out" 2>&1; then
+  echo "expected read-only completion to reject a writer launch" >&2
+  exit 1
+fi
+assert_contains "$TEST_TMP/read-only-write.out" "non-read-only launch"
 
 EXTERNAL_STATE="$TEST_TMP/external-state"
 EXTERNAL_ROOT="$TEST_TMP/external-non-git-root"

@@ -19,6 +19,7 @@ const ACTIVE: &[&str] = &["open", "assigned", "in-progress"];
 const TODO_KINDS: &[&str] = &["direct", "evidence", "decision"];
 const REVIEW_TYPES: &[&str] = &[
     "decision-authority",
+    "read-only-integrity",
     "decision-drift",
     "scope",
     "technical",
@@ -1614,6 +1615,259 @@ pub fn supervisor_complete_external(id: &str) -> Result<String, String> {
     Ok(result)
 }
 
+/// Completes a conversational route that launched no role and produced no
+/// repository or external side effect.
+pub fn supervisor_complete_direct(id: &str) -> Result<String, String> {
+    require_supervisor_completion_authority()?;
+    let store = Store::configured()?;
+    let p = store.paths(id)?;
+    let _lock = store.lock(&p)?;
+    let mut state = shortcut_completion_state(&store, &p, id)?;
+    let launches = workflow_launches(&store, id)?;
+    if !launches.is_empty() {
+        return Err("direct-response completion forbids role launches".into());
+    }
+    let result_hash = shortcut_result_hash(&store)?;
+    let result = format!("direct-response:{result_hash}");
+    complete_shortcut(&p, &mut state, "direct-response", &result)?;
+    Ok(result)
+}
+
+/// Completes a repository investigation whose workers and independent reviewer
+/// were all mechanically read-only and whose repository diff stayed empty.
+pub fn supervisor_complete_read_only(id: &str, reviewer: &str) -> Result<String, String> {
+    require_supervisor_completion_authority()?;
+    valid_id("read-only reviewer", reviewer)?;
+    let store = Store::configured()?;
+    let p = store.paths(id)?;
+    let _lock = store.lock(&p)?;
+    let mut state = shortcut_completion_state(&store, &p, id)?;
+    let diff = crate::snapshot::canonical_diff(&config::root()?, "HEAD")?;
+    let diff_hash = format!("{:x}", Sha256::digest(&diff));
+    let launches = workflow_launches(&store, id)?;
+    if launches.is_empty() {
+        return Err("read-only completion requires at least one reader launch".into());
+    }
+    validate_read_only_launches(&launches, reviewer)?;
+    let evidence_dir = store.state_dir.join("reviewer-evidence").join(reviewer);
+    let evidence = read_simple_env(&evidence_dir.join("evidence.env"))?;
+    if state_value(&evidence, "role") != "reviewer"
+        || state_value(&evidence, "access") != "read-only"
+        || state_value(&evidence, "workflow_id") != id
+        || state_value(&evidence, "state") != "completed"
+    {
+        return Err(
+            "read-only reviewer evidence is not supervisor-sealed for this workflow".into(),
+        );
+    }
+    let marker = format!("review-record: type=read-only-integrity verdict=pass diff={diff_hash}");
+    let findings_marker =
+        format!("review-record: type=read-only-integrity verdict=findings diff={diff_hash}");
+    let report = fs::read_to_string(evidence_dir.join("last-message.txt"))
+        .map_err(io_error("read read-only reviewer evidence"))?;
+    let passing_markers = report
+        .lines()
+        .filter(|line| review_marker_matches(line, &marker))
+        .count();
+    let findings_markers = report
+        .lines()
+        .filter(|line| review_marker_matches(line, &findings_marker))
+        .count();
+    if passing_markers != 1 || findings_markers != 0 {
+        return Err(
+            "read-only reviewer evidence requires exactly one passing integrity marker and no findings marker"
+                .into(),
+        );
+    }
+    let review_id = format!("read-only-integrity-{}", state_value(&state, "iteration"));
+    let mut reviews = read_reviews(&p.reviews)?;
+    if !reviews.iter().any(|row| row.get(0) == review_id) {
+        reviews.push(Review {
+            fields: [
+                review_id.clone(),
+                "read-only-integrity".into(),
+                "pass".into(),
+                diff_hash.clone(),
+                evidence_dir.display().to_string(),
+                state_value(&state, "iteration").into(),
+                timestamp(),
+                reviewer.into(),
+            ],
+        });
+        write_reviews(&p.reviews, &reviews)?;
+        event(
+            &p.events,
+            "review_recorded",
+            &format!(
+                "review_id={review_id}\ttype=read-only-integrity\tverdict=pass\tdiff_hash={diff_hash}"
+            ),
+        )?;
+    }
+    let result_hash = shortcut_result_hash(&store)?;
+    let result = format!("read-only:{result_hash}");
+    complete_shortcut(&p, &mut state, "read-only", &result)?;
+    Ok(result)
+}
+
+fn validate_read_only_launches(
+    launches: &[(String, BTreeMap<String, String>)],
+    reviewer: &str,
+) -> Result<(), String> {
+    let mut readers = 0usize;
+    let mut reviewer_launch = None;
+    for (name, launch) in launches {
+        if state_value(launch, "access") != "read-only" {
+            return Err(format!(
+                "read-only completion found non-read-only launch: {name}"
+            ));
+        }
+        if state_value(launch, "state") != "completed" {
+            return Err(format!(
+                "read-only completion found unfinished launch: {name}"
+            ));
+        }
+        match state_value(launch, "role") {
+            "reader" => readers += 1,
+            "reviewer" if name == reviewer => reviewer_launch = Some(launch),
+            "reviewer" => {}
+            role => {
+                return Err(format!(
+                    "read-only completion found unsupported role {role}: {name}"
+                ))
+            }
+        }
+    }
+    if readers == 0 {
+        return Err("read-only completion requires at least one completed reader".into());
+    }
+    if reviewer_launch.is_none() {
+        return Err(format!(
+            "read-only completion requires completed reviewer launch: {reviewer}"
+        ));
+    }
+    Ok(())
+}
+
+fn require_supervisor_completion_authority() -> Result<(), String> {
+    if config::lifecycle_enforced()
+        && std::env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1")
+        && std::env::var("MULTIAGENT_AUTHORITY_SERVER_CHILD").as_deref() != Ok("1")
+    {
+        return Err("lifecycle completion must execute inside the authority supervisor".into());
+    }
+    Ok(())
+}
+
+fn shortcut_completion_state(
+    store: &Store,
+    paths: &Paths,
+    id: &str,
+) -> Result<BTreeMap<String, String>, String> {
+    let state = read_env(&paths.state, id)?;
+    if state_value(&state, "phase") != "pre-implementation" {
+        return Err(format!(
+            "shortcut completion requires phase=pre-implementation, got {}",
+            state_value(&state, "phase")
+        ));
+    }
+    if source_implementation_started(&state) {
+        return Err("shortcut completion cannot bypass a started source lifecycle".into());
+    }
+    validate_original_task(&state)?;
+    let active = read_todos(&paths.todos)?
+        .into_iter()
+        .filter(|row| active(row.get(4)))
+        .map(|row| row.get(0).to_string())
+        .collect::<Vec<_>>();
+    if !active.is_empty() {
+        return Err(format!(
+            "shortcut completion blocked by active TODOs: {}",
+            active.join(",")
+        ));
+    }
+    let diff = crate::snapshot::canonical_diff(&config::root()?, "HEAD")?;
+    if !diff.is_empty() {
+        return Err("shortcut completion requires an unchanged repository diff".into());
+    }
+    if reviewed_operation_receipt_exists(&store.state_dir)? {
+        return Err("shortcut completion forbids external operation receipts".into());
+    }
+    Ok(state)
+}
+
+fn workflow_launches(
+    store: &Store,
+    id: &str,
+) -> Result<Vec<(String, BTreeMap<String, String>)>, String> {
+    let root = store.state_dir.join("launch-authorizations");
+    if !root.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut launches = Vec::new();
+    for entry in fs::read_dir(&root).map_err(io_error("list launch authorizations"))? {
+        let entry = entry.map_err(io_error("read launch authorization"))?;
+        if !entry
+            .file_type()
+            .map_err(io_error("inspect launch authorization"))?
+            .is_dir()
+        {
+            continue;
+        }
+        let metadata = read_simple_env(&entry.path().join("launch.env"))?;
+        if state_value(&metadata, "workflow_id") == id {
+            launches.push((entry.file_name().to_string_lossy().into_owned(), metadata));
+        }
+    }
+    Ok(launches)
+}
+
+fn reviewed_operation_receipt_exists(state_dir: &Path) -> Result<bool, String> {
+    let root = state_dir.join("operations");
+    if !root.is_dir() {
+        return Ok(false);
+    }
+    for entry in fs::read_dir(root).map_err(io_error("list operation receipts"))? {
+        if entry
+            .map_err(io_error("read operation receipt entry"))?
+            .path()
+            .join("receipt.json")
+            .is_file()
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn shortcut_result_hash(store: &Store) -> Result<String, String> {
+    let result = store.state_dir.join("orchestrator-result.md");
+    if !result.is_file() {
+        return Err("shortcut completion requires the persisted orchestrator result".into());
+    }
+    sha256(&result)
+}
+
+fn complete_shortcut(
+    paths: &Paths,
+    state: &mut BTreeMap<String, String>,
+    route: &str,
+    result: &str,
+) -> Result<(), String> {
+    state.insert("phase".into(), "complete".into());
+    state.insert("candidate_diff_hash".into(), result.into());
+    state.insert("reviewed_diff_hash".into(), result.into());
+    state.insert("updated_at".into(), timestamp());
+    write_env(&paths.state, state)?;
+    event(
+        &paths.events,
+        "phase_transitioned",
+        &format!(
+            "from=pre-implementation\tto=complete\titeration={}\tauthority=supervisor\troute={route}",
+            state_value(state, "iteration")
+        ),
+    )
+}
+
 fn source_implementation_started(state: &BTreeMap<String, String>) -> bool {
     !matches!(state_value(state, "preimplementation_gate"), "" | "pending")
         || [
@@ -2468,6 +2722,49 @@ mod tests {
             &format!("evidence includes {marker}"),
             marker
         ));
+    }
+
+    #[test]
+    fn read_only_shortcut_rejects_any_writer_launch() {
+        let launch = |role: &str, access: &str, state: &str| {
+            BTreeMap::from([
+                ("role".into(), role.into()),
+                ("access".into(), access.into()),
+                ("state".into(), state.into()),
+            ])
+        };
+        let valid = vec![
+            (
+                "reader-01".into(),
+                launch("reader", "read-only", "completed"),
+            ),
+            (
+                "read-only-integrity-reviewer-01".into(),
+                launch("reviewer", "read-only", "completed"),
+            ),
+        ];
+        assert!(validate_read_only_launches(&valid, "read-only-integrity-reviewer-01").is_ok());
+
+        let mut writer = valid.clone();
+        writer.push((
+            "worker-01".into(),
+            launch("worker", "workspace-write", "completed"),
+        ));
+        assert!(
+            validate_read_only_launches(&writer, "read-only-integrity-reviewer-01")
+                .unwrap_err()
+                .contains("non-read-only")
+        );
+
+        let unfinished = vec![
+            ("reader-01".into(), launch("reader", "read-only", "running")),
+            valid[1].clone(),
+        ];
+        assert!(
+            validate_read_only_launches(&unfinished, "read-only-integrity-reviewer-01")
+                .unwrap_err()
+                .contains("unfinished")
+        );
     }
 
     #[test]
