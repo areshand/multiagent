@@ -153,6 +153,51 @@ dataset exists, the adapter falls back to three synthetic contract cases so CI
 can verify scorer behavior without private data. Set
 `MULTIAGENT_OPS_TRACE_DATASET=synthetic` to force that fallback explicitly.
 
+## Trace-derived conversational workflow comparison
+
+`conversation-trace` is a separate companion to the 24-row `ops-trace` solve
+benchmark. It does not change or extend the ops scorer. It replays bounded
+follow-up context from real Codex sessions and compares only production
+workflow behavior: completion, selected route, role fanout, writer launches,
+repository cleanliness, and latency. It deliberately does not claim to judge
+semantic answer quality.
+
+Generate a private, pseudonymized 12-case dataset locally:
+
+```bash
+python3 -m evaluation.conversation_trace_dataset \
+  --sessions "$HOME/.codex/sessions" \
+  --sessions "$HOME/.codex/archived_sessions" \
+  --output "$HOME/projects/traces/benchmark/conversation-trace-cases.json" \
+  --max-cases 12
+```
+
+The generator accepts only multi-turn cases, removes runtime-injected context,
+rejects requests mentioning credentials or external mutations, and classifies
+read-only cases only when every observed tool call is on a conservative local
+read allowlist. The resulting dataset contains pseudonymized user/assistant
+prose, remains `private: true` and `publishable: false`, and must not be
+committed or replayed through a model without explicit approval.
+
+Build the two production images from the revisions being compared, then run:
+
+```bash
+MULTIAGENT_CONVERSATION_TRACE_SPLIT=all python3 -m evaluation.cli \
+  --adapter conversation-trace \
+  --agent-cli codex \
+  --model gpt-5.6-sol \
+  --arms legacy,shortcut \
+  --runs 1 \
+  --workers 2 \
+  --timeout 900
+```
+
+The default image tags are `multiagent:conversation-trace-legacy` and
+`multiagent:conversation-trace-shortcut`. Override them with
+`MULTIAGENT_CONVERSATION_TRACE_LEGACY_IMAGE` and
+`MULTIAGENT_CONVERSATION_TRACE_SHORTCUT_IMAGE`. When no private dataset is
+present, the adapter uses three synthetic cases for scorer self-tests.
+
 Use `--agent-cli claude` for Claude Code or `--agent-cli codex` for Codex. The
 Codex path uses the local Codex configuration and default model unless
 `--model` is supplied. Live agent runs may create commits inside their isolated
@@ -165,6 +210,7 @@ Rescore a saved run without another model call:
 python3 -m evaluation.cli --adapter ponytail --rescore evaluation/runs/ponytail/<stamp>
 python3 -m evaluation.cli --adapter orchestration --rescore evaluation/runs/orchestration/<stamp>
 python3 -m evaluation.cli --adapter ops-trace --rescore evaluation/runs/ops-trace/<stamp>
+python3 -m evaluation.cli --adapter conversation-trace --rescore evaluation/runs/conversation-trace/<stamp>
 ```
 
 ## Outputs

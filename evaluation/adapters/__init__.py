@@ -18,8 +18,12 @@ def load_adapter(name: str) -> Adapter:
         from evaluation.adapters.ops_trace import ADAPTER
 
         return ADAPTER
+    if name in ("conversation-trace", "shortcut-trace"):
+        from evaluation.adapters.conversation_trace import ADAPTER
+
+        return ADAPTER
     raise KeyError(name)
 
 
 def adapter_names() -> list[str]:
-    return ["ops-trace", "orchestration", "ponytail"]
+    return ["conversation-trace", "ops-trace", "orchestration", "ponytail"]

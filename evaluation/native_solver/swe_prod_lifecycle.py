@@ -31,6 +31,7 @@ from .swe_prod_contracts import (
 from .swe_prod_repository import (
     git_head,
     list_untracked_files,
+    make_conversation_prompt,
     make_prompt,
     mark_untracked_intent_to_add,
     materialize_committed_changes,
@@ -193,7 +194,13 @@ def active_workflow_phase() -> str | None:
     return None
 
 
-def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, timeout: int) -> int:
+def run_prod_solver(
+    prompt_path: str | None,
+    workdir: Path,
+    repo_root: Path,
+    timeout: int,
+    prompt_profile: str = "swe",
+) -> int:
     """Run the production workflow and leave its current diff for SWE-bench.
 
     The adapter only starts the workflow and exposes its final workspace diff.
@@ -260,7 +267,12 @@ def run_prod_solver(prompt_path: str | None, workdir: Path, repo_root: Path, tim
     issue = read_prompt(prompt_path)
     task_metadata = read_task_metadata()
     log("solver metadata is public-only; official expected-test metadata is not exposed to the solver")
-    autonomous_prompt = make_prompt(repo_root, workdir, issue, task_metadata)
+    if prompt_profile == "swe":
+        autonomous_prompt = make_prompt(repo_root, workdir, issue, task_metadata)
+    elif prompt_profile == "conversation":
+        autonomous_prompt = make_conversation_prompt(repo_root, issue)
+    else:
+        raise RuntimeError(f"unsupported production prompt profile: {prompt_profile}")
     session = f"swe-prod-{os.getpid()}"
     toolchain_prefix = ":".join(toolchain_path_prefixes())
     path_parts = [str(RUNTIME_ROOT), str(repo_root / "bin")]

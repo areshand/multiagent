@@ -24,8 +24,15 @@ def main(argv: list[str]) -> int:
         type=int,
         default=int(os.environ.get("EVAL_PROD_MULTIAGENT_TIMEOUT", "3300")),
     )
+    parser.add_argument("--prompt-profile", choices=["swe", "conversation"], default="swe")
     args = parser.parse_args(argv[1:])
-    return _lifecycle.run_prod_solver(args.prompt, Path(args.workdir), Path(args.multiagent_root), args.timeout)
+    return _lifecycle.run_prod_solver(
+        args.prompt,
+        Path(args.workdir),
+        Path(args.multiagent_root),
+        args.timeout,
+        args.prompt_profile,
+    )
 
 
 run_prod_solver = _lifecycle.run_prod_solver

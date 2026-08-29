@@ -546,6 +546,10 @@ def markdown_report(adapter: Adapter, results: list[dict[str, Any]]) -> str:
         ("Max Agents", "max_concurrent_agents_mean"),
         ("Avg Agents", "avg_concurrent_agents_mean"),
         ("Concurrency", "concurrency_ratio_mean"),
+        ("Route Match", "route_match_mean"),
+        ("Agents", "agent_count_mean"),
+        ("Writers", "writer_count_mean"),
+        ("No Diff", "repo_diff_clean_mean"),
     ]
     visible_extra_columns = [
         column for column in extra_columns if any(row.get(column[1]) is not None for row in rows)
