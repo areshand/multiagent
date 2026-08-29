@@ -1,0 +1,15 @@
+DEPLOYMENT RUNBOOK OWNERSHIP
+
+The Markdown files in this directory are source-build defaults for local
+development and tests. They are not the source of truth for a deployed
+multiagent service.
+
+Production runbooks are versioned under
+InternalServices/artifacts/multiagent/runbooks, selected by that repository's
+service catalog, digest-bound to prod-mcp policy, and mounted over these default
+paths at deployment time.
+
+Do not make a production procedure change only in this directory. Change the
+authoritative InternalServices artifact, update its semantic version and
+prod-mcp digest when required, and then mirror the resulting content here when
+source builds should carry the same default.
