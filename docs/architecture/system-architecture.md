@@ -78,7 +78,7 @@ storage configuration shown above.
 | Ops reviewer | Comparing the proposed or observed operation with the authorized goal and runbook | Production credentials, independent execution authority |
 | Other role agents | Their assigned reasoning or implementation role | Supervisor authority and unrelated role capabilities |
 | `prod-mcp` | Authentication verification, signed-permit validation, operation schemas, target allowlists, execution, receipts | Multiagent workflow orchestration and model-provider behavior |
-| `InternalServices` | Images, deployments, secrets, IAM, KMS, service accounts, endpoints, ingress, DNS, certificates, S3 trace export | Agent reasoning and runbook procedures |
+| `InternalServices` | Images, deployments, secrets, IAM, KMS, service accounts, endpoints, ingress, DNS, certificates, S3 trace export, and distribution of deployment-specific Markdown runbook artifacts | Agent reasoning, procedure logic embedded in deployment code, and environment-specific secrets inside runbooks |
 | Markdown runbooks | Human-readable operational procedure, operation version, allowed phase progression | Credentials and environment-specific secrets |
 
 The deployment may also place a trusted repository-preparation init container
@@ -330,6 +330,13 @@ Secrets, service accounts, IAM roles, and environment configuration. It owns
 building or selecting application images and deploying `multiagent` and
 `prod-mcp` as separate workloads.
 
+Deployment-specific operational runbooks may be source-controlled as Markdown
+artifacts in `InternalServices`, selected by its service catalog, and mounted
+read-only into session runtimes. Terraform, Helm, catalog fields, and agent
+prompts must not duplicate or interpret their procedure steps. The deployment
+must preserve the exact artifact bytes whose digest is authorized by
+`prod-mcp`; repository location does not weaken the Markdown runbook boundary.
+
 The model API keys belong to the intended deployment account or project. Model
 selection and economical test settings are deployment configuration rather
 than hard-coded prompts.
@@ -368,6 +375,11 @@ Every operation and runbook has an explicit version. A semantic change to a
 request schema, allowed behavior, or runbook procedure requires a version
 change. Permits and receipts bind the exact runbook content digest and contract
 fields.
+
+A deployment-specific runbook's source of truth may live in the deployment
+repository. The service catalog must select the exact artifact, mount it
+read-only within the framework runbooks directory, and bind the same content
+digest in the corresponding `prod-mcp` target policy.
 
 The Rust permit producer and TypeScript permit consumer must share conformance
 fixtures. In the longer term, a canonical machine-readable schema should be
