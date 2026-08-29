@@ -76,8 +76,15 @@ impl AuthorityRequest {
                     && (args.len() == 1
                         || (args.len() == 2 && args[1] == "--external-only")
                         || (args.len() == 4
-                            && args[1] == "--external-only"
-                            && args[2] == "--result-file")) =>
+                            && matches!(
+                                args[1].as_str(),
+                                "--external-only" | "--direct-response"
+                            )
+                            && args[2] == "--result-file")
+                        || (args.len() == 6
+                            && args[1] == "--read-only"
+                            && args[2] == "--result-file"
+                            && args[4] == "--reviewer")) =>
             {
                 (AuthorityOperation::OrchestratorComplete, &args[1..])
             }
@@ -338,6 +345,31 @@ mod tests {
                 ]),
             )
         );
+        let direct_completion = AuthorityRequest::from_cli(
+            "orchestrator",
+            &strings(&[
+                "complete",
+                "--direct-response",
+                "--result-file",
+                "/state/direct.md",
+            ]),
+        )
+        .expect("direct completion request");
+        assert!(direct_completion.authorized_for(config::ORCHESTRATOR_UID));
+        let read_only_completion = AuthorityRequest::from_cli(
+            "orchestrator",
+            &strings(&[
+                "complete",
+                "--read-only",
+                "--result-file",
+                "/state/result.md",
+                "--reviewer",
+                "read-only-integrity-reviewer-01",
+            ]),
+        )
+        .expect("read-only completion request");
+        assert!(read_only_completion.authorized_for(config::ORCHESTRATOR_UID));
+        assert!(!read_only_completion.authorized_for(config::READER_UID));
         assert!(AuthorityRequest::from_cli(
             "orchestrator",
             &strings(&["complete", "--unsupported"]),

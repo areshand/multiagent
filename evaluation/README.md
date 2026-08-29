@@ -8,8 +8,8 @@ the runner.
 ## Concepts
 
 - **Adapter**: loads evaluation tasks, prepares each task workspace, and
-  scores completed work. Current adapters are `ponytail`, `orchestration`, and
-  `ops-trace`.
+  scores completed work. `trace` is the unified trace entry point; focused
+  adapters remain available for `ops-trace` and `conversation-trace`.
 - **Task**: a single assignment with a prompt, seed files, and a scorer.
 - **Arm**: an instruction profile to compare, such as `baseline` or
   `ponytail-full`. Adapters may load the worker rules or the full orchestrator
@@ -32,6 +32,7 @@ Validate an adapter without model/API spend:
 ```bash
 python3 -m evaluation.cli --adapter ponytail --selftest
 python3 -m evaluation.cli --adapter orchestration --selftest
+python3 -m evaluation.cli --adapter trace --selftest
 python3 -m evaluation.cli --adapter ops-trace --selftest
 ```
 
@@ -40,6 +41,7 @@ Generate a no-agent reference report:
 ```bash
 python3 -m evaluation.cli --adapter ponytail --reference-report --run-root /tmp/multiagent-eval
 python3 -m evaluation.cli --adapter orchestration --reference-report --run-root /tmp/multiagent-eval
+python3 -m evaluation.cli --adapter trace --reference-report --run-root /tmp/multiagent-eval
 python3 -m evaluation.cli --adapter ops-trace --reference-report --run-root /tmp/multiagent-eval
 ```
 
@@ -60,6 +62,53 @@ python3 -m evaluation.cli \
   --runs 1 \
   --workers 1
 ```
+
+## Unified trace benchmark
+
+The `trace` adapter combines the 24-row ops dataset and 12-row conversational
+dataset under one private manifest, one CLI entry point, and one report. It is
+a suite composition, not a scorer merge:
+
+- ops rows keep measuring whether the requested operations plan is solved
+  within the architecture and authority contract;
+- conversation rows keep measuring completion, route, fanout, write safety,
+  and latency without claiming semantic answer quality;
+- reports group rows by suite and never average the two scoring contracts into
+  one benchmark-wide correctness claim.
+
+After generating the two focused datasets, combine them locally:
+
+```bash
+python3 -m evaluation.trace_dataset \
+  --ops "$HOME/projects/traces/ops-trace-cases.json" \
+  --conversation "$HOME/projects/traces/conversation-trace-cases.json" \
+  --output "$HOME/projects/traces/trace-cases.json"
+```
+
+The combined file remains mode `0600`, `private: true`, and
+`publishable: false`. It nests the original manifests, records their hashes,
+and does not add raw traces. Combining manifests does not authorize a live
+model replay.
+
+Run both suites through one matrix command:
+
+```bash
+MULTIAGENT_TRACE_SPLIT=all python3 -m evaluation.cli \
+  --adapter trace \
+  --agent-cli codex \
+  --model gpt-5.6-sol \
+  --arms baseline,multiagent,legacy,shortcut \
+  --runs 1 \
+  --workers 4 \
+  --timeout 900
+```
+
+The runner applies `baseline,multiagent` only to ops tasks and
+`legacy,shortcut` only to conversation tasks; incompatible cross-suite cells
+are skipped. Set `MULTIAGENT_TRACE_DATASET` to override the combined manifest
+and `MULTIAGENT_TRACE_SPLIT` to `train`, `validation`, `test`, or `all`.
+When the local combined manifest is absent, the adapter uses both suites'
+synthetic contract cases so CI can validate the unified entry point.
 
 ## Trace-derived operations benchmark
 
@@ -88,7 +137,7 @@ Generate a private pseudonymized dataset from a redacted trace export:
 ```bash
 python3 -m evaluation.ops_trace_dataset \
   --traces "$HOME/projects/traces" \
-  --output "$HOME/projects/traces/benchmark/ops-trace-cases.json" \
+  --output "$HOME/projects/traces/ops-trace-cases.json" \
   --max-cases 24
 ```
 
@@ -153,6 +202,52 @@ dataset exists, the adapter falls back to three synthetic contract cases so CI
 can verify scorer behavior without private data. Set
 `MULTIAGENT_OPS_TRACE_DATASET=synthetic` to force that fallback explicitly.
 
+## Trace-derived conversational workflow comparison
+
+`conversation-trace` is the focused compatibility entry point for the
+conversation suite included by `trace`. It does not change or extend the ops
+scorer. It replays bounded
+follow-up context from real Codex sessions and compares only production
+workflow behavior: completion, selected route, role fanout, writer launches,
+repository cleanliness, and latency. It deliberately does not claim to judge
+semantic answer quality.
+
+Generate a private, pseudonymized 12-case dataset locally:
+
+```bash
+python3 -m evaluation.conversation_trace_dataset \
+  --sessions "$HOME/.codex/sessions" \
+  --sessions "$HOME/.codex/archived_sessions" \
+  --output "$HOME/projects/traces/conversation-trace-cases.json" \
+  --max-cases 12
+```
+
+The generator accepts only multi-turn cases, removes runtime-injected context,
+rejects requests mentioning credentials or external mutations, and classifies
+read-only cases only when every observed tool call is on a conservative local
+read allowlist. The resulting dataset contains pseudonymized user/assistant
+prose, remains `private: true` and `publishable: false`, and must not be
+committed or replayed through a model without explicit approval.
+
+Build the two production images from the revisions being compared, then run:
+
+```bash
+MULTIAGENT_CONVERSATION_TRACE_SPLIT=all python3 -m evaluation.cli \
+  --adapter conversation-trace \
+  --agent-cli codex \
+  --model gpt-5.6-sol \
+  --arms legacy,shortcut \
+  --runs 1 \
+  --workers 2 \
+  --timeout 900
+```
+
+The default image tags are `multiagent:conversation-trace-legacy` and
+`multiagent:conversation-trace-shortcut`. Override them with
+`MULTIAGENT_CONVERSATION_TRACE_LEGACY_IMAGE` and
+`MULTIAGENT_CONVERSATION_TRACE_SHORTCUT_IMAGE`. When no private dataset is
+present, the adapter uses three synthetic cases for scorer self-tests.
+
 Use `--agent-cli claude` for Claude Code or `--agent-cli codex` for Codex. The
 Codex path uses the local Codex configuration and default model unless
 `--model` is supplied. Live agent runs may create commits inside their isolated
@@ -164,7 +259,9 @@ Rescore a saved run without another model call:
 ```bash
 python3 -m evaluation.cli --adapter ponytail --rescore evaluation/runs/ponytail/<stamp>
 python3 -m evaluation.cli --adapter orchestration --rescore evaluation/runs/orchestration/<stamp>
+python3 -m evaluation.cli --adapter trace --rescore evaluation/runs/trace/<stamp>
 python3 -m evaluation.cli --adapter ops-trace --rescore evaluation/runs/ops-trace/<stamp>
+python3 -m evaluation.cli --adapter conversation-trace --rescore evaluation/runs/conversation-trace/<stamp>
 ```
 
 ## Outputs

@@ -150,12 +150,16 @@ fn register_launch(args: &[String], renew: bool) -> Result<(), String> {
         .ok_or_else(|| "register-launch requires a valid NAME".to_string())?;
     let options = parse_options(&args[1..])?;
     let role = required_option(&options, "--role")?;
+    let requested_access = options.get("--access").map(String::as_str);
     let cli = required_option(&options, "--cli")?;
     let cli_bin = required_option(&options, "--cli-bin")?;
     let instruction_source = PathBuf::from(required_option(&options, "--instruction-file")?);
-    if !matches!(role, "worker" | "verifier" | "reviewer" | "scout" | "ops") {
+    if !matches!(
+        role,
+        "worker" | "reader" | "verifier" | "reviewer" | "scout" | "ops"
+    ) {
         return Err(
-            "register-launch role must be worker, verifier, reviewer, scout, or ops".into(),
+            "register-launch role must be worker, reader, verifier, reviewer, scout, or ops".into(),
         );
     }
     if !matches!(cli, "codex" | "claude" | "qwen") {
@@ -228,11 +232,7 @@ fn register_launch(args: &[String], renew: bool) -> Result<(), String> {
             expected_instruction.display()
         ));
     }
-    let access = if role == "worker" {
-        "workspace-write"
-    } else {
-        "read-only"
-    };
+    let access = launch_access(role, requested_access)?;
     let assignment = state.join("assignments").join(name);
     let owned_paths = if access == "workspace-write" {
         if !assignment.join("assignment.env").is_file() {
@@ -257,6 +257,7 @@ fn register_launch(args: &[String], renew: bool) -> Result<(), String> {
             return Err(format!("launch authorization is not renewable: {name}"));
         }
         if current.get("role").map(String::as_str) != Some(role)
+            || current.get("access").map(String::as_str) != Some(access)
             || current.get("cli").map(String::as_str) != Some(cli)
             || current.get("cli_bin").map(String::as_str) != Some(cli_bin)
         {
@@ -317,6 +318,24 @@ Findings marker: decision-review: capsule-sha256={} verdict=findings\n",
     }
     println!("launch authorized\t{name}\t{role}\t{access}");
     Ok(())
+}
+
+fn launch_access<'a>(role: &str, requested: Option<&'a str>) -> Result<&'a str, String> {
+    let access = requested.unwrap_or(if role == "worker" {
+        "workspace-write"
+    } else {
+        "read-only"
+    });
+    if !matches!(access, "read-only" | "workspace-write") {
+        return Err("register-launch access must be read-only or workspace-write".into());
+    }
+    if access == "workspace-write" && role != "worker" {
+        return Err("workspace-write access is reserved for implementation workers".into());
+    }
+    if role == "reader" && access != "read-only" {
+        return Err("reader launches require read-only access".into());
+    }
+    Ok(access)
 }
 
 pub fn claim_launch(state: &Path, name: &str) -> Result<LaunchAuthorization, String> {
@@ -576,6 +595,7 @@ fn parse_options(args: &[String]) -> Result<BTreeMap<String, String>, String> {
         if !matches!(
             pair[0].as_str(),
             "--role"
+                | "--access"
                 | "--cli"
                 | "--cli-bin"
                 | "--instruction-file"
@@ -1179,6 +1199,7 @@ pub fn start(_state: &Path, _executable: &Path) -> Result<u32, String> {
 
 #[cfg(test)]
 mod tests {
+    use super::launch_access;
     #[cfg(target_os = "linux")]
     use super::serve_connection;
     #[cfg(target_os = "linux")]
@@ -1191,5 +1212,20 @@ mod tests {
         drop(client);
 
         assert!(!serve_connection(&mut server).expect("isolate disconnected client"));
+    }
+
+    #[test]
+    fn supervisor_derives_and_confines_launch_access() {
+        assert_eq!(launch_access("worker", None).unwrap(), "workspace-write");
+        assert_eq!(
+            launch_access("worker", Some("read-only")).unwrap(),
+            "read-only"
+        );
+        assert_eq!(launch_access("reader", None).unwrap(), "read-only");
+        assert!(launch_access("reader", Some("workspace-write"))
+            .unwrap_err()
+            .contains("reserved"));
+        assert!(launch_access("reviewer", Some("workspace-write")).is_err());
+        assert!(launch_access("worker", Some("unknown")).is_err());
     }
 }

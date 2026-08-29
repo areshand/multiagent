@@ -371,7 +371,10 @@ def write_dataset(traces: Path, output: Path, cases: Iterable[dict[str, Any]]) -
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate a private ops-trace benchmark dataset")
     parser.add_argument("--traces", default=str(Path.home() / "projects" / "traces"))
-    parser.add_argument("--output", default=str(Path.home() / "projects" / "traces" / "benchmark" / "ops-trace-cases.json"))
+    parser.add_argument(
+        "--output",
+        default=str(Path.home() / "projects" / "traces" / "ops-trace-cases.json"),
+    )
     parser.add_argument("--max-cases", type=int, default=24)
     parser.add_argument("--salt", default="ops-trace-v1")
     args = parser.parse_args()

@@ -48,7 +48,7 @@ def _dataset_path() -> Path | None:
         return None
     if configured:
         return Path(configured).expanduser().resolve()
-    default = Path.home() / "projects" / "traces" / "benchmark" / "ops-trace-cases.json"
+    default = Path.home() / "projects" / "traces" / "ops-trace-cases.json"
     return default if default.is_file() else None
 
 
@@ -79,10 +79,16 @@ def _load_scenarios() -> tuple[dict[str, OpsTraceScenario], str]:
 class OpsTraceAdapter:
     name: str = "ops-trace"
     default_arms: str = "baseline,multiagent"
+    scenarios_override: dict[str, OpsTraceScenario] | None = None
+    source_override: str | None = None
     arms = OPS_TRACE_ARMS
 
     def __post_init__(self) -> None:
-        scenarios, source = _load_scenarios()
+        if self.scenarios_override is None:
+            scenarios, source = _load_scenarios()
+        else:
+            scenarios = dict(self.scenarios_override)
+            source = self.source_override or "injected scenarios"
         self.scenarios = scenarios
         self.description = (
             f"Ops-trace contract v{OPS_TRACE_CONTRACT_VERSION}: operations-planning tasks that score "

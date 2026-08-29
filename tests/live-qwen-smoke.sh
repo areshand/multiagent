@@ -28,7 +28,7 @@ QWEN_BIN="$QWEN_BIN" \
 MULTIAGENT_AGENT_TIMEOUT_SECONDS="${MULTIAGENT_AGENT_TIMEOUT_SECONDS:-300}" \
   "$MULTIAGENT" agent run \
   --backend qwen \
-  --cwd "$WORKSPACE" \
+  --working-directory "$WORKSPACE" \
   --prompt-file "$SMOKE_ROOT/read-only.prompt" \
   --final-output "$SMOKE_ROOT/read-only.final" \
   --trace-dir "$SMOKE_ROOT/traces/read-only" \
@@ -45,7 +45,7 @@ QWEN_BIN="$QWEN_BIN" \
 MULTIAGENT_AGENT_TIMEOUT_SECONDS="${MULTIAGENT_AGENT_TIMEOUT_SECONDS:-300}" \
   "$MULTIAGENT" agent run \
   --backend qwen \
-  --cwd "$WORKSPACE" \
+  --working-directory "$WORKSPACE" \
   --prompt-file "$SMOKE_ROOT/write.prompt" \
   --final-output "$SMOKE_ROOT/write.final" \
   --trace-dir "$SMOKE_ROOT/traces/write" \

@@ -413,6 +413,29 @@ identity, or evidence boundary. The Claude headless adapter therefore disables
 its built-in `Agent` and legacy `Task` tools; delegated work must enter through
 the registered `multiagent subagent` lifecycle.
 
+The orchestrator may propose one of three execution routes, but the supervisor
+selects the corresponding mechanical completion gate:
+
+- A direct-response route may answer a question or request one bounded
+  clarification without launching another role. It requires a clean repository,
+  no external operation, no role launch, no active workflow obligation, and no
+  source lifecycle state. Because it produces no independently mutable artifact
+  or external effect, it does not require a reviewer.
+- A read-only investigation route may launch repository readers with the
+  selected repository as their working directory. The supervisor denies source
+  writes, records the exact read-only launch manifests and sealed outputs, and
+  requires an independent read-only integrity review bound to the unchanged
+  repository diff before completion.
+- A source implementation route uses the sealed iteration, writer ownership,
+  frozen candidate diff, and mechanically derived review obligations described
+  below.
+
+The route proposal is semantic input, not authority. A reviewer evaluates the
+supervisor-sealed access evidence and result, but reviewer prose never replaces
+UID separation, Landlock, assignment ownership, diff binding, or the completion
+gate. If any source write or production operation occurs, the direct and
+read-only gates fail and the applicable full workflow must be used.
+
 For source implementation, adaptivity happens at iteration boundaries. The
 orchestrator submits one complete iteration plan containing the committed
 decision, worker dependency graph, bounded ownership, and any additional

@@ -104,7 +104,7 @@ impl BackendPaths {
 
 #[derive(Clone, Debug)]
 pub struct AgentRequest {
-    pub cwd: PathBuf,
+    pub working_directory: PathBuf,
     pub prompt_file: Option<PathBuf>,
     pub final_output: Option<PathBuf>,
     pub access: RoleAccess,
@@ -116,7 +116,11 @@ pub struct AgentRequest {
 pub struct CommandSpec {
     pub program: String,
     pub args: Vec<OsString>,
-    pub cwd: PathBuf,
+    // Some providers (currently Codex) also receive this path through a
+    // provider-native CLI argument. This process-level cwd is still required
+    // for providers such as Claude Code and Qwen Code whose normal session
+    // commands derive their workspace from the inherited working directory.
+    pub working_directory: PathBuf,
     pub stdin_file: Option<PathBuf>,
     // Interactive compatibility only. Headless backends must use stdin_file.
     pub legacy_prompt_argument: Option<PathBuf>,
@@ -246,7 +250,11 @@ impl AgentBackend for CodexBackend {
                         "codex native resume is not enabled by the v1 backend contract".into(),
                     );
                 }
-                args.extend(["exec".into(), "--cd".into(), request.cwd.as_os_str().into()]);
+                args.extend([
+                    "exec".into(),
+                    "--cd".into(),
+                    request.working_directory.as_os_str().into(),
+                ]);
                 args.push("--skip-git-repo-check".into());
                 for value in codex_safety_args(request.access, true) {
                     args.push(value.into());
@@ -261,13 +269,13 @@ impl AgentBackend for CodexBackend {
                 Ok(CommandSpec {
                     program: self.executable.clone(),
                     args,
-                    cwd: request.cwd.clone(),
+                    working_directory: request.working_directory.clone(),
                     stdin_file: request.prompt_file.clone(),
                     legacy_prompt_argument: None,
                 })
             }
             InvocationMode::Interactive => {
-                args.extend(["--cd".into(), request.cwd.as_os_str().into()]);
+                args.extend(["--cd".into(), request.working_directory.as_os_str().into()]);
                 for value in codex_safety_args(request.access, false) {
                     args.push(value.into());
                 }
@@ -281,7 +289,7 @@ impl AgentBackend for CodexBackend {
                 // invocation so Codex cannot block unattended bootstrap on
                 // its first-run project trust prompt.
                 let trusted_cwd = request
-                    .cwd
+                    .working_directory
                     .to_string_lossy()
                     .replace('\\', "\\\\")
                     .replace('"', "\\\"");
@@ -297,7 +305,7 @@ impl AgentBackend for CodexBackend {
                 Ok(CommandSpec {
                     program: self.executable.clone(),
                     args,
-                    cwd: request.cwd.clone(),
+                    working_directory: request.working_directory.clone(),
                     stdin_file: None,
                     legacy_prompt_argument: request.prompt_file.clone(),
                 })
@@ -382,7 +390,7 @@ impl AgentBackend for ClaudeBackend {
                 Ok(CommandSpec {
                     program: self.executable.clone(),
                     args,
-                    cwd: request.cwd.clone(),
+                    working_directory: request.working_directory.clone(),
                     stdin_file: request.prompt_file.clone(),
                     legacy_prompt_argument: None,
                 })
@@ -390,7 +398,7 @@ impl AgentBackend for ClaudeBackend {
             InvocationMode::Interactive => Ok(CommandSpec {
                 program: self.executable.clone(),
                 args: vec!["--dangerously-skip-permissions".into()],
-                cwd: request.cwd.clone(),
+                working_directory: request.working_directory.clone(),
                 stdin_file: None,
                 legacy_prompt_argument: request.prompt_file.clone(),
             }),
@@ -448,7 +456,7 @@ impl AgentBackend for QwenBackend {
         Ok(CommandSpec {
             program: self.executable.clone(),
             args,
-            cwd: request.cwd.clone(),
+            working_directory: request.working_directory.clone(),
             stdin_file: request.prompt_file.clone(),
             legacy_prompt_argument: None,
         })
@@ -462,10 +470,11 @@ fn codex_safety_args(_access: RoleAccess, _headless: bool) -> Vec<&'static str> 
 
 #[cfg(not(target_os = "linux"))]
 fn codex_safety_args(access: RoleAccess, headless: bool) -> Vec<&'static str> {
-    if !headless {
+    if !headless && access == RoleAccess::WorkspaceWrite {
         // The interactive orchestrator must reach the tmux server so it can
-        // create and coordinate role-isolated subagent windows. Headless role
-        // processes retain their requested Codex sandbox below.
+        // create and coordinate role-isolated subagent windows. Interactive
+        // read-only roles and all headless roles retain their requested Codex
+        // sandbox below.
         return vec!["--dangerously-bypass-approvals-and-sandbox"];
     }
     vec!["--sandbox", access.as_str(), "-c", "approval_policy=never"]
@@ -489,7 +498,7 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
 
 fn print_usage() {
     println!(
-        "Usage:\n  multiagent agent backend-info BACKEND\n  multiagent agent run --backend BACKEND --cwd DIR --prompt-file FILE --final-output FILE --trace-dir DIR --access read-only|workspace-write [--resume-session ID]"
+        "Usage:\n  multiagent agent backend-info BACKEND\n  multiagent agent run --backend BACKEND --working-directory DIR --prompt-file FILE --final-output FILE --trace-dir DIR --access read-only|workspace-write [--resume-session ID]"
     );
 }
 
@@ -519,8 +528,16 @@ fn run_backend(args: &[String]) -> Result<ExitCode, String> {
     let mut index = 0;
     while index < args.len() {
         let key = match args[index].as_str() {
-            "--backend" | "--cwd" | "--prompt-file" | "--final-output" | "--trace-dir"
-            | "--access" | "--resume-session" => args[index].trim_start_matches("--"),
+            "--backend"
+            | "--working-directory"
+            | "--prompt-file"
+            | "--final-output"
+            | "--trace-dir"
+            | "--access"
+            | "--resume-session" => args[index].trim_start_matches("--"),
+            // Compatibility for callers deployed before the driver contract
+            // named this value explicitly.
+            "--cwd" => "working-directory",
             other => return Err(format!("unknown agent run argument: {other}")),
         };
         let value = args
@@ -537,15 +554,15 @@ fn run_backend(args: &[String]) -> Result<ExitCode, String> {
             .ok_or_else(|| format!("agent run requires --{key}"))
     };
     let id = BackendId::parse(&required("backend")?)?;
-    let cwd = PathBuf::from(required("cwd")?);
+    let working_directory = PathBuf::from(required("working-directory")?);
     let prompt_file = PathBuf::from(required("prompt-file")?);
     let final_output = PathBuf::from(required("final-output")?);
     let trace_root = PathBuf::from(required("trace-dir")?);
     let access = RoleAccess::parse(&required("access")?)?;
-    if !cwd.is_dir() {
+    if !working_directory.is_dir() {
         return Err(format!(
             "agent working directory is missing: {}",
-            cwd.display()
+            working_directory.display()
         ));
     }
     if !prompt_file.is_file() {
@@ -559,7 +576,7 @@ fn run_backend(args: &[String]) -> Result<ExitCode, String> {
     let selected = backend(id, &paths);
     let version = selected.preflight()?;
     let request = AgentRequest {
-        cwd,
+        working_directory,
         prompt_file: Some(prompt_file.clone()),
         final_output: Some(final_output.clone()),
         access,
@@ -663,7 +680,7 @@ fn run_spec(
         "executable": version.executable,
         "version": version.version,
         "capabilities": capabilities,
-        "cwd": spec.cwd,
+        "cwd": spec.working_directory,
         "prompt_bytes": prompt.len(),
         "prompt_file": files.prompt,
         "final_output": files.final_output,
@@ -681,7 +698,7 @@ fn run_spec(
     let mut command = Command::new(&spec.program);
     command
         .args(&spec.args)
-        .current_dir(&spec.cwd)
+        .current_dir(&spec.working_directory)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -1326,7 +1343,7 @@ mod tests {
 
     fn request(mode: InvocationMode) -> AgentRequest {
         AgentRequest {
-            cwd: PathBuf::from("/tmp/project with spaces"),
+            working_directory: PathBuf::from("/tmp/project with spaces"),
             prompt_file: Some(PathBuf::from("/tmp/prompt file")),
             final_output: Some(PathBuf::from("/tmp/final message")),
             access: RoleAccess::ReadOnly,
@@ -1339,6 +1356,29 @@ mod tests {
     fn backend_names_are_strict() {
         assert_eq!(BackendId::parse("qwen").unwrap(), BackendId::Qwen);
         assert!(BackendId::parse("ollama").is_err());
+    }
+
+    #[test]
+    fn backends_map_the_abstract_working_directory_to_their_native_mechanism() {
+        let paths = BackendPaths {
+            codex: "codex".into(),
+            claude: "claude".into(),
+            qwen: "qwen".into(),
+        };
+        let expected = PathBuf::from("/tmp/project with spaces");
+
+        for id in [BackendId::Codex, BackendId::Claude, BackendId::Qwen] {
+            let command = backend(id, &paths)
+                .command(&request(InvocationMode::Headless))
+                .unwrap();
+            assert_eq!(command.working_directory, expected);
+
+            let has_codex_cd = command
+                .args
+                .windows(2)
+                .any(|pair| pair[0] == OsString::from("--cd") && pair[1] == expected.as_os_str());
+            assert_eq!(has_codex_cd, id == BackendId::Codex);
+        }
     }
 
     #[test]
@@ -1373,9 +1413,9 @@ mod tests {
         assert!(selected.command(&headless).is_err());
         assert!(!selected.capabilities().native_resume);
 
-        let interactive = selected
-            .command(&request(InvocationMode::Interactive))
-            .unwrap();
+        let mut interactive_request = request(InvocationMode::Interactive);
+        interactive_request.access = RoleAccess::WorkspaceWrite;
+        let interactive = selected.command(&interactive_request).unwrap();
         assert!(interactive.stdin_file.is_none());
         assert_eq!(
             interactive.legacy_prompt_argument,
@@ -1383,6 +1423,28 @@ mod tests {
         );
         assert!(interactive.args.iter().any(|arg| arg == "--no-alt-screen"));
         assert!(interactive
+            .args
+            .iter()
+            .any(|arg| arg == "--dangerously-bypass-approvals-and-sandbox"));
+
+        let read_only = selected
+            .command(&request(InvocationMode::Interactive))
+            .unwrap();
+        #[cfg(not(target_os = "linux"))]
+        {
+            assert!(read_only.args.windows(2).any(|pair| {
+                pair == [
+                    OsString::from("--sandbox"),
+                    OsString::from(RoleAccess::ReadOnly.as_str()),
+                ]
+            }));
+            assert!(!read_only
+                .args
+                .iter()
+                .any(|arg| arg == "--dangerously-bypass-approvals-and-sandbox"));
+        }
+        #[cfg(target_os = "linux")]
+        assert!(read_only
             .args
             .iter()
             .any(|arg| arg == "--dangerously-bypass-approvals-and-sandbox"));
@@ -1553,7 +1615,7 @@ mod tests {
         let spec = CommandSpec {
             program: "qwen".into(),
             args: vec!["--output-format".into(), "stream-json".into()],
-            cwd: PathBuf::from("/tmp"),
+            working_directory: PathBuf::from("/tmp"),
             stdin_file: Some(PathBuf::from("/tmp/prompt")),
             legacy_prompt_argument: None,
         };

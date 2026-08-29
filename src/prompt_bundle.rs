@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-const USAGE:&str="Usage:\n  multiagent prompt-bundle --orchestrator PATH --lifecycle PATH --output PATH\n\nBuilds the canonical initial orchestrator prompt from the role prompt and the\nmandatory implementation lifecycle playbook.";
+const USAGE:&str="Usage:\n  multiagent prompt-bundle --orchestrator PATH --routing PATH --lifecycle PATH --output PATH\n\nBuilds the canonical initial orchestrator prompt from the role prompt, routing contract, and mandatory implementation lifecycle playbook.";
 
 pub fn run(args: &[String]) -> Result<(), String> {
     if args
@@ -18,10 +18,14 @@ pub fn run(args: &[String]) -> Result<(), String> {
         .get("--orchestrator")
         .map(String::as_str)
         .unwrap_or("");
+    let routing = options.get("--routing").map(String::as_str).unwrap_or("");
     let lifecycle = options.get("--lifecycle").map(String::as_str).unwrap_or("");
     let output = options.get("--output").map(String::as_str).unwrap_or("");
     if !Path::new(orchestrator).is_file() {
         return Err(format!("orchestrator prompt not found: {orchestrator}"));
+    }
+    if !Path::new(routing).is_file() {
+        return Err(format!("routing prompt not found: {routing}"));
     }
     if !Path::new(lifecycle).is_file() {
         return Err(format!("lifecycle prompt not found: {lifecycle}"));
@@ -30,9 +34,11 @@ pub fn run(args: &[String]) -> Result<(), String> {
         return Err("--output is required".into());
     }
     let role = fs::read_to_string(orchestrator).map_err(io_error("read orchestrator prompt"))?;
+    let routing_text =
+        fs::read_to_string(routing).map_err(io_error("read orchestration routing prompt"))?;
     let lifecycle_text =
         fs::read_to_string(lifecycle).map_err(io_error("read lifecycle prompt"))?;
-    let text=format!("----- BEGIN ORCHESTRATOR ROLE -----\n\n{role}\n----- END ORCHESTRATOR ROLE -----\n\n----- BEGIN MANDATORY IMPLEMENTATION LIFECYCLE -----\n\n{lifecycle_text}\n----- END MANDATORY IMPLEMENTATION LIFECYCLE -----\n");
+    let text=format!("----- BEGIN ORCHESTRATOR ROLE -----\n\n{role}\n----- END ORCHESTRATOR ROLE -----\n\n----- BEGIN ORCHESTRATION ROUTING CONTRACT -----\n\n{routing_text}\n----- END ORCHESTRATION ROUTING CONTRACT -----\n\n----- BEGIN MANDATORY IMPLEMENTATION LIFECYCLE -----\n\n{lifecycle_text}\n----- END MANDATORY IMPLEMENTATION LIFECYCLE -----\n");
     atomic_write(Path::new(output), &text)?;
     println!("prompt bundle built\t{output}");
     Ok(())
@@ -43,7 +49,10 @@ fn parse_options(args: &[String]) -> Result<BTreeMap<String, String>, String> {
     let mut index = 0;
     while index < args.len() {
         let key = &args[index];
-        if !matches!(key.as_str(), "--orchestrator" | "--lifecycle" | "--output") {
+        if !matches!(
+            key.as_str(),
+            "--orchestrator" | "--routing" | "--lifecycle" | "--output"
+        ) {
             return Err(format!("unknown argument: {key}"));
         }
         let value = args

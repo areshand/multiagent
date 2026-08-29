@@ -137,6 +137,11 @@ def default_arms(adapter: Adapter) -> str:
     return str(value) if value else "baseline,ponytail-full"
 
 
+def result_adapter_name(adapter: Adapter, task_id: str) -> str:
+    resolver = getattr(adapter, "result_adapter_name", None)
+    return str(resolver(task_id)) if callable(resolver) else adapter.name
+
+
 def run_git(workdir: Path, *args: str) -> subprocess.CompletedProcess[str]:
     git = shutil.which("git") or "git"
     return subprocess.run([git, *args], cwd=workdir, capture_output=True, text=True, check=False)
@@ -283,7 +288,7 @@ def score_workspace(adapter: Adapter, task_id: str, arm: str, model: str, run_id
         except Exception as exc:
             meta = {"agent_json_error": str(exc)}
     return {
-        "adapter": adapter.name,
+        "adapter": result_adapter_name(adapter, task_id),
         "task": task_id,
         "arm": arm,
         "model": model,
@@ -541,11 +546,16 @@ def write_json_report(run_dir: Path, adapter: Adapter, results: list[dict[str, A
 
 def markdown_report(adapter: Adapter, results: list[dict[str, Any]]) -> str:
     rows = aggregate(results)
+    show_suite = adapter.name == "trace" or len({row["adapter"] for row in rows}) > 1
     extra_columns = [
         ("First Wave", "first_wave_agents_mean"),
         ("Max Agents", "max_concurrent_agents_mean"),
         ("Avg Agents", "avg_concurrent_agents_mean"),
         ("Concurrency", "concurrency_ratio_mean"),
+        ("Route Match", "route_match_mean"),
+        ("Agents", "agent_count_mean"),
+        ("Writers", "writer_count_mean"),
+        ("No Diff", "repo_diff_clean_mean"),
     ]
     visible_extra_columns = [
         column for column in extra_columns if any(row.get(column[1]) is not None for row in rows)
@@ -555,15 +565,23 @@ def markdown_report(adapter: Adapter, results: list[dict[str, Any]]) -> str:
         "",
         adapter.description,
         "",
-        "| Task | Arm | Runs | Correct | Safe | Source LOC | Source Files | Time s | Tokens | Cost |"
+        ("| Suite |" if show_suite else "")
+        + " Task | Arm | Runs | Correct | Safe | Source LOC | Source Files | Time s | Tokens | Cost |"
         + "".join(f" {label} |" for label, _key in visible_extra_columns),
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+        ("|---" if show_suite else "")
+        + "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
         + "---:|" * len(visible_extra_columns),
     ]
     for row in rows:
+        suite_prefix = f"| {row['adapter']} " if show_suite else ""
         lines.append(
-            "| {task} | {arm} | {runs} | {correct_rate} | {safe_rate} | {src_loc_mean} | "
-            "{src_files_mean} | {duration_s_mean} | {tokens_mean} | {cost_mean} |".format(**row)
+            suite_prefix
+            + (
+                "| {task} | {arm} | {runs} | {correct_rate} | {safe_rate} | {src_loc_mean} | "
+                "{src_files_mean} | {duration_s_mean} | {tokens_mean} | {cost_mean} |".format(
+                    **row
+                )
+            )
             + "".join(f" {row.get(key)} |" for _label, key in visible_extra_columns)
         )
     lines.append("")
@@ -610,15 +628,26 @@ def run_matrix(
     runs_root: Path = RUNS_ROOT,
     agent_cli: str = "claude",
 ) -> tuple[Path, list[dict[str, Any]]]:
+    arms_for_task = getattr(adapter, "arms_for_task", None)
+    compatible_pairs = [
+        (task, arm)
+        for task in tasks
+        for arm in arms
+        if not callable(arms_for_task) or arm in set(arms_for_task(task))
+    ]
+    if not compatible_pairs:
+        die("no compatible task/arm cells selected")
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     run_dir = runs_root / adapter.name / stamp
     run_dir.mkdir(parents=True, exist_ok=False)
     matrix = [
         (adapter, task, arm, model, run_id, run_dir, timeout, agent_cli)
-        for task in tasks
-        for arm in arms
+        for task, arm in compatible_pairs
         for run_id in range(1, runs + 1)
     ]
+    skipped_pairs = len(tasks) * len(arms) - len(compatible_pairs)
+    if skipped_pairs:
+        print(f"skipping {skipped_pairs} incompatible task/arm pair(s)")
     print(f"\nrunning {len(matrix)} cells in {run_dir} with {workers} worker(s)")
 
     adapter_runner = getattr(adapter, "run_cell", None)
@@ -632,7 +661,7 @@ def run_matrix(
                 row = future.result()
             except Exception as exc:
                 row = {
-                    "adapter": adapter.name,
+                    "adapter": result_adapter_name(adapter, task),
                     "agent_cli": agent_cli,
                     "task": task,
                     "arm": arm,

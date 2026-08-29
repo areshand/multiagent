@@ -7,5 +7,15 @@ client
 evaluation
 prod-mcp
 patch.txt
+model_api_key.txt
+.env
+.env.*
+*_api_key.txt
+*apikey*.txt
+*password*.txt
+*passwd*.txt
+*secret*.txt
+*.pem
+*.key
 **/node_modules
 **/target

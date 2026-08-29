@@ -489,6 +489,8 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
 
     let prompt =
         env_path("MULTIAGENT_PROMPT").unwrap_or_else(|| framework.join("orchestrator_prompt.md"));
+    let routing_prompt = env_path("MULTIAGENT_ROUTING_PROMPT")
+        .unwrap_or_else(|| framework.join("prompts/playbooks/orchestration-routing.md"));
     let lifecycle_prompt = env_path("MULTIAGENT_LIFECYCLE_PROMPT")
         .unwrap_or_else(|| framework.join("prompts/playbooks/implementation-lifecycle.md"));
     let prompt_root =
@@ -636,6 +638,8 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
     prompt_bundle::run(&[
         "--orchestrator".into(),
         prompt.display().to_string(),
+        "--routing".into(),
+        routing_prompt.display().to_string(),
         "--lifecycle".into(),
         lifecycle_prompt.display().to_string(),
         "--output".into(),
@@ -699,7 +703,13 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
     }
     write_prompt_hashes(
         &state_dir.join("runtime_state/prompt-sha256.tsv"),
-        [&prompt, &lifecycle_prompt, &prompt_bundle, &agent_prompt],
+        [
+            &prompt,
+            &routing_prompt,
+            &lifecycle_prompt,
+            &prompt_bundle,
+            &agent_prompt,
+        ],
     )?;
     workflow::run(&[
         "init-or-resume".into(),
@@ -1149,19 +1159,47 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
             .iter()
             .any(|arg| matches!(arg.as_str(), "-h" | "--help"))
     {
-        println!("Usage:\n  multiagent orchestrator complete\n  multiagent orchestrator complete --external-only --result-file PATH\n\nRuns the supervisor completion gates. External-only completion requires a self-contained caller result under MULTIAGENT_STATE_DIR.");
+        println!("Usage:\n  multiagent orchestrator complete\n  multiagent orchestrator complete --direct-response --result-file PATH\n  multiagent orchestrator complete --read-only --result-file PATH --reviewer NAME\n  multiagent orchestrator complete --external-only --result-file PATH\n\nRuns the supervisor completion gates. Shortcut and external-only completion require a self-contained caller result under MULTIAGENT_STATE_DIR.");
         return Ok(ExitCode::SUCCESS);
     }
-    let result_file = if args.len() == 1 && args[0] == "complete" {
-        None
+    #[derive(Clone, Copy)]
+    enum CompletionRoute<'a> {
+        Source,
+        Direct(&'a str),
+        ReadOnly { result: &'a str, reviewer: &'a str },
+        External(&'a str),
+    }
+    let route = if args.len() == 1 && args[0] == "complete" {
+        CompletionRoute::Source
     } else if args.len() == 4
         && args[0] == "complete"
         && args[1] == "--external-only"
         && args[2] == "--result-file"
     {
-        Some(args[3].as_str())
+        CompletionRoute::External(&args[3])
+    } else if args.len() == 4
+        && args[0] == "complete"
+        && args[1] == "--direct-response"
+        && args[2] == "--result-file"
+    {
+        CompletionRoute::Direct(&args[3])
+    } else if args.len() == 6
+        && args[0] == "complete"
+        && args[1] == "--read-only"
+        && args[2] == "--result-file"
+        && args[4] == "--reviewer"
+    {
+        CompletionRoute::ReadOnly {
+            result: &args[3],
+            reviewer: &args[5],
+        }
     } else {
         return Err(format!("unknown command: {}", args[0]));
+    };
+    let result_file = match route {
+        CompletionRoute::Source => None,
+        CompletionRoute::Direct(path) | CompletionRoute::External(path) => Some(path),
+        CompletionRoute::ReadOnly { result, .. } => Some(result),
     };
     if let Some(path) = result_file {
         persist_orchestrator_result(path)?;
@@ -1169,10 +1207,17 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
     if config::lifecycle_enforced() {
         let workflow_id = env_nonempty("MULTIAGENT_WORKFLOW_ID")
             .ok_or_else(|| "lifecycle enforcement requires MULTIAGENT_WORKFLOW_ID".to_string())?;
-        let diff = if result_file.is_some() {
-            crate::workflow::supervisor_complete_external(&workflow_id)?
-        } else {
-            crate::workflow::supervisor_complete(&workflow_id)?
+        let diff = match route {
+            CompletionRoute::Source => crate::workflow::supervisor_complete(&workflow_id)?,
+            CompletionRoute::Direct(_) => {
+                crate::workflow::supervisor_complete_direct(&workflow_id)?
+            }
+            CompletionRoute::ReadOnly { reviewer, .. } => {
+                crate::workflow::supervisor_complete_read_only(&workflow_id, reviewer)?
+            }
+            CompletionRoute::External(_) => {
+                crate::workflow::supervisor_complete_external(&workflow_id)?
+            }
         };
         println!("workflow completed\t{workflow_id}\t{diff}\tauthority=supervisor");
     } else {
@@ -1195,20 +1240,20 @@ fn persist_orchestrator_result(path: &str) -> Result<(), String> {
     let candidate = fs::canonicalize(path).map_err(io_error("canonicalize orchestrator result"))?;
     if !candidate.starts_with(&canonical_state) || !candidate.is_file() {
         return Err(
-            "external-only result file must be a regular file under MULTIAGENT_STATE_DIR".into(),
+            "orchestrator result file must be a regular file under MULTIAGENT_STATE_DIR".into(),
         );
     }
     let bytes = fs::read(&candidate).map_err(io_error("read orchestrator result"))?;
     if bytes.is_empty() || bytes.len() > MAX_RESULT_BYTES {
         return Err(format!(
-            "external-only result must contain 1 to {MAX_RESULT_BYTES} UTF-8 bytes"
+            "orchestrator result must contain 1 to {MAX_RESULT_BYTES} UTF-8 bytes"
         ));
     }
     let result = String::from_utf8(bytes)
-        .map_err(|_| "external-only result must contain valid UTF-8".to_string())?;
+        .map_err(|_| "orchestrator result must contain valid UTF-8".to_string())?;
     let result = result.trim();
     if result.is_empty() {
-        return Err("external-only result must not be blank".into());
+        return Err("orchestrator result must not be blank".into());
     }
     atomic_write(
         &state.join("orchestrator-result.md"),
@@ -1558,7 +1603,7 @@ pub fn subagent(args: &[String]) -> Result<ExitCode, String> {
 
 fn print_subagent_usage() {
     println!(
-        "Usage:\n  multiagent subagent spawn NAME [--own PATH[,PATH...] ...] [--assignment-id ID] [--workflow-id ID --decision-id ID --plan-id ID --decision-revision REV] [--branch BRANCH] [--start-commit COMMIT] [--role ROLE] [--instruction TEXT | --instruction-file PATH | -- TEXT]\n  multiagent subagent restore NAME [--force] [--instruction TEXT | --instruction-file PATH]\n  multiagent subagent reviewed-ops-cycle OPS_NAME --request-file PATH --reviewer NAME [--timeout SECONDS]\n  multiagent subagent execute-iteration --plan-file PATH [--timeout SECONDS]\n  multiagent subagent list|recover-plan|restore-all|gate-check\n  multiagent subagent poll|inspect|finalize|kill NAME [OPTIONS]\n  multiagent subagent wait NAME [--timeout SECONDS] [--poll-interval SECONDS]\n\nAll durable state and tmux subprocess orchestration are implemented by the Rust CLI."
+        "Usage:\n  multiagent subagent spawn NAME [--own PATH[,PATH...] ...] [--assignment-id ID] [--workflow-id ID --decision-id ID --plan-id ID --decision-revision REV] [--branch BRANCH] [--start-commit COMMIT] [--role ROLE] [--access read-only|workspace-write] [--instruction TEXT | --instruction-file PATH | -- TEXT]\n  multiagent subagent restore NAME [--force] [--instruction TEXT | --instruction-file PATH]\n  multiagent subagent reviewed-ops-cycle OPS_NAME --request-file PATH --reviewer NAME [--timeout SECONDS]\n  multiagent subagent execute-iteration --plan-file PATH [--timeout SECONDS]\n  multiagent subagent list|recover-plan|restore-all|gate-check\n  multiagent subagent poll|inspect|finalize|kill NAME [OPTIONS]\n  multiagent subagent wait NAME [--timeout SECONDS] [--poll-interval SECONDS]\n\nAll durable state and tmux subprocess orchestration are implemented by the Rust CLI."
     );
 }
 
@@ -1572,6 +1617,7 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
     let mut instruction_file = None::<PathBuf>;
     let mut owned = Vec::new();
     let mut role = String::new();
+    let mut requested_access = None::<CodexAccess>;
     let mut assignment_values = BTreeMap::<String, String>::new();
     let mut index = 1;
     while index < args.len() {
@@ -1584,12 +1630,21 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
                 role = required_value(args, index, "spawn --role")?.to_string();
                 if !matches!(
                     role.as_str(),
-                    "worker" | "verifier" | "reviewer" | "scout" | "ops"
+                    "worker" | "reader" | "verifier" | "reviewer" | "scout" | "ops"
                 ) {
                     return Err(
-                        "spawn --role must be worker, verifier, reviewer, scout, or ops".into(),
+                        "spawn --role must be worker, reader, verifier, reviewer, scout, or ops"
+                            .into(),
                     );
                 }
+                index += 2;
+            }
+            "--access" => {
+                requested_access = Some(RoleAccess::parse(required_value(
+                    args,
+                    index,
+                    "spawn --access",
+                )?)?);
                 index += 2;
             }
             "--assignment-id"
@@ -1665,12 +1720,19 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         _ if role.is_empty() => "worker",
         _ => role.as_str(),
     };
-    let access =
+    let default_access =
         if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") && authority_role != "worker" {
             CodexAccess::ReadOnly
         } else {
             codex_access_for_spawn(cfg, name, &role)
         };
+    let access = requested_access.unwrap_or(default_access);
+    if access == CodexAccess::WorkspaceWrite && authority_role != "worker" {
+        return Err("workspace-write access is reserved for implementation workers".into());
+    }
+    if role == "reader" && access != CodexAccess::ReadOnly {
+        return Err("reader roles require read-only access".into());
+    }
 
     require_command("tmux")?;
     let cli = &cfg.subagent_cli;
@@ -1840,6 +1902,8 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
             name.to_string(),
             "--role".to_string(),
             authority_role.to_string(),
+            "--access".to_string(),
+            access.as_str().to_string(),
             "--cli".to_string(),
             cli.to_string(),
             "--cli-bin".to_string(),
@@ -3399,6 +3463,7 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
             Some("reviewer") => "reviewer",
             Some("verifier") => "verifier",
             Some("scout") => "scout",
+            Some("reader") => "reader",
             Some("ops") => "ops",
             _ => "worker",
         };
@@ -3408,6 +3473,11 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
             name,
             "--role",
             role,
+            "--access",
+            metadata
+                .get("access")
+                .map(String::as_str)
+                .unwrap_or("read-only"),
             "--cli",
             &cli,
             "--cli-bin",
@@ -3760,12 +3830,14 @@ fn append_semantic_envelope(
 fn role_can_start_before_contract_gate(name: &str, role: &str, prompt_file: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     role == "ops"
+        || role == "reader"
         || role == "scout"
         || prompt_file == "ops-agent.md"
         || prompt_file == "ops-reviewer.md"
         || prompt_file == "contract-scout.md"
         || prompt_file == "decision-authority-reviewer.md"
         || lower.contains("ops-reviewer")
+        || lower.contains("read-only-integrity-reviewer")
         || lower.contains("contract-scout")
         || lower.contains("decision-authority-reviewer")
 }
@@ -3778,6 +3850,8 @@ fn role_prompt_name(name: &str, role: &str) -> Option<&'static str> {
     let lower = name.to_ascii_lowercase();
     let relative = if lower.contains("decision-authority-reviewer") {
         "prompts/roles/decision-authority-reviewer.md"
+    } else if lower.contains("read-only-integrity-reviewer") {
+        "prompts/roles/read-only-integrity-reviewer.md"
     } else if lower.contains("ops-reviewer") {
         "prompts/roles/ops-reviewer.md"
     } else if role == "ops" {
@@ -3795,6 +3869,8 @@ fn role_prompt_name(name: &str, role: &str) -> Option<&'static str> {
         || lower.contains("review")
     {
         "prompts/verifier.md"
+    } else if role == "reader" {
+        "prompts/roles/repository-reader.md"
     } else if role == "worker" || lower.starts_with("worker-") {
         "prompts/worker.md"
     } else {
@@ -3811,7 +3887,11 @@ fn assignment_role_for_spawn<'a>(name: &str, role: &'a str) -> &'a str {
             "scout" => "scout",
             "ops" => "ops",
             _ => match role_prompt_name(name, role) {
-                Some("prompts/verifier.md" | "prompts/roles/build-verifier.md") => "verifier",
+                Some(
+                    "prompts/verifier.md"
+                    | "prompts/roles/build-verifier.md"
+                    | "prompts/roles/read-only-integrity-reviewer.md",
+                ) => "verifier",
                 _ => "exploitation",
             },
         },
@@ -3824,16 +3904,21 @@ fn codex_access_for_spawn(cfg: &RuntimeConfig, name: &str, role: &str) -> CodexA
         path.file_name()
             .map(|value| value.to_string_lossy().to_string())
     });
-    if role == "ops" {
+    if matches!(role, "ops" | "reader") {
         CodexAccess::ReadOnly
     } else if role == "reviewer"
         || role == "verifier"
         || role == "scout"
+        || lower.starts_with("verifier-")
+        || lower.contains("reviewer")
         || lower.contains("decision-authority-reviewer")
         || matches!(
             prompt.as_deref(),
             Some(
-                "acceptance-scout.md"
+                "verifier.md"
+                    | "build-verifier.md"
+                    | "read-only-integrity-reviewer.md"
+                    | "acceptance-scout.md"
                     | "contract-scout.md"
                     | "decision-authority-reviewer.md"
                     | "scope-guard.md"
@@ -4004,7 +4089,7 @@ fn reject_parallel_generic_worker_spawn(cfg: &RuntimeConfig, name: &str) -> Resu
 #[allow(clippy::too_many_arguments)]
 fn build_cli_command(
     cli: &str,
-    cwd: &Path,
+    working_directory: &Path,
     prompt: Option<&Path>,
     output: Option<&Path>,
     codex_bin: &str,
@@ -4028,7 +4113,7 @@ fn build_cli_command(
     };
     selected
         .command(&AgentRequest {
-            cwd: cwd.to_path_buf(),
+            working_directory: working_directory.to_path_buf(),
             prompt_file: prompt.map(Path::to_path_buf),
             final_output: output.map(Path::to_path_buf),
             access,
@@ -4041,7 +4126,7 @@ fn build_cli_command(
 #[allow(clippy::too_many_arguments)]
 fn build_agent_runner_args(
     cli: &str,
-    cwd: &Path,
+    working_directory: &Path,
     prompt: &Path,
     output: &Path,
     trace_dir: &Path,
@@ -4053,8 +4138,8 @@ fn build_agent_runner_args(
         "run".into(),
         "--backend".into(),
         cli.into(),
-        "--cwd".into(),
-        cwd.display().to_string(),
+        "--working-directory".into(),
+        working_directory.display().to_string(),
         "--prompt-file".into(),
         prompt.display().to_string(),
         "--final-output".into(),
@@ -4075,7 +4160,7 @@ fn build_agent_runner_args(
 fn build_agent_runner_command(
     executable: &Path,
     cli: &str,
-    cwd: &Path,
+    working_directory: &Path,
     prompt: &Path,
     output: &Path,
     trace_dir: &Path,
@@ -4083,8 +4168,15 @@ fn build_agent_runner_command(
     resume_session: Option<&str>,
 ) -> String {
     let mut command = shell_escape(&executable.display().to_string());
-    for arg in build_agent_runner_args(cli, cwd, prompt, output, trace_dir, access, resume_session)
-    {
+    for arg in build_agent_runner_args(
+        cli,
+        working_directory,
+        prompt,
+        output,
+        trace_dir,
+        access,
+        resume_session,
+    ) {
         command.push(' ');
         command.push_str(&shell_escape(&arg));
     }
@@ -5577,6 +5669,53 @@ review-record: type=decision-authority verdict=pass diff=-\n";
             assignment_role_for_spawn("contract-scout-01-api", "reviewer"),
             "scout"
         );
+    }
+
+    #[test]
+    fn read_only_shortcut_roles_use_focused_prompts_and_read_access() {
+        let root = std::env::temp_dir().join("multiagent-read-only-role-test");
+        let cfg = RuntimeConfig {
+            session: "test".into(),
+            root: root.clone(),
+            state: root.join("state"),
+            logs: root.join("logs"),
+            policy: root.join("policy"),
+            prompt_root: root.join("prompts"),
+            worker_cli: "codex".into(),
+            subagent_cli: "codex".into(),
+            verifier_cli: "codex".into(),
+            codex_bin: "codex".into(),
+            claude_bin: "claude".into(),
+            qwen_bin: "qwen".into(),
+            code_exec: true,
+            agent_headless: true,
+        };
+        assert_eq!(
+            role_prompt_name("reader-01", "reader"),
+            Some("prompts/roles/repository-reader.md")
+        );
+        assert_eq!(
+            codex_access_for_spawn(&cfg, "reader-01", "reader"),
+            CodexAccess::ReadOnly
+        );
+        assert_eq!(
+            codex_access_for_spawn(&cfg, "verifier-01-docs", ""),
+            CodexAccess::ReadOnly
+        );
+        assert_eq!(
+            role_prompt_name("read-only-integrity-reviewer-01", "reviewer"),
+            Some("prompts/roles/read-only-integrity-reviewer.md")
+        );
+        assert!(role_can_start_before_contract_gate(
+            "reader-01",
+            "reader",
+            "worker.md"
+        ));
+        assert!(role_can_start_before_contract_gate(
+            "read-only-integrity-reviewer-01",
+            "reviewer",
+            "read-only-integrity-reviewer.md"
+        ));
     }
 
     #[test]

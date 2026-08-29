@@ -251,7 +251,7 @@ printf 'prompt payload with spaces and '\''quotes'\''\n' >"$AGENT_RUN_DIR/prompt
 QWEN_PROMPT_CAPTURE="$AGENT_RUN_DIR/prompt-captured.txt" \
   "$MULTIAGENT" agent run \
   --backend qwen \
-  --cwd "$AGENT_RUN_DIR/work" \
+  --working-directory "$AGENT_RUN_DIR/work" \
   --prompt-file "$AGENT_RUN_DIR/prompt.txt" \
   --final-output "$AGENT_RUN_DIR/final.txt" \
   --trace-dir "$AGENT_RUN_DIR/trace" \
@@ -268,7 +268,7 @@ assert_file_contains "$AGENT_TRACE/metadata.json" '"version": "qwen-code test-1.
 assert_file_contains "$AGENT_TRACE/exit.json" '"success": true'
 "$MULTIAGENT" agent run \
   --backend qwen \
-  --cwd "$AGENT_RUN_DIR/work" \
+  --working-directory "$AGENT_RUN_DIR/work" \
   --prompt-file "$AGENT_RUN_DIR/prompt.txt" \
   --final-output "$AGENT_RUN_DIR/final-second.txt" \
   --trace-dir "$AGENT_RUN_DIR/trace" \
@@ -283,7 +283,7 @@ agent_backend_info="$("$MULTIAGENT" agent backend-info qwen)"
 [[ "$agent_backend_info" == *'"version":"qwen-code test-1.0"'* ]]
 if MULTIAGENT_AGENT_TIMEOUT_SECONDS=0 "$MULTIAGENT" agent run \
   --backend qwen \
-  --cwd "$AGENT_RUN_DIR/work" \
+  --working-directory "$AGENT_RUN_DIR/work" \
   --prompt-file "$AGENT_RUN_DIR/prompt.txt" \
   --final-output "$AGENT_RUN_DIR/invalid-timeout-final.txt" \
   --trace-dir "$AGENT_RUN_DIR/invalid-timeout-trace" \
@@ -297,7 +297,7 @@ assert_file_contains "$AGENT_RUN_DIR/invalid-timeout.out" "MULTIAGENT_AGENT_TIME
 set +e
 QWEN_EXIT_CODE=7 "$MULTIAGENT" agent run \
   --backend qwen \
-  --cwd "$AGENT_RUN_DIR/work" \
+  --working-directory "$AGENT_RUN_DIR/work" \
   --prompt-file "$AGENT_RUN_DIR/prompt.txt" \
   --final-output "$AGENT_RUN_DIR/nonzero-final.txt" \
   --trace-dir "$AGENT_RUN_DIR/nonzero-trace" \
@@ -314,7 +314,7 @@ MULTIAGENT_AGENT_TIMEOUT_SECONDS=1 \
   QWEN_DESCENDANT_PID_FILE="$AGENT_RUN_DIR/descendant.pid" \
   "$MULTIAGENT" agent run \
   --backend qwen \
-  --cwd "$AGENT_RUN_DIR/work" \
+  --working-directory "$AGENT_RUN_DIR/work" \
   --prompt-file "$AGENT_RUN_DIR/prompt.txt" \
   --final-output "$AGENT_RUN_DIR/timeout-final.txt" \
   --trace-dir "$AGENT_RUN_DIR/timeout-trace" \
@@ -347,7 +347,7 @@ if [[ "$HOST_KERNEL" == Linux ]]; then
     --allow-write "$AGENT_RUN_DIR/landlock-output" \
     -- "$MULTIAGENT" agent run \
     --backend qwen \
-    --cwd "$AGENT_RUN_DIR/work" \
+    --working-directory "$AGENT_RUN_DIR/work" \
     --prompt-file "$AGENT_RUN_DIR/prompt.txt" \
     --final-output "$AGENT_RUN_DIR/landlock-output/final.txt" \
     --trace-dir "$AGENT_RUN_DIR/landlock-output/trace" \
@@ -421,6 +421,8 @@ assert_file_contains "$LAUNCH_BOOTSTRAP" "$(printf '%q' "$LAUNCH_STATE/runtime_s
 assert_file_contains "$LAUNCH_BOOTSTRAP" "export MULTIAGENT_LIFECYCLE_ENFORCEMENT=1"
 assert_file_contains "$LAUNCH_BOOTSTRAP" 'if [[ ${BASH_SOURCE[0]} != "$0" ]]; then return 0; fi'
 assert_file_contains "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "BEGIN ORCHESTRATOR ROLE"
+assert_file_contains "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "BEGIN ORCHESTRATION ROUTING CONTRACT"
+assert_file_contains "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "--direct-response"
 assert_file_contains "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "BEGIN MANDATORY IMPLEMENTATION LIFECYCLE"
 SOURCE_BOOTSTRAP_OUTPUT="$(bash -c 'source "$1"; printf "source-complete\\n"' bash "$LAUNCH_BOOTSTRAP")"
 if [[ "$SOURCE_BOOTSTRAP_OUTPUT" != "source-complete" ]]; then
@@ -508,6 +510,7 @@ MOCK_TMUX_HAS_SESSION=0 \
   "$ROOT/launch.sh" --session launch-explicit-prompt --root "$LAUNCH_TARGET" --no-attach >"$TMPDIR/launch-explicit.out"
 assert_file_contains "$TMPDIR/launch-explicit-state/orchestrator-bootstrap.sh" "$(printf '%q' "$TMPDIR/launch-explicit-state/runtime_state/orchestrator-prompt-bundle.md")"
 assert_file_contains "$TMPDIR/launch-explicit-state/runtime_state/orchestrator-prompt-bundle.md" "custom prompt"
+assert_file_contains "$TMPDIR/launch-explicit-state/runtime_state/orchestrator-prompt-bundle.md" "BEGIN ORCHESTRATION ROUTING CONTRACT"
 assert_file_contains "$TMPDIR/launch-explicit-state/runtime_state/orchestrator-prompt-bundle.md" "BEGIN MANDATORY IMPLEMENTATION LIFECYCLE"
 
 rm -f "$MOCK_TMUX_LOG"
@@ -1227,6 +1230,7 @@ assert_file_contains "$TMPDIR/swe-bench-pro-config.json" '"framework": "multiage
 python3 -m evaluation.cli --list >"$TMPDIR/evaluation-list.out"
 assert_file_contains "$TMPDIR/evaluation-list.out" "ponytail"
 assert_file_contains "$TMPDIR/evaluation-list.out" "orchestration"
+assert_file_contains "$TMPDIR/evaluation-list.out" $'trace\tUnified private trace benchmark'
 assert_file_contains "$TMPDIR/evaluation-list.out" "ops-trace"
 python3 -c "from evaluation.core import system_for_arm; print(system_for_arm('baseline'))" >"$TMPDIR/evaluation-baseline-arm.out"
 assert_file_contains "$TMPDIR/evaluation-baseline-arm.out" "Evaluation Worker Launch Context"
@@ -1280,6 +1284,8 @@ python3 -m evaluation.cli --adapter orchestration --selftest >"$TMPDIR/orchestra
 assert_file_contains "$TMPDIR/orchestration-selftest.out" "selftest[orchestration]: all scorers valid"
 MULTIAGENT_OPS_TRACE_DATASET=synthetic python3 -m evaluation.cli --adapter ops-trace --selftest >"$TMPDIR/ops-trace-selftest.out"
 assert_file_contains "$TMPDIR/ops-trace-selftest.out" "selftest[ops-trace]: all scorers valid"
+MULTIAGENT_TRACE_DATASET=synthetic python3 -m evaluation.cli --adapter trace --selftest >"$TMPDIR/trace-selftest.out"
+assert_file_contains "$TMPDIR/trace-selftest.out" "selftest[trace]: all scorers valid"
 python3 -m evaluation.cli --adapter orchestration --task large-update-300 --reference-report --run-root "$TMPDIR/eval-runs" >"$TMPDIR/orchestration-reference-report.out"
 assert_file_contains "$TMPDIR/orchestration-reference-report.out" "wrote $TMPDIR/eval-runs/orchestration/"
 orchestration_results="$(find "$TMPDIR/eval-runs/orchestration" -name results.json -print -quit)"
@@ -1670,9 +1676,10 @@ verifier_spawn_line="$(grep -F "new-window -d test-session verifier-01-docs " "$
 if [[ "$HOST_KERNEL" == Linux ]]; then
   [[ "$verifier_spawn_line" == *"$MULTIAGENT role-exec"* ]]
   [[ "$verifier_spawn_line" == *"--dangerously-bypass-approvals-and-sandbox"* ]]
-  [[ "$verifier_spawn_line" == *"--allow-write $ROOT"* ]]
+  [[ "$verifier_spawn_line" != *"--allow-write $ROOT"* ]]
 else
-  [[ "$verifier_spawn_line" == *"--sandbox workspace-write --ask-for-approval never --no-alt-screen"* ]]
+  [[ "$verifier_spawn_line" == *"--sandbox read-only -c approval_policy=never"* ]]
+  [[ "$verifier_spawn_line" == *"--no-alt-screen"* ]]
   [[ "$verifier_spawn_line" != *"--dangerously-bypass-approvals-and-sandbox"* ]]
 fi
 
@@ -1725,7 +1732,7 @@ assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/codex-exec-protocol/instru
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/codex-exec-protocol/instruction.txt" '{"cmd":"cd /app && sed -n'
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/codex-exec-protocol/instruction.txt" "Inspect /app"
 codex_exec_spawn_line="$(grep -F "new-window -d test-session codex-exec-protocol " "$MOCK_TMUX_LOG")"
-[[ "$codex_exec_spawn_line" == *"$MULTIAGENT agent run --backend codex --cwd $ROOT"* ]]
+[[ "$codex_exec_spawn_line" == *"$MULTIAGENT agent run --backend codex --working-directory $ROOT"* ]]
 if [[ "$HOST_KERNEL" == Linux ]]; then
   [[ "$codex_exec_spawn_line" == *"$MULTIAGENT role-exec"* ]]
   [[ "$codex_exec_spawn_line" == *"--allow-write $ROOT"* ]]
@@ -1742,7 +1749,7 @@ printf 'Codex exec prompt ready\n' >"$MOCK_TMUX_CAPTURES/reviewer-read-only.txt"
 MULTIAGENT_CODEX_EXEC=1 SUBAGENT_CLI=codex "$MULTIAGENT" subagent spawn reviewer-read-only \
   --role reviewer --instruction "Review the proposed authority"
 authority_spawn_line="$(grep -F "new-window -d test-session reviewer-read-only " "$MOCK_TMUX_LOG")"
-[[ "$authority_spawn_line" == *"$MULTIAGENT agent run --backend codex --cwd $ROOT"* ]]
+[[ "$authority_spawn_line" == *"$MULTIAGENT agent run --backend codex --working-directory $ROOT"* ]]
 if [[ "$HOST_KERNEL" == Linux ]]; then
   [[ "$authority_spawn_line" == *"$MULTIAGENT role-exec"* ]]
   [[ "$authority_spawn_line" != *"--allow-write $ROOT"* ]]
@@ -1816,7 +1823,7 @@ assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-qwen/meta.env" "c
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-qwen/meta.env" "access=read-only"
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-qwen/meta.env" "trace_dir=$MULTIAGENT_STATE_DIR/logs/agents/subagent-qwen"
 qwen_spawn_line="$(grep -F "new-window -d test-session subagent-qwen " "$MOCK_TMUX_LOG")"
-[[ "$qwen_spawn_line" == *"$MULTIAGENT agent run --backend qwen --cwd $ROOT"* ]]
+[[ "$qwen_spawn_line" == *"$MULTIAGENT agent run --backend qwen --working-directory $ROOT"* ]]
 [[ "$qwen_spawn_line" == *"--prompt-file $MULTIAGENT_STATE_DIR/subagents/subagent-qwen/instruction.txt"* ]]
 [[ "$qwen_spawn_line" == *"--access read-only"* ]]
 if grep -Fq "send-key test-session:subagent-qwen" "$MOCK_TMUX_LOG"; then
