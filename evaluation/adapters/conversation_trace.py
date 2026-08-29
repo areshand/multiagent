@@ -31,7 +31,7 @@ def _dataset_path() -> Path | None:
         return None
     if configured:
         return Path(configured).expanduser().resolve()
-    default = Path.home() / "projects/traces/benchmark/conversation-trace-cases.json"
+    default = Path.home() / "projects/traces/conversation-trace-cases.json"
     return default if default.is_file() else None
 
 

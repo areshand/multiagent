@@ -423,7 +423,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--output",
-        default=str(Path.home() / "projects/traces/benchmark/conversation-trace-cases.json"),
+        default=str(Path.home() / "projects/traces/conversation-trace-cases.json"),
     )
     parser.add_argument("--max-cases", type=int, default=12)
     parser.add_argument("--salt", default="conversation-trace-v1")

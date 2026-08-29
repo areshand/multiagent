@@ -80,9 +80,9 @@ After generating the two focused datasets, combine them locally:
 
 ```bash
 python3 -m evaluation.trace_dataset \
-  --ops "$HOME/projects/traces/benchmark/ops-trace-cases.json" \
-  --conversation "$HOME/projects/traces/benchmark/conversation-trace-cases.json" \
-  --output "$HOME/projects/traces/benchmark/trace-cases.json"
+  --ops "$HOME/projects/traces/ops-trace-cases.json" \
+  --conversation "$HOME/projects/traces/conversation-trace-cases.json" \
+  --output "$HOME/projects/traces/trace-cases.json"
 ```
 
 The combined file remains mode `0600`, `private: true`, and
@@ -137,7 +137,7 @@ Generate a private pseudonymized dataset from a redacted trace export:
 ```bash
 python3 -m evaluation.ops_trace_dataset \
   --traces "$HOME/projects/traces" \
-  --output "$HOME/projects/traces/benchmark/ops-trace-cases.json" \
+  --output "$HOME/projects/traces/ops-trace-cases.json" \
   --max-cases 24
 ```
 
@@ -218,7 +218,7 @@ Generate a private, pseudonymized 12-case dataset locally:
 python3 -m evaluation.conversation_trace_dataset \
   --sessions "$HOME/.codex/sessions" \
   --sessions "$HOME/.codex/archived_sessions" \
-  --output "$HOME/projects/traces/benchmark/conversation-trace-cases.json" \
+  --output "$HOME/projects/traces/conversation-trace-cases.json" \
   --max-cases 12
 ```
 

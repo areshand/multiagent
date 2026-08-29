@@ -124,13 +124,13 @@ def write_dataset(
 
 
 def main() -> int:
-    benchmark_root = Path.home() / "projects" / "traces" / "benchmark"
+    trace_root = Path.home() / "projects" / "traces"
     parser = argparse.ArgumentParser(description="Combine private trace benchmark manifests")
-    parser.add_argument("--ops", default=str(benchmark_root / "ops-trace-cases.json"))
+    parser.add_argument("--ops", default=str(trace_root / "ops-trace-cases.json"))
     parser.add_argument(
-        "--conversation", default=str(benchmark_root / "conversation-trace-cases.json")
+        "--conversation", default=str(trace_root / "conversation-trace-cases.json")
     )
-    parser.add_argument("--output", default=str(benchmark_root / "trace-cases.json"))
+    parser.add_argument("--output", default=str(trace_root / "trace-cases.json"))
     args = parser.parse_args()
 
     output = Path(args.output).expanduser().resolve()
