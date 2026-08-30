@@ -537,7 +537,7 @@ test("completed outcome summary wraps within the terminal width", () => {
   assert.ok(lines.every((line) => line.length <= 52));
 });
 
-test("asynchronous status redraw restores the active input prompt", async () => {
+test("latest-open-PR interaction ends with an informative summary, completed agent graph, and active prompt", async () => {
   const sessionFile = await sessionFixture();
   const output = ttyWriter();
   let questionCount = 0;
@@ -559,9 +559,19 @@ test("asynchronous status redraw restores the active input prompt", async () => 
               sequence: 1,
               type: "assistant_message",
               payload: {
-                text: "# Open PRs — movement-network/aptos-core\n\nChecked current open pull requests.\n\n## Latest opened PR\n\n| PR | Title |\n| --- | --- |\n| **#421** | fix: remove global waypoint signature-verification bypass |",
+                text: "# thread-latest-open-pr\n\nStatus: completed\nWorkflow: run-latest-open-pr\n\n## Final agent message\nLatest open PR: **#421** — fix: remove global waypoint signature-verification bypass\n- Author: contributor\n- URL: https://github.com/movement-network/aptos-core/pull/421\n\n## Trace references\n- agents/ops-01/attempt-0001/events.jsonl",
               },
             },
+          })));
+          threadSocket.emit("message", Buffer.from(JSON.stringify({
+            type: "agents",
+            agents: [{
+              name: "ops-01",
+              status: "done",
+              role: "ops",
+              workingOn: "Found latest open PR #421",
+            }],
+            available: true,
           })));
           setImmediate(() => resolve("/quit"));
         });
@@ -595,8 +605,11 @@ test("asynchronous status redraw restores the active input prompt", async () => 
   });
 
   assert.match(output.output, /● orchestrator · running/);
-  assert.match(output.output, /assistant> # Open PRs/);
+  assert.match(output.output, /assistant> # thread-latest-open-pr/);
   assert.match(output.output, /✓ orchestrator · complete/);
-  assert.match(output.output, /↳ Latest opened PR: #421 — fix: remove global waypoint/);
+  assert.match(output.output, /↳ Latest open PR: #421 — fix: remove global waypoint/);
+  assert.match(output.output, /✓ ops-01 · ops · done/);
+  assert.match(output.output, /↳ Found latest open PR #421/);
+  assert.doesNotMatch(output.output, /↳ Status: completed/);
   assert.ok(prompts.some((prompt) => prompt.label === "› " && prompt.preserveCursor === true));
 });

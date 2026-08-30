@@ -691,8 +691,15 @@ function paneOutcomeForEvent(event) {
 }
 
 function compactOutcomeSummary(event) {
-  const entries = String(event?.payload?.text || event?.payload?.report || "")
-    .split(/\r?\n/)
+  const sources = String(event?.payload?.text || event?.payload?.report || "").split(/\r?\n/);
+  const finalMessageHeading = sources.findIndex((source) => /^\s*#{1,6}\s+final agent message\s*$/i.test(source));
+  let scopedSources = sources;
+  if (finalMessageHeading >= 0) {
+    const finalSection = sources.slice(finalMessageHeading + 1);
+    const nextHeading = finalSection.findIndex((source) => /^\s*#{1,6}\s+/.test(source));
+    scopedSources = nextHeading >= 0 ? finalSection.slice(0, nextHeading) : finalSection;
+  }
+  const entries = scopedSources
     .map((source) => {
       const tableRow = /^\s*\|/.test(source) && /\|\s*$/.test(source);
       let text = source
@@ -708,6 +715,8 @@ function compactOutcomeSummary(event) {
     .filter(({ text }) => text);
   const meaningful = entries.filter(({ text }) =>
     !/^(?:result|summary|outcome|answer|final answer)$/i.test(text)
+    && !/^(?:status|workflow|session|task)\s*:/i.test(text)
+    && !/^trace references$/i.test(text)
     && !/^(?:-+)(?:\s+—\s+-+)*$/.test(text));
   const latestIndex = meaningful.findIndex(({ text }) => /\b(?:most recently|latest)\b/i.test(text));
   if (latestIndex >= 0) {

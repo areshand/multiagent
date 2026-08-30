@@ -11,7 +11,7 @@ import { deliverWorkerReport, reportDeliveryTimeoutMs } from "./worker-report-de
 import { issueWorkerToken as createWorkerToken, verifyWorkerAuthorization } from "./worker-token.mjs";
 import { readSubagentSnapshot } from "./subagent-status.mjs";
 import { renderThreadTask } from "./thread-execution-context.mjs";
-import { fetchWorkerSubagents } from "./worker-subagent-client.mjs";
+import { fetchWorkerSubagents, fetchWorkerSubagentsWithReconciliation } from "./worker-subagent-client.mjs";
 import { configuredRepository, parseRepositoryCatalog } from "./repository-catalog.mjs";
 import { visibleLegacySessionIds } from "./session-visibility.mjs";
 import {
@@ -23,13 +23,13 @@ import {
   normalizeWorkerReport,
   ownsThreadProjection,
   responseTypeForMessage,
-  scopedThreadTranscript,
   selectFinalMessage,
   sessionControlInvocation,
   sessionLaunchInvocation,
   shouldAutomaticallyResume,
   submitLocalFollowup,
   validResourceId,
+  workerReportPublicEvent,
 } from "./session-runtime.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -513,12 +513,17 @@ async function gatewaySubagentSnapshot(id) {
   if (!record) return unavailableSubagentSnapshot(id);
   if (!record.podIP) record = await reconcileGatewaySession(id);
   if (!record?.podIP) return unavailableSubagentSnapshot(id);
-  try {
-    const agents = await fetchWorkerSubagents({
+  const result = await fetchWorkerSubagentsWithReconciliation({
+    record,
+    fetchSnapshot: (hostname) => fetchWorkerSubagents({
       sessionId: id,
-      hostname: record.podIP,
+      hostname,
       token: issueWorkerToken(id),
-    });
+    }),
+    reconcile: () => reconcileGatewaySession(id),
+  });
+  if (Array.isArray(result.agents)) {
+    const agents = result.agents;
     const snapshot = {
       sessionId: id,
       agents,
@@ -530,14 +535,14 @@ async function gatewaySubagentSnapshot(id) {
     gatewaySubagentSnapshots.set(id, snapshot);
     gatewaySubagentSnapshotErrors.delete(id);
     return snapshot;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (gatewaySubagentSnapshotErrors.get(id) !== message) {
-      gatewaySubagentSnapshotErrors.set(id, message);
-      console.warn("session worker subagent snapshot unavailable", { sessionId: id, error: message });
-    }
-    return unavailableSubagentSnapshot(id, error);
   }
+  if (!result.error) return unavailableSubagentSnapshot(id);
+  const message = result.error instanceof Error ? result.error.message : String(result.error);
+  if (gatewaySubagentSnapshotErrors.get(id) !== message) {
+    gatewaySubagentSnapshotErrors.set(id, message);
+    console.warn("session worker subagent snapshot unavailable", { sessionId: id, error: message });
+  }
+  return unavailableSubagentSnapshot(id, result.error);
 }
 
 async function reconcileGatewaySession(id) {
@@ -727,16 +732,13 @@ async function projectSessionToThread(id, status, reportReader = readGatewayRepo
     const session = sessions.find((candidate) => candidate.id === id);
     if (!session) return;
     if (session.inboxAckSequence !== session.inboxHeadSequence) return;
+    const publicEvent = workerReportPublicEvent(id, report);
     await threadStore.appendFencedSessionEvent({
       threadId: record.threadId,
       sessionId: id,
       generation: record.leaseGeneration,
       eventId: `final-${id}`,
-      type: report.responseType,
-      payload: {
-        text: report.responseType === "question" && report.message ? report.message : report.report,
-        transcript: scopedThreadTranscript(id, report.transcript),
-      },
+      ...publicEvent,
     });
     await threadStore.markSessionFinishing({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration });
     const finalized = await threadStore.finalizeSession({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration });

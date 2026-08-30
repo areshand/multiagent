@@ -38,3 +38,32 @@ export function fetchWorkerSubagents({
     request.end();
   });
 }
+
+export async function fetchWorkerSubagentsWithReconciliation({
+  record,
+  fetchSnapshot,
+  reconcile,
+}) {
+  const initialPodIP = record?.podIP || null;
+  try {
+    return { agents: await fetchSnapshot(initialPodIP), record, error: null };
+  } catch (initialError) {
+    let refreshed;
+    try {
+      refreshed = await reconcile();
+    } catch {
+      return { agents: null, record, error: initialError };
+    }
+    if (refreshed?.status !== "running" || !refreshed.podIP) {
+      return { agents: null, record: refreshed, error: null };
+    }
+    if (refreshed.podIP === initialPodIP) {
+      return { agents: null, record: refreshed, error: initialError };
+    }
+    try {
+      return { agents: await fetchSnapshot(refreshed.podIP), record: refreshed, error: null };
+    } catch (retryError) {
+      return { agents: null, record: refreshed, error: retryError };
+    }
+  }
+}

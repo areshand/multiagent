@@ -109,3 +109,13 @@ export function scopedThreadTranscript(sessionId, transcript) {
     : [];
   return { ...transcript, traceReferences };
 }
+
+export function workerReportPublicEvent(sessionId, report) {
+  return {
+    type: report.responseType,
+    payload: {
+      text: selectFinalMessage(report.message, report.report),
+      transcript: scopedThreadTranscript(sessionId, report.transcript),
+    },
+  };
+}
