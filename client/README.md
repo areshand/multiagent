@@ -13,10 +13,12 @@ npm run client -- --server https://agent.example login operator
 npm run client --
 ```
 
-Running without a command opens a persistent, Claude Code-style terminal. It
-lists durable threads, accepts `/open THREAD_ID` or a list number, and sends
-ordinary input to the open thread. Use `/new REPOSITORY [TITLE]` to create a
-thread and `/help` to see the complete interactive command set. The server
+Running without a command opens a persistent, Claude Code-style terminal without
+enumerating server threads. `/list` shows only threads created by this local
+client profile; `/open THREAD_ID` opens an explicitly known thread without adding
+it to that local list. A list number may be used after `/list`. Use
+`/new REPOSITORY [TITLE]` to create a thread and `/help` to see the complete
+interactive command set. The server
 assigns both thread IDs and execution-session IDs. After a message starts an
 execution session, the client streams the orchestrator terminal without locking
 the prompt. Additional ordinary input is durably appended and delivered as a
@@ -42,6 +44,8 @@ printf '%s' "$MULTIAGENT_LOGIN_PASSWORD" | \
 The login session defaults to
 `~/.config/multiagent/client-session.json` and is written with mode `0600`.
 Override it with `--session-file` or `MULTIAGENT_CLIENT_SESSION_FILE`.
+Locally created thread IDs are kept separately in the adjacent mode-`0600`
+`client-session.json.threads.json` file. It contains no authentication cookie.
 
 ## Commands
 
@@ -51,7 +55,7 @@ and debugging:
 ```text
 connect [THREAD_ID]
 repositories list
-threads list
+threads list  # only threads created by this local client profile
 threads show THREAD_ID
 threads create --repository NAME [--title TITLE] (--message TEXT | --message-file PATH)
 threads send THREAD_ID (--message TEXT | --message-file PATH)

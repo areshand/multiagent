@@ -13,6 +13,7 @@ import { readSubagentSnapshot } from "./subagent-status.mjs";
 import { renderThreadTask } from "./thread-execution-context.mjs";
 import { fetchWorkerSubagents } from "./worker-subagent-client.mjs";
 import { configuredRepository, parseRepositoryCatalog } from "./repository-catalog.mjs";
+import { visibleLegacySessionIds } from "./session-visibility.mjs";
 import {
   acceptsLiveInput,
   automaticResumeLimit,
@@ -750,6 +751,24 @@ function sessionView(id) {
   return { ...record, live: tmuxAlive(id) };
 }
 
+async function publicLegacySessions(username) {
+  const legacyIds = await visibleLegacySessionIds({
+    records: registry.sessions,
+    username,
+    hasThread: async (threadId, actor) => {
+      try {
+        await threadStore.getThreadForActor(threadId, actor);
+        return true;
+      } catch (error) {
+        if (error?.statusCode !== 404) throw error;
+        return false;
+      }
+    },
+  });
+  if (gatewayMode) await Promise.all(legacyIds.map(reconcileGatewaySession));
+  return legacyIds.map((id) => gatewayMode ? registry.sessions[id] : sessionView(id));
+}
+
 function capture(id) {
   if (!tmuxAlive(id)) {
     try { return fs.readFileSync(path.join(traceRoot(id), "terminal-tail.log"), "utf8"); } catch { return ""; }
@@ -898,7 +917,6 @@ const server = http.createServer(async (request, response) => {
         readiness: "/readyz",
       });
     }
-
     if (!validOrigin(request)) return json(response, 403, { error: "origin rejected" });
     if (request.method === "POST" && url.pathname === "/api/login") {
       const address = request.socket.remoteAddress || "unknown";
@@ -930,7 +948,7 @@ const server = http.createServer(async (request, response) => {
       return json(response, 200, { repositories });
     }
     if (request.method === "GET" && url.pathname === "/api/threads") {
-      return json(response, 200, { threads: await threadStore.listThreadsForActor(username) });
+      return json(response, 404, { error: "not found" });
     }
     if (request.method === "POST" && url.pathname === "/api/threads") {
       if (workerMode) throw new Error("session workers cannot create threads");
@@ -994,8 +1012,7 @@ const server = http.createServer(async (request, response) => {
       return json(response, 202, { ...routed, delivery });
     }
     if (request.method === "GET" && url.pathname === "/api/sessions") {
-      if (gatewayMode) await Promise.all(Object.keys(registry.sessions).map(reconcileGatewaySession));
-      return json(response, 200, { sessions: Object.keys(registry.sessions).sort().filter((id) => registry.sessions[id].createdBy === username).map((id) => gatewayMode ? registry.sessions[id] : sessionView(id)) });
+      return json(response, 200, { sessions: await publicLegacySessions(username) });
     }
     const reportMatch = url.pathname.match(/^\/api\/sessions\/([a-z0-9-]+)\/report$/);
     if (request.method === "POST" && reportMatch) {

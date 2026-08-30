@@ -32,7 +32,7 @@ thread watch emits one JSON event per line. Run without a command for the
 interactive terminal client.`;
 
 const interactiveHelp = `Commands:
-  /threads                 List threads
+  /list                    List threads created by this local client
   /open THREAD_ID          Open a thread
   /new REPO [TITLE]        Create and open a server-assigned thread
   /sessions                List execution sessions for the open thread
@@ -103,12 +103,17 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
   const normalizedServer = normalizeServer(server).href;
   const cookie = stored?.server === normalizedServer ? stored.cookie : "";
   const client = new ControlClient({ server: normalizedServer, cookie, fetchImpl });
+  const threadIndex = {
+    file: `${sessionFile}.threads.json`,
+    server: normalizedServer,
+    username: stored?.server === normalizedServer ? String(stored.username || "") : "",
+  };
 
   if (!command || command === "connect") {
     if (!client.cookie) throw new ClientError(`not logged in to ${normalizedServer}; run the login command first`);
     const initialThreadId = command === "connect" ? parsed.args.shift() || "" : "";
     rejectExtraArguments(parsed.args);
-    return runInteractive({ client, stdin, stdout, sleep, createInterfaceImpl, createWebSocketImpl, initialThreadId });
+    return runInteractive({ client, stdin, stdout, sleep, createInterfaceImpl, createWebSocketImpl, initialThreadId, threadIndex });
   }
 
   if (command === "login") {
@@ -146,7 +151,7 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
     return 0;
   }
   if (command === "threads") {
-    return runThreads({ client, args: parsed.args, stdout, stdin, sleep });
+    return runThreads({ client, args: parsed.args, stdout, stdin, sleep, threadIndex });
   }
   if (command === "sessions") {
     requireAction(parsed.args.shift(), "list", "sessions");
@@ -169,10 +174,11 @@ export async function runInteractive({
   createInterfaceImpl = createInterface,
   createWebSocketImpl = (url, options) => new WebSocket(url, options),
   initialThreadId = "",
+  threadIndex,
 }) {
   if (!stdin?.isTTY) throw new ClientError("interactive mode requires a terminal; use a JSON command for non-interactive calls");
   const terminal = createInterfaceImpl({ input: stdin, output: stdout, terminal: true });
-  let threads = [];
+  let threads = (await loadLocalThreadIds(threadIndex)).map((id) => ({ id }));
   let current = null;
   let cursor = 0;
   let monitor = null;
@@ -195,9 +201,9 @@ export async function runInteractive({
   const agentPane = createAgentPane(stdout, { onDraw: refreshPrompt });
 
   const listThreads = async () => {
-    threads = (await client.request("/api/threads")).value.threads || [];
+    threads = await fetchLocalThreads(client, threadIndex);
     if (!threads.length) {
-      stdout.write("\nNo threads. Create one with /new REPOSITORY [TITLE].\n");
+      stdout.write("\nNo threads created by this local client. Use /new REPOSITORY [TITLE].\n");
       return;
     }
     stdout.write("\nThreads\n");
@@ -316,7 +322,6 @@ export async function runInteractive({
 
   stdout.write("Multiagent — /help\n");
   try {
-    await listThreads();
     if (initialThreadId) await openThread(initialThreadId);
     while (true) {
       promptLabel = current ? "› " : "multiagent> ";
@@ -332,7 +337,7 @@ export async function runInteractive({
       try {
         if (line === "/quit" || line === "/exit") return 0;
         if (line === "/help") { stdout.write(`\n${interactiveHelp}\n`); continue; }
-        if (line === "/threads") { await listThreads(); continue; }
+        if (line === "/list" || line === "/threads") { await listThreads(); continue; }
         if (line === "/refresh") { await replay(); continue; }
         if (line === "/wait") {
           if (!monitor) stdout.write("No execution is currently running.\n");
@@ -354,13 +359,14 @@ export async function runInteractive({
             method: "POST",
             body: { repository, title: titleParts.join(" ") },
           });
+          await rememberLocalThread(threadIndex, created.value.thread.id);
           await stopMonitor();
           await stopThreadConnection();
           current = created.value.thread;
           agentPane.setThread(current);
           cursor = 0;
+          threads = [...threads.filter((thread) => thread.id !== current.id), current];
           startThreadConnection(current.id);
-          await listThreads();
           stdout.write(`\nOpened ${current.id}. Enter its first message.\n`);
           continue;
         }
@@ -800,11 +806,11 @@ function renderInteractiveEvent(stdout, event) {
   else stdout.write(`\n[${event.type.replaceAll("_", " ")}] ${text || JSON.stringify(event.payload)}\n`);
 }
 
-async function runThreads({ client, args, stdout, stdin, sleep }) {
+async function runThreads({ client, args, stdout, stdin, sleep, threadIndex }) {
   const action = requiredArgument(args.shift(), "threads action");
   if (action === "list") {
     rejectExtraArguments(args);
-    writeJson(stdout, (await client.request("/api/threads")).value.threads || []);
+    writeJson(stdout, await fetchLocalThreads(client, threadIndex));
     return 0;
   }
   if (action === "show") {
@@ -828,6 +834,7 @@ async function runThreads({ client, args, stdout, stdin, sleep }) {
       body: { repository, title: options.get("--title") || "" },
     });
     const threadId = created.value.thread.id;
+    await rememberLocalThread(threadIndex, threadId);
     try {
       const routed = await sendThreadMessage(client, threadId, message);
       writeJson(stdout, { thread: created.value.thread, route: routed });
@@ -867,9 +874,7 @@ async function runLegacy({ client, args, stdout }) {
   const action = requiredArgument(args.shift(), "legacy action");
   if (action === "list") {
     rejectExtraArguments(args);
-    const [threads, sessions] = await Promise.all([client.request("/api/threads"), client.request("/api/sessions")]);
-    const threadIds = new Set((threads.value.threads || []).map((thread) => thread.id));
-    writeJson(stdout, (sessions.value.sessions || []).filter((session) => !threadIds.has(session.threadId)));
+    writeJson(stdout, (await client.request("/api/sessions")).value.sessions || []);
     return 0;
   }
   if (action === "report") {
@@ -1001,6 +1006,52 @@ async function saveSession(file, value) {
   await fs.writeFile(temporary, JSON.stringify(value, null, 2) + "\n", { mode: 0o600 });
   await fs.rename(temporary, file);
   await fs.chmod(file, 0o600);
+}
+
+async function loadThreadIndex(file) {
+  try {
+    const value = JSON.parse(await fs.readFile(file, "utf8"));
+    if (value.schemaVersion !== 1 || !Array.isArray(value.profiles)) throw new Error("invalid fields");
+    return value;
+  } catch (error) {
+    if (error.code === "ENOENT") return { schemaVersion: 1, profiles: [] };
+    throw new ClientError(`cannot read local thread index: ${error.message}`);
+  }
+}
+
+async function loadLocalThreadIds(threadIndex) {
+  if (!threadIndex?.file || !threadIndex.server || !threadIndex.username) return [];
+  const value = await loadThreadIndex(threadIndex.file);
+  const profile = value.profiles.find((candidate) => candidate?.server === threadIndex.server && candidate?.username === threadIndex.username);
+  if (!profile) return [];
+  if (!Array.isArray(profile.threadIds)) throw new ClientError("cannot read local thread index: invalid thread IDs");
+  return [...new Set(profile.threadIds.filter((id) => typeof id === "string" && /^[a-z0-9-]+$/.test(id)))];
+}
+
+async function rememberLocalThread(threadIndex, threadId) {
+  if (!threadIndex?.file || !threadIndex.server || !threadIndex.username) {
+    throw new ClientError("cannot record the local thread without an authenticated client profile");
+  }
+  const value = await loadThreadIndex(threadIndex.file);
+  let profile = value.profiles.find((candidate) => candidate?.server === threadIndex.server && candidate?.username === threadIndex.username);
+  if (!profile) {
+    profile = { server: threadIndex.server, username: threadIndex.username, threadIds: [] };
+    value.profiles.push(profile);
+  }
+  profile.threadIds = [...new Set([...(Array.isArray(profile.threadIds) ? profile.threadIds : []), threadId])];
+  await saveSession(threadIndex.file, value);
+}
+
+async function fetchLocalThreads(client, threadIndex) {
+  const ids = await loadLocalThreadIds(threadIndex);
+  return Promise.all(ids.map(async (id) => {
+    try {
+      return (await client.request(`/api/threads/${encodeURIComponent(id)}`)).value.thread;
+    } catch (error) {
+      if (error instanceof ClientError && error.statusCode === 404) return { id, state: "unavailable", repository: "-" };
+      throw error;
+    }
+  }));
 }
 
 function writeJson(stream, value) {

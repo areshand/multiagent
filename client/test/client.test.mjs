@@ -21,13 +21,17 @@ function jsonResponse(value, init = {}) {
   });
 }
 
-async function sessionFixture() {
+async function sessionFixture({ threadIds = ["thread-1"] } = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "multiagent-client-"));
   const file = path.join(directory, "session.json");
   await writeFile(file, JSON.stringify({
     server: "https://control.example/",
     cookie: "multiagent_session=signed-cookie",
     username: "operator",
+  }), { mode: 0o600 });
+  await writeFile(`${file}.threads.json`, JSON.stringify({
+    schemaVersion: 1,
+    profiles: [{ server: "https://control.example/", username: "operator", threadIds }],
   }), { mode: 0o600 });
   return file;
 }
@@ -104,7 +108,7 @@ test("client login stores only the scoped session cookie with mode 0600", async 
   });
 });
 
-test("users can list durable threads through the terminal client", async () => {
+test("users list only locally created threads through individually authorized lookups", async () => {
   const sessionFile = await sessionFixture();
   const output = writer();
   let cookie = "";
@@ -113,9 +117,9 @@ test("users can list durable threads through the terminal client", async () => {
   ], {
     stdout: output,
     fetchImpl: async (url, options) => {
-      assert.equal(String(url), "https://control.example/api/threads");
+      assert.equal(String(url), "https://control.example/api/threads/thread-1");
       cookie = options.headers.cookie;
-      return jsonResponse({ threads: [{ id: "thread-1", state: "idle", repository: "multiagent" }] });
+      return jsonResponse({ thread: { id: "thread-1", state: "idle", repository: "multiagent" } });
     },
   });
   assert.equal(cookie, "multiagent_session=signed-cookie");
@@ -123,7 +127,7 @@ test("users can list durable threads through the terminal client", async () => {
 });
 
 test("thread creation lets the server generate both the thread and execution session IDs", async () => {
-  const sessionFile = await sessionFixture();
+  const sessionFile = await sessionFixture({ threadIds: [] });
   const output = writer();
   const requests = [];
   await main([
@@ -143,6 +147,9 @@ test("thread creation lets the server generate both the thread and execution ses
   assert.deepEqual(JSON.parse(requests[1].options.body), { text: "Investigate the incident" });
   assert.ok(requests[1].options.headers["idempotency-key"]);
   assert.equal(JSON.parse(output.output).route.session.id, "thread-1-generated-session");
+  const index = JSON.parse(await readFile(`${sessionFile}.threads.json`, "utf8"));
+  assert.deepEqual(index.profiles[0].threadIds, ["thread-1"]);
+  assert.equal((await stat(`${sessionFile}.threads.json`)).mode & 0o777, 0o600);
 });
 
 test("thread show and one-shot watch expose history and execution state as JSON", async () => {
@@ -175,7 +182,7 @@ test("client refuses to send authentication over non-local plaintext HTTP", () =
 test("interactive terminal lists, opens, and continues durable threads", async () => {
   const sessionFile = await sessionFixture();
   const output = writer();
-  const answers = ["/open missing", "/open 1", "Continue the investigation", "/wait", "/quit"];
+  const answers = ["/list", "/open missing", "/open 1", "Continue the investigation", "/wait", "/quit"];
   const requests = [];
   await main([
     "--server", "https://control.example", "--session-file", sessionFile,
@@ -218,10 +225,11 @@ test("interactive terminal lists, opens, and continues durable threads", async (
   assert.match(output.output, /Planning\nDelegating/);
   assert.match(output.output, /assistant> Investigation complete/);
   assert.ok(requests.some((request) => request.url.endsWith("/api/threads/thread-1/messages")));
+  assert.deepEqual(JSON.parse(await readFile(`${sessionFile}.threads.json`, "utf8")).profiles[0].threadIds, ["thread-1"]);
 });
 
 test("interactive new asks only for a repository and streams its first execution", async () => {
-  const sessionFile = await sessionFixture();
+  const sessionFile = await sessionFixture({ threadIds: [] });
   const output = writer();
   const answers = ["/new multiagent Incident triage", "Investigate now", "/wait", "/quit"];
   let created = null;
@@ -253,10 +261,11 @@ test("interactive new asks only for a repository and streams its first execution
       throw new Error(`unexpected request: ${value}`);
     },
   });
-  assert.match(output.output, /No threads\. Create one with \/new REPOSITORY \[TITLE\]/);
+  assert.doesNotMatch(output.output, /No threads|\nThreads\n/);
   assert.match(output.output, /Opened thread-generated\. Enter its first message/);
   assert.match(output.output, /Starting orchestrator\nReader assigned/);
   assert.match(output.output, /assistant> Done/);
+  assert.deepEqual(JSON.parse(await readFile(`${sessionFile}.threads.json`, "utf8")).profiles[0].threadIds, ["thread-generated"]);
 });
 
 test("interactive streaming retries while the session worker starts", async () => {

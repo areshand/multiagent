@@ -70,7 +70,7 @@ storage configuration shown above.
 
 | Component | Owns | Must not own or know |
 | --- | --- | --- |
-| Terminal client | User login, local session-cookie storage, interactive durable-thread conversation, scriptable commands, result presentation | Runbook implementation, KMS signing, production credentials |
+| Terminal client | User login, local session-cookie storage, a separate local index of thread IDs created by that client profile, interactive durable-thread conversation, scriptable commands, result presentation | Server-wide thread discovery, runbook implementation, KMS signing, production credentials |
 | Control server | Treating the authenticated client caller as the user, durable thread ownership and public history, execution-session creation, message transport, event replay, trace-derived context, result streaming | Provider lifecycle logic, agent/model turn storage, Grafana procedures, operation IDs, runbook steps, production credentials |
 | Supervisor | One session's authority, role bootstrap, role confinement, privileged-request mediation, KMS signing | Service-specific operational procedures |
 | Orchestrator | Goal decomposition, role routing, workflow coordination | Grafana/Loki knowledge, concrete production operations, `prod-mcp` parameters, provider-specific prompts |
@@ -90,8 +90,10 @@ part of the orchestrator's production-operation path.
 ### AD-001: The authenticated client user is the authorizing user
 
 The terminal client authenticates the human user and submits that user's intent
-to the control server. It stores only the resulting session cookie in a local
-mode-`0600` file. Interactive mode presents durable thread conversation events;
+to the control server. Its authentication file stores only the resulting session
+cookie. A separate mode-`0600` local index records only the thread IDs created by
+that exact server-and-user client profile; it contains no credential or server-wide
+discovery result. Interactive mode presents durable thread conversation events;
 explicit subcommands emit thread state as JSON for automation. The control
 server records the authenticated actor and approval time. It must not convert
 authorization into hidden prompt text or ask each role agent to authenticate
@@ -100,6 +102,13 @@ the caller again.
 The control server may have high authority because access to it is already
 restricted to authenticated users. That authority remains attributable to the
 authenticated user and session.
+
+The client does not enumerate threads on startup. `/list` and the scriptable
+thread-list command resolve only IDs from the local client index through
+individually authorized thread lookups. A caller may explicitly open a known
+thread ID, but doing so does not add it to the local-created index. Server-wide
+thread collection listing is not an HTTP API. Pod-local deployment diagnostics
+inspect the control server's internal thread manifest/store directly.
 
 The HTTP API is the client contract. There is no browser client and therefore no
 second thread/session state machine. The unauthenticated root route returns only
