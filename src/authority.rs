@@ -78,7 +78,10 @@ impl AuthorityRequest {
                         || (args.len() == 4
                             && matches!(
                                 args[1].as_str(),
-                                "--external-only" | "--direct-response"
+                                "--external-only"
+                                    | "--direct-response"
+                                    | "--clarification"
+                                    | "--auto-clarification"
                             )
                             && args[2] == "--result-file")
                         || (args.len() == 6
@@ -356,6 +359,32 @@ mod tests {
         )
         .expect("direct completion request");
         assert!(direct_completion.authorized_for(config::ORCHESTRATOR_UID));
+        for route in ["--clarification", "--auto-clarification"] {
+            let clarification_completion = AuthorityRequest::from_cli(
+                "orchestrator",
+                &strings(&[
+                    "complete",
+                    route,
+                    "--result-file",
+                    "/state/clarification.md",
+                ]),
+            )
+            .expect("clarification completion request");
+            assert!(clarification_completion.authorized_for(config::ORCHESTRATOR_UID));
+            assert!(!clarification_completion.authorized_for(config::READER_UID));
+            assert_eq!(
+                clarification_completion.into_cli(),
+                (
+                    "orchestrator".to_string(),
+                    strings(&[
+                        "complete",
+                        route,
+                        "--result-file",
+                        "/state/clarification.md",
+                    ]),
+                )
+            );
+        }
         let read_only_completion = AuthorityRequest::from_cli(
             "orchestrator",
             &strings(&[

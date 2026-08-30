@@ -506,7 +506,10 @@ cat >"$EXTERNAL_STATE/operations/OP-EXTERNAL/receipt.json" <<'EOF'
   }
 }
 EOF
-mkdir -p "$EXTERNAL_STATE/operations/OP-FAILED" "$EXTERNAL_STATE/operations/OP-NONTERMINAL"
+mkdir -p \
+  "$EXTERNAL_STATE/operations/OP-FAILED" \
+  "$EXTERNAL_STATE/operations/OP-BLOCKED" \
+  "$EXTERNAL_STATE/operations/OP-NONTERMINAL"
 cat >"$EXTERNAL_STATE/operations/OP-FAILED/receipt.json" <<'EOF'
 {
   "result": {
@@ -517,6 +520,21 @@ cat >"$EXTERNAL_STATE/operations/OP-FAILED/receipt.json" <<'EOF'
         "terminal": true,
         "retryable": false,
         "code": "executor_failure"
+      }
+    }
+  }
+}
+EOF
+cat >"$EXTERNAL_STATE/operations/OP-BLOCKED/receipt.json" <<'EOF'
+{
+  "result": {
+    "structuredContent": {
+      "state": "blocked",
+      "outcome": {
+        "disposition": "blocked",
+        "terminal": true,
+        "retryable": false,
+        "code": "github_repository_inaccessible"
       }
     }
   }
@@ -570,7 +588,7 @@ assert_contains "$EXTERNAL_STATE/workflows/WF-EXTERNAL/lifecycle/lifecycle.env" 
 assert_contains "$EXTERNAL_STATE/workflows/WF-EXTERNAL/lifecycle/events.log" \
   "route=external-only"
 assert_contains "$EXTERNAL_STATE/workflows/WF-EXTERNAL/lifecycle/events.log" \
-  $'operations=1\tfailed_operations=2'
+  $'operations=1\tfailed_operations=3'
 assert_contains "$EXTERNAL_STATE/orchestrator-result.md" \
   "External operation completed with reviewed evidence."
 

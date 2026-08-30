@@ -1581,7 +1581,9 @@ pub fn supervisor_complete_external(id: &str) -> Result<String, String> {
                     .and_then(serde_json::Value::as_str),
             ) {
                 (Some("succeeded"), Some("succeeded")) => successful_operations += 1,
-                (Some("failed"), Some("failed")) => failed_operations += 1,
+                (Some("failed"), Some("failed")) | (Some("blocked"), Some("blocked")) => {
+                    failed_operations += 1
+                }
                 _ => {
                     return Err(format!(
                         "external-only completion requires consistently classified terminal receipts; {} has mismatched state and disposition",
