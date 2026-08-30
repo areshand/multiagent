@@ -3,9 +3,9 @@
 ## Metadata
 
 - Runbook ID: `github.repository-work`
-- Version: `1.0.0`
-- Prod MCP operations: `github.read`, `github.clone`, `github.create-pr`
-- Operation version: `1.0.0`
+- Version: `1.1.0`
+- Prod MCP operations: `github.read`, `github.clone`, `github.create-pr`, `github.create-pr-review`
+- Operation versions: `github.read@1.1.0`; `github.clone@1.0.0`; `github.create-pr@1.0.0`; `github.create-pr-review@1.0.0`
 - Set `target` to `{"cluster":"external-services","environment":"production","namespace":"github","service":"installation"}`.
 
 ## Goal
@@ -20,9 +20,12 @@ container's GitHub App credential or token.
 ## Read phase
 
 1. Set the phase to `read` and operation to `github.read`.
-2. Identify the exact `owner/repository` and choose `get-repository`, `get-file`, `get-pull-request`, `list-pull-requests`, or `list-pull-request-reviews`.
-3. Bound file paths, refs, pull-request numbers, state, and result limits to the original goal. Compose multiple read requests when the goal requires correlating pull requests with their submitted reviews.
-4. Persist the signed action ID and receipt.
+2. Identify the exact `owner/repository` and choose `get-repository`, `get-file`, `get-pull-request`, `get-pull-request-review-context`, `list-pull-requests`, or `list-pull-request-reviews`.
+3. For a substantive pull-request review, use `get-pull-request-review-context` with the exact pull-request number. Start at `checkPage: 1`, use no more than 10 checks per page, and collect sequential bounded pages until `checks.hasMore` is false.
+4. Return the exact head/base SHAs to the orchestrator. The code review belongs to a confined read-only repository worker, which must verify that both commit objects exist in the thread-selected checkout and inspect `git diff <baseSha>...<headSha>` without modifying the checkout. The ops agent must not substitute metadata for source review.
+5. If either exact commit is absent from the deployment-prepared checkout, stop and report that the PR head requires trusted materialization. Never claim line-level review from metadata alone.
+6. Bound file paths, refs, pull-request numbers, state, pages, and result limits to the original goal. Compose multiple read requests only when the goal requires correlating the bounded results.
+7. Persist every signed action ID and receipt.
 
 ## Materialize phase
 
@@ -40,6 +43,14 @@ container's GitHub App credential or token.
 5. Submit the complete request, including all file contents, for independent operations review.
 6. Execute once. Persist the returned pull-request URL and durable receipt.
 
+## Pull-request review publication phase
+
+1. Continue only when the authenticated user explicitly authorizes publishing review comments; a request to inspect or summarize a pull request is not publication authority.
+2. Complete the read phase and the independently sealed repository review against the exact current head, then prepare one bounded review containing a summary and at most 50 single-line inline comments on changed-file paths and diff lines.
+3. Set the phase to `publish` and operation to `github.create-pr-review@1.0.0`. Supply the exact repository, pull-request number, previously observed head SHA, review body, and inline comments. The operation publishes only GitHub's neutral `COMMENT` event and cannot approve or request changes.
+4. Submit the complete immutable review request for independent operations review. The reviewer must verify every comment against the sealed read evidence and the user's publication authority.
+5. Execute once and persist the returned review URL and durable receipt. If the head moved, return to the read phase and obtain fresh independent review; never publish comments authorized for a stale head.
+
 ## Stop conditions
 
 - The repository differs from the original goal.
@@ -47,4 +58,6 @@ container's GitHub App credential or token.
 - The checkout would leave the session workspace.
 - The requested changes cannot fit in one bounded signed permit.
 - The base branch moved after authorization.
+- A pull-request review lacks the exact base/head commits or complete check pages but claims complete coverage.
+- Review comment publication was not explicitly requested, targets an unobserved or changed head, exceeds 50 comments, or attempts approval or change-request authority.
 - The reviewer or prod-mcp rejects the request.

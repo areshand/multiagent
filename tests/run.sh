@@ -1076,6 +1076,10 @@ assert_file_contains "$ROOT/docs/getting-started.md" "Normal Workflow"
 assert_file_contains "$ROOT/docs/getting-started.md" "Recovery"
 assert_file_contains "$ROOT/runbooks/OWNERSHIP" "not the source of truth for a deployed"
 assert_file_contains "$ROOT/runbooks/OWNERSHIP" "InternalServices/artifacts/multiagent/runbooks"
+assert_file_contains "$ROOT/runbooks/github-repository-work.md" 'Version: `1.1.0`'
+assert_file_contains "$ROOT/runbooks/github-repository-work.md" '`get-pull-request-review-context`'
+assert_file_contains "$ROOT/runbooks/github-repository-work.md" '`github.create-pr-review@1.0.0`'
+assert_file_contains "$ROOT/runbooks/github-repository-work.md" "explicitly authorizes publishing review comments"
 assert_file_contains "$ROOT/evaluation/README.md" "large-update-300"
 assert_file_contains "$ROOT/evaluation/README.md" "Low-signal orchestration cases"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "MULTIAGENT_PROMPT_MODULE_ROOT"
