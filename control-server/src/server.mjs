@@ -465,21 +465,58 @@ function fetchWorkerReport(id, podIP) {
 }
 
 const gatewaySubagentSnapshots = new Map();
+const gatewaySubagentSnapshotErrors = new Map();
+
+function unavailableSubagentSnapshot(id, error = null) {
+  const cached = gatewaySubagentSnapshots.get(id);
+  if (cached) {
+    return {
+      ...cached,
+      available: false,
+      stale: true,
+      error: error ? "subagent status temporarily unavailable" : null,
+    };
+  }
+  return {
+    sessionId: id,
+    agents: [],
+    available: false,
+    stale: false,
+    error: error ? "subagent status temporarily unavailable" : null,
+    updatedAt: null,
+  };
+}
 
 async function gatewaySubagentSnapshot(id) {
   let record = registry.sessions[id];
-  if (!record) return [];
+  if (!record) return unavailableSubagentSnapshot(id);
   if (!record.podIP) record = await reconcileGatewaySession(id);
-  if (!record?.podIP) return gatewaySubagentSnapshots.get(id) || [];
+  if (!record?.podIP) return unavailableSubagentSnapshot(id);
   try {
     const agents = await fetchWorkerSubagents({
       sessionId: id,
       hostname: record.podIP,
       token: issueWorkerToken(id),
     });
-    gatewaySubagentSnapshots.set(id, agents);
-    return agents;
-  } catch { return gatewaySubagentSnapshots.get(id) || []; }
+    const snapshot = {
+      sessionId: id,
+      agents,
+      available: true,
+      stale: false,
+      error: null,
+      updatedAt: agents.map((agent) => agent.updatedAt).filter(Boolean).sort().at(-1) || null,
+    };
+    gatewaySubagentSnapshots.set(id, snapshot);
+    gatewaySubagentSnapshotErrors.delete(id);
+    return snapshot;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (gatewaySubagentSnapshotErrors.get(id) !== message) {
+      gatewaySubagentSnapshotErrors.set(id, message);
+      console.warn("session worker subagent snapshot unavailable", { sessionId: id, error: message });
+    }
+    return unavailableSubagentSnapshot(id, error);
+  }
 }
 
 async function reconcileGatewaySession(id) {
@@ -993,7 +1030,7 @@ const server = http.createServer(async (request, response) => {
       if (!registry.sessions[id] || (workerSessionId !== id && registry.sessions[id].createdBy !== username)) {
         return json(response, 404, { error: "unknown session" });
       }
-      if (gatewayMode) return json(response, 200, { sessionId: id, agents: await gatewaySubagentSnapshot(id) });
+      if (gatewayMode) return json(response, 200, await gatewaySubagentSnapshot(id));
       return json(response, 200, { sessionId: id, agents: readSubagentSnapshot(sessionStateDir(id)) });
     }
     if (request.method === "POST" && url.pathname === "/api/sessions") {
@@ -1081,6 +1118,7 @@ sockets.on("connection", (socket, request) => {
     let publishing = false;
     let previousThread = "";
     let previousAgents = "";
+    let observedSessionId = null;
     let lastHeartbeatAt = 0;
     const publish = async () => {
       if (publishing) return;
@@ -1097,16 +1135,34 @@ sockets.on("connection", (socket, request) => {
           previousThread = serializedThread;
           socket.send(JSON.stringify({ type: "thread", thread }));
         }
-        const sessionId = thread.activeSessionId || null;
-        const agents = sessionId
+        const activeSessionId = thread.activeSessionId || null;
+        if (activeSessionId) observedSessionId = activeSessionId;
+        if (!observedSessionId) {
+          const sessions = await threadStore.listSessionsForActor({ threadId: request.threadId, actor: request.username });
+          observedSessionId = sessions.at(-1)?.id || null;
+        }
+        let snapshot = observedSessionId
           ? gatewayMode
-            ? await gatewaySubagentSnapshot(sessionId)
-            : readSubagentSnapshot(sessionStateDir(sessionId))
-          : [];
-        const serializedAgents = JSON.stringify({ sessionId, agents });
+            ? activeSessionId
+              ? await gatewaySubagentSnapshot(observedSessionId)
+              : unavailableSubagentSnapshot(observedSessionId)
+            : {
+                sessionId: observedSessionId,
+                agents: readSubagentSnapshot(sessionStateDir(observedSessionId)),
+                available: true,
+                stale: false,
+                error: null,
+                updatedAt: null,
+              }
+          : unavailableSubagentSnapshot("");
+        if (!activeSessionId && snapshot.agents.length === 0) {
+          snapshot = { ...snapshot, error: null, stale: false };
+        }
+        const agentPayload = { type: "agents", ...snapshot, active: Boolean(activeSessionId && activeSessionId === observedSessionId) };
+        const serializedAgents = JSON.stringify(agentPayload);
         if (serializedAgents !== previousAgents && socket.readyState === WebSocket.OPEN) {
           previousAgents = serializedAgents;
-          socket.send(JSON.stringify({ type: "agents", sessionId, agents }));
+          socket.send(serializedAgents);
         }
         if (Date.now() - lastHeartbeatAt >= 15_000 && socket.readyState === WebSocket.OPEN) {
           lastHeartbeatAt = Date.now();

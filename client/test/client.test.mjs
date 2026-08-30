@@ -477,6 +477,25 @@ test("subagent pane keeps the open thread and orchestrator status visible", () =
   assert.equal(lines[2], "     ↳ Inspecting the runtime");
 });
 
+test("subagent pane distinguishes idle, discovery, and unavailable snapshots", () => {
+  assert.equal(renderAgentPane([], {
+    columns: 80,
+    maxRows: 4,
+    thread: { id: "thread-idle", state: "idle" },
+  })[1], "└─ ○ no active agents");
+  assert.equal(renderAgentPane([], {
+    columns: 80,
+    maxRows: 4,
+    thread: { id: "thread-running", state: "running" },
+  })[1], "└─ ◌ discovering subagents");
+  assert.equal(renderAgentPane([], {
+    columns: 80,
+    maxRows: 4,
+    thread: { id: "thread-running", state: "running" },
+    agentSnapshot: { error: "subagent status temporarily unavailable" },
+  })[1], "└─ ◌ subagent status unavailable");
+});
+
 test("asynchronous status redraw restores the active input prompt", async () => {
   const sessionFile = await sessionFixture();
   const output = ttyWriter();

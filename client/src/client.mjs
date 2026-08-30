@@ -236,7 +236,7 @@ export async function runInteractive({
     active.controller.abort();
     await active.promise;
     if (threadConnection === active) threadConnection = null;
-    agentPane.render([], "disconnected");
+    agentPane.render([], "disconnected", null);
   };
 
   const startThreadConnection = (threadId) => {
@@ -258,7 +258,7 @@ export async function runInteractive({
           agentPane.setThread(thread);
         }
       },
-      onAgents: (agents) => agentPane.render(agents),
+      onAgents: (agents, snapshot) => agentPane.render(agents, undefined, snapshot),
       onEvent: (event) => {
         if (current?.id !== threadId) return;
         const sequence = Number(event.sequence) || 0;
@@ -410,7 +410,7 @@ async function streamThread({ client, threadId, getCursor, sleep, signal, create
         onState("connected");
         if (payload.type === "event" && payload.event) onEvent(payload.event);
         else if (payload.type === "thread" && payload.thread) onThread(payload.thread);
-        else if (payload.type === "agents") onAgents(Array.isArray(payload.agents) ? payload.agents : []);
+        else if (payload.type === "agents") onAgents(Array.isArray(payload.agents) ? payload.agents : [], payload);
       },
     });
     if (signal.aborted) return;
@@ -669,6 +669,7 @@ export function renderAgentPane(agents, {
   connectionState = "connected",
   thread = null,
   executionStatus = "",
+  agentSnapshot = null,
 } = {}) {
   const values = Array.isArray(agents) ? agents : [];
   const orchestratorStatus = executionStatus || thread?.state || "idle";
@@ -685,7 +686,12 @@ export function renderAgentPane(agents, {
     rows.push(`${last ? "   " : "│  "}  ↳ ${work}`);
   });
   if (values.length > visible.length && rows.length < maxRows) rows.push(`└─ … ${values.length - visible.length} more`);
-  if (!values.length && maxRows > 1) rows.push("└─ ○ waiting for agents");
+  if (!values.length && maxRows > 1) {
+    const active = new Set(["queued", "starting", "running", "working", "in-progress"]).has(String(orchestratorStatus).toLowerCase());
+    if (agentSnapshot?.error) rows.push("└─ ◌ subagent status unavailable");
+    else if (active) rows.push("└─ ◌ discovering subagents");
+    else rows.push("└─ ○ no active agents");
+  }
   return rows.slice(0, maxRows).map((line) => truncateTerminalLine(line, columns));
 }
 
@@ -711,6 +717,7 @@ function createAgentPane(stdout, { onDraw = () => {} } = {}) {
   let connectionState = "disconnected";
   let thread = null;
   let executionStatus = "";
+  let agentSnapshot = null;
   let panel = null;
   let lastFrame = "";
 
@@ -739,6 +746,7 @@ function createAgentPane(stdout, { onDraw = () => {} } = {}) {
       connectionState,
       thread,
       executionStatus,
+      agentSnapshot,
     });
     const frame = JSON.stringify({ rows, columns, height, lines });
     if (frame === lastFrame) return;
@@ -753,9 +761,10 @@ function createAgentPane(stdout, { onDraw = () => {} } = {}) {
   };
 
   return {
-    render(nextAgents, nextConnectionState) {
+    render(nextAgents, nextConnectionState, nextAgentSnapshot) {
       agents = Array.isArray(nextAgents) ? nextAgents : [];
       if (nextConnectionState) connectionState = nextConnectionState;
+      if (nextAgentSnapshot !== undefined) agentSnapshot = nextAgentSnapshot;
       draw();
     },
     setConnectionState(next) {
