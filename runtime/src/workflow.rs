@@ -709,6 +709,7 @@ fn context(args: &[String]) -> Result<(), String> {
         .map_err(|error| format!("inspect original task artifact: {error}"))?
         .len();
     let identities = typed_identity_context(&store.state_dir, MAX_IDENTITIES)?;
+    let result_candidate = store.state_dir.join("orchestrator-result-candidate.md");
     let value = serde_json::json!({
         "apiVersion": "multiagent.moveindustries.io/v1",
         "kind": "WorkflowContext",
@@ -722,6 +723,11 @@ fn context(args: &[String]) -> Result<(), String> {
             "bytes": task_bytes,
             "mediaType": "text/plain",
             "truncated": false
+        },
+        "resultCandidate": {
+            "path": result_candidate,
+            "mediaType": "text/plain",
+            "maxBytes": 6000
         },
         "activeTodoCount": read_todos(&p.todos)?.iter().filter(|row| active(row.get(4))).count(),
         "reviewCount": read_reviews(&p.reviews)?.len(),
@@ -1541,6 +1547,7 @@ pub fn supervisor_complete_external(id: &str) -> Result<String, String> {
     let operations_dir = store.state_dir.join("operations");
     let mut successful_operations = 0usize;
     let mut failed_operations = 0usize;
+    let mut blocked_operations = 0usize;
     if operations_dir.is_dir() {
         for entry in fs::read_dir(&operations_dir)
             .map_err(|error| format!("list external operation receipts: {error}"))?
@@ -1581,9 +1588,8 @@ pub fn supervisor_complete_external(id: &str) -> Result<String, String> {
                     .and_then(serde_json::Value::as_str),
             ) {
                 (Some("succeeded"), Some("succeeded")) => successful_operations += 1,
-                (Some("failed"), Some("failed")) | (Some("blocked"), Some("blocked")) => {
-                    failed_operations += 1
-                }
+                (Some("failed"), Some("failed")) => failed_operations += 1,
+                (Some("blocked"), Some("blocked")) => blocked_operations += 1,
                 _ => {
                     return Err(format!(
                         "external-only completion requires consistently classified terminal receipts; {} has mismatched state and disposition",
@@ -1593,10 +1599,9 @@ pub fn supervisor_complete_external(id: &str) -> Result<String, String> {
             }
         }
     }
-    if successful_operations == 0 {
+    if successful_operations == 0 && (blocked_operations == 0 || failed_operations > 0) {
         return Err(
-            "external-only completion requires at least one successful reviewed operation receipt"
-                .into(),
+            "external-only completion requires a successful reviewed operation receipt or a terminal reviewed blocker without executor failures".into(),
         );
     }
     crate::subagent::external_completion_gate_check()?;
@@ -1610,7 +1615,7 @@ pub fn supervisor_complete_external(id: &str) -> Result<String, String> {
         &p.events,
         "phase_transitioned",
         &format!(
-            "from=pre-implementation\tto=complete\titeration={}\tauthority=supervisor\troute=external-only\toperations={successful_operations}\tfailed_operations={failed_operations}",
+            "from=pre-implementation\tto=complete\titeration={}\tauthority=supervisor\troute=external-only\toperations={successful_operations}\tfailed_operations={failed_operations}\tblocked_operations={blocked_operations}",
             state_value(&state, "iteration")
         ),
     )?;
