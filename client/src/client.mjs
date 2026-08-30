@@ -691,24 +691,40 @@ function paneOutcomeForEvent(event) {
 }
 
 function compactOutcomeSummary(event) {
-  const lines = String(event?.payload?.text || event?.payload?.report || "")
+  const entries = String(event?.payload?.text || event?.payload?.report || "")
     .split(/\r?\n/)
-    .map((line) => line
-      .replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1")
-      .replace(/^\s*#{1,6}\s*/, "")
-      .replace(/[`*_>]+/g, "")
-      .replace(/^\s*[-•]\s*/, "")
-      .replace(/\s+/g, " ")
-      .trim())
-    .filter(Boolean);
-  const meaningful = lines.filter((line) => !/^(?:result|summary|outcome|answer|final answer)$/i.test(line));
-  const preferred = meaningful.find((line) => /\b(?:most recently|latest)\b/i.test(line))
-    || meaningful.find((line) => /^(?:result|answer|outcome)\s*:/i.test(line))
-    || meaningful.find((line) => /\b(?:found|fixed|created|updated|merged|deployed|completed)\b/i.test(line))
-    || meaningful[0]
+    .map((source) => {
+      const tableRow = /^\s*\|/.test(source) && /\|\s*$/.test(source);
+      let text = source
+        .replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1")
+        .replace(/^\s*#{1,6}\s*/, "")
+        .replace(/[`*_>]+/g, "")
+        .replace(/^\s*[-•]\s*/, "");
+      if (tableRow) {
+        text = text.replace(/^\s*\|\s*/, "").replace(/\s*\|\s*$/, "").replace(/\s*\|\s*/g, " — ");
+      }
+      return { text: text.replace(/\s+/g, " ").trim(), tableRow };
+    })
+    .filter(({ text }) => text);
+  const meaningful = entries.filter(({ text }) =>
+    !/^(?:result|summary|outcome|answer|final answer)$/i.test(text)
+    && !/^(?:-+)(?:\s+—\s+-+)*$/.test(text));
+  const latestIndex = meaningful.findIndex(({ text }) => /\b(?:most recently|latest)\b/i.test(text));
+  if (latestIndex >= 0) {
+    const label = meaningful[latestIndex].text;
+    if (/\bpr\b/i.test(label) && !/#\d+\b/.test(label)) {
+      const detail = meaningful.slice(latestIndex + 1).find(({ text }) => /#\d+\b/.test(text));
+      if (detail) return `${label.replace(/[:：]\s*$/, "")}: ${detail.text}`.slice(0, 240);
+    }
+  }
+  const lines = meaningful.map(({ text }) => text);
+  const preferred = lines.find((line) => /\b(?:most recently|latest)\b/i.test(line))
+    || lines.find((line) => /^(?:result|answer|outcome)\s*:/i.test(line))
+    || lines.find((line) => /\b(?:found|fixed|created|updated|merged|deployed|completed)\b/i.test(line))
     || lines[0]
+    || entries[0]?.text
     || "";
-  return preferred.slice(0, 240);
+  return String(preferred?.text || preferred).slice(0, 240);
 }
 
 export function renderAgentPane(agents, {
