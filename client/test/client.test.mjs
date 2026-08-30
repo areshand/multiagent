@@ -536,7 +536,13 @@ test("asynchronous status redraw restores the active input prompt", async () => 
           })));
           threadSocket.emit("message", Buffer.from(JSON.stringify({
             type: "event",
-            event: { sequence: 1, type: "assistant_message", payload: { text: "Still working" } },
+            event: {
+              sequence: 1,
+              type: "assistant_message",
+              payload: {
+                text: "# Open PRs — movement-network/aptos-core\n\nChecked current open pull requests.\n\n**Most recently opened:** **#421** — fix: remove global waypoint signature-verification bypass",
+              },
+            },
           })));
           setImmediate(() => resolve("/quit"));
         });
@@ -570,8 +576,8 @@ test("asynchronous status redraw restores the active input prompt", async () => 
   });
 
   assert.match(output.output, /● orchestrator · running/);
-  assert.match(output.output, /\r\u001b\[2K\nassistant> Still working/);
+  assert.match(output.output, /assistant> # Open PRs/);
   assert.match(output.output, /✓ orchestrator · complete/);
-  assert.match(output.output, /↳ Still working/);
+  assert.match(output.output, /↳ Most recently opened: #421 — fix: remove global waypoint/);
   assert.ok(prompts.some((prompt) => prompt.label === "› " && prompt.preserveCursor === true));
 });

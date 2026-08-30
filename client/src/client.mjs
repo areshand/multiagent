@@ -691,12 +691,24 @@ function paneOutcomeForEvent(event) {
 }
 
 function compactOutcomeSummary(event) {
-  const value = String(event?.payload?.text || event?.payload?.report || "")
-    .replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1")
-    .replace(/[`*_#>]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  return value.slice(0, 240);
+  const lines = String(event?.payload?.text || event?.payload?.report || "")
+    .split(/\r?\n/)
+    .map((line) => line
+      .replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1")
+      .replace(/^\s*#{1,6}\s*/, "")
+      .replace(/[`*_>]+/g, "")
+      .replace(/^\s*[-•]\s*/, "")
+      .replace(/\s+/g, " ")
+      .trim())
+    .filter(Boolean);
+  const meaningful = lines.filter((line) => !/^(?:result|summary|outcome|answer|final answer)$/i.test(line));
+  const preferred = meaningful.find((line) => /\b(?:most recently|latest)\b/i.test(line))
+    || meaningful.find((line) => /^(?:result|answer|outcome)\s*:/i.test(line))
+    || meaningful.find((line) => /\b(?:found|fixed|created|updated|merged|deployed|completed)\b/i.test(line))
+    || meaningful[0]
+    || lines[0]
+    || "";
+  return preferred.slice(0, 240);
 }
 
 export function renderAgentPane(agents, {
