@@ -537,6 +537,21 @@ test("completed outcome summary wraps within the terminal width", () => {
   assert.ok(lines.every((line) => line.length <= 52));
 });
 
+test("interrupted orchestrator pane shows the bounded blocker instead of a generic failure", () => {
+  const lines = renderAgentPane([], {
+    columns: 64,
+    maxRows: 6,
+    thread: { id: "thread-blocked", state: "interrupted" },
+    outcomeStatus: "interrupted",
+    taskSummary: "Grafana read blocked: runbook requests 1.0.0 but prod-mcp certifies 1.1.0.",
+  });
+  assert.deepEqual(lines.slice(0, 3), [
+    "× orchestrator · interrupted",
+    "   ↳ Grafana read blocked: runbook requests 1.0.0 but prod-mcp",
+    "     certifies 1.1.0.",
+  ]);
+});
+
 test("latest-open-PR interaction ends with an informative summary, completed agent graph, and active prompt", async () => {
   const sessionFile = await sessionFixture();
   const output = ttyWriter();

@@ -29,6 +29,7 @@ import {
   shouldAutomaticallyResume,
   submitLocalFollowup,
   validResourceId,
+  workerReportInterruptedEvent,
   workerReportPublicEvent,
 } from "./session-runtime.mjs";
 
@@ -442,10 +443,10 @@ function readLocalWorkerReport(id) {
   } catch { return null; }
 }
 
-async function deliverCompletedWorkerReport(id) {
+async function deliverWorkerOutcomeReport(id) {
   if (!workerMode || !workerReportGatewayUrl || !workerReportTokenFile) return;
   const report = readLocalWorkerReport(id);
-  if (!report) throw new Error(`completed session ${id} has no normalized report`);
+  if (!report) throw new Error(`session ${id} has no normalized outcome report`);
   const token = fs.readFileSync(workerReportTokenFile, "utf8").trim();
   await deliverWorkerReport({
     gatewayUrl: workerReportGatewayUrl,
@@ -746,13 +747,14 @@ async function projectSessionToThread(id, status, reportReader = readGatewayRepo
     await saveRegistry();
     if (finalized.activatedSession) await launchActivatedThreadSession(record, finalized.activatedSession);
   } else if (status === "failed" || status === "paused") {
+    const fallback = status === "paused" ? "Execution session paused" : "Execution session failed";
+    const publicEvent = workerReportInterruptedEvent(id, reportReader(id), fallback);
     await threadStore.appendFencedSessionEvent({
       threadId: record.threadId,
       sessionId: id,
       generation: record.leaseGeneration,
       eventId: `interrupted-${id}`,
-      type: "session_interrupted",
-      payload: { text: status === "paused" ? "Execution session paused" : "Execution session failed" },
+      ...publicEvent,
     });
     const finalized = await threadStore.finalizeSession({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration, status: "interrupted" });
     record.threadProjectedAt = new Date().toISOString();
@@ -1297,7 +1299,7 @@ for (const record of gatewayMode ? [] : Object.values(registry.sessions)) {
     writeTraceSummary(record.id, "completed");
     saveRegistry();
     if (workerMode) {
-      deliverCompletedWorkerReport(record.id)
+      deliverWorkerOutcomeReport(record.id)
         .catch((error) => console.error(`worker report delivery failed for ${record.id}`, error))
         .finally(() => setTimeout(() => process.exit(0), completionGraceMs));
     }
@@ -1316,7 +1318,7 @@ const retirementTimer = setInterval(() => {
     if (record.status === "running" && workflowPhase(record.id) === "complete") {
       retireSession(record.id, "completed", "workflow-supervisor").then(async () => {
         if (workerMode) {
-          try { await deliverCompletedWorkerReport(record.id); }
+          try { await deliverWorkerOutcomeReport(record.id); }
           catch (error) { console.error(`worker report delivery failed for ${record.id}`, error); }
           setTimeout(() => process.exit(0), completionGraceMs);
         }
@@ -1335,8 +1337,12 @@ const retirementTimer = setInterval(() => {
           console.error(`automatic resume failed for ${record.id}`, error);
         }
       }
-      retireSession(record.id, "failed", "process-exit").then(() => {
-        if (workerMode) setTimeout(() => process.exit(1), 1000);
+      retireSession(record.id, "failed", "process-exit").then(async () => {
+        if (workerMode) {
+          try { await deliverWorkerOutcomeReport(record.id); }
+          catch (error) { console.error(`worker outcome report delivery failed for ${record.id}`, error); }
+          setTimeout(() => process.exit(1), 1000);
+        }
       }).catch((error) => console.error(`failed retirement failed for ${record.id}`, error));
       continue;
     }

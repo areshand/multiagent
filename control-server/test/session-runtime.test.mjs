@@ -17,6 +17,7 @@ import {
   shouldAutomaticallyResume,
   submitLocalFollowup,
   validResourceId,
+  workerReportInterruptedEvent,
   workerReportPublicEvent,
 } from "../src/session-runtime.mjs";
 
@@ -113,6 +114,22 @@ test("production-shaped reports publish the user result instead of lifecycle met
     type: "assistant_message",
     payload: {
       text: "Latest open PR: #421 — fix: remove global waypoint signature-verification bypass",
+      transcript: { traceReferences: ["trace://session/session-1/logs/agents/ops-01/events.jsonl"] },
+    },
+  });
+});
+
+test("failed sessions publish their bounded blocker instead of a generic interruption", () => {
+  const report = normalizeWorkerReport({
+    report: "# session-1\n\nStatus: failed\n\n## Final agent message\nThe Grafana read is blocked by an operation version mismatch.",
+    message: "The Grafana read is blocked: the runbook requests 1.0.0 but prod-mcp certifies 1.1.0.",
+    completionRoute: "external-only",
+    transcript: { traceReferences: ["agents/ops-01/events.jsonl"] },
+  });
+  assert.deepEqual(workerReportInterruptedEvent("session-1", report, "Execution session failed"), {
+    type: "session_interrupted",
+    payload: {
+      text: "The Grafana read is blocked: the runbook requests 1.0.0 but prod-mcp certifies 1.1.0.",
       transcript: { traceReferences: ["trace://session/session-1/logs/agents/ops-01/events.jsonl"] },
     },
   });

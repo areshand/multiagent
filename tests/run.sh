@@ -432,9 +432,12 @@ if [[ "$SOURCE_BOOTSTRAP_OUTPUT" != "source-complete" ]]; then
 fi
 
 HEADLESS_LAUNCH_STATE="$TMPDIR/launch-headless-state"
+HEADLESS_ORIGINAL_TASK="$TMPDIR/launch-headless-original-task.md"
+printf 'Check testnet validator logs for errors.\n' >"$HEADLESS_ORIGINAL_TASK"
 MOCK_TMUX_HAS_SESSION=0 \
   MULTIAGENT_AGENT_HEADLESS=1 \
   MULTIAGENT_SESSION="launch-headless" \
+  MULTIAGENT_ORIGINAL_TASK_FILE="$HEADLESS_ORIGINAL_TASK" \
   MULTIAGENT_ROOT= \
   MULTIAGENT_PROMPT= \
   MULTIAGENT_STATE_DIR="$HEADLESS_LAUNCH_STATE" \
@@ -444,6 +447,8 @@ MOCK_TMUX_HAS_SESSION=0 \
 HEADLESS_LAUNCH_BOOTSTRAP="$HEADLESS_LAUNCH_STATE/orchestrator-bootstrap.sh"
 assert_file_contains "$HEADLESS_LAUNCH_BOOTSTRAP" "orchestrator complete --auto-clarification --result-file"
 assert_file_contains "$HEADLESS_LAUNCH_BOOTSTRAP" 'exit "$agent_status"'
+assert_file_contains "$HEADLESS_LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "Authenticated Original Task Envelope"
+assert_file_contains "$HEADLESS_LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "Check testnet validator logs for errors."
 
 LAUNCH_WORKFLOW_ID="$(tr -d '\r\n' <"$LAUNCH_STATE/runtime_state/active-workflow-id")"
 assert_file_contains "$LAUNCH_STATE/workflows/$LAUNCH_WORKFLOW_ID/lifecycle/lifecycle.env" "phase=pre-implementation"

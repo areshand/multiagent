@@ -119,3 +119,13 @@ export function workerReportPublicEvent(sessionId, report) {
     },
   };
 }
+
+export function workerReportInterruptedEvent(sessionId, report, fallback) {
+  return {
+    type: "session_interrupted",
+    payload: {
+      text: report ? selectFinalMessage(report.message, fallback) : String(fallback || "").trim(),
+      transcript: report ? scopedThreadTranscript(sessionId, report.transcript) : null,
+    },
+  };
+}
