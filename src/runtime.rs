@@ -1106,6 +1106,19 @@ fn write_bootstrap(
     };
     text.push_str(&command);
     text.push('\n');
+    if headless {
+        let executable = environment
+            .get("MULTIAGENT_BIN")
+            .ok_or_else(|| "missing MULTIAGENT_BIN in launch environment".to_string())?;
+        text.push_str("agent_status=$?\n");
+        text.push_str("if [[ $agent_status -eq 0 ]]; then\n");
+        text.push_str(&format!(
+            "  {} orchestrator complete --auto-clarification --result-file {} >/dev/null 2>&1 || true\n",
+            shell_escape(executable),
+            shell_escape(&last_message.display().to_string())
+        ));
+        text.push_str("fi\nexit \"$agent_status\"\n");
+    }
     atomic_write(path, &text, "orchestrator bootstrap")?;
     set_executable(path, 0o700)?;
     Ok(())
@@ -1119,7 +1132,7 @@ fn resume_user_turn(original_task: Option<&str>, followup: Option<&str>) -> Stri
     let mut turn = String::from(
         "Continue this same execution session after a prior headless pass exited before lifecycle completion.\n\
          Reconcile the persisted workflow and subagent state against every unfinished requirement in the authenticated original task.\n\
-         A prior prose answer is not completion: finish the work, satisfy the required lifecycle gates, and produce the final answer.\n",
+         A prior prose answer is not completion. If one bounded clarification is still required, persist that exact question and use the direct-response completion route; do not guess the missing user choice. Otherwise finish the work, satisfy the required lifecycle gates, and produce the final answer.\n",
     );
     if let Some(task) = original_task.map(str::trim).filter(|task| !task.is_empty()) {
         turn.push_str("\n## Authenticated Original Task\n\n");
@@ -1159,13 +1172,15 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
             .iter()
             .any(|arg| matches!(arg.as_str(), "-h" | "--help"))
     {
-        println!("Usage:\n  multiagent orchestrator complete\n  multiagent orchestrator complete --direct-response --result-file PATH\n  multiagent orchestrator complete --read-only --result-file PATH --reviewer NAME\n  multiagent orchestrator complete --external-only --result-file PATH\n\nRuns the supervisor completion gates. Shortcut and external-only completion require a self-contained caller result under MULTIAGENT_STATE_DIR.");
+        println!("Usage:\n  multiagent orchestrator complete\n  multiagent orchestrator complete --direct-response --result-file PATH\n  multiagent orchestrator complete --clarification --result-file PATH\n  multiagent orchestrator complete --auto-clarification --result-file PATH\n  multiagent orchestrator complete --read-only --result-file PATH --reviewer NAME\n  multiagent orchestrator complete --external-only --result-file PATH\n\nRuns the supervisor completion gates. Shortcut and external-only completion require a self-contained caller result under MULTIAGENT_STATE_DIR.");
         return Ok(ExitCode::SUCCESS);
     }
     #[derive(Clone, Copy)]
     enum CompletionRoute<'a> {
         Source,
         Direct(&'a str),
+        Clarification(&'a str),
+        AutoClarification(&'a str),
         ReadOnly { result: &'a str, reviewer: &'a str },
         External(&'a str),
     }
@@ -1183,6 +1198,18 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
         && args[2] == "--result-file"
     {
         CompletionRoute::Direct(&args[3])
+    } else if args.len() == 4
+        && args[0] == "complete"
+        && args[1] == "--clarification"
+        && args[2] == "--result-file"
+    {
+        CompletionRoute::Clarification(&args[3])
+    } else if args.len() == 4
+        && args[0] == "complete"
+        && args[1] == "--auto-clarification"
+        && args[2] == "--result-file"
+    {
+        CompletionRoute::AutoClarification(&args[3])
     } else if args.len() == 6
         && args[0] == "complete"
         && args[1] == "--read-only"
@@ -1198,9 +1225,20 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
     };
     let result_file = match route {
         CompletionRoute::Source => None,
-        CompletionRoute::Direct(path) | CompletionRoute::External(path) => Some(path),
+        CompletionRoute::Direct(path)
+        | CompletionRoute::Clarification(path)
+        | CompletionRoute::AutoClarification(path)
+        | CompletionRoute::External(path) => Some(path),
         CompletionRoute::ReadOnly { result, .. } => Some(result),
     };
+    if let CompletionRoute::Clarification(path) = route {
+        validate_bounded_clarification(path)?;
+    }
+    if let CompletionRoute::AutoClarification(path) = route {
+        if !is_bounded_clarification(&validated_orchestrator_result(path)?) {
+            return Ok(ExitCode::SUCCESS);
+        }
+    }
     if let Some(path) = result_file {
         persist_orchestrator_result(path)?;
     }
@@ -1209,7 +1247,9 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
             .ok_or_else(|| "lifecycle enforcement requires MULTIAGENT_WORKFLOW_ID".to_string())?;
         let diff = match route {
             CompletionRoute::Source => crate::workflow::supervisor_complete(&workflow_id)?,
-            CompletionRoute::Direct(_) => {
+            CompletionRoute::Direct(_)
+            | CompletionRoute::Clarification(_)
+            | CompletionRoute::AutoClarification(_) => {
                 crate::workflow::supervisor_complete_direct(&workflow_id)?
             }
             CompletionRoute::ReadOnly { reviewer, .. } => {
@@ -1233,6 +1273,16 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
 }
 
 fn persist_orchestrator_result(path: &str) -> Result<(), String> {
+    let result = validated_orchestrator_result(path)?;
+    let state = config::state_dir()?;
+    atomic_write(
+        &state.join("orchestrator-result.md"),
+        &format!("{result}\n"),
+        "orchestrator result",
+    )
+}
+
+fn validated_orchestrator_result(path: &str) -> Result<String, String> {
     const MAX_RESULT_BYTES: usize = 6_000;
     let state = config::state_dir()?;
     let canonical_state =
@@ -1255,11 +1305,27 @@ fn persist_orchestrator_result(path: &str) -> Result<(), String> {
     if result.is_empty() {
         return Err("orchestrator result must not be blank".into());
     }
-    atomic_write(
-        &state.join("orchestrator-result.md"),
-        &format!("{result}\n"),
-        "orchestrator result",
-    )
+    Ok(result.to_string())
+}
+
+fn validate_bounded_clarification(path: &str) -> Result<(), String> {
+    let result = validated_orchestrator_result(path)?;
+    if !is_bounded_clarification(&result) {
+        return Err("automatic clarification completion requires one bounded question".into());
+    }
+    Ok(())
+}
+
+fn is_bounded_clarification(result: &str) -> bool {
+    const MAX_CLARIFICATION_BYTES: usize = 2_000;
+    let question_count = result.matches(['?', '？']).count();
+    let tail = result.trim_end_matches(|character: char| {
+        character.is_whitespace() || matches!(character, '*' | '_' | '`' | '"' | '\'' | ')' | ']')
+    });
+    !result.trim().is_empty()
+        && result.len() <= MAX_CLARIFICATION_BYTES
+        && (1..=3).contains(&question_count)
+        && (tail.ends_with('?') || tail.ends_with('？'))
 }
 
 pub fn status(args: &[String]) -> Result<ExitCode, String> {
@@ -5417,6 +5483,21 @@ mod tests {
         assert!(turn.contains("Also report the current branch"));
         assert!(turn.contains("additive unless it explicitly replaces"));
         assert!(turn.contains("lifecycle gates"));
+        assert!(turn.contains("do not guess the missing user choice"));
+    }
+
+    #[test]
+    fn automatic_clarification_accepts_only_bounded_questions() {
+        assert!(is_bounded_clarification(
+            "Which repository should I check — prod-mcp, aptos-core, or both?"
+        ));
+        assert!(is_bounded_clarification("你希望检查哪个仓库？"));
+        assert!(!is_bounded_clarification("The latest PR is #421."));
+        assert!(!is_bounded_clarification(&format!(
+            "{}?",
+            "x".repeat(2_000)
+        )));
+        assert!(!is_bounded_clarification("One? Two? Three? Four?"));
     }
 
     #[test]

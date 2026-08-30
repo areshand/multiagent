@@ -59,6 +59,19 @@ export function selectFinalMessage(result, fallback) {
   return String(result || "").trim() || String(fallback || "").trim();
 }
 
+export function responseTypeForMessage(message, completionRoute = "") {
+  if (completionRoute !== "direct-response") return "assistant_message";
+  const text = String(message || "").trim();
+  const questions = [...text].filter((character) => character === "?" || character === "？").length;
+  const tail = text.replace(/[\s*_`"')\]]+$/g, "");
+  return Buffer.byteLength(text, "utf8") <= 2000
+    && questions >= 1
+    && questions <= 3
+    && (tail.endsWith("?") || tail.endsWith("？"))
+    ? "question"
+    : "assistant_message";
+}
+
 export async function submitLocalFollowup({ id, text, actor, live, sendInput, restart, sessionView }) {
   if (live) {
     await sendInput(id, text);
@@ -72,7 +85,17 @@ export function normalizeWorkerReport(value) {
   if (Buffer.byteLength(value.report, "utf8") > 64 * 1024) return null;
   const transcript = value.transcript === undefined ? null : value.transcript;
   if (Buffer.byteLength(JSON.stringify(transcript), "utf8") > 64 * 1024) return null;
-  return { report: value.report, transcript };
+  const message = typeof value.message === "string" && value.message.trim() ? value.message.trim() : null;
+  if (message && Buffer.byteLength(message, "utf8") > 6000) return null;
+  const completionRoute = new Set(["direct-response", "read-only", "external-only", "source"])
+    .has(value.completionRoute) ? value.completionRoute : null;
+  return {
+    report: value.report,
+    transcript,
+    message,
+    completionRoute,
+    responseType: responseTypeForMessage(message, completionRoute),
+  };
 }
 
 export function scopedThreadTranscript(sessionId, transcript) {

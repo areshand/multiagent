@@ -10,6 +10,10 @@ function writer() {
   return { output: "", write(value) { this.output += String(value); } };
 }
 
+function ttyWriter({ rows = 24, columns = 100 } = {}) {
+  return { ...writer(), isTTY: true, rows, columns };
+}
+
 function jsonResponse(value, init = {}) {
   return new Response(JSON.stringify(value), {
     status: init.status || 200,
@@ -17,13 +21,17 @@ function jsonResponse(value, init = {}) {
   });
 }
 
-async function sessionFixture() {
+async function sessionFixture({ threadIds = ["thread-1"] } = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "multiagent-client-"));
   const file = path.join(directory, "session.json");
   await writeFile(file, JSON.stringify({
     server: "https://control.example/",
     cookie: "multiagent_session=signed-cookie",
     username: "operator",
+  }), { mode: 0o600 });
+  await writeFile(`${file}.threads.json`, JSON.stringify({
+    schemaVersion: 1,
+    profiles: [{ server: "https://control.example/", username: "operator", threadIds }],
   }), { mode: 0o600 });
   return file;
 }
@@ -100,7 +108,7 @@ test("client login stores only the scoped session cookie with mode 0600", async 
   });
 });
 
-test("users can list durable threads through the terminal client", async () => {
+test("users list only locally created threads through individually authorized lookups", async () => {
   const sessionFile = await sessionFixture();
   const output = writer();
   let cookie = "";
@@ -109,9 +117,9 @@ test("users can list durable threads through the terminal client", async () => {
   ], {
     stdout: output,
     fetchImpl: async (url, options) => {
-      assert.equal(String(url), "https://control.example/api/threads");
+      assert.equal(String(url), "https://control.example/api/threads/thread-1");
       cookie = options.headers.cookie;
-      return jsonResponse({ threads: [{ id: "thread-1", state: "idle", repository: "multiagent" }] });
+      return jsonResponse({ thread: { id: "thread-1", state: "idle", repository: "multiagent" } });
     },
   });
   assert.equal(cookie, "multiagent_session=signed-cookie");
@@ -119,7 +127,7 @@ test("users can list durable threads through the terminal client", async () => {
 });
 
 test("thread creation lets the server generate both the thread and execution session IDs", async () => {
-  const sessionFile = await sessionFixture();
+  const sessionFile = await sessionFixture({ threadIds: [] });
   const output = writer();
   const requests = [];
   await main([
@@ -139,6 +147,9 @@ test("thread creation lets the server generate both the thread and execution ses
   assert.deepEqual(JSON.parse(requests[1].options.body), { text: "Investigate the incident" });
   assert.ok(requests[1].options.headers["idempotency-key"]);
   assert.equal(JSON.parse(output.output).route.session.id, "thread-1-generated-session");
+  const index = JSON.parse(await readFile(`${sessionFile}.threads.json`, "utf8"));
+  assert.deepEqual(index.profiles[0].threadIds, ["thread-1"]);
+  assert.equal((await stat(`${sessionFile}.threads.json`)).mode & 0o777, 0o600);
 });
 
 test("thread show and one-shot watch expose history and execution state as JSON", async () => {
@@ -171,7 +182,7 @@ test("client refuses to send authentication over non-local plaintext HTTP", () =
 test("interactive terminal lists, opens, and continues durable threads", async () => {
   const sessionFile = await sessionFixture();
   const output = writer();
-  const answers = ["/open missing", "/open 1", "Continue the investigation", "/wait", "/quit"];
+  const answers = ["/list", "/open missing", "/open 1", "Continue the investigation", "/wait", "/quit"];
   const requests = [];
   await main([
     "--server", "https://control.example", "--session-file", sessionFile,
@@ -214,10 +225,11 @@ test("interactive terminal lists, opens, and continues durable threads", async (
   assert.match(output.output, /Planning\nDelegating/);
   assert.match(output.output, /assistant> Investigation complete/);
   assert.ok(requests.some((request) => request.url.endsWith("/api/threads/thread-1/messages")));
+  assert.deepEqual(JSON.parse(await readFile(`${sessionFile}.threads.json`, "utf8")).profiles[0].threadIds, ["thread-1"]);
 });
 
 test("interactive new asks only for a repository and streams its first execution", async () => {
-  const sessionFile = await sessionFixture();
+  const sessionFile = await sessionFixture({ threadIds: [] });
   const output = writer();
   const answers = ["/new multiagent Incident triage", "Investigate now", "/wait", "/quit"];
   let created = null;
@@ -249,10 +261,11 @@ test("interactive new asks only for a repository and streams its first execution
       throw new Error(`unexpected request: ${value}`);
     },
   });
-  assert.match(output.output, /No threads\. Create one with \/new REPOSITORY \[TITLE\]/);
+  assert.doesNotMatch(output.output, /No threads|\nThreads\n/);
   assert.match(output.output, /Opened thread-generated\. Enter its first message/);
   assert.match(output.output, /Starting orchestrator\nReader assigned/);
   assert.match(output.output, /assistant> Done/);
+  assert.deepEqual(JSON.parse(await readFile(`${sessionFile}.threads.json`, "utf8")).profiles[0].threadIds, ["thread-generated"]);
 });
 
 test("interactive streaming retries while the session worker starts", async () => {
@@ -450,9 +463,140 @@ test("subagent pane includes status, role, and current work within its width", (
   const lines = renderAgentPane([
     { name: "reader", status: "working", role: "investigator", workingOn: "Tracing the session lifecycle" },
     { name: "tester", status: "done", role: "verification", workingOn: "Ran the client tests" },
-  ], { columns: 72, maxRows: 4, connectionState: "connected" });
-  assert.equal(lines[0], "Subagents | connected | 1 active, 2 total");
-  assert.match(lines[1], /> reader \[working\] \(investigator\): Tracing the session lifecycle/);
-  assert.match(lines[2], /- tester \[done\] \(verification\): Ran the client tests/);
+  ], { columns: 72, maxRows: 6, connectionState: "connected" });
+  assert.equal(lines[0], "○ orchestrator · idle");
+  assert.match(lines[1], /├─ ● reader · investigator · working/);
+  assert.match(lines[2], /↳ Tracing the session lifecycle/);
+  assert.match(lines[3], /└─ ✓ tester · verification · done/);
+  assert.match(lines[4], /↳ Ran the client tests/);
   assert.ok(lines.every((line) => line.length <= 72));
+});
+
+test("subagent pane keeps the open thread and orchestrator status visible", () => {
+  const lines = renderAgentPane([
+    { name: "reader", status: "running", role: "investigator", workingOn: "Inspecting the runtime" },
+  ], {
+    columns: 100,
+    maxRows: 5,
+    connectionState: "connected",
+    thread: { id: "thread-123", state: "running" },
+  });
+  assert.equal(lines[0], "● orchestrator · running");
+  assert.equal(lines[1], "└─ ● reader · investigator · running");
+  assert.equal(lines[2], "     ↳ Inspecting the runtime");
+});
+
+test("subagent pane distinguishes idle, orchestrator planning, and unavailable snapshots", () => {
+  assert.equal(renderAgentPane([], {
+    columns: 80,
+    maxRows: 4,
+    thread: { id: "thread-idle", state: "idle" },
+  })[1], "└─ ○ no active agents");
+  const planning = renderAgentPane([], {
+    columns: 80,
+    maxRows: 4,
+    thread: { id: "thread-running", state: "running" },
+  });
+  assert.equal(planning[0], "● orchestrator · planning");
+  assert.equal(planning[1], "└─ ○ no delegated agents yet");
+  assert.equal(renderAgentPane([], {
+    columns: 80,
+    maxRows: 4,
+    thread: { id: "thread-running", state: "running" },
+    agentSnapshot: { error: "subagent status temporarily unavailable" },
+  })[1], "└─ ◌ subagent status unavailable");
+});
+
+test("completed orchestrator pane retains a concise outcome summary", () => {
+  const lines = renderAgentPane([], {
+    columns: 90,
+    maxRows: 5,
+    thread: { id: "thread-complete", state: "idle" },
+    outcomeStatus: "complete",
+    taskSummary: "Found open PR #421 and returned its review status.",
+  });
+  assert.equal(lines[0], "✓ orchestrator · complete");
+  assert.equal(lines[1], "   ↳ Found open PR #421 and returned its review status.");
+  assert.equal(lines[2], "└─ ○ no active agents");
+});
+
+test("completed outcome summary wraps within the terminal width", () => {
+  const lines = renderAgentPane([], {
+    columns: 52,
+    maxRows: 6,
+    thread: { id: "thread-complete", state: "idle" },
+    outcomeStatus: "complete",
+    taskSummary: "Latest open PR: #421 — fix: remove global waypoint signature-verification bypass from the live consensus path",
+  });
+  assert.deepEqual(lines.slice(0, 4), [
+    "✓ orchestrator · complete",
+    "   ↳ Latest open PR: #421 — fix: remove global",
+    "     waypoint signature-verification bypass from the",
+    "     live consensus path",
+  ]);
+  assert.ok(lines.every((line) => line.length <= 52));
+});
+
+test("asynchronous status redraw restores the active input prompt", async () => {
+  const sessionFile = await sessionFixture();
+  const output = ttyWriter();
+  let questionCount = 0;
+  let threadSocket = null;
+  const prompts = [];
+  const terminal = {
+    async question() {
+      questionCount += 1;
+      if (questionCount === 1) return "/open 1";
+      return new Promise((resolve) => {
+        setImmediate(() => {
+          threadSocket.emit("message", Buffer.from(JSON.stringify({
+            type: "agents",
+            agents: [{ name: "reader", status: "running", role: "investigator", workingOn: "Checking status" }],
+          })));
+          threadSocket.emit("message", Buffer.from(JSON.stringify({
+            type: "event",
+            event: {
+              sequence: 1,
+              type: "assistant_message",
+              payload: {
+                text: "# Open PRs — movement-network/aptos-core\n\nChecked current open pull requests.\n\n## Latest opened PR\n\n| PR | Title |\n| --- | --- |\n| **#421** | fix: remove global waypoint signature-verification bypass |",
+              },
+            },
+          })));
+          setImmediate(() => resolve("/quit"));
+        });
+      });
+    },
+    setPrompt(value) { this.label = value; },
+    prompt(preserveCursor) { prompts.push({ label: this.label, preserveCursor }); },
+    close() {},
+  };
+
+  await main([
+    "--server", "https://control.example", "--session-file", sessionFile,
+  ], {
+    stdin: { isTTY: true },
+    stdout: output,
+    createInterface: () => terminal,
+    sleep: async () => {},
+    createWebSocket: (url) => {
+      const socket = new EventEmitter();
+      socket.close = () => queueMicrotask(() => socket.emit("close"));
+      if (String(url).includes("/stream")) threadSocket = socket;
+      return socket;
+    },
+    fetchImpl: async (url) => {
+      const value = String(url);
+      if (value.endsWith("/api/threads")) return jsonResponse({ threads: [{ id: "thread-1", state: "running", repository: "multiagent" }] });
+      if (value.endsWith("/api/threads/thread-1")) return jsonResponse({ thread: { id: "thread-1", state: "running", repository: "multiagent" } });
+      if (value.includes("/events?after_sequence=0")) return jsonResponse({ events: [] });
+      throw new Error(`unexpected request: ${value}`);
+    },
+  });
+
+  assert.match(output.output, /● orchestrator · running/);
+  assert.match(output.output, /assistant> # Open PRs/);
+  assert.match(output.output, /✓ orchestrator · complete/);
+  assert.match(output.output, /↳ Latest opened PR: #421 — fix: remove global waypoint/);
+  assert.ok(prompts.some((prompt) => prompt.label === "› " && prompt.preserveCursor === true));
 });

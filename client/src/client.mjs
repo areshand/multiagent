@@ -32,7 +32,7 @@ thread watch emits one JSON event per line. Run without a command for the
 interactive terminal client.`;
 
 const interactiveHelp = `Commands:
-  /threads                 List threads
+  /list                    List threads created by this local client
   /open THREAD_ID          Open a thread
   /new REPO [TITLE]        Create and open a server-assigned thread
   /sessions                List execution sessions for the open thread
@@ -103,12 +103,17 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
   const normalizedServer = normalizeServer(server).href;
   const cookie = stored?.server === normalizedServer ? stored.cookie : "";
   const client = new ControlClient({ server: normalizedServer, cookie, fetchImpl });
+  const threadIndex = {
+    file: `${sessionFile}.threads.json`,
+    server: normalizedServer,
+    username: stored?.server === normalizedServer ? String(stored.username || "") : "",
+  };
 
   if (!command || command === "connect") {
     if (!client.cookie) throw new ClientError(`not logged in to ${normalizedServer}; run the login command first`);
     const initialThreadId = command === "connect" ? parsed.args.shift() || "" : "";
     rejectExtraArguments(parsed.args);
-    return runInteractive({ client, stdin, stdout, sleep, createInterfaceImpl, createWebSocketImpl, initialThreadId });
+    return runInteractive({ client, stdin, stdout, sleep, createInterfaceImpl, createWebSocketImpl, initialThreadId, threadIndex });
   }
 
   if (command === "login") {
@@ -146,7 +151,7 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
     return 0;
   }
   if (command === "threads") {
-    return runThreads({ client, args: parsed.args, stdout, stdin, sleep });
+    return runThreads({ client, args: parsed.args, stdout, stdin, sleep, threadIndex });
   }
   if (command === "sessions") {
     requireAction(parsed.args.shift(), "list", "sessions");
@@ -169,20 +174,40 @@ export async function runInteractive({
   createInterfaceImpl = createInterface,
   createWebSocketImpl = (url, options) => new WebSocket(url, options),
   initialThreadId = "",
+  threadIndex,
 }) {
   if (!stdin?.isTTY) throw new ClientError("interactive mode requires a terminal; use a JSON command for non-interactive calls");
   const terminal = createInterfaceImpl({ input: stdin, output: stdout, terminal: true });
-  let threads = [];
+  let threads = (await loadLocalThreadIds(threadIndex)).map((id) => ({ id }));
   let current = null;
   let cursor = 0;
   let monitor = null;
   let threadConnection = null;
-  const agentPane = createAgentPane(stdout);
+  let promptActive = false;
+  let promptLabel = "› ";
+  const refreshPrompt = () => {
+    if (!promptActive) return;
+    if (typeof terminal.setPrompt !== "function" || typeof terminal.prompt !== "function") return;
+    terminal.setPrompt(promptLabel);
+    terminal.prompt(true);
+  };
+  const interactiveOutput = {
+    write(value) {
+      if (promptActive && stdout.isTTY) stdout.write("\r\u001b[2K");
+      stdout.write(value);
+      refreshPrompt();
+    },
+  };
+  const agentPane = createAgentPane(stdout, { onDraw: refreshPrompt });
+  const applyPaneEvent = (event) => {
+    const outcome = paneOutcomeForEvent(event);
+    if (outcome) agentPane.setOutcome(outcome.status, outcome.summary);
+  };
 
   const listThreads = async () => {
-    threads = (await client.request("/api/threads")).value.threads || [];
+    threads = await fetchLocalThreads(client, threadIndex);
     if (!threads.length) {
-      stdout.write("\nNo threads. Create one with /new REPOSITORY [TITLE].\n");
+      stdout.write("\nNo threads created by this local client. Use /new REPOSITORY [TITLE].\n");
       return;
     }
     stdout.write("\nThreads\n");
@@ -202,7 +227,8 @@ export async function runInteractive({
       const sequence = Number(event.sequence) || 0;
       if (sequence <= cursor) continue;
       cursor = sequence;
-      renderInteractiveEvent(stdout, event);
+      applyPaneEvent(event);
+      renderInteractiveEvent(interactiveOutput, event);
     }
     return events;
   };
@@ -221,7 +247,7 @@ export async function runInteractive({
     active.controller.abort();
     await active.promise;
     if (threadConnection === active) threadConnection = null;
-    agentPane.render([], "disconnected");
+    agentPane.render([], "disconnected", null);
   };
 
   const startThreadConnection = (threadId) => {
@@ -238,15 +264,19 @@ export async function runInteractive({
       createWebSocketImpl,
       onState: (state) => agentPane.setConnectionState(state),
       onThread: (thread) => {
-        if (current?.id === threadId) current = thread;
+        if (current?.id === threadId) {
+          current = thread;
+          agentPane.setThread(thread);
+        }
       },
-      onAgents: (agents) => agentPane.render(agents),
+      onAgents: (agents, snapshot) => agentPane.render(agents, undefined, snapshot),
       onEvent: (event) => {
         if (current?.id !== threadId) return;
         const sequence = Number(event.sequence) || 0;
         if (sequence <= cursor) return;
         cursor = sequence;
-        renderInteractiveEvent(stdout, event);
+        applyPaneEvent(event);
+        renderInteractiveEvent(interactiveOutput, event);
         if (new Set(["assistant_message", "question", "session_interrupted"]).has(event.type)) {
           monitor?.controller.abort();
         }
@@ -263,7 +293,7 @@ export async function runInteractive({
     const active = { sessionId, controller, promise: null };
     monitor = active;
     active.promise = (async () => {
-      const stream = streamSessionTerminal({ client, sessionId, stdout, sleep, signal: controller.signal, createWebSocketImpl });
+      const stream = streamSessionTerminal({ client, sessionId, stdout: interactiveOutput, sleep, signal: controller.signal, createWebSocketImpl });
       try {
         while (!controller.signal.aborted) {
           const events = await replay();
@@ -286,6 +316,8 @@ export async function runInteractive({
     await stopMonitor();
     await stopThreadConnection();
     current = response.value.thread;
+    agentPane.setOutcome("", "");
+    agentPane.setThread(current);
     cursor = 0;
     stdout.write(`\nOpened ${current.id} [${current.state}] — ${current.repository}\n`);
     await replay({ all: true });
@@ -295,19 +327,24 @@ export async function runInteractive({
     }
   };
 
-  stdout.write("Multiagent terminal\n");
-  stdout.write("Threads are durable conversations; execution session IDs are managed by the server.\n");
-  stdout.write("Type /help for commands.\n");
+  stdout.write("Multiagent — /help\n");
   try {
-    await listThreads();
     if (initialThreadId) await openThread(initialThreadId);
     while (true) {
-      const line = String(await terminal.question(current ? `${current.id}> ` : "multiagent> ")).trim();
+      promptLabel = current ? "› " : "multiagent> ";
+      promptActive = true;
+      let answer;
+      try {
+        answer = await terminal.question(promptLabel);
+      } finally {
+        promptActive = false;
+      }
+      const line = String(answer).trim();
       if (!line) continue;
       try {
         if (line === "/quit" || line === "/exit") return 0;
         if (line === "/help") { stdout.write(`\n${interactiveHelp}\n`); continue; }
-        if (line === "/threads") { await listThreads(); continue; }
+        if (line === "/list" || line === "/threads") { await listThreads(); continue; }
         if (line === "/refresh") { await replay(); continue; }
         if (line === "/wait") {
           if (!monitor) stdout.write("No execution is currently running.\n");
@@ -329,12 +366,15 @@ export async function runInteractive({
             method: "POST",
             body: { repository, title: titleParts.join(" ") },
           });
+          await rememberLocalThread(threadIndex, created.value.thread.id);
           await stopMonitor();
           await stopThreadConnection();
           current = created.value.thread;
+          agentPane.setOutcome("", "");
+          agentPane.setThread(current);
           cursor = 0;
+          threads = [...threads.filter((thread) => thread.id !== current.id), current];
           startThreadConnection(current.id);
-          await listThreads();
           stdout.write(`\nOpened ${current.id}. Enter its first message.\n`);
           continue;
         }
@@ -349,11 +389,15 @@ export async function runInteractive({
           const sequence = Number(routed.event.sequence) || 0;
           if (sequence > cursor) {
             cursor = sequence;
-            renderInteractiveEvent(stdout, routed.event);
+            applyPaneEvent(routed.event);
+            renderInteractiveEvent(interactiveOutput, routed.event);
           }
         }
         const session = routed.session;
-        if (session) stdout.write(`[execution ${session.status}] ${session.id}\n`);
+        if (session) {
+          agentPane.setThread(current, session.status);
+          stdout.write(`[execution ${session.status}] ${session.id}\n`);
+        }
         await startMonitor(session?.id || "");
       } catch (error) {
         if (!(error instanceof ClientError)) throw error;
@@ -381,7 +425,7 @@ async function streamThread({ client, threadId, getCursor, sleep, signal, create
         onState("connected");
         if (payload.type === "event" && payload.event) onEvent(payload.event);
         else if (payload.type === "thread" && payload.thread) onThread(payload.thread);
-        else if (payload.type === "agents") onAgents(Array.isArray(payload.agents) ? payload.agents : []);
+        else if (payload.type === "agents") onAgents(Array.isArray(payload.agents) ? payload.agents : [], payload);
       },
     });
     if (signal.aborted) return;
@@ -632,21 +676,109 @@ function claudeStreamProgress(lines) {
   return { detected, progress: progress.join("\n") };
 }
 
-const inactiveAgentStatuses = new Set(["done", "completed", "closed", "cancelled", "canceled", "failed", "released", "skipped", "finalized", "killed", "missing"]);
+const inactiveAgentStatuses = new Set(["complete", "done", "completed", "closed", "cancelled", "canceled", "failed", "released", "skipped", "finalized", "killed", "missing"]);
 
-export function renderAgentPane(agents, { columns = 80, maxRows = 6, connectionState = "connected" } = {}) {
+function paneOutcomeForEvent(event) {
+  const type = String(event?.type || "");
+  if (type === "user_message") return { status: "", summary: "" };
+  if (type === "session_started") return { status: "running", summary: "" };
+  if (type === "assistant_message") return { status: "complete", summary: compactOutcomeSummary(event) };
+  if (type === "question") return { status: "waiting", summary: compactOutcomeSummary(event) };
+  if (type === "session_interrupted") return { status: "interrupted", summary: compactOutcomeSummary(event) };
+  if (type === "progress") return { status: "working", summary: compactOutcomeSummary(event) };
+  if (type === "session_completed") return { status: "complete", summary: undefined };
+  return null;
+}
+
+function compactOutcomeSummary(event) {
+  const entries = String(event?.payload?.text || event?.payload?.report || "")
+    .split(/\r?\n/)
+    .map((source) => {
+      const tableRow = /^\s*\|/.test(source) && /\|\s*$/.test(source);
+      let text = source
+        .replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1")
+        .replace(/^\s*#{1,6}\s*/, "")
+        .replace(/[`*_>]+/g, "")
+        .replace(/^\s*[-•]\s*/, "");
+      if (tableRow) {
+        text = text.replace(/^\s*\|\s*/, "").replace(/\s*\|\s*$/, "").replace(/\s*\|\s*/g, " — ");
+      }
+      return { text: text.replace(/\s+/g, " ").trim(), tableRow };
+    })
+    .filter(({ text }) => text);
+  const meaningful = entries.filter(({ text }) =>
+    !/^(?:result|summary|outcome|answer|final answer)$/i.test(text)
+    && !/^(?:-+)(?:\s+—\s+-+)*$/.test(text));
+  const latestIndex = meaningful.findIndex(({ text }) => /\b(?:most recently|latest)\b/i.test(text));
+  if (latestIndex >= 0) {
+    const label = meaningful[latestIndex].text;
+    if (/\bpr\b/i.test(label) && !/#\d+\b/.test(label)) {
+      const detail = meaningful.slice(latestIndex + 1).find(({ text }) => /#\d+\b/.test(text));
+      if (detail) return `${label.replace(/[:：]\s*$/, "")}: ${detail.text}`.slice(0, 240);
+    }
+  }
+  const lines = meaningful.map(({ text }) => text);
+  const preferred = lines.find((line) => /\b(?:most recently|latest)\b/i.test(line))
+    || lines.find((line) => /^(?:result|answer|outcome)\s*:/i.test(line))
+    || lines.find((line) => /\b(?:found|fixed|created|updated|merged|deployed|completed)\b/i.test(line))
+    || lines[0]
+    || entries[0]?.text
+    || "";
+  return String(preferred?.text || preferred).slice(0, 240);
+}
+
+export function renderAgentPane(agents, {
+  columns = 80,
+  maxRows = 6,
+  connectionState = "connected",
+  thread = null,
+  executionStatus = "",
+  agentSnapshot = null,
+  outcomeStatus = "",
+  taskSummary = "",
+} = {}) {
   const values = Array.isArray(agents) ? agents : [];
-  const active = values.filter((agent) => !inactiveAgentStatuses.has(String(agent.status || "").toLowerCase())).length;
-  const header = `Subagents | ${connectionState} | ${active} active, ${values.length} total`;
-  const rows = values.slice(0, Math.max(0, maxRows - 1)).map((agent) => {
+  const executionState = outcomeStatus || executionStatus || thread?.state || "idle";
+  const planning = !values.length
+    && !agentSnapshot?.error
+    && new Set(["running", "working", "in-progress"]).has(String(executionState).toLowerCase());
+  const orchestratorStatus = planning ? "planning" : executionState;
+  const connection = connectionState === "connected" ? "" : ` · ${connectionState}`;
+  const rows = [`${agentStatusGlyph(orchestratorStatus)} orchestrator · ${orchestratorStatus}${connection}`];
+  if (taskSummary && rows.length < maxRows) {
+    rows.push(...wrapTerminalText(taskSummary, {
+      columns,
+      firstPrefix: "   ↳ ",
+      continuationPrefix: "     ",
+      maxLines: Math.min(3, maxRows - rows.length),
+    }));
+  }
+  const agentCapacity = Math.max(0, Math.floor((maxRows - rows.length) / 2));
+  const visible = values.slice(0, agentCapacity);
+  visible.forEach((agent, index) => {
     const status = String(agent.status || "unknown");
-    const role = agent.role ? ` (${agent.role})` : "";
+    const role = agent.role ? ` · ${agent.role}` : "";
     const work = String(agent.workingOn || agent.assignment || "waiting");
-    return `${inactiveAgentStatuses.has(status.toLowerCase()) ? "-" : ">"} ${agent.name || "agent"} [${status}]${role}: ${work}`;
+    const last = index === visible.length - 1 && values.length === visible.length;
+    rows.push(`${last ? "└─" : "├─"} ${agentStatusGlyph(status)} ${agent.name || "agent"}${role} · ${status}`);
+    rows.push(`${last ? "   " : "│  "}  ↳ ${work}`);
   });
-  if (values.length > rows.length) rows.push(`... ${values.length - rows.length} more`);
-  if (!rows.length && maxRows > 1) rows.push("  No subagents reported yet");
-  return [header, ...rows].slice(0, maxRows).map((line) => truncateTerminalLine(line, columns));
+  if (values.length > visible.length && rows.length < maxRows) rows.push(`└─ … ${values.length - visible.length} more`);
+  if (!values.length && maxRows > 1) {
+    if (agentSnapshot?.error) rows.push("└─ ◌ subagent status unavailable");
+    else if (planning) rows.push("└─ ○ no delegated agents yet");
+    else rows.push("└─ ○ no active agents");
+  }
+  return rows.slice(0, maxRows).map((line) => truncateTerminalLine(line, columns));
+}
+
+function agentStatusGlyph(status) {
+  const value = String(status || "").toLowerCase();
+  if (new Set(["failed", "killed", "cancelled", "canceled", "delivery-blocked", "interrupted"]).has(value)) return "×";
+  if (inactiveAgentStatuses.has(value)) return "✓";
+  if (new Set(["starting", "queued", "connecting", "restoring", "waiting"]).has(value)) return "◌";
+  if (new Set(["running", "working", "in-progress", "planning"]).has(value)) return "●";
+  return "○";
 }
 
 function truncateTerminalLine(value, columns) {
@@ -656,10 +788,44 @@ function truncateTerminalLine(value, columns) {
   return width <= 3 ? line.slice(0, width) : `${line.slice(0, width - 3)}...`;
 }
 
-function createAgentPane(stdout) {
+function wrapTerminalText(value, {
+  columns,
+  firstPrefix = "",
+  continuationPrefix = firstPrefix,
+  maxLines = 3,
+} = {}) {
+  const width = Math.max(8, Number(columns) || 80);
+  let remaining = String(value || "").replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim();
+  const lines = [];
+  while (remaining && lines.length < maxLines) {
+    const prefix = lines.length === 0 ? firstPrefix : continuationPrefix;
+    const available = Math.max(1, width - prefix.length);
+    if (remaining.length <= available) {
+      lines.push(prefix + remaining);
+      remaining = "";
+      break;
+    }
+    let split = remaining.lastIndexOf(" ", available);
+    if (split <= 0) split = available;
+    lines.push(prefix + remaining.slice(0, split).trimEnd());
+    remaining = remaining.slice(split).trimStart();
+  }
+  if (remaining && lines.length) {
+    const last = lines.length - 1;
+    lines[last] = truncateTerminalLine(`${lines[last]}…`, width);
+  }
+  return lines;
+}
+
+function createAgentPane(stdout, { onDraw = () => {} } = {}) {
   const enabled = Boolean(stdout?.isTTY && Number(stdout.rows) >= 8);
   let agents = [];
   let connectionState = "disconnected";
+  let thread = null;
+  let executionStatus = "";
+  let agentSnapshot = null;
+  let outcomeStatus = "";
+  let taskSummary = "";
   let panel = null;
   let lastFrame = "";
 
@@ -677,12 +843,21 @@ function createAgentPane(stdout) {
     if (!enabled) return;
     const rows = Math.max(8, Number(stdout.rows) || 24);
     const columns = Math.max(20, Number(stdout.columns) || 80);
-    const height = Math.min(7, Math.max(3, Math.floor(rows / 3)));
+    const height = Math.min(9, Math.max(4, Math.floor(rows / 3)));
     const start = rows - height + 1;
     const mainBottom = start - 1;
     if (panel && (panel.rows !== rows || panel.start !== start)) clear();
     panel = { rows, start };
-    const lines = renderAgentPane(agents, { columns, maxRows: height, connectionState });
+    const lines = renderAgentPane(agents, {
+      columns,
+      maxRows: height,
+      connectionState,
+      thread,
+      executionStatus,
+      agentSnapshot,
+      outcomeStatus,
+      taskSummary,
+    });
     const frame = JSON.stringify({ rows, columns, height, lines });
     if (frame === lastFrame) return;
     lastFrame = frame;
@@ -692,16 +867,28 @@ function createAgentPane(stdout) {
     }
     output += "\u001b8";
     stdout.write(output);
+    onDraw();
   };
 
   return {
-    render(nextAgents, nextConnectionState) {
+    render(nextAgents, nextConnectionState, nextAgentSnapshot) {
       agents = Array.isArray(nextAgents) ? nextAgents : [];
       if (nextConnectionState) connectionState = nextConnectionState;
+      if (nextAgentSnapshot !== undefined) agentSnapshot = nextAgentSnapshot;
       draw();
     },
     setConnectionState(next) {
       connectionState = next;
+      draw();
+    },
+    setThread(nextThread, nextExecutionStatus = "") {
+      thread = nextThread || null;
+      executionStatus = nextExecutionStatus || "";
+      draw();
+    },
+    setOutcome(nextStatus, nextSummary) {
+      if (nextStatus !== undefined) outcomeStatus = nextStatus || "";
+      if (nextSummary !== undefined) taskSummary = nextSummary || "";
       draw();
     },
     close: clear,
@@ -728,11 +915,11 @@ function renderInteractiveEvent(stdout, event) {
   else stdout.write(`\n[${event.type.replaceAll("_", " ")}] ${text || JSON.stringify(event.payload)}\n`);
 }
 
-async function runThreads({ client, args, stdout, stdin, sleep }) {
+async function runThreads({ client, args, stdout, stdin, sleep, threadIndex }) {
   const action = requiredArgument(args.shift(), "threads action");
   if (action === "list") {
     rejectExtraArguments(args);
-    writeJson(stdout, (await client.request("/api/threads")).value.threads || []);
+    writeJson(stdout, await fetchLocalThreads(client, threadIndex));
     return 0;
   }
   if (action === "show") {
@@ -756,6 +943,7 @@ async function runThreads({ client, args, stdout, stdin, sleep }) {
       body: { repository, title: options.get("--title") || "" },
     });
     const threadId = created.value.thread.id;
+    await rememberLocalThread(threadIndex, threadId);
     try {
       const routed = await sendThreadMessage(client, threadId, message);
       writeJson(stdout, { thread: created.value.thread, route: routed });
@@ -795,9 +983,7 @@ async function runLegacy({ client, args, stdout }) {
   const action = requiredArgument(args.shift(), "legacy action");
   if (action === "list") {
     rejectExtraArguments(args);
-    const [threads, sessions] = await Promise.all([client.request("/api/threads"), client.request("/api/sessions")]);
-    const threadIds = new Set((threads.value.threads || []).map((thread) => thread.id));
-    writeJson(stdout, (sessions.value.sessions || []).filter((session) => !threadIds.has(session.threadId)));
+    writeJson(stdout, (await client.request("/api/sessions")).value.sessions || []);
     return 0;
   }
   if (action === "report") {
@@ -929,6 +1115,52 @@ async function saveSession(file, value) {
   await fs.writeFile(temporary, JSON.stringify(value, null, 2) + "\n", { mode: 0o600 });
   await fs.rename(temporary, file);
   await fs.chmod(file, 0o600);
+}
+
+async function loadThreadIndex(file) {
+  try {
+    const value = JSON.parse(await fs.readFile(file, "utf8"));
+    if (value.schemaVersion !== 1 || !Array.isArray(value.profiles)) throw new Error("invalid fields");
+    return value;
+  } catch (error) {
+    if (error.code === "ENOENT") return { schemaVersion: 1, profiles: [] };
+    throw new ClientError(`cannot read local thread index: ${error.message}`);
+  }
+}
+
+async function loadLocalThreadIds(threadIndex) {
+  if (!threadIndex?.file || !threadIndex.server || !threadIndex.username) return [];
+  const value = await loadThreadIndex(threadIndex.file);
+  const profile = value.profiles.find((candidate) => candidate?.server === threadIndex.server && candidate?.username === threadIndex.username);
+  if (!profile) return [];
+  if (!Array.isArray(profile.threadIds)) throw new ClientError("cannot read local thread index: invalid thread IDs");
+  return [...new Set(profile.threadIds.filter((id) => typeof id === "string" && /^[a-z0-9-]+$/.test(id)))];
+}
+
+async function rememberLocalThread(threadIndex, threadId) {
+  if (!threadIndex?.file || !threadIndex.server || !threadIndex.username) {
+    throw new ClientError("cannot record the local thread without an authenticated client profile");
+  }
+  const value = await loadThreadIndex(threadIndex.file);
+  let profile = value.profiles.find((candidate) => candidate?.server === threadIndex.server && candidate?.username === threadIndex.username);
+  if (!profile) {
+    profile = { server: threadIndex.server, username: threadIndex.username, threadIds: [] };
+    value.profiles.push(profile);
+  }
+  profile.threadIds = [...new Set([...(Array.isArray(profile.threadIds) ? profile.threadIds : []), threadId])];
+  await saveSession(threadIndex.file, value);
+}
+
+async function fetchLocalThreads(client, threadIndex) {
+  const ids = await loadLocalThreadIds(threadIndex);
+  return Promise.all(ids.map(async (id) => {
+    try {
+      return (await client.request(`/api/threads/${encodeURIComponent(id)}`)).value.thread;
+    } catch (error) {
+      if (error instanceof ClientError && error.statusCode === 404) return { id, state: "unavailable", repository: "-" };
+      throw error;
+    }
+  }));
 }
 
 function writeJson(stream, value) {

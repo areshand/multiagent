@@ -13,6 +13,7 @@ import { readSubagentSnapshot } from "./subagent-status.mjs";
 import { renderThreadTask } from "./thread-execution-context.mjs";
 import { fetchWorkerSubagents } from "./worker-subagent-client.mjs";
 import { configuredRepository, parseRepositoryCatalog } from "./repository-catalog.mjs";
+import { visibleLegacySessionIds } from "./session-visibility.mjs";
 import {
   acceptsLiveInput,
   automaticResumeLimit,
@@ -21,6 +22,7 @@ import {
   findActiveSession,
   normalizeWorkerReport,
   ownsThreadProjection,
+  responseTypeForMessage,
   scopedThreadTranscript,
   selectFinalMessage,
   sessionControlInvocation,
@@ -237,12 +239,25 @@ function activeWorkflow(id) {
 }
 
 function workflowPhase(id) {
+  return workflowLifecycleValue(id, "phase");
+}
+
+function workflowLifecycleValue(id, key) {
   const workflow = activeWorkflow(id);
   if (!workflow) return "";
   try {
     const lifecycle = fs.readFileSync(path.join(sessionStateDir(id), "workflows", workflow, "lifecycle", "lifecycle.env"), "utf8");
-    return lifecycle.split("\n").find((line) => line.startsWith("phase="))?.slice(6).trim() || "";
+    const prefix = `${key}=`;
+    return lifecycle.split("\n").find((line) => line.startsWith(prefix))?.slice(prefix.length).trim() || "";
   } catch { return ""; }
+}
+
+function workflowCompletionRoute(id) {
+  const result = workflowLifecycleValue(id, "candidate_diff_hash");
+  if (result.startsWith("direct-response:")) return "direct-response";
+  if (result.startsWith("read-only:")) return "read-only";
+  if (result.startsWith("external-only:")) return "external-only";
+  return result ? "source" : null;
 }
 
 function traceReferences(id) {
@@ -271,6 +286,7 @@ function writeTraceSummary(id, status) {
   try { result = conciseTail(fs.readFileSync(path.join(sessionStateDir(id), "orchestrator-result.md"), "utf8"), 80, 6000); } catch {}
   try { fallback = conciseTail(fs.readFileSync(path.join(sessionStateDir(id), "orchestrator-last-message.txt"), "utf8"), 40, 6000); } catch {}
   const finalMessage = selectFinalMessage(result, fallback);
+  const completionRoute = workflowCompletionRoute(id);
   const references = traceReferences(id);
   const report = {
     taskId: id,
@@ -278,6 +294,8 @@ function writeTraceSummary(id, status) {
     status,
     completedAt: registry.sessions[id]?.completedAt || null,
     finalMessage,
+    completionRoute,
+    responseType: responseTypeForMessage(finalMessage, completionRoute),
     traceReferences: references,
   };
   const markdown = [
@@ -414,9 +432,12 @@ async function writeGatewayReport(id, report) {
 
 function readLocalWorkerReport(id) {
   try {
+    const finalReport = JSON.parse(fs.readFileSync(path.join(traceRoot(id), "final-report.json"), "utf8"));
     return normalizeWorkerReport({
       report: fs.readFileSync(path.join(traceRoot(id), "final-report.md"), "utf8"),
       transcript: JSON.parse(fs.readFileSync(path.join(traceRoot(id), "transcript-index.json"), "utf8")),
+      message: finalReport.finalMessage,
+      completionRoute: finalReport.completionRoute,
     });
   } catch { return null; }
 }
@@ -465,21 +486,58 @@ function fetchWorkerReport(id, podIP) {
 }
 
 const gatewaySubagentSnapshots = new Map();
+const gatewaySubagentSnapshotErrors = new Map();
+
+function unavailableSubagentSnapshot(id, error = null) {
+  const cached = gatewaySubagentSnapshots.get(id);
+  if (cached) {
+    return {
+      ...cached,
+      available: false,
+      stale: true,
+      error: error ? "subagent status temporarily unavailable" : null,
+    };
+  }
+  return {
+    sessionId: id,
+    agents: [],
+    available: false,
+    stale: false,
+    error: error ? "subagent status temporarily unavailable" : null,
+    updatedAt: null,
+  };
+}
 
 async function gatewaySubagentSnapshot(id) {
   let record = registry.sessions[id];
-  if (!record) return [];
+  if (!record) return unavailableSubagentSnapshot(id);
   if (!record.podIP) record = await reconcileGatewaySession(id);
-  if (!record?.podIP) return gatewaySubagentSnapshots.get(id) || [];
+  if (!record?.podIP) return unavailableSubagentSnapshot(id);
   try {
     const agents = await fetchWorkerSubagents({
       sessionId: id,
       hostname: record.podIP,
       token: issueWorkerToken(id),
     });
-    gatewaySubagentSnapshots.set(id, agents);
-    return agents;
-  } catch { return gatewaySubagentSnapshots.get(id) || []; }
+    const snapshot = {
+      sessionId: id,
+      agents,
+      available: true,
+      stale: false,
+      error: null,
+      updatedAt: agents.map((agent) => agent.updatedAt).filter(Boolean).sort().at(-1) || null,
+    };
+    gatewaySubagentSnapshots.set(id, snapshot);
+    gatewaySubagentSnapshotErrors.delete(id);
+    return snapshot;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (gatewaySubagentSnapshotErrors.get(id) !== message) {
+      gatewaySubagentSnapshotErrors.set(id, message);
+      console.warn("session worker subagent snapshot unavailable", { sessionId: id, error: message });
+    }
+    return unavailableSubagentSnapshot(id, error);
+  }
 }
 
 async function reconcileGatewaySession(id) {
@@ -674,8 +732,11 @@ async function projectSessionToThread(id, status, reportReader = readGatewayRepo
       sessionId: id,
       generation: record.leaseGeneration,
       eventId: `final-${id}`,
-      type: "assistant_message",
-      payload: { text: report.report, transcript: scopedThreadTranscript(id, report.transcript) },
+      type: report.responseType,
+      payload: {
+        text: report.responseType === "question" && report.message ? report.message : report.report,
+        transcript: scopedThreadTranscript(id, report.transcript),
+      },
     });
     await threadStore.markSessionFinishing({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration });
     const finalized = await threadStore.finalizeSession({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration });
@@ -711,6 +772,24 @@ function sessionView(id) {
   const record = registry.sessions[id];
   if (!record) return null;
   return { ...record, live: tmuxAlive(id) };
+}
+
+async function publicLegacySessions(username) {
+  const legacyIds = await visibleLegacySessionIds({
+    records: registry.sessions,
+    username,
+    hasThread: async (threadId, actor) => {
+      try {
+        await threadStore.getThreadForActor(threadId, actor);
+        return true;
+      } catch (error) {
+        if (error?.statusCode !== 404) throw error;
+        return false;
+      }
+    },
+  });
+  if (gatewayMode) await Promise.all(legacyIds.map(reconcileGatewaySession));
+  return legacyIds.map((id) => gatewayMode ? registry.sessions[id] : sessionView(id));
 }
 
 function capture(id) {
@@ -861,7 +940,6 @@ const server = http.createServer(async (request, response) => {
         readiness: "/readyz",
       });
     }
-
     if (!validOrigin(request)) return json(response, 403, { error: "origin rejected" });
     if (request.method === "POST" && url.pathname === "/api/login") {
       const address = request.socket.remoteAddress || "unknown";
@@ -893,7 +971,7 @@ const server = http.createServer(async (request, response) => {
       return json(response, 200, { repositories });
     }
     if (request.method === "GET" && url.pathname === "/api/threads") {
-      return json(response, 200, { threads: await threadStore.listThreadsForActor(username) });
+      return json(response, 404, { error: "not found" });
     }
     if (request.method === "POST" && url.pathname === "/api/threads") {
       if (workerMode) throw new Error("session workers cannot create threads");
@@ -957,8 +1035,7 @@ const server = http.createServer(async (request, response) => {
       return json(response, 202, { ...routed, delivery });
     }
     if (request.method === "GET" && url.pathname === "/api/sessions") {
-      if (gatewayMode) await Promise.all(Object.keys(registry.sessions).map(reconcileGatewaySession));
-      return json(response, 200, { sessions: Object.keys(registry.sessions).sort().filter((id) => registry.sessions[id].createdBy === username).map((id) => gatewayMode ? registry.sessions[id] : sessionView(id)) });
+      return json(response, 200, { sessions: await publicLegacySessions(username) });
     }
     const reportMatch = url.pathname.match(/^\/api\/sessions\/([a-z0-9-]+)\/report$/);
     if (request.method === "POST" && reportMatch) {
@@ -993,7 +1070,7 @@ const server = http.createServer(async (request, response) => {
       if (!registry.sessions[id] || (workerSessionId !== id && registry.sessions[id].createdBy !== username)) {
         return json(response, 404, { error: "unknown session" });
       }
-      if (gatewayMode) return json(response, 200, { sessionId: id, agents: await gatewaySubagentSnapshot(id) });
+      if (gatewayMode) return json(response, 200, await gatewaySubagentSnapshot(id));
       return json(response, 200, { sessionId: id, agents: readSubagentSnapshot(sessionStateDir(id)) });
     }
     if (request.method === "POST" && url.pathname === "/api/sessions") {
@@ -1081,6 +1158,7 @@ sockets.on("connection", (socket, request) => {
     let publishing = false;
     let previousThread = "";
     let previousAgents = "";
+    let observedSessionId = null;
     let lastHeartbeatAt = 0;
     const publish = async () => {
       if (publishing) return;
@@ -1097,16 +1175,34 @@ sockets.on("connection", (socket, request) => {
           previousThread = serializedThread;
           socket.send(JSON.stringify({ type: "thread", thread }));
         }
-        const sessionId = thread.activeSessionId || null;
-        const agents = sessionId
+        const activeSessionId = thread.activeSessionId || null;
+        if (activeSessionId) observedSessionId = activeSessionId;
+        if (!observedSessionId) {
+          const sessions = await threadStore.listSessionsForActor({ threadId: request.threadId, actor: request.username });
+          observedSessionId = sessions.at(-1)?.id || null;
+        }
+        let snapshot = observedSessionId
           ? gatewayMode
-            ? await gatewaySubagentSnapshot(sessionId)
-            : readSubagentSnapshot(sessionStateDir(sessionId))
-          : [];
-        const serializedAgents = JSON.stringify({ sessionId, agents });
+            ? activeSessionId
+              ? await gatewaySubagentSnapshot(observedSessionId)
+              : unavailableSubagentSnapshot(observedSessionId)
+            : {
+                sessionId: observedSessionId,
+                agents: readSubagentSnapshot(sessionStateDir(observedSessionId)),
+                available: true,
+                stale: false,
+                error: null,
+                updatedAt: null,
+              }
+          : unavailableSubagentSnapshot("");
+        if (!activeSessionId && snapshot.agents.length === 0) {
+          snapshot = { ...snapshot, error: null, stale: false };
+        }
+        const agentPayload = { type: "agents", ...snapshot, active: Boolean(activeSessionId && activeSessionId === observedSessionId) };
+        const serializedAgents = JSON.stringify(agentPayload);
         if (serializedAgents !== previousAgents && socket.readyState === WebSocket.OPEN) {
           previousAgents = serializedAgents;
-          socket.send(JSON.stringify({ type: "agents", sessionId, agents }));
+          socket.send(serializedAgents);
         }
         if (Date.now() - lastHeartbeatAt >= 15_000 && socket.readyState === WebSocket.OPEN) {
           lastHeartbeatAt = Date.now();
