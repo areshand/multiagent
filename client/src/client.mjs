@@ -725,7 +725,14 @@ export function renderAgentPane(agents, {
   const orchestratorStatus = outcomeStatus || executionStatus || thread?.state || "idle";
   const connection = connectionState === "connected" ? "" : ` · ${connectionState}`;
   const rows = [`${agentStatusGlyph(orchestratorStatus)} orchestrator · ${orchestratorStatus}${connection}`];
-  if (taskSummary && rows.length < maxRows) rows.push(`   ↳ ${taskSummary}`);
+  if (taskSummary && rows.length < maxRows) {
+    rows.push(...wrapTerminalText(taskSummary, {
+      columns,
+      firstPrefix: "   ↳ ",
+      continuationPrefix: "     ",
+      maxLines: Math.min(3, maxRows - rows.length),
+    }));
+  }
   const agentCapacity = Math.max(0, Math.floor((maxRows - rows.length) / 2));
   const visible = values.slice(0, agentCapacity);
   visible.forEach((agent, index) => {
@@ -760,6 +767,35 @@ function truncateTerminalLine(value, columns) {
   const line = String(value || "").replace(/[\r\n\t]+/g, " ");
   if (line.length <= width) return line;
   return width <= 3 ? line.slice(0, width) : `${line.slice(0, width - 3)}...`;
+}
+
+function wrapTerminalText(value, {
+  columns,
+  firstPrefix = "",
+  continuationPrefix = firstPrefix,
+  maxLines = 3,
+} = {}) {
+  const width = Math.max(8, Number(columns) || 80);
+  let remaining = String(value || "").replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim();
+  const lines = [];
+  while (remaining && lines.length < maxLines) {
+    const prefix = lines.length === 0 ? firstPrefix : continuationPrefix;
+    const available = Math.max(1, width - prefix.length);
+    if (remaining.length <= available) {
+      lines.push(prefix + remaining);
+      remaining = "";
+      break;
+    }
+    let split = remaining.lastIndexOf(" ", available);
+    if (split <= 0) split = available;
+    lines.push(prefix + remaining.slice(0, split).trimEnd());
+    remaining = remaining.slice(split).trimStart();
+  }
+  if (remaining && lines.length) {
+    const last = lines.length - 1;
+    lines[last] = truncateTerminalLine(`${lines[last]}…`, width);
+  }
+  return lines;
 }
 
 function createAgentPane(stdout, { onDraw = () => {} } = {}) {

@@ -31,8 +31,9 @@ execution is active. The interactive TTY reserves a small bottom pane for each
 subagent's state, role, and current progress as a compact graph rooted at the
 orchestrator. The stable `› ` input area remains available while agents work;
 asynchronous output redraws it without discarding partially typed follow-up
-text. When an execution finishes, the pane keeps a one-line summary of the
-latest public outcome and labels the orchestrator `complete` instead of reducing
+text. When an execution finishes, the pane keeps a concise result summary,
+wrapped to at most three terminal lines, showing the latest public outcome and
+labels the orchestrator `complete` instead of reducing
 the result to `idle`. HTTP event replay repairs gaps after a disconnect and
 reconstructs that summary when a thread is reopened.
 

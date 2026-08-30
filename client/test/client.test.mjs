@@ -518,6 +518,23 @@ test("completed orchestrator pane retains a concise outcome summary", () => {
   assert.equal(lines[2], "└─ ○ no active agents");
 });
 
+test("completed outcome summary wraps within the terminal width", () => {
+  const lines = renderAgentPane([], {
+    columns: 52,
+    maxRows: 6,
+    thread: { id: "thread-complete", state: "idle" },
+    outcomeStatus: "complete",
+    taskSummary: "Latest open PR: #421 — fix: remove global waypoint signature-verification bypass from the live consensus path",
+  });
+  assert.deepEqual(lines.slice(0, 4), [
+    "✓ orchestrator · complete",
+    "   ↳ Latest open PR: #421 — fix: remove global",
+    "     waypoint signature-verification bypass from the",
+    "     live consensus path",
+  ]);
+  assert.ok(lines.every((line) => line.length <= 52));
+});
+
 test("asynchronous status redraw restores the active input prompt", async () => {
   const sessionFile = await sessionFixture();
   const output = ttyWriter();
