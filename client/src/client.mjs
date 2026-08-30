@@ -199,6 +199,10 @@ export async function runInteractive({
     },
   };
   const agentPane = createAgentPane(stdout, { onDraw: refreshPrompt });
+  const applyPaneEvent = (event) => {
+    const outcome = paneOutcomeForEvent(event);
+    if (outcome) agentPane.setOutcome(outcome.status, outcome.summary);
+  };
 
   const listThreads = async () => {
     threads = await fetchLocalThreads(client, threadIndex);
@@ -223,6 +227,7 @@ export async function runInteractive({
       const sequence = Number(event.sequence) || 0;
       if (sequence <= cursor) continue;
       cursor = sequence;
+      applyPaneEvent(event);
       renderInteractiveEvent(interactiveOutput, event);
     }
     return events;
@@ -270,6 +275,7 @@ export async function runInteractive({
         const sequence = Number(event.sequence) || 0;
         if (sequence <= cursor) return;
         cursor = sequence;
+        applyPaneEvent(event);
         renderInteractiveEvent(interactiveOutput, event);
         if (new Set(["assistant_message", "question", "session_interrupted"]).has(event.type)) {
           monitor?.controller.abort();
@@ -310,6 +316,7 @@ export async function runInteractive({
     await stopMonitor();
     await stopThreadConnection();
     current = response.value.thread;
+    agentPane.setOutcome("", "");
     agentPane.setThread(current);
     cursor = 0;
     stdout.write(`\nOpened ${current.id} [${current.state}] — ${current.repository}\n`);
@@ -363,6 +370,7 @@ export async function runInteractive({
           await stopMonitor();
           await stopThreadConnection();
           current = created.value.thread;
+          agentPane.setOutcome("", "");
           agentPane.setThread(current);
           cursor = 0;
           threads = [...threads.filter((thread) => thread.id !== current.id), current];
@@ -381,6 +389,7 @@ export async function runInteractive({
           const sequence = Number(routed.event.sequence) || 0;
           if (sequence > cursor) {
             cursor = sequence;
+            applyPaneEvent(routed.event);
             renderInteractiveEvent(interactiveOutput, routed.event);
           }
         }
@@ -667,7 +676,28 @@ function claudeStreamProgress(lines) {
   return { detected, progress: progress.join("\n") };
 }
 
-const inactiveAgentStatuses = new Set(["done", "completed", "closed", "cancelled", "canceled", "failed", "released", "skipped", "finalized", "killed", "missing"]);
+const inactiveAgentStatuses = new Set(["complete", "done", "completed", "closed", "cancelled", "canceled", "failed", "released", "skipped", "finalized", "killed", "missing"]);
+
+function paneOutcomeForEvent(event) {
+  const type = String(event?.type || "");
+  if (type === "user_message") return { status: "", summary: "" };
+  if (type === "session_started") return { status: "running", summary: "" };
+  if (type === "assistant_message") return { status: "complete", summary: compactOutcomeSummary(event) };
+  if (type === "question") return { status: "waiting", summary: compactOutcomeSummary(event) };
+  if (type === "session_interrupted") return { status: "interrupted", summary: compactOutcomeSummary(event) };
+  if (type === "progress") return { status: "working", summary: compactOutcomeSummary(event) };
+  if (type === "session_completed") return { status: "complete", summary: undefined };
+  return null;
+}
+
+function compactOutcomeSummary(event) {
+  const value = String(event?.payload?.text || event?.payload?.report || "")
+    .replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1")
+    .replace(/[`*_#>]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return value.slice(0, 240);
+}
 
 export function renderAgentPane(agents, {
   columns = 80,
@@ -676,11 +706,14 @@ export function renderAgentPane(agents, {
   thread = null,
   executionStatus = "",
   agentSnapshot = null,
+  outcomeStatus = "",
+  taskSummary = "",
 } = {}) {
   const values = Array.isArray(agents) ? agents : [];
-  const orchestratorStatus = executionStatus || thread?.state || "idle";
+  const orchestratorStatus = outcomeStatus || executionStatus || thread?.state || "idle";
   const connection = connectionState === "connected" ? "" : ` · ${connectionState}`;
   const rows = [`${agentStatusGlyph(orchestratorStatus)} orchestrator · ${orchestratorStatus}${connection}`];
+  if (taskSummary && rows.length < maxRows) rows.push(`   ↳ ${taskSummary}`);
   const agentCapacity = Math.max(0, Math.floor((maxRows - rows.length) / 2));
   const visible = values.slice(0, agentCapacity);
   visible.forEach((agent, index) => {
@@ -724,6 +757,8 @@ function createAgentPane(stdout, { onDraw = () => {} } = {}) {
   let thread = null;
   let executionStatus = "";
   let agentSnapshot = null;
+  let outcomeStatus = "";
+  let taskSummary = "";
   let panel = null;
   let lastFrame = "";
 
@@ -753,6 +788,8 @@ function createAgentPane(stdout, { onDraw = () => {} } = {}) {
       thread,
       executionStatus,
       agentSnapshot,
+      outcomeStatus,
+      taskSummary,
     });
     const frame = JSON.stringify({ rows, columns, height, lines });
     if (frame === lastFrame) return;
@@ -780,6 +817,11 @@ function createAgentPane(stdout, { onDraw = () => {} } = {}) {
     setThread(nextThread, nextExecutionStatus = "") {
       thread = nextThread || null;
       executionStatus = nextExecutionStatus || "";
+      draw();
+    },
+    setOutcome(nextStatus, nextSummary) {
+      if (nextStatus !== undefined) outcomeStatus = nextStatus || "";
+      if (nextSummary !== undefined) taskSummary = nextSummary || "";
       draw();
     },
     close: clear,

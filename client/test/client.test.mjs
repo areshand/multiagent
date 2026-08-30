@@ -505,6 +505,19 @@ test("subagent pane distinguishes idle, discovery, and unavailable snapshots", (
   })[1], "└─ ◌ subagent status unavailable");
 });
 
+test("completed orchestrator pane retains a concise outcome summary", () => {
+  const lines = renderAgentPane([], {
+    columns: 90,
+    maxRows: 5,
+    thread: { id: "thread-complete", state: "idle" },
+    outcomeStatus: "complete",
+    taskSummary: "Found open PR #421 and returned its review status.",
+  });
+  assert.equal(lines[0], "✓ orchestrator · complete");
+  assert.equal(lines[1], "   ↳ Found open PR #421 and returned its review status.");
+  assert.equal(lines[2], "└─ ○ no active agents");
+});
+
 test("asynchronous status redraw restores the active input prompt", async () => {
   const sessionFile = await sessionFixture();
   const output = ttyWriter();
@@ -558,5 +571,7 @@ test("asynchronous status redraw restores the active input prompt", async () => 
 
   assert.match(output.output, /● orchestrator · running/);
   assert.match(output.output, /\r\u001b\[2K\nassistant> Still working/);
+  assert.match(output.output, /✓ orchestrator · complete/);
+  assert.match(output.output, /↳ Still working/);
   assert.ok(prompts.some((prompt) => prompt.label === "› " && prompt.preserveCursor === true));
 });

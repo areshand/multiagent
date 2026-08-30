@@ -31,7 +31,10 @@ execution is active. The interactive TTY reserves a small bottom pane for each
 subagent's state, role, and current progress as a compact graph rooted at the
 orchestrator. The stable `› ` input area remains available while agents work;
 asynchronous output redraws it without discarding partially typed follow-up
-text. HTTP event replay repairs gaps after a disconnect.
+text. When an execution finishes, the pane keeps a one-line summary of the
+latest public outcome and labels the orchestrator `complete` instead of reducing
+the result to `idle`. HTTP event replay repairs gaps after a disconnect and
+reconstructs that summary when a thread is reopened.
 
 The first command securely prompts for the password. For a non-interactive
 caller, provide the password on stdin. Do not put it in a command argument:
