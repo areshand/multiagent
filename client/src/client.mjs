@@ -690,16 +690,18 @@ function paneOutcomeForEvent(event) {
   return null;
 }
 
-function compactOutcomeSummary(event) {
-  const sources = String(event?.payload?.text || event?.payload?.report || "").split(/\r?\n/);
+export function finalAgentMessageText(value) {
+  const sources = String(value || "").split(/\r?\n/);
   const finalMessageHeading = sources.findIndex((source) => /^\s*#{1,6}\s+final agent message\s*$/i.test(source));
-  let scopedSources = sources;
-  if (finalMessageHeading >= 0) {
-    const finalSection = sources.slice(finalMessageHeading + 1);
-    const nextHeading = finalSection.findIndex((source) => /^\s*#{1,6}\s+/.test(source));
-    scopedSources = nextHeading >= 0 ? finalSection.slice(0, nextHeading) : finalSection;
-  }
-  const entries = scopedSources
+  if (finalMessageHeading < 0) return String(value || "").trim();
+  const finalSection = sources.slice(finalMessageHeading + 1);
+  const traceHeading = finalSection.findIndex((source) => /^\s*#{1,6}\s+trace references\s*$/i.test(source));
+  return (traceHeading >= 0 ? finalSection.slice(0, traceHeading) : finalSection).join("\n").trim();
+}
+
+export function compactOutcomeSummary(event) {
+  const sources = finalAgentMessageText(event?.payload?.text || event?.payload?.report || "").split(/\r?\n/);
+  const entries = sources
     .map((source) => {
       const tableRow = /^\s*\|/.test(source) && /\|\s*$/.test(source);
       let text = source
@@ -728,7 +730,7 @@ function compactOutcomeSummary(event) {
   }
   const lines = meaningful.map(({ text }) => text);
   const preferred = lines.find((line) => /\b(?:most recently|latest)\b/i.test(line))
-    || lines.find((line) => /^(?:result|answer|outcome)\s*:/i.test(line))
+    || lines.find((line) => /^(?:result|answer|outcome|blocker|finding|conclusion)\s*:/i.test(line))
     || lines.find((line) => /\b(?:found|fixed|created|updated|merged|deployed|completed)\b/i.test(line))
     || lines[0]
     || entries[0]?.text
@@ -916,7 +918,10 @@ function selectThread(threads, selector) {
 }
 
 function renderInteractiveEvent(stdout, event) {
-  const text = String(event.payload?.text || event.payload?.report || "").trim();
+  const rawText = String(event.payload?.text || event.payload?.report || "").trim();
+  const text = new Set(["assistant_message", "question", "session_interrupted"]).has(event.type)
+    ? finalAgentMessageText(rawText)
+    : rawText;
   if (event.type === "user_message") stdout.write(`\nyou> ${text}\n`);
   else if (event.type === "assistant_message") stdout.write(`\nassistant> ${text}\n`);
   else if (event.type === "question") stdout.write(`\nassistant? ${text}\n`);

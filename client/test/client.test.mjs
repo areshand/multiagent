@@ -4,7 +4,15 @@ import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { ControlClient, main, renderAgentPane, terminalDelta, terminalProgressView } from "../src/client.mjs";
+import {
+  compactOutcomeSummary,
+  ControlClient,
+  finalAgentMessageText,
+  main,
+  renderAgentPane,
+  terminalDelta,
+  terminalProgressView,
+} from "../src/client.mjs";
 
 function writer() {
   return { output: "", write(value) { this.output += String(value); } };
@@ -552,6 +560,12 @@ test("interrupted orchestrator pane shows the bounded blocker instead of a gener
   ]);
 });
 
+test("structured PR review reports expose the blocker and hide the runtime envelope", () => {
+  const report = "# session-pr-review\n\nStatus: completed\nWorkflow: run-pr-review\n\n## Final agent message\n# PR #68 Review — Blocked\n\n**Blocker:** GitHub read access does not expose the PR diff, changed files, or CI checks.\n\n## Trace references\n- agents/ops-01/events.jsonl";
+  assert.equal(finalAgentMessageText(report), "# PR #68 Review — Blocked\n\n**Blocker:** GitHub read access does not expose the PR diff, changed files, or CI checks.");
+  assert.equal(compactOutcomeSummary({ payload: { text: report } }), "Blocker: GitHub read access does not expose the PR diff, changed files, or CI checks.");
+});
+
 test("latest-open-PR interaction ends with an informative summary, completed agent graph, and active prompt", async () => {
   const sessionFile = await sessionFixture();
   const output = ttyWriter();
@@ -620,11 +634,12 @@ test("latest-open-PR interaction ends with an informative summary, completed age
   });
 
   assert.match(output.output, /● orchestrator · running/);
-  assert.match(output.output, /assistant> # thread-latest-open-pr/);
+  assert.match(output.output, /assistant> Latest open PR: \*\*#421\*\*/);
   assert.match(output.output, /✓ orchestrator · complete/);
   assert.match(output.output, /↳ Latest open PR: #421 — fix: remove global waypoint/);
   assert.match(output.output, /✓ ops-01 · ops · done/);
   assert.match(output.output, /↳ Found latest open PR #421/);
   assert.doesNotMatch(output.output, /↳ Status: completed/);
+  assert.doesNotMatch(output.output, /assistant> # thread-latest-open-pr|Status: completed|Workflow: run-latest-open-pr|Trace references/);
   assert.ok(prompts.some((prompt) => prompt.label === "› " && prompt.preserveCursor === true));
 });
