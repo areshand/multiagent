@@ -177,7 +177,22 @@ export async function runInteractive({
   let cursor = 0;
   let monitor = null;
   let threadConnection = null;
-  const agentPane = createAgentPane(stdout);
+  let promptActive = false;
+  let promptLabel = "› ";
+  const refreshPrompt = () => {
+    if (!promptActive) return;
+    if (typeof terminal.setPrompt !== "function" || typeof terminal.prompt !== "function") return;
+    terminal.setPrompt(promptLabel);
+    terminal.prompt(true);
+  };
+  const interactiveOutput = {
+    write(value) {
+      if (promptActive && stdout.isTTY) stdout.write("\r\u001b[2K");
+      stdout.write(value);
+      refreshPrompt();
+    },
+  };
+  const agentPane = createAgentPane(stdout, { onDraw: refreshPrompt });
 
   const listThreads = async () => {
     threads = (await client.request("/api/threads")).value.threads || [];
@@ -202,7 +217,7 @@ export async function runInteractive({
       const sequence = Number(event.sequence) || 0;
       if (sequence <= cursor) continue;
       cursor = sequence;
-      renderInteractiveEvent(stdout, event);
+      renderInteractiveEvent(interactiveOutput, event);
     }
     return events;
   };
@@ -238,7 +253,10 @@ export async function runInteractive({
       createWebSocketImpl,
       onState: (state) => agentPane.setConnectionState(state),
       onThread: (thread) => {
-        if (current?.id === threadId) current = thread;
+        if (current?.id === threadId) {
+          current = thread;
+          agentPane.setThread(thread);
+        }
       },
       onAgents: (agents) => agentPane.render(agents),
       onEvent: (event) => {
@@ -246,7 +264,7 @@ export async function runInteractive({
         const sequence = Number(event.sequence) || 0;
         if (sequence <= cursor) return;
         cursor = sequence;
-        renderInteractiveEvent(stdout, event);
+        renderInteractiveEvent(interactiveOutput, event);
         if (new Set(["assistant_message", "question", "session_interrupted"]).has(event.type)) {
           monitor?.controller.abort();
         }
@@ -263,7 +281,7 @@ export async function runInteractive({
     const active = { sessionId, controller, promise: null };
     monitor = active;
     active.promise = (async () => {
-      const stream = streamSessionTerminal({ client, sessionId, stdout, sleep, signal: controller.signal, createWebSocketImpl });
+      const stream = streamSessionTerminal({ client, sessionId, stdout: interactiveOutput, sleep, signal: controller.signal, createWebSocketImpl });
       try {
         while (!controller.signal.aborted) {
           const events = await replay();
@@ -286,6 +304,7 @@ export async function runInteractive({
     await stopMonitor();
     await stopThreadConnection();
     current = response.value.thread;
+    agentPane.setThread(current);
     cursor = 0;
     stdout.write(`\nOpened ${current.id} [${current.state}] — ${current.repository}\n`);
     await replay({ all: true });
@@ -295,14 +314,20 @@ export async function runInteractive({
     }
   };
 
-  stdout.write("Multiagent terminal\n");
-  stdout.write("Threads are durable conversations; execution session IDs are managed by the server.\n");
-  stdout.write("Type /help for commands.\n");
+  stdout.write("Multiagent — /help\n");
   try {
     await listThreads();
     if (initialThreadId) await openThread(initialThreadId);
     while (true) {
-      const line = String(await terminal.question(current ? `${current.id}> ` : "multiagent> ")).trim();
+      promptLabel = current ? "› " : "multiagent> ";
+      promptActive = true;
+      let answer;
+      try {
+        answer = await terminal.question(promptLabel);
+      } finally {
+        promptActive = false;
+      }
+      const line = String(answer).trim();
       if (!line) continue;
       try {
         if (line === "/quit" || line === "/exit") return 0;
@@ -332,6 +357,7 @@ export async function runInteractive({
           await stopMonitor();
           await stopThreadConnection();
           current = created.value.thread;
+          agentPane.setThread(current);
           cursor = 0;
           startThreadConnection(current.id);
           await listThreads();
@@ -349,11 +375,14 @@ export async function runInteractive({
           const sequence = Number(routed.event.sequence) || 0;
           if (sequence > cursor) {
             cursor = sequence;
-            renderInteractiveEvent(stdout, routed.event);
+            renderInteractiveEvent(interactiveOutput, routed.event);
           }
         }
         const session = routed.session;
-        if (session) stdout.write(`[execution ${session.status}] ${session.id}\n`);
+        if (session) {
+          agentPane.setThread(current, session.status);
+          stdout.write(`[execution ${session.status}] ${session.id}\n`);
+        }
         await startMonitor(session?.id || "");
       } catch (error) {
         if (!(error instanceof ClientError)) throw error;
@@ -634,19 +663,39 @@ function claudeStreamProgress(lines) {
 
 const inactiveAgentStatuses = new Set(["done", "completed", "closed", "cancelled", "canceled", "failed", "released", "skipped", "finalized", "killed", "missing"]);
 
-export function renderAgentPane(agents, { columns = 80, maxRows = 6, connectionState = "connected" } = {}) {
+export function renderAgentPane(agents, {
+  columns = 80,
+  maxRows = 6,
+  connectionState = "connected",
+  thread = null,
+  executionStatus = "",
+} = {}) {
   const values = Array.isArray(agents) ? agents : [];
-  const active = values.filter((agent) => !inactiveAgentStatuses.has(String(agent.status || "").toLowerCase())).length;
-  const header = `Subagents | ${connectionState} | ${active} active, ${values.length} total`;
-  const rows = values.slice(0, Math.max(0, maxRows - 1)).map((agent) => {
+  const orchestratorStatus = executionStatus || thread?.state || "idle";
+  const connection = connectionState === "connected" ? "" : ` · ${connectionState}`;
+  const rows = [`${agentStatusGlyph(orchestratorStatus)} orchestrator · ${orchestratorStatus}${connection}`];
+  const agentCapacity = Math.max(0, Math.floor((maxRows - rows.length) / 2));
+  const visible = values.slice(0, agentCapacity);
+  visible.forEach((agent, index) => {
     const status = String(agent.status || "unknown");
-    const role = agent.role ? ` (${agent.role})` : "";
+    const role = agent.role ? ` · ${agent.role}` : "";
     const work = String(agent.workingOn || agent.assignment || "waiting");
-    return `${inactiveAgentStatuses.has(status.toLowerCase()) ? "-" : ">"} ${agent.name || "agent"} [${status}]${role}: ${work}`;
+    const last = index === visible.length - 1 && values.length === visible.length;
+    rows.push(`${last ? "└─" : "├─"} ${agentStatusGlyph(status)} ${agent.name || "agent"}${role} · ${status}`);
+    rows.push(`${last ? "   " : "│  "}  ↳ ${work}`);
   });
-  if (values.length > rows.length) rows.push(`... ${values.length - rows.length} more`);
-  if (!rows.length && maxRows > 1) rows.push("  No subagents reported yet");
-  return [header, ...rows].slice(0, maxRows).map((line) => truncateTerminalLine(line, columns));
+  if (values.length > visible.length && rows.length < maxRows) rows.push(`└─ … ${values.length - visible.length} more`);
+  if (!values.length && maxRows > 1) rows.push("└─ ○ waiting for agents");
+  return rows.slice(0, maxRows).map((line) => truncateTerminalLine(line, columns));
+}
+
+function agentStatusGlyph(status) {
+  const value = String(status || "").toLowerCase();
+  if (new Set(["failed", "killed", "cancelled", "canceled", "delivery-blocked", "interrupted"]).has(value)) return "×";
+  if (inactiveAgentStatuses.has(value)) return "✓";
+  if (new Set(["starting", "queued", "connecting", "restoring", "waiting"]).has(value)) return "◌";
+  if (new Set(["running", "working", "in-progress"]).has(value)) return "●";
+  return "○";
 }
 
 function truncateTerminalLine(value, columns) {
@@ -656,10 +705,12 @@ function truncateTerminalLine(value, columns) {
   return width <= 3 ? line.slice(0, width) : `${line.slice(0, width - 3)}...`;
 }
 
-function createAgentPane(stdout) {
+function createAgentPane(stdout, { onDraw = () => {} } = {}) {
   const enabled = Boolean(stdout?.isTTY && Number(stdout.rows) >= 8);
   let agents = [];
   let connectionState = "disconnected";
+  let thread = null;
+  let executionStatus = "";
   let panel = null;
   let lastFrame = "";
 
@@ -677,12 +728,18 @@ function createAgentPane(stdout) {
     if (!enabled) return;
     const rows = Math.max(8, Number(stdout.rows) || 24);
     const columns = Math.max(20, Number(stdout.columns) || 80);
-    const height = Math.min(7, Math.max(3, Math.floor(rows / 3)));
+    const height = Math.min(9, Math.max(4, Math.floor(rows / 3)));
     const start = rows - height + 1;
     const mainBottom = start - 1;
     if (panel && (panel.rows !== rows || panel.start !== start)) clear();
     panel = { rows, start };
-    const lines = renderAgentPane(agents, { columns, maxRows: height, connectionState });
+    const lines = renderAgentPane(agents, {
+      columns,
+      maxRows: height,
+      connectionState,
+      thread,
+      executionStatus,
+    });
     const frame = JSON.stringify({ rows, columns, height, lines });
     if (frame === lastFrame) return;
     lastFrame = frame;
@@ -692,6 +749,7 @@ function createAgentPane(stdout) {
     }
     output += "\u001b8";
     stdout.write(output);
+    onDraw();
   };
 
   return {
@@ -702,6 +760,11 @@ function createAgentPane(stdout) {
     },
     setConnectionState(next) {
       connectionState = next;
+      draw();
+    },
+    setThread(nextThread, nextExecutionStatus = "") {
+      thread = nextThread || null;
+      executionStatus = nextExecutionStatus || "";
       draw();
     },
     close: clear,

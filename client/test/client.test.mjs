@@ -10,6 +10,10 @@ function writer() {
   return { output: "", write(value) { this.output += String(value); } };
 }
 
+function ttyWriter({ rows = 24, columns = 100 } = {}) {
+  return { ...writer(), isTTY: true, rows, columns };
+}
+
 function jsonResponse(value, init = {}) {
   return new Response(JSON.stringify(value), {
     status: init.status || 200,
@@ -450,9 +454,81 @@ test("subagent pane includes status, role, and current work within its width", (
   const lines = renderAgentPane([
     { name: "reader", status: "working", role: "investigator", workingOn: "Tracing the session lifecycle" },
     { name: "tester", status: "done", role: "verification", workingOn: "Ran the client tests" },
-  ], { columns: 72, maxRows: 4, connectionState: "connected" });
-  assert.equal(lines[0], "Subagents | connected | 1 active, 2 total");
-  assert.match(lines[1], /> reader \[working\] \(investigator\): Tracing the session lifecycle/);
-  assert.match(lines[2], /- tester \[done\] \(verification\): Ran the client tests/);
+  ], { columns: 72, maxRows: 6, connectionState: "connected" });
+  assert.equal(lines[0], "○ orchestrator · idle");
+  assert.match(lines[1], /├─ ● reader · investigator · working/);
+  assert.match(lines[2], /↳ Tracing the session lifecycle/);
+  assert.match(lines[3], /└─ ✓ tester · verification · done/);
+  assert.match(lines[4], /↳ Ran the client tests/);
   assert.ok(lines.every((line) => line.length <= 72));
+});
+
+test("subagent pane keeps the open thread and orchestrator status visible", () => {
+  const lines = renderAgentPane([
+    { name: "reader", status: "running", role: "investigator", workingOn: "Inspecting the runtime" },
+  ], {
+    columns: 100,
+    maxRows: 5,
+    connectionState: "connected",
+    thread: { id: "thread-123", state: "running" },
+  });
+  assert.equal(lines[0], "● orchestrator · running");
+  assert.equal(lines[1], "└─ ● reader · investigator · running");
+  assert.equal(lines[2], "     ↳ Inspecting the runtime");
+});
+
+test("asynchronous status redraw restores the active input prompt", async () => {
+  const sessionFile = await sessionFixture();
+  const output = ttyWriter();
+  let questionCount = 0;
+  let threadSocket = null;
+  const prompts = [];
+  const terminal = {
+    async question() {
+      questionCount += 1;
+      if (questionCount === 1) return "/open 1";
+      return new Promise((resolve) => {
+        setImmediate(() => {
+          threadSocket.emit("message", Buffer.from(JSON.stringify({
+            type: "agents",
+            agents: [{ name: "reader", status: "running", role: "investigator", workingOn: "Checking status" }],
+          })));
+          threadSocket.emit("message", Buffer.from(JSON.stringify({
+            type: "event",
+            event: { sequence: 1, type: "assistant_message", payload: { text: "Still working" } },
+          })));
+          setImmediate(() => resolve("/quit"));
+        });
+      });
+    },
+    setPrompt(value) { this.label = value; },
+    prompt(preserveCursor) { prompts.push({ label: this.label, preserveCursor }); },
+    close() {},
+  };
+
+  await main([
+    "--server", "https://control.example", "--session-file", sessionFile,
+  ], {
+    stdin: { isTTY: true },
+    stdout: output,
+    createInterface: () => terminal,
+    sleep: async () => {},
+    createWebSocket: (url) => {
+      const socket = new EventEmitter();
+      socket.close = () => queueMicrotask(() => socket.emit("close"));
+      if (String(url).includes("/stream")) threadSocket = socket;
+      return socket;
+    },
+    fetchImpl: async (url) => {
+      const value = String(url);
+      if (value.endsWith("/api/threads")) return jsonResponse({ threads: [{ id: "thread-1", state: "running", repository: "multiagent" }] });
+      if (value.endsWith("/api/threads/thread-1")) return jsonResponse({ thread: { id: "thread-1", state: "running", repository: "multiagent" } });
+      if (value.includes("/events?after_sequence=0")) return jsonResponse({ events: [] });
+      throw new Error(`unexpected request: ${value}`);
+    },
+  });
+
+  assert.match(output.output, /● orchestrator · running/);
+  assert.match(output.output, /\r\u001b\[2K\nassistant> Still working/);
+  assert.ok(prompts.some((prompt) => prompt.label === "› " && prompt.preserveCursor === true));
 });
