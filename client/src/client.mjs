@@ -678,11 +678,15 @@ function claudeStreamProgress(lines) {
 
 const inactiveAgentStatuses = new Set(["complete", "done", "completed", "closed", "cancelled", "canceled", "failed", "released", "skipped", "finalized", "killed", "missing"]);
 
-function paneOutcomeForEvent(event) {
+export function paneOutcomeForEvent(event) {
   const type = String(event?.type || "");
   if (type === "user_message") return { status: "", summary: "" };
   if (type === "session_started") return { status: "running", summary: "" };
-  if (type === "assistant_message") return { status: "complete", summary: compactOutcomeSummary(event) };
+  if (type === "assistant_message") {
+    const summary = compactOutcomeSummary(event);
+    const status = /^(?:blocker\s*:|.*\bblocked\b)/i.test(summary) ? "blocked" : "complete";
+    return { status, summary };
+  }
   if (type === "question") return { status: "waiting", summary: compactOutcomeSummary(event) };
   if (type === "session_interrupted") return { status: "interrupted", summary: compactOutcomeSummary(event) };
   if (type === "progress") return { status: "working", summary: compactOutcomeSummary(event) };
@@ -785,7 +789,7 @@ export function renderAgentPane(agents, {
 
 function agentStatusGlyph(status) {
   const value = String(status || "").toLowerCase();
-  if (new Set(["failed", "killed", "cancelled", "canceled", "delivery-blocked", "interrupted"]).has(value)) return "×";
+  if (new Set(["blocked", "failed", "killed", "cancelled", "canceled", "delivery-blocked", "interrupted"]).has(value)) return "×";
   if (inactiveAgentStatuses.has(value)) return "✓";
   if (new Set(["starting", "queued", "connecting", "restoring", "waiting"]).has(value)) return "◌";
   if (new Set(["running", "working", "in-progress", "planning"]).has(value)) return "●";

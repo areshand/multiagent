@@ -9,6 +9,7 @@ import {
   ControlClient,
   finalAgentMessageText,
   main,
+  paneOutcomeForEvent,
   renderAgentPane,
   terminalDelta,
   terminalProgressView,
@@ -564,6 +565,14 @@ test("structured PR review reports expose the blocker and hide the runtime envel
   const report = "# session-pr-review\n\nStatus: completed\nWorkflow: run-pr-review\n\n## Final agent message\n# PR #68 Review — Blocked\n\n**Blocker:** GitHub read access does not expose the PR diff, changed files, or CI checks.\n\n## Trace references\n- agents/ops-01/events.jsonl";
   assert.equal(finalAgentMessageText(report), "# PR #68 Review — Blocked\n\n**Blocker:** GitHub read access does not expose the PR diff, changed files, or CI checks.");
   assert.equal(compactOutcomeSummary({ payload: { text: report } }), "Blocker: GitHub read access does not expose the PR diff, changed files, or CI checks.");
+  assert.deepEqual(paneOutcomeForEvent({ type: "assistant_message", payload: { text: report } }), {
+    status: "blocked",
+    summary: "Blocker: GitHub read access does not expose the PR diff, changed files, or CI checks.",
+  });
+  assert.equal(renderAgentPane([], {
+    outcomeStatus: "blocked",
+    taskSummary: "Blocker: GitHub read access does not expose the PR diff.",
+  })[0], "× orchestrator · blocked");
 });
 
 test("latest-open-PR interaction ends with an informative summary, completed agent graph, and active prompt", async () => {
