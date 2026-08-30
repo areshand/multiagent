@@ -28,6 +28,8 @@ The initial supported production capabilities are:
 - Read service and Kubernetes logs without requiring a separate log emitter.
 - Restart an explicitly allowed Kubernetes service, including the keyless
   server where configured.
+- Queue a static Move security audit for the exact reviewed head SHA of a pull
+  request accessible to the deployment GitHub App.
 
 The design should remain general. These initial operations must not become
 hard-coded orchestration logic.
@@ -301,6 +303,30 @@ and allowed service restarts.
 `prod-mcp` must not expose a general shell, arbitrary Kubernetes command, or
 unbounded Grafana proxy. Supporting another AWS account or cluster requires a
 deployment-managed role and target allowlist, not agent-provided credentials.
+
+### AD-017: PR audit execution is separated from the production operation boundary
+
+`prod-mcp` may queue one fixed Move-audit event after verifying the signed
+repository, pull-request number, expected head SHA, mode, runbook, and reviews.
+It must not run the model, execute target code, accept a workflow name or URL,
+or hold audit-model behavior. Repository eligibility is the GitHub App
+installation's access set, queried through GitHub; it is not a caller-provided
+or prompt-maintained list.
+
+The versioned audit workflow in `move-ai-audit-prototype` owns audit-model
+instructions and report production. Its preparation job mints a token scoped
+to only the requested repository, revalidates the PR head, and exports a
+credential-free tracked-source snapshot. The model-credentialed audit job has
+no target-repository token and performs source-only analysis without executing
+target code or using network/RAG tools. A separate publication job has the
+target-repository token but no model credential and posts only the bounded
+report. The workflow independently validates all dispatch fields so direct
+GitHub invocation cannot widen the signed prod-mcp contract.
+
+The audit workflow's GitHub App must be the same installation authority used
+by `prod-mcp`, or have an access set no broader than it. Deployment automation
+must provision both App and model secrets; neither credential appears in
+source, dispatch payloads, artifacts, reports, or prod-mcp receipts.
 
 ### AD-008: `prod-mcp` uses two independent request protections
 
