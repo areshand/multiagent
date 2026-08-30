@@ -22,6 +22,7 @@ import {
   findActiveSession,
   normalizeWorkerReport,
   ownsThreadProjection,
+  responseTypeForMessage,
   scopedThreadTranscript,
   selectFinalMessage,
   sessionControlInvocation,
@@ -238,12 +239,25 @@ function activeWorkflow(id) {
 }
 
 function workflowPhase(id) {
+  return workflowLifecycleValue(id, "phase");
+}
+
+function workflowLifecycleValue(id, key) {
   const workflow = activeWorkflow(id);
   if (!workflow) return "";
   try {
     const lifecycle = fs.readFileSync(path.join(sessionStateDir(id), "workflows", workflow, "lifecycle", "lifecycle.env"), "utf8");
-    return lifecycle.split("\n").find((line) => line.startsWith("phase="))?.slice(6).trim() || "";
+    const prefix = `${key}=`;
+    return lifecycle.split("\n").find((line) => line.startsWith(prefix))?.slice(prefix.length).trim() || "";
   } catch { return ""; }
+}
+
+function workflowCompletionRoute(id) {
+  const result = workflowLifecycleValue(id, "candidate_diff_hash");
+  if (result.startsWith("direct-response:")) return "direct-response";
+  if (result.startsWith("read-only:")) return "read-only";
+  if (result.startsWith("external-only:")) return "external-only";
+  return result ? "source" : null;
 }
 
 function traceReferences(id) {
@@ -272,6 +286,7 @@ function writeTraceSummary(id, status) {
   try { result = conciseTail(fs.readFileSync(path.join(sessionStateDir(id), "orchestrator-result.md"), "utf8"), 80, 6000); } catch {}
   try { fallback = conciseTail(fs.readFileSync(path.join(sessionStateDir(id), "orchestrator-last-message.txt"), "utf8"), 40, 6000); } catch {}
   const finalMessage = selectFinalMessage(result, fallback);
+  const completionRoute = workflowCompletionRoute(id);
   const references = traceReferences(id);
   const report = {
     taskId: id,
@@ -279,6 +294,8 @@ function writeTraceSummary(id, status) {
     status,
     completedAt: registry.sessions[id]?.completedAt || null,
     finalMessage,
+    completionRoute,
+    responseType: responseTypeForMessage(finalMessage, completionRoute),
     traceReferences: references,
   };
   const markdown = [
@@ -415,9 +432,12 @@ async function writeGatewayReport(id, report) {
 
 function readLocalWorkerReport(id) {
   try {
+    const finalReport = JSON.parse(fs.readFileSync(path.join(traceRoot(id), "final-report.json"), "utf8"));
     return normalizeWorkerReport({
       report: fs.readFileSync(path.join(traceRoot(id), "final-report.md"), "utf8"),
       transcript: JSON.parse(fs.readFileSync(path.join(traceRoot(id), "transcript-index.json"), "utf8")),
+      message: finalReport.finalMessage,
+      completionRoute: finalReport.completionRoute,
     });
   } catch { return null; }
 }
@@ -712,8 +732,11 @@ async function projectSessionToThread(id, status, reportReader = readGatewayRepo
       sessionId: id,
       generation: record.leaseGeneration,
       eventId: `final-${id}`,
-      type: "assistant_message",
-      payload: { text: report.report, transcript: scopedThreadTranscript(id, report.transcript) },
+      type: report.responseType,
+      payload: {
+        text: report.responseType === "question" && report.message ? report.message : report.report,
+        transcript: scopedThreadTranscript(id, report.transcript),
+      },
     });
     await threadStore.markSessionFinishing({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration });
     const finalized = await threadStore.finalizeSession({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration });

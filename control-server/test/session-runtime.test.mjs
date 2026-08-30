@@ -9,6 +9,7 @@ import {
   findActiveSession,
   normalizeWorkerReport,
   ownsThreadProjection,
+  responseTypeForMessage,
   scopedThreadTranscript,
   selectFinalMessage,
   sessionControlInvocation,
@@ -80,9 +81,32 @@ test("completed session reports prefer the explicit bounded caller result", () =
   assert.deepEqual(normalizeWorkerReport({ report: "complete result", transcript: { taskId: "task-1" } }), {
     report: "complete result",
     transcript: { taskId: "task-1" },
+    message: null,
+    completionRoute: null,
+    responseType: "assistant_message",
+  });
+  assert.deepEqual(normalizeWorkerReport({
+    report: "completed report",
+    transcript: null,
+    message: "Which repository should I check?",
+    completionRoute: "direct-response",
+  }), {
+    report: "completed report",
+    transcript: null,
+    message: "Which repository should I check?",
+    completionRoute: "direct-response",
+    responseType: "question",
   });
   assert.equal(normalizeWorkerReport({ report: "" }), null);
   assert.equal(normalizeWorkerReport({ report: "x".repeat(64 * 1024 + 1) }), null);
+});
+
+test("only bounded direct-response questions project as clarification events", () => {
+  assert.equal(responseTypeForMessage("Which repository should I check?", "direct-response"), "question");
+  assert.equal(responseTypeForMessage("你希望检查哪个仓库？", "direct-response"), "question");
+  assert.equal(responseTypeForMessage("The latest PR is #421.", "direct-response"), "assistant_message");
+  assert.equal(responseTypeForMessage("Which repository should I check?", "external-only"), "assistant_message");
+  assert.equal(responseTypeForMessage("One? Two? Three? Four?", "direct-response"), "assistant_message");
 });
 
 test("thread transcript references remain bound to their originating session", () => {

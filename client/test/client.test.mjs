@@ -486,17 +486,19 @@ test("subagent pane keeps the open thread and orchestrator status visible", () =
   assert.equal(lines[2], "     ↳ Inspecting the runtime");
 });
 
-test("subagent pane distinguishes idle, discovery, and unavailable snapshots", () => {
+test("subagent pane distinguishes idle, orchestrator planning, and unavailable snapshots", () => {
   assert.equal(renderAgentPane([], {
     columns: 80,
     maxRows: 4,
     thread: { id: "thread-idle", state: "idle" },
   })[1], "└─ ○ no active agents");
-  assert.equal(renderAgentPane([], {
+  const planning = renderAgentPane([], {
     columns: 80,
     maxRows: 4,
     thread: { id: "thread-running", state: "running" },
-  })[1], "└─ ◌ discovering subagents");
+  });
+  assert.equal(planning[0], "● orchestrator · planning");
+  assert.equal(planning[1], "└─ ○ no delegated agents yet");
   assert.equal(renderAgentPane([], {
     columns: 80,
     maxRows: 4,

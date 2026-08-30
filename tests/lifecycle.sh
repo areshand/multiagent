@@ -397,6 +397,36 @@ assert_contains "$DIRECT_STATE/workflows/WF-DIRECT/lifecycle/lifecycle.env" "pha
 assert_contains "$DIRECT_STATE/workflows/WF-DIRECT/lifecycle/events.log" "route=direct-response"
 assert_contains "$DIRECT_STATE/orchestrator-result.md" "The direct conversational answer."
 
+CLARIFICATION_STATE="$TEST_TMP/clarification-state"
+MULTIAGENT_STATE_DIR="$CLARIFICATION_STATE" MULTIAGENT_ORIGINAL_TASK_FILE="$SHORTCUT_TASK" \
+  "$MULTIAGENT" workflow init WF-CLARIFICATION >/dev/null
+CLARIFICATION_RESULT="$CLARIFICATION_STATE/clarification-result.md"
+printf 'Which repository should I check — prod-mcp, aptos-core, or both?\n' \
+  >"$CLARIFICATION_RESULT"
+MULTIAGENT_ROOT="$SHORTCUT_REPO" MULTIAGENT_STATE_DIR="$CLARIFICATION_STATE" \
+  MULTIAGENT_WORKFLOW_ID=WF-CLARIFICATION MULTIAGENT_RUN_ID=RUN-CLARIFICATION \
+  MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
+  "$MULTIAGENT" orchestrator complete --auto-clarification --result-file "$CLARIFICATION_RESULT" \
+  >"$TEST_TMP/clarification-shortcut.out"
+assert_contains "$CLARIFICATION_STATE/workflows/WF-CLARIFICATION/lifecycle/lifecycle.env" "phase=complete"
+assert_contains "$CLARIFICATION_STATE/workflows/WF-CLARIFICATION/lifecycle/events.log" "route=direct-response"
+assert_contains "$CLARIFICATION_STATE/orchestrator-result.md" "Which repository should I check"
+
+NONQUESTION_STATE="$TEST_TMP/nonquestion-state"
+MULTIAGENT_STATE_DIR="$NONQUESTION_STATE" MULTIAGENT_ORIGINAL_TASK_FILE="$SHORTCUT_TASK" \
+  "$MULTIAGENT" workflow init WF-NONQUESTION >/dev/null
+NONQUESTION_RESULT="$NONQUESTION_STATE/nonquestion-result.md"
+printf 'This is not a clarification.\n' >"$NONQUESTION_RESULT"
+if MULTIAGENT_ROOT="$SHORTCUT_REPO" MULTIAGENT_STATE_DIR="$NONQUESTION_STATE" \
+  MULTIAGENT_WORKFLOW_ID=WF-NONQUESTION MULTIAGENT_RUN_ID=RUN-NONQUESTION \
+  MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
+  "$MULTIAGENT" orchestrator complete --clarification --result-file "$NONQUESTION_RESULT" \
+  >"$TEST_TMP/nonquestion-shortcut.out" 2>&1; then
+  echo "expected automatic clarification completion to reject a prose answer" >&2
+  exit 1
+fi
+assert_contains "$NONQUESTION_STATE/workflows/WF-NONQUESTION/lifecycle/lifecycle.env" "phase=pre-implementation"
+
 READ_ONLY_STATE="$TEST_TMP/read-only-state"
 MULTIAGENT_STATE_DIR="$READ_ONLY_STATE" MULTIAGENT_ORIGINAL_TASK_FILE="$SHORTCUT_TASK" \
   "$MULTIAGENT" workflow init WF-READ-ONLY >/dev/null

@@ -429,7 +429,11 @@ selects the corresponding mechanical completion gate:
   clarification without launching another role. It requires a clean repository,
   no external operation, no role launch, no active workflow obligation, and no
   source lifecycle state. Because it produces no independently mutable artifact
-  or external effect, it does not require a reviewer.
+  or external effect, it does not require a reviewer. When a successful headless
+  orchestrator pass exits with a bounded clarification question but omits the
+  explicit completion command, the runtime submits that exact question to the
+  same supervisor-owned direct-response gate. The adapter may not mark the
+  workflow complete itself; a failed gate leaves the workflow incomplete.
 - A read-only investigation route may launch repository readers with the
   selected repository as their working directory. The supervisor denies source
   writes, records the exact read-only launch manifests and sealed outputs, and

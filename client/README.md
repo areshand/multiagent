@@ -29,12 +29,16 @@ events, thread state, heartbeats, and bounded subagent status. A separate
 session WebSocket carries live orchestrator terminal output only while an
 execution is active. The interactive TTY reserves a small bottom pane for each
 subagent's state, role, and current progress as a compact graph rooted at the
-orchestrator. The stable `› ` input area remains available while agents work;
+orchestrator. Before the first delegation, the graph labels the orchestrator
+`planning` and says that no agents have been delegated yet; it does not imply
+that a separate discovery operation is running. The stable `› ` input area
+remains available while agents work;
 asynchronous output redraws it without discarding partially typed follow-up
 text. When an execution finishes, the pane keeps a concise result summary,
-wrapped to at most three terminal lines, showing the latest public outcome and
-labels the orchestrator `complete` instead of reducing
-the result to `idle`. HTTP event replay repairs gaps after a disconnect and
+wrapped to at most three terminal lines, showing the latest public outcome, and
+labels the orchestrator `complete` instead of reducing the result to `idle`.
+Bounded clarification responses are shown as questions and wait for ordinary
+follow-up input. HTTP event replay repairs gaps after a disconnect and
 reconstructs that summary when a thread is reopened.
 
 The first command securely prompts for the password. For a non-interactive

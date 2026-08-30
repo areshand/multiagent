@@ -430,6 +430,21 @@ if [[ "$SOURCE_BOOTSTRAP_OUTPUT" != "source-complete" ]]; then
   printf '%s\n' "$SOURCE_BOOTSTRAP_OUTPUT" >&2
   exit 1
 fi
+
+HEADLESS_LAUNCH_STATE="$TMPDIR/launch-headless-state"
+MOCK_TMUX_HAS_SESSION=0 \
+  MULTIAGENT_AGENT_HEADLESS=1 \
+  MULTIAGENT_SESSION="launch-headless" \
+  MULTIAGENT_ROOT= \
+  MULTIAGENT_PROMPT= \
+  MULTIAGENT_STATE_DIR="$HEADLESS_LAUNCH_STATE" \
+  MULTIAGENT_WRITE_POLICY="$TMPDIR/launch-headless-policy/write-policy.paths" \
+  "$ROOT/launch.sh" --session launch-headless --root "$LAUNCH_TARGET" --no-attach \
+  >"$TMPDIR/launch-headless.out"
+HEADLESS_LAUNCH_BOOTSTRAP="$HEADLESS_LAUNCH_STATE/orchestrator-bootstrap.sh"
+assert_file_contains "$HEADLESS_LAUNCH_BOOTSTRAP" "orchestrator complete --auto-clarification --result-file"
+assert_file_contains "$HEADLESS_LAUNCH_BOOTSTRAP" 'exit "$agent_status"'
+
 LAUNCH_WORKFLOW_ID="$(tr -d '\r\n' <"$LAUNCH_STATE/runtime_state/active-workflow-id")"
 assert_file_contains "$LAUNCH_STATE/workflows/$LAUNCH_WORKFLOW_ID/lifecycle/lifecycle.env" "phase=pre-implementation"
 if grep -Fq "$LAUNCH_TARGET/orchestrator_prompt.md" "$MOCK_TMUX_LOG" "$TMPDIR/launch.out" "$LAUNCH_BOOTSTRAP"; then

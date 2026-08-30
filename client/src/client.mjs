@@ -738,7 +738,11 @@ export function renderAgentPane(agents, {
   taskSummary = "",
 } = {}) {
   const values = Array.isArray(agents) ? agents : [];
-  const orchestratorStatus = outcomeStatus || executionStatus || thread?.state || "idle";
+  const executionState = outcomeStatus || executionStatus || thread?.state || "idle";
+  const planning = !values.length
+    && !agentSnapshot?.error
+    && new Set(["running", "working", "in-progress"]).has(String(executionState).toLowerCase());
+  const orchestratorStatus = planning ? "planning" : executionState;
   const connection = connectionState === "connected" ? "" : ` · ${connectionState}`;
   const rows = [`${agentStatusGlyph(orchestratorStatus)} orchestrator · ${orchestratorStatus}${connection}`];
   if (taskSummary && rows.length < maxRows) {
@@ -761,9 +765,8 @@ export function renderAgentPane(agents, {
   });
   if (values.length > visible.length && rows.length < maxRows) rows.push(`└─ … ${values.length - visible.length} more`);
   if (!values.length && maxRows > 1) {
-    const active = new Set(["queued", "starting", "running", "working", "in-progress"]).has(String(orchestratorStatus).toLowerCase());
     if (agentSnapshot?.error) rows.push("└─ ◌ subagent status unavailable");
-    else if (active) rows.push("└─ ◌ discovering subagents");
+    else if (planning) rows.push("└─ ○ no delegated agents yet");
     else rows.push("└─ ○ no active agents");
   }
   return rows.slice(0, maxRows).map((line) => truncateTerminalLine(line, columns));
@@ -774,7 +777,7 @@ function agentStatusGlyph(status) {
   if (new Set(["failed", "killed", "cancelled", "canceled", "delivery-blocked", "interrupted"]).has(value)) return "×";
   if (inactiveAgentStatuses.has(value)) return "✓";
   if (new Set(["starting", "queued", "connecting", "restoring", "waiting"]).has(value)) return "◌";
-  if (new Set(["running", "working", "in-progress"]).has(value)) return "●";
+  if (new Set(["running", "working", "in-progress", "planning"]).has(value)) return "●";
   return "○";
 }
 
