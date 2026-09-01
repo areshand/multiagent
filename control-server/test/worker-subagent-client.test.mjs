@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import http from "node:http";
 import test from "node:test";
-import { fetchWorkerSubagents } from "../src/worker-subagent-client.mjs";
+import { fetchWorkerSubagents, fetchWorkerSubagentsWithReconciliation } from "../src/worker-subagent-client.mjs";
 
 test("gateway fetches a bounded authenticated subagent snapshot from the session worker", async (context) => {
   const server = http.createServer((request, response) => {
@@ -36,4 +36,42 @@ test("gateway rejects malformed worker subagent snapshots", async (context) => {
     port: address.port,
     token: "scoped-token",
   }), /invalid subagent snapshot/);
+});
+
+test("a refused worker snapshot reconciles a completed session instead of reporting unavailable", async () => {
+  const calls = [];
+  const result = await fetchWorkerSubagentsWithReconciliation({
+    record: { status: "running", podIP: "10.0.0.1" },
+    fetchSnapshot: async (podIP) => {
+      calls.push(`fetch:${podIP}`);
+      throw new Error("connect ECONNREFUSED 10.0.0.1:8080");
+    },
+    reconcile: async () => {
+      calls.push("reconcile");
+      return { status: "completed", podIP: "10.0.0.1" };
+    },
+  });
+  assert.deepEqual(calls, ["fetch:10.0.0.1", "reconcile"]);
+  assert.equal(result.record.status, "completed");
+  assert.equal(result.agents, null);
+  assert.equal(result.error, null);
+});
+
+test("a refused stale Pod IP retries the reconciled running worker", async () => {
+  const calls = [];
+  const result = await fetchWorkerSubagentsWithReconciliation({
+    record: { status: "running", podIP: "10.0.0.1" },
+    fetchSnapshot: async (podIP) => {
+      calls.push(`fetch:${podIP}`);
+      if (podIP === "10.0.0.1") throw new Error("connect ECONNREFUSED");
+      return [{ name: "ops-01", status: "working" }];
+    },
+    reconcile: async () => {
+      calls.push("reconcile");
+      return { status: "running", podIP: "10.0.0.2" };
+    },
+  });
+  assert.deepEqual(calls, ["fetch:10.0.0.1", "reconcile", "fetch:10.0.0.2"]);
+  assert.deepEqual(result.agents, [{ name: "ops-01", status: "working" }]);
+  assert.equal(result.error, null);
 });

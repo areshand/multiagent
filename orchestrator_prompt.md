@@ -16,6 +16,9 @@ On a clean launch:
 
 1. Run `multiagent workflow context "$MULTIAGENT_WORKFLOW_ID"`.
 2. Read the authenticated task artifact named by `originalTask` exactly once.
+   Use only the exact writable path in `resultCandidate.path` for caller-result
+   handoff files; never write inside the workflow directory containing
+   `originalTask`.
 3. Route from that typed context. Do not inspect panes, rediscover state paths,
    or reconstruct provider transcripts.
 
@@ -94,11 +97,11 @@ bindings, independent review, and phase completion.
   request at `$MULTIAGENT_LOG_DIR/agents/OPS_NAME/request.json`. A prose proposal
   or `awaiting` report is not a result; restore that ops identity, then run a new
   reviewed cycle with a fresh reviewer.
-- For successful external-only work, synthesize one self-contained caller
-  response from the original goal and all accumulated `opsResult` values. Write
-  it to `$MULTIAGENT_STATE_DIR/orchestrator-result.md`, then complete with
-  `multiagent orchestrator complete --external-only --result-file
-  "$MULTIAGENT_STATE_DIR/orchestrator-result.md"`. The runtime rejects external
+- For successful or terminally blocked external-only work, synthesize one
+  self-contained caller response from the original goal and all accumulated
+  `opsResult` values. Write it to the exact `resultCandidate.path` returned by
+  `workflow context`, then complete with `multiagent orchestrator complete
+  --external-only --result-file RESULT_CANDIDATE_PATH`. The runtime rejects external
   completion without this bounded result handoff. Do not enter source lifecycle
   phases or pass a private agent artifact as the caller response.
 - Preserve literal predicates from the authenticated goal. When the caller

@@ -90,13 +90,14 @@ response. It must include every caller-requested field and its supporting
 evidence, not merely a completion statement. A new caller-authorized session is
 required for more work.
 
-For an external-only task with successful reviewed operations and no source
-changes, write that caller response to
-`$MULTIAGENT_STATE_DIR/orchestrator-result.md`, then finish with:
+For an external-only task with successful reviewed operations, or a terminal
+reviewed structural blocker, and no source changes, write that caller response
+to the exact `resultCandidate.path` returned by workflow context, then finish
+with:
 
 ```bash
 multiagent orchestrator complete --external-only \
-  --result-file "$MULTIAGENT_STATE_DIR/orchestrator-result.md"
+  --result-file "RESULT_CANDIDATE_PATH"
 ```
 
 The result artifact is the control server handoff, not a substitute for an

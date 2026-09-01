@@ -35,7 +35,8 @@ function lastProgressLine(text) {
     if (/^(?:final status:|Multiagent launch mode:)/i.test(line)) return false;
     if (/[{,]\s*\\?"(?:type|session_id|uuid|usage|duration_ms)\\?"\s*:/.test(line)) return false;
     try { if (typeof JSON.parse(line) === "object") return false; } catch {}
-    return true;
+    if (/[{}\[\]`]|\\[nrt"]|"\s*:|\bsignature\b/i.test(line)) return false;
+    return /^(?:Analyzing|Checking|Collecting|Comparing|Executing|Finding|Found|Inspecting|Investigating|Preparing|Querying|Reading|Reviewing|Running|Summarizing|Tracing|Validating|Waiting|Working)\b/.test(line);
   }) || "";
 }
 

@@ -8,7 +8,8 @@ own role-specific procedure; this file does not repeat them.
 - Answer directly, or ask one bounded clarification, when the authenticated
   request can be handled from the current conversation without reading the
   repository, calling an external service, or producing an artifact. Persist
-  the exact response under `MULTIAGENT_STATE_DIR`, then request
+  the exact response at the `resultCandidate.path` returned by workflow context,
+  then request
   `multiagent orchestrator complete --direct-response --result-file PATH`.
 - Use a `reader` when answering requires repository inspection but no source
   mutation. Readers run in the repository working directory with mechanically

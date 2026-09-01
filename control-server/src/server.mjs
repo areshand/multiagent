@@ -11,7 +11,7 @@ import { deliverWorkerReport, reportDeliveryTimeoutMs } from "./worker-report-de
 import { issueWorkerToken as createWorkerToken, verifyWorkerAuthorization } from "./worker-token.mjs";
 import { readSubagentSnapshot } from "./subagent-status.mjs";
 import { renderThreadTask } from "./thread-execution-context.mjs";
-import { fetchWorkerSubagents } from "./worker-subagent-client.mjs";
+import { fetchWorkerSubagents, fetchWorkerSubagentsWithReconciliation } from "./worker-subagent-client.mjs";
 import { configuredRepository, parseRepositoryCatalog } from "./repository-catalog.mjs";
 import { visibleLegacySessionIds } from "./session-visibility.mjs";
 import {
@@ -23,13 +23,14 @@ import {
   normalizeWorkerReport,
   ownsThreadProjection,
   responseTypeForMessage,
-  scopedThreadTranscript,
   selectFinalMessage,
   sessionControlInvocation,
   sessionLaunchInvocation,
   shouldAutomaticallyResume,
   submitLocalFollowup,
   validResourceId,
+  workerReportInterruptedEvent,
+  workerReportPublicEvent,
 } from "./session-runtime.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -442,10 +443,10 @@ function readLocalWorkerReport(id) {
   } catch { return null; }
 }
 
-async function deliverCompletedWorkerReport(id) {
+async function deliverWorkerOutcomeReport(id) {
   if (!workerMode || !workerReportGatewayUrl || !workerReportTokenFile) return;
   const report = readLocalWorkerReport(id);
-  if (!report) throw new Error(`completed session ${id} has no normalized report`);
+  if (!report) throw new Error(`session ${id} has no normalized outcome report`);
   const token = fs.readFileSync(workerReportTokenFile, "utf8").trim();
   await deliverWorkerReport({
     gatewayUrl: workerReportGatewayUrl,
@@ -513,12 +514,17 @@ async function gatewaySubagentSnapshot(id) {
   if (!record) return unavailableSubagentSnapshot(id);
   if (!record.podIP) record = await reconcileGatewaySession(id);
   if (!record?.podIP) return unavailableSubagentSnapshot(id);
-  try {
-    const agents = await fetchWorkerSubagents({
+  const result = await fetchWorkerSubagentsWithReconciliation({
+    record,
+    fetchSnapshot: (hostname) => fetchWorkerSubagents({
       sessionId: id,
-      hostname: record.podIP,
+      hostname,
       token: issueWorkerToken(id),
-    });
+    }),
+    reconcile: () => reconcileGatewaySession(id),
+  });
+  if (Array.isArray(result.agents)) {
+    const agents = result.agents;
     const snapshot = {
       sessionId: id,
       agents,
@@ -530,14 +536,14 @@ async function gatewaySubagentSnapshot(id) {
     gatewaySubagentSnapshots.set(id, snapshot);
     gatewaySubagentSnapshotErrors.delete(id);
     return snapshot;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (gatewaySubagentSnapshotErrors.get(id) !== message) {
-      gatewaySubagentSnapshotErrors.set(id, message);
-      console.warn("session worker subagent snapshot unavailable", { sessionId: id, error: message });
-    }
-    return unavailableSubagentSnapshot(id, error);
   }
+  if (!result.error) return unavailableSubagentSnapshot(id);
+  const message = result.error instanceof Error ? result.error.message : String(result.error);
+  if (gatewaySubagentSnapshotErrors.get(id) !== message) {
+    gatewaySubagentSnapshotErrors.set(id, message);
+    console.warn("session worker subagent snapshot unavailable", { sessionId: id, error: message });
+  }
+  return unavailableSubagentSnapshot(id, result.error);
 }
 
 async function reconcileGatewaySession(id) {
@@ -727,16 +733,13 @@ async function projectSessionToThread(id, status, reportReader = readGatewayRepo
     const session = sessions.find((candidate) => candidate.id === id);
     if (!session) return;
     if (session.inboxAckSequence !== session.inboxHeadSequence) return;
+    const publicEvent = workerReportPublicEvent(id, report);
     await threadStore.appendFencedSessionEvent({
       threadId: record.threadId,
       sessionId: id,
       generation: record.leaseGeneration,
       eventId: `final-${id}`,
-      type: report.responseType,
-      payload: {
-        text: report.responseType === "question" && report.message ? report.message : report.report,
-        transcript: scopedThreadTranscript(id, report.transcript),
-      },
+      ...publicEvent,
     });
     await threadStore.markSessionFinishing({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration });
     const finalized = await threadStore.finalizeSession({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration });
@@ -744,13 +747,14 @@ async function projectSessionToThread(id, status, reportReader = readGatewayRepo
     await saveRegistry();
     if (finalized.activatedSession) await launchActivatedThreadSession(record, finalized.activatedSession);
   } else if (status === "failed" || status === "paused") {
+    const fallback = status === "paused" ? "Execution session paused" : "Execution session failed";
+    const publicEvent = workerReportInterruptedEvent(id, reportReader(id), fallback);
     await threadStore.appendFencedSessionEvent({
       threadId: record.threadId,
       sessionId: id,
       generation: record.leaseGeneration,
       eventId: `interrupted-${id}`,
-      type: "session_interrupted",
-      payload: { text: status === "paused" ? "Execution session paused" : "Execution session failed" },
+      ...publicEvent,
     });
     const finalized = await threadStore.finalizeSession({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration, status: "interrupted" });
     record.threadProjectedAt = new Date().toISOString();
@@ -1295,7 +1299,7 @@ for (const record of gatewayMode ? [] : Object.values(registry.sessions)) {
     writeTraceSummary(record.id, "completed");
     saveRegistry();
     if (workerMode) {
-      deliverCompletedWorkerReport(record.id)
+      deliverWorkerOutcomeReport(record.id)
         .catch((error) => console.error(`worker report delivery failed for ${record.id}`, error))
         .finally(() => setTimeout(() => process.exit(0), completionGraceMs));
     }
@@ -1314,7 +1318,7 @@ const retirementTimer = setInterval(() => {
     if (record.status === "running" && workflowPhase(record.id) === "complete") {
       retireSession(record.id, "completed", "workflow-supervisor").then(async () => {
         if (workerMode) {
-          try { await deliverCompletedWorkerReport(record.id); }
+          try { await deliverWorkerOutcomeReport(record.id); }
           catch (error) { console.error(`worker report delivery failed for ${record.id}`, error); }
           setTimeout(() => process.exit(0), completionGraceMs);
         }
@@ -1333,8 +1337,12 @@ const retirementTimer = setInterval(() => {
           console.error(`automatic resume failed for ${record.id}`, error);
         }
       }
-      retireSession(record.id, "failed", "process-exit").then(() => {
-        if (workerMode) setTimeout(() => process.exit(1), 1000);
+      retireSession(record.id, "failed", "process-exit").then(async () => {
+        if (workerMode) {
+          try { await deliverWorkerOutcomeReport(record.id); }
+          catch (error) { console.error(`worker outcome report delivery failed for ${record.id}`, error); }
+          setTimeout(() => process.exit(1), 1000);
+        }
       }).catch((error) => console.error(`failed retirement failed for ${record.id}`, error));
       continue;
     }
