@@ -105,7 +105,7 @@ top-level ownership boundaries:
 - `runtime/` owns the Rust session runtime, supervisor, and role-confinement
   package.
 - `logger/` owns the independent single-writer Logger executable,
-  canonical event contract, SQLite ledger, integrity checks, and
+  canonical event contract, append-only JSONL ledger, integrity checks, and
   producer client utilities.
 - `docker/` owns component image definitions and container entrypoints, but not
   deployment secrets or environment-specific configuration.
@@ -486,21 +486,23 @@ an entry, and advances the authoritative per-session chain head.
 
 For each append, the service authenticates the producer, authorizes the event
 type and session, validates a bounded schema, rejects conflicting event-ID
-replays, serializes the append in one SQLite transaction, canonically encodes
-and hashes the entry, and durably advances the head. Exact idempotent replay is
-a no-op. The HTTP append endpoint returns `204 No Content`; this is transport
-acknowledgement, not evidence that authorizes workflow progress. Periodic
+replays, serializes each append as one canonical JSONL record, fsyncs it before
+acknowledgement, hashes the entry, and then advances the in-memory head. Exact
+idempotent replay is a no-op. The HTTP append endpoint returns `204 No Content`;
+this is transport acknowledgement, not evidence that authorizes workflow progress. Periodic
 signed checkpoints commit the current chain head. Startup and explicit
 verification recompute the chain and verify checkpoint signatures; an
 integrity failure makes the service unready and prevents further authoritative
 appends.
 
-The SQLite WAL and its dedicated volume are internal implementation details of
-the single writer, not shared organizational storage. Deployment must run at
-most one active writer for a ledger volume. A cold standby has no write
-authority until deployment fencing transfers ownership. Producers may call
-the append API but cannot update or delete entries, choose the chain head, or
-read the logger signing key.
+The append-only ledger file and its dedicated volume are internal implementation
+details of the single writer, not a database or shared organizational storage.
+The service takes an exclusive process lock, rejects truncated or non-canonical
+records during startup replay, and rebuilds read indexes in memory. Deployment
+must run at most one active writer for a ledger volume. A cold standby has no
+write authority until deployment fencing transfers ownership. Producers may
+call the append API but cannot update or delete entries, choose the chain head,
+or read the logger signing key.
 
 The Logger signing identity, producer credentials, volume, network
 policy, backups, retention, and concrete endpoints are deployment-owned. The
@@ -509,8 +511,8 @@ repository credentials and cannot issue permits or perform production work.
 Its verification is structural and cryptographic; independent reviewers retain
 ownership of semantic correctness and scope review.
 
-Authoritative appends complete before derived exports. Optional Loki, metrics,
-or JSONL projections are non-authoritative and retry from durable queue state;
+Authoritative appends complete before derived exports. Optional JSONL
+projections are non-authoritative and are rebuilt atomically from the ledger;
 their outage must not invalidate or block a committed append. Producers retain
 and retry undelivered events through a local outbox or deployment-owned durable
 queue, and delivery backlog is observable. Neither logger availability, append
@@ -648,8 +650,8 @@ authorized iteration without granting the runtime semantic decision authority.
    output.
 14. The reviewer and supervisor evaluate the result before another runbook
    phase or operation is allowed.
-15. Authenticated producers submit bounded structural events to the Audit
-   Logger, which independently advances the authoritative chain without
+15. Authenticated producers submit bounded structural events to the Logger,
+   which independently advances the authoritative chain without
    participating in workflow progression.
 16. The trace sidecar persists session evidence to S3 and submits the exported
    artifact commitment to the Logger without sending the trace body.
@@ -830,8 +832,8 @@ yet be fully implemented:
   confinement cannot express the required boundary.
 - Define retention, redaction, migration, and replay policy for historical S3
   evidence.
-- Integrate producer outboxes or a deployment-owned durable queue so Audit
-  Logger delivery retries independently and backlog alerts are testable.
+- Integrate producer outboxes or a deployment-owned durable queue so Logger
+  delivery retries independently and backlog alerts are testable.
 - Add deployment-owned Loki/OpenTelemetry projections if operational demand
   justifies them; these must remain derived from the authoritative ledger.
 

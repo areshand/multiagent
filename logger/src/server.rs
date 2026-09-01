@@ -50,7 +50,7 @@ impl AppState {
         )?;
         let public_key = signer.public_descriptor()?;
         let store = Store::open(
-            &config.database,
+            &config.ledger_file,
             signer,
             config.checkpoint_interval,
             config.projection_dir.is_some(),
@@ -188,8 +188,11 @@ async fn events(
         .store
         .lock()
         .expect("logger store lock")
-        .append(event, client.id)
-        .map_err(ApiError::from_store)?;
+        .append(event, client.id);
+    if matches!(result, Err(StoreError::Internal(_))) {
+        state.0.ready.store(false, Ordering::Relaxed);
+    }
+    let result = result.map_err(ApiError::from_store)?;
     match result {
         AppendResult::Appended => {
             state.0.appends.fetch_add(1, Ordering::Relaxed);
@@ -441,7 +444,7 @@ mod tests {
         )
         .unwrap();
         let config = Config {
-            database: directory.path().join("ledger.sqlite"),
+            ledger_file: directory.path().join("ledger.jsonl"),
             signing_key_file: key_file,
             signing_key_id: "test-key".into(),
             logger_id: "test-logger".into(),

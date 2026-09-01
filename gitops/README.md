@@ -23,7 +23,7 @@ The application-owned Logger deployment contract is:
   reach only the read/verify APIs through deployment network policy;
 - do not mount model, KMS, `prod-mcp`, Grafana, Kubernetes, or repository
   credentials;
-- back up ledger segments and signed checkpoints using the
+- back up the append-only ledger, whose records include signed checkpoints, using the
   deployment-owned retention controls;
 - give producers a durable retry path or outbox and alert on delivery backlog;
 - keep the existing trace sidecar and S3 data path, then submit a bounded

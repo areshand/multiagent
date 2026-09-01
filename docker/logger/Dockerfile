@@ -15,7 +15,7 @@ RUN apt-get update \
  && chown 10020:10020 /var/lib/logger
 COPY --from=builder /src/target/release/logger /usr/local/bin/logger
 USER 10020:10020
-ENV LOGGER_DATABASE=/var/lib/logger/ledger.sqlite PORT=8090
+ENV LOGGER_LEDGER_FILE=/var/lib/logger/ledger.jsonl PORT=8090
 EXPOSE 8090
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
   CMD ["curl", "--fail", "--silent", "http://127.0.0.1:8090/readyz"]

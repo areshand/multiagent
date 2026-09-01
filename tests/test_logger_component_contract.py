@@ -20,6 +20,15 @@ class LoggerComponentContractTests(unittest.TestCase):
         self.assertNotIn("append-receipt", source.lower())
         self.assertNotIn("operation permit", source.lower())
 
+    def test_logger_uses_an_append_only_file_not_a_database(self):
+        cargo = (ROOT / "logger/Cargo.toml").read_text()
+        store = (ROOT / "logger/src/store.rs").read_text()
+        self.assertNotIn("rusqlite", cargo)
+        self.assertNotIn("sqlite", store.lower())
+        self.assertIn("sync_data", store)
+        self.assertIn("read_until", store)
+        self.assertIn("LOCK_EX | libc::LOCK_NB", store)
+
     def test_event_contract_is_bounded_metadata(self):
         schema = json.loads((ROOT / "contracts/logger-event-v1.schema.json").read_text())
         self.assertFalse(schema["additionalProperties"])

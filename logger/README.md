@@ -5,7 +5,7 @@ structural history. Producers submit bounded event commitments; only this
 service assigns authoritative sequence numbers and parent hashes.
 
 It provides scoped bearer authentication, canonical JSON encoding, a durable
-SQLite WAL ledger, exact event-id idempotency, per-session hash chains,
+fsynced append-only JSONL ledger, exact event-id idempotency, per-session hash chains,
 Ed25519-signed periodic checkpoints, startup/on-demand verification, and
 optional retrying JSONL projections. It does not interpret reasoning, approve
 workflow transitions, hold production credentials, or issue operation permits.
@@ -31,7 +31,7 @@ cargo run -p multiagent-logger -- hash-token "$token"
 ```bash
 LOGGER_SIGNING_KEY_FILE=/tmp/logger.pem \
 LOGGER_CLIENTS_FILE=/tmp/logger-clients.json \
-LOGGER_DATABASE=/tmp/logger.sqlite \
+LOGGER_LEDGER_FILE=/tmp/logger.jsonl \
 LOGGER_ID=logger-local \
 cargo run -p multiagent-logger -- serve
 ```
@@ -62,7 +62,7 @@ bodies are limited to 64 KiB by default; artifact references are metadata only.
 
 | Variable | Default |
 | --- | --- |
-| `LOGGER_DATABASE` | `/var/lib/logger/ledger.sqlite` |
+| `LOGGER_LEDGER_FILE` | `/var/lib/logger/ledger.jsonl` |
 | `LOGGER_SIGNING_KEY_FILE` | required |
 | `LOGGER_CLIENTS_FILE` | required |
 | `LOGGER_ID` | required |

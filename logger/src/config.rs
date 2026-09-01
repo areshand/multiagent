@@ -2,7 +2,7 @@ use std::{env, path::PathBuf};
 
 #[derive(Clone, Debug)]
 pub struct Config {
-    pub database: PathBuf,
+    pub ledger_file: PathBuf,
     pub signing_key_file: PathBuf,
     pub signing_key_id: String,
     pub logger_id: String,
@@ -18,7 +18,7 @@ pub struct Config {
 impl Config {
     pub fn from_env() -> Result<Self, String> {
         Ok(Self {
-            database: path("LOGGER_DATABASE", "/var/lib/logger/ledger.sqlite"),
+            ledger_file: path("LOGGER_LEDGER_FILE", "/var/lib/logger/ledger.jsonl"),
             signing_key_file: required_path("LOGGER_SIGNING_KEY_FILE")?,
             signing_key_id: env::var("LOGGER_SIGNING_KEY_ID")
                 .unwrap_or_else(|_| "logger-signing-key".into()),

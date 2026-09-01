@@ -1,23 +1,66 @@
 use crate::{
     canonical,
     model::{
-        AcceptedEvent, Checkpoint, CheckpointBody, Entry, EntryBody, Event, LogHead, Verification,
+        validate_event, validate_identifier, AcceptedEvent, Checkpoint, CheckpointBody, Entry,
+        EntryBody, Event, LogHead, Verification,
     },
     signer::Ed25519Signer,
 };
-use chrono::{SecondsFormat, Utc};
-use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use chrono::{DateTime, SecondsFormat, Utc};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap},
+    fs::{self, File, OpenOptions},
+    io::{BufRead, BufReader, Read, Write},
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 pub const GENESIS_HASH: &str =
     "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+const MAX_LEDGER_RECORD_BYTES: usize = 2 * 1024 * 1024;
 
 pub struct Store {
-    connection: Connection,
+    ledger_path: PathBuf,
+    ledger: File,
     signer: Ed25519Signer,
     checkpoint_interval: u64,
     projection_enabled: bool,
+    projection_dirty: BTreeSet<String>,
+    state: LedgerState,
+    writable: bool,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct LedgerState {
+    logs: BTreeMap<String, LogHead>,
+    events: HashMap<String, StoredEvent>,
+    entries: BTreeMap<String, Vec<Entry>>,
+    checkpoints: HashMap<String, Checkpoint>,
+    checkpoints_by_log: BTreeMap<String, Vec<Checkpoint>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct StoredEvent {
+    request_digest: String,
+    accepted_event: AcceptedEvent,
+    entry: Entry,
+}
+
+/// One newline-delimited record is one authoritative transaction. Keeping an
+/// optional checkpoint in the same record prevents a crash from committing an
+/// entry without its scheduled checkpoint.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LedgerRecord {
+    api_version: String,
+    kind: String,
+    request_digest: String,
+    accepted_event: AcceptedEvent,
+    entry: Entry,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    checkpoint: Option<Checkpoint>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -31,11 +74,7 @@ pub enum StoreError {
     Conflict(String),
     Internal(String),
 }
-impl From<rusqlite::Error> for StoreError {
-    fn from(value: rusqlite::Error) -> Self {
-        Self::Internal(value.to_string())
-    }
-}
+
 impl From<String> for StoreError {
     fn from(value: String) -> Self {
         Self::Internal(value)
@@ -44,55 +83,36 @@ impl From<String> for StoreError {
 
 impl Store {
     pub fn open(
-        database: &Path,
+        ledger_path: &Path,
         signer: Ed25519Signer,
         checkpoint_interval: u64,
         projection_enabled: bool,
     ) -> Result<Self, String> {
-        if let Some(parent) = database.parent() {
+        if let Some(parent) = ledger_path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+        {
             fs::create_dir_all(parent)
                 .map_err(|error| format!("create logger data directory: {error}"))?;
         }
-        let connection =
-            Connection::open(database).map_err(|error| format!("open logger database: {error}"))?;
-        connection.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA locking_mode=EXCLUSIVE; PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF;
-          CREATE TABLE IF NOT EXISTS logs(log_id TEXT PRIMARY KEY, sequence INTEGER NOT NULL, head_hash TEXT NOT NULL, updated_at TEXT NOT NULL) STRICT;
-          CREATE TABLE IF NOT EXISTS events(event_id TEXT PRIMARY KEY, request_digest TEXT NOT NULL, log_id TEXT NOT NULL, sequence INTEGER NOT NULL, previous_hash TEXT NOT NULL, entry_hash TEXT NOT NULL UNIQUE, committed_at TEXT NOT NULL, producer_id TEXT NOT NULL, event_type TEXT NOT NULL, payload_digest TEXT NOT NULL, event_json TEXT NOT NULL, entry_json TEXT NOT NULL, UNIQUE(log_id,sequence), FOREIGN KEY(log_id) REFERENCES logs(log_id)) STRICT;
-          CREATE TABLE IF NOT EXISTS checkpoints(checkpoint_id TEXT PRIMARY KEY, log_id TEXT NOT NULL, sequence INTEGER NOT NULL, entry_hash TEXT NOT NULL, created_at TEXT NOT NULL, checkpoint_json TEXT NOT NULL, UNIQUE(log_id,sequence), FOREIGN KEY(log_id) REFERENCES logs(log_id)) STRICT;
-          CREATE TABLE IF NOT EXISTS projection_queue(event_id TEXT PRIMARY KEY, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT NOT NULL, last_error TEXT, FOREIGN KEY(event_id) REFERENCES events(event_id)) STRICT;
-          CREATE INDEX IF NOT EXISTS events_log_sequence ON events(log_id,sequence); CREATE INDEX IF NOT EXISTS projections_pending ON projection_queue(status,next_attempt_at);")
-            .map_err(|error| format!("initialize logger database: {error}"))?;
-        let journal_mode: String = connection
-            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
-            .map_err(|error| format!("read logger journal mode: {error}"))?;
-        if !journal_mode.eq_ignore_ascii_case("wal") {
-            return Err("logger ledger requires SQLite WAL mode".into());
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            for suffix in ["", "-wal", "-shm"] {
-                let file = format!("{}{}", database.display(), suffix);
-                if Path::new(&file).exists() {
-                    fs::set_permissions(&file, fs::Permissions::from_mode(0o600))
-                        .map_err(|error| format!("protect logger database: {error}"))?;
-                }
-            }
-        }
-        let store = Self {
-            connection,
+        let ledger = secure_append_file(ledger_path)?;
+        lock_single_writer(&ledger)?;
+        let state = replay(ledger_path, &signer)?;
+        let projection_dirty = if projection_enabled {
+            state.logs.keys().cloned().collect()
+        } else {
+            BTreeSet::new()
+        };
+        Ok(Self {
+            ledger_path: ledger_path.to_path_buf(),
+            ledger,
             signer,
             checkpoint_interval,
             projection_enabled,
-        };
-        let result = store.verify(None)?;
-        if !result.ok {
-            return Err(format!(
-                "logger integrity check failed: {}",
-                result.errors.join("; ")
-            ));
-        }
-        Ok(store)
+            projection_dirty,
+            state,
+            writable: true,
+        })
     }
 
     pub fn append(
@@ -100,47 +120,35 @@ impl Store {
         event: Event,
         producer_id: String,
     ) -> Result<AppendResult, StoreError> {
-        let accepted = AcceptedEvent {
+        if !self.writable {
+            return Err(StoreError::Internal(
+                "logger ledger is unavailable after a durability failure".into(),
+            ));
+        }
+        let accepted_event = AcceptedEvent {
             event: event.clone(),
             producer_id: producer_id.clone(),
         };
-        let request_digest = canonical::sha256(&accepted)?;
-        let signer = self.signer.clone();
-        let checkpoint_interval = self.checkpoint_interval;
-        let projection_enabled = self.projection_enabled;
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let existing: Option<String> = transaction
-            .query_row(
-                "SELECT request_digest FROM events WHERE event_id=?1",
-                [&event.event_id],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if let Some(existing) = existing {
-            if existing == request_digest {
-                transaction.commit()?;
+        let request_digest = canonical::sha256(&accepted_event)?;
+        if let Some(existing) = self.state.events.get(&event.event_id) {
+            if existing.request_digest == request_digest {
                 return Ok(AppendResult::Duplicate);
             }
             return Err(StoreError::Conflict(
                 "eventId already commits different content".into(),
             ));
         }
-        let head: Option<(u64, String)> = transaction
-            .query_row(
-                "SELECT sequence,head_hash FROM logs WHERE log_id=?1",
-                [&event.session_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()?;
-        let sequence = head.as_ref().map_or(1, |(sequence, _)| sequence + 1);
-        let previous_hash = head.map_or_else(|| GENESIS_HASH.into(), |(_, hash)| hash);
+
+        let head = self.state.logs.get(&event.session_id);
+        let sequence = head.map_or(1, |value| value.sequence + 1);
+        let previous_hash = head
+            .map(|value| value.entry_hash.clone())
+            .unwrap_or_else(|| GENESIS_HASH.into());
         let committed_at = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
         let body = EntryBody {
             log_id: event.session_id.clone(),
             sequence,
-            previous_hash: previous_hash.clone(),
+            previous_hash,
             committed_at: committed_at.clone(),
             producer_id,
             event_id: event.event_id.clone(),
@@ -148,337 +156,479 @@ impl Store {
             payload_digest: event.payload_digest.clone(),
             artifact_references: event.artifact_references.clone(),
         };
-        let entry_hash = canonical::sha256(&body)?;
         let entry = Entry {
+            entry_hash: canonical::sha256(&body)?,
             body,
-            entry_hash: entry_hash.clone(),
         };
-        transaction.execute("INSERT INTO logs(log_id,sequence,head_hash,updated_at) VALUES(?1,?2,?3,?4) ON CONFLICT(log_id) DO UPDATE SET sequence=excluded.sequence,head_hash=excluded.head_hash,updated_at=excluded.updated_at", params![event.session_id,sequence,entry_hash,committed_at])?;
-        transaction.execute("INSERT INTO events(event_id,request_digest,log_id,sequence,previous_hash,entry_hash,committed_at,producer_id,event_type,payload_digest,event_json,entry_json) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)", params![event.event_id,request_digest,event.session_id,sequence,previous_hash,entry_hash,committed_at,accepted.producer_id,event.event_type,event.payload_digest,canonical::string(&accepted)?,canonical::string(&entry)?])?;
-        if sequence % checkpoint_interval == 0 {
-            create_checkpoint(
-                &transaction,
-                &signer,
-                &event.session_id,
-                sequence,
-                &entry_hash,
-                &committed_at,
-            )?;
+        let checkpoint = if sequence % self.checkpoint_interval == 0 {
+            Some(create_checkpoint(&self.signer, &entry)?)
+        } else {
+            None
+        };
+        let record = LedgerRecord {
+            api_version: "logger.multiagent.dev/v1".into(),
+            kind: "LoggerLedgerRecord".into(),
+            request_digest,
+            accepted_event,
+            entry,
+            checkpoint,
+        };
+        validate_next(&self.state, &self.signer, &record)?;
+        let mut encoded = canonical::bytes(&record)?;
+        if encoded.len() > MAX_LEDGER_RECORD_BYTES {
+            return Err(StoreError::Internal(
+                "encoded logger record exceeds the ledger limit".into(),
+            ));
         }
-        if projection_enabled {
-            transaction.execute("INSERT INTO projection_queue(event_id,status,next_attempt_at) VALUES(?1,'pending',?2)", params![event.event_id,committed_at])?;
+        encoded.push(b'\n');
+        if let Err(error) = self
+            .ledger
+            .write_all(&encoded)
+            .and_then(|()| self.ledger.sync_data())
+        {
+            self.writable = false;
+            return Err(StoreError::Internal(format!(
+                "durably append logger ledger: {error}"
+            )));
         }
-        transaction.commit()?;
+        let log_id = record.entry.body.log_id.clone();
+        insert_record(&mut self.state, record);
+        if self.projection_enabled {
+            self.projection_dirty.insert(log_id);
+        }
         Ok(AppendResult::Appended)
     }
 
     pub fn head(&self, log_id: &str) -> Result<Option<LogHead>, String> {
-        self.connection
-            .query_row(
-                "SELECT log_id,sequence,head_hash,updated_at FROM logs WHERE log_id=?1",
-                [log_id],
-                |row| {
-                    Ok(LogHead {
-                        log_id: row.get(0)?,
-                        sequence: row.get(1)?,
-                        entry_hash: row.get(2)?,
-                        updated_at: row.get(3)?,
-                    })
-                },
-            )
-            .optional()
-            .map_err(|e| e.to_string())
+        Ok(self.state.logs.get(log_id).cloned())
     }
+
     pub fn entries(&self, log_id: &str, after: u64, limit: usize) -> Result<Vec<Entry>, String> {
-        json_rows(&self.connection, "SELECT entry_json FROM events WHERE log_id=?1 AND sequence>?2 ORDER BY sequence LIMIT ?3", params![log_id,after,limit])
+        Ok(self
+            .state
+            .entries
+            .get(log_id)
+            .into_iter()
+            .flatten()
+            .filter(|entry| entry.body.sequence > after)
+            .take(limit)
+            .cloned()
+            .collect())
     }
+
     pub fn checkpoints(
         &self,
         log_id: &str,
         after: u64,
         limit: usize,
     ) -> Result<Vec<Checkpoint>, String> {
-        json_rows(&self.connection, "SELECT checkpoint_json FROM checkpoints WHERE log_id=?1 AND sequence>?2 ORDER BY sequence LIMIT ?3", params![log_id,after,limit])
+        Ok(self
+            .state
+            .checkpoints_by_log
+            .get(log_id)
+            .into_iter()
+            .flatten()
+            .filter(|checkpoint| checkpoint.body.sequence > after)
+            .take(limit)
+            .cloned()
+            .collect())
     }
+
     pub fn checkpoint(&self, id: &str) -> Result<Option<Checkpoint>, String> {
-        self.connection
-            .query_row(
-                "SELECT checkpoint_json FROM checkpoints WHERE checkpoint_id=?1",
-                [id],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(|e| e.to_string())?
-            .map(|raw| serde_json::from_str(&raw).map_err(|e| e.to_string()))
-            .transpose()
+        Ok(self.state.checkpoints.get(id).cloned())
     }
+
     pub fn checkpoint_session(&self, id: &str) -> Result<Option<String>, String> {
-        self.connection
-            .query_row(
-                "SELECT log_id FROM checkpoints WHERE checkpoint_id=?1",
-                [id],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(|e| e.to_string())
+        Ok(self
+            .state
+            .checkpoints
+            .get(id)
+            .map(|checkpoint| checkpoint.body.log_id.clone()))
     }
 
     pub fn verify(&self, log_id: Option<&str>) -> Result<Verification, String> {
-        let mut logs = self
-            .connection
-            .prepare(if log_id.is_some() {
-                "SELECT log_id,sequence,head_hash FROM logs WHERE log_id=?1"
-            } else {
-                "SELECT log_id,sequence,head_hash FROM logs ORDER BY log_id"
-            })
-            .map_err(|e| e.to_string())?;
-        let values = if let Some(id) = log_id {
-            let rows = logs
-                .query_map([id], read_log_row)
-                .map_err(|e| e.to_string())?;
-            rows.collect::<Result<Vec<_>, _>>()
-                .map_err(|e| e.to_string())?
-        } else {
-            let rows = logs
-                .query_map([], read_log_row)
-                .map_err(|e| e.to_string())?;
-            rows.collect::<Result<Vec<_>, _>>()
-                .map_err(|e| e.to_string())?
+        let replayed = match replay(&self.ledger_path, &self.signer) {
+            Ok(state) => state,
+            Err(error) => {
+                return Ok(Verification {
+                    ok: false,
+                    checked_logs: 0,
+                    checked_entries: 0,
+                    checked_checkpoints: 0,
+                    errors: vec![error],
+                });
+            }
         };
         let mut errors = Vec::new();
-        let mut checked_entries = 0;
-        for (id, head_sequence, head_hash) in &values {
-            let rows: Vec<(u64, String, String, String, String)> = {
-                let mut statement=self.connection.prepare("SELECT sequence,previous_hash,entry_hash,event_json,entry_json FROM events WHERE log_id=?1 ORDER BY sequence").map_err(|e| e.to_string())?;
-                let mapped = statement
-                    .query_map([id], |r| {
-                        Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
-                    })
-                    .map_err(|e| e.to_string())?;
-                mapped
-                    .collect::<Result<_, _>>()
-                    .map_err(|e| e.to_string())?
-            };
-            let mut previous = GENESIS_HASH.to_string();
-            let mut expected = 1;
-            for (sequence, row_previous, row_hash, accepted_json, entry_json) in &rows {
-                checked_entries += 1;
-                let entry: Entry = serde_json::from_str(entry_json).map_err(|e| e.to_string())?;
-                let accepted: AcceptedEvent =
-                    serde_json::from_str(accepted_json).map_err(|e| e.to_string())?;
-                if *sequence != expected {
-                    errors.push(format!("{id}: expected sequence {expected}"));
-                }
-                if row_previous != &previous || entry.body.previous_hash != previous {
-                    errors.push(format!("{id}:{sequence}: previous hash mismatch"));
-                }
-                let calculated = canonical::sha256(&entry.body)?;
-                if calculated != *row_hash || calculated != entry.entry_hash {
-                    errors.push(format!("{id}:{sequence}: entry hash mismatch"));
-                }
-                if canonical::sha256(&accepted)?
-                    != request_digest(&self.connection, &accepted.event.event_id)?
-                {
-                    errors.push(format!("{id}:{sequence}: accepted event digest mismatch"));
-                }
-                if accepted.event.session_id != entry.body.log_id
-                    || accepted.event.event_id != entry.body.event_id
-                    || accepted.producer_id != entry.body.producer_id
-                    || accepted.event.event_type != entry.body.event_type
-                    || accepted.event.payload_digest != entry.body.payload_digest
-                    || accepted.event.artifact_references != entry.body.artifact_references
-                {
-                    errors.push(format!(
-                        "{id}:{sequence}: accepted event does not match chain entry"
-                    ));
-                }
-                previous = calculated;
-                expected += 1;
-            }
-            if *head_sequence != rows.len() as u64 || *head_hash != previous {
-                errors.push(format!("{id}: authoritative head mismatch"));
-            }
+        if !self.writable {
+            errors.push("ledger writes are disabled after a durability failure".into());
         }
-        let mut statement = self
-            .connection
-            .prepare(if log_id.is_some() {
-                "SELECT checkpoint_json FROM checkpoints WHERE log_id=?1 ORDER BY sequence"
-            } else {
-                "SELECT checkpoint_json FROM checkpoints ORDER BY log_id,sequence"
+        if replayed != self.state {
+            errors.push("on-disk ledger differs from the active in-memory index".into());
+        }
+        let logs = replayed
+            .logs
+            .keys()
+            .filter(|candidate| log_id.is_none_or(|selected| candidate.as_str() == selected))
+            .collect::<BTreeSet<_>>();
+        let checked_entries = logs
+            .iter()
+            .map(|id| replayed.entries.get(id.as_str()).map_or(0, Vec::len))
+            .sum();
+        let checked_checkpoints = logs
+            .iter()
+            .map(|id| {
+                replayed
+                    .checkpoints_by_log
+                    .get(id.as_str())
+                    .map_or(0, Vec::len)
             })
-            .map_err(|e| e.to_string())?;
-        let checkpoint_jsons: Vec<String> = if let Some(id) = log_id {
-            let rows = statement
-                .query_map([id], read_string)
-                .map_err(|e| e.to_string())?;
-            rows.collect::<Result<_, _>>().map_err(|e| e.to_string())?
-        } else {
-            let rows = statement
-                .query_map([], read_string)
-                .map_err(|e| e.to_string())?;
-            rows.collect::<Result<_, _>>().map_err(|e| e.to_string())?
-        };
-        for raw in &checkpoint_jsons {
-            let checkpoint: Checkpoint = serde_json::from_str(raw).map_err(|e| e.to_string())?;
-            if !self
-                .signer
-                .verify(&checkpoint.body, &checkpoint.logger_signature)
-            {
-                errors.push(format!(
-                    "{}: invalid checkpoint signature",
-                    checkpoint.body.checkpoint_id
-                ));
-            }
-            let found: Option<String> = self
-                .connection
-                .query_row(
-                    "SELECT entry_hash FROM events WHERE log_id=?1 AND sequence=?2",
-                    params![checkpoint.body.log_id, checkpoint.body.sequence],
-                    |r| r.get(0),
-                )
-                .optional()
-                .map_err(|e| e.to_string())?;
-            if found.as_deref() != Some(&checkpoint.body.entry_hash) {
-                errors.push(format!(
-                    "{}: checkpoint entry mismatch",
-                    checkpoint.body.checkpoint_id
-                ));
-            }
-        }
+            .sum();
         Ok(Verification {
             ok: errors.is_empty(),
-            checked_logs: values.len(),
+            checked_logs: logs.len(),
             checked_entries,
-            checked_checkpoints: checkpoint_jsons.len(),
+            checked_checkpoints,
             errors,
         })
     }
 
     pub fn projection_counts(&self) -> Result<BTreeMap<String, u64>, String> {
-        let mut s = self
-            .connection
-            .prepare("SELECT status,COUNT(*) FROM projection_queue GROUP BY status")
-            .map_err(|e| e.to_string())?;
-        let rows = s
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
-            .map_err(|e| e.to_string())?;
-        rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+        Ok(BTreeMap::from([(
+            "pending".into(),
+            self.projection_dirty.len() as u64,
+        )]))
     }
+
+    /// Projections are rebuilt atomically from the authoritative ledger index.
+    /// This avoids a second state store and makes retries naturally idempotent.
     pub fn flush_projections(&mut self, directory: &Path) -> Result<(u64, u64), String> {
-        fs::create_dir_all(directory).map_err(|e| e.to_string())?;
-        let pending: Vec<(String, u64, Entry)> = {
-            let mut s=self.connection.prepare("SELECT q.event_id,q.attempts,e.entry_json FROM projection_queue q JOIN events e ON e.event_id=q.event_id WHERE q.status='pending' AND q.next_attempt_at<=?1 ORDER BY e.committed_at LIMIT 100").map_err(|e|e.to_string())?;
-            let now = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
-            let rows = s
-                .query_map([now], |r| {
-                    let raw: String = r.get(2)?;
-                    let entry = serde_json::from_str(&raw).map_err(|e| {
-                        rusqlite::Error::FromSqlConversionFailure(
-                            raw.len(),
-                            rusqlite::types::Type::Text,
-                            Box::new(e),
-                        )
-                    })?;
-                    Ok((r.get(0)?, r.get(1)?, entry))
-                })
-                .map_err(|e| e.to_string())?;
-            rows.collect::<Result<_, _>>().map_err(|e| e.to_string())?
-        };
-        let (mut ok, mut failed) = (0, 0);
-        for (event_id, attempts, entry) in pending {
-            use std::io::Write;
-            let result = (|| -> Result<(), String> {
-                let file = directory.join(format!("{}.jsonl", entry.body.log_id));
-                let mut output = fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(file)
-                    .map_err(|e| e.to_string())?;
-                writeln!(output, "{}", canonical::string(&entry)?).map_err(|e| e.to_string())
-            })();
-            match result {
+        fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+        let pending = self.projection_dirty.iter().cloned().collect::<Vec<_>>();
+        let (mut success, mut failed) = (0, 0);
+        for log_id in pending {
+            match write_projection(
+                directory,
+                &log_id,
+                self.state.entries.get(&log_id).map_or(&[], Vec::as_slice),
+            ) {
                 Ok(()) => {
-                    self.connection.execute("UPDATE projection_queue SET status='complete',last_error=NULL WHERE event_id=?1",[event_id]).map_err(|e|e.to_string())?;
-                    ok += 1
+                    self.projection_dirty.remove(&log_id);
+                    success += 1;
                 }
                 Err(error) => {
-                    let delay = 1000u64
-                        .saturating_mul(2u64.pow((attempts + 1).min(6) as u32))
-                        .min(60_000);
-                    let next = (Utc::now() + chrono::Duration::milliseconds(delay as i64))
-                        .to_rfc3339_opts(SecondsFormat::Millis, true);
-                    self.connection.execute("UPDATE projection_queue SET attempts=?1,next_attempt_at=?2,last_error=?3 WHERE event_id=?4",params![attempts+1,next,error.chars().take(1024).collect::<String>(),event_id]).map_err(|e|e.to_string())?;
-                    failed += 1
+                    eprintln!("logger projection for {log_id} failed: {error}");
+                    failed += 1;
                 }
             }
         }
-        Ok((ok, failed))
+        Ok((success, failed))
     }
 }
 
-fn create_checkpoint(
-    tx: &rusqlite::Transaction<'_>,
+fn replay(path: &Path, signer: &Ed25519Signer) -> Result<LedgerState, String> {
+    let file =
+        File::open(path).map_err(|error| format!("open logger ledger for replay: {error}"))?;
+    let mut reader = BufReader::new(file);
+    let mut state = LedgerState::default();
+    let mut line = Vec::new();
+    let mut record_number = 0usize;
+    loop {
+        line.clear();
+        let count = reader
+            .by_ref()
+            .take((MAX_LEDGER_RECORD_BYTES + 2) as u64)
+            .read_until(b'\n', &mut line)
+            .map_err(|error| format!("read logger ledger: {error}"))?;
+        if count == 0 {
+            break;
+        }
+        record_number += 1;
+        if line.len() > MAX_LEDGER_RECORD_BYTES + 1 {
+            return Err(format!(
+                "logger ledger record {record_number} exceeds the size limit"
+            ));
+        }
+        if line.last() != Some(&b'\n') {
+            return Err(format!(
+                "logger ledger record {record_number} is truncated; manual recovery is required"
+            ));
+        }
+        line.pop();
+        if line.is_empty() {
+            return Err(format!("logger ledger record {record_number} is empty"));
+        }
+        let record: LedgerRecord = serde_json::from_slice(&line)
+            .map_err(|error| format!("decode logger ledger record {record_number}: {error}"))?;
+        if canonical::bytes(&record)? != line {
+            return Err(format!(
+                "logger ledger record {record_number} is not canonical JSON"
+            ));
+        }
+        validate_next(&state, signer, &record)
+            .map_err(|error| format!("verify logger ledger record {record_number}: {error}"))?;
+        insert_record(&mut state, record);
+    }
+    Ok(state)
+}
+
+fn validate_next(
+    state: &LedgerState,
     signer: &Ed25519Signer,
-    log_id: &str,
-    sequence: u64,
-    entry_hash: &str,
-    created_at: &str,
-) -> Result<(), StoreError> {
+    record: &LedgerRecord,
+) -> Result<(), String> {
+    if record.api_version != "logger.multiagent.dev/v1" || record.kind != "LoggerLedgerRecord" {
+        return Err("ledger record has an unsupported contract".into());
+    }
+    validate_event(&record.accepted_event.event)?;
+    validate_identifier(&record.accepted_event.producer_id, "producer ID")?;
+    if canonical::sha256(&record.accepted_event)? != record.request_digest {
+        return Err("accepted event digest mismatch".into());
+    }
+    if state
+        .events
+        .contains_key(&record.accepted_event.event.event_id)
+    {
+        return Err("ledger contains a duplicate event ID".into());
+    }
+    let event = &record.accepted_event.event;
+    let entry = &record.entry;
+    if entry.body.log_id != event.session_id
+        || entry.body.event_id != event.event_id
+        || entry.body.producer_id != record.accepted_event.producer_id
+        || entry.body.event_type != event.event_type
+        || entry.body.payload_digest != event.payload_digest
+        || entry.body.artifact_references != event.artifact_references
+    {
+        return Err("accepted event does not match the chain entry".into());
+    }
+    DateTime::parse_from_rfc3339(&entry.body.committed_at)
+        .map_err(|_| "entry committedAt is not RFC3339")?;
+    let head = state.logs.get(&event.session_id);
+    let expected_sequence = head.map_or(1, |value| value.sequence + 1);
+    let expected_previous = head
+        .map(|value| value.entry_hash.as_str())
+        .unwrap_or(GENESIS_HASH);
+    if entry.body.sequence != expected_sequence || entry.body.previous_hash != expected_previous {
+        return Err("entry does not extend the current log head".into());
+    }
+    if canonical::sha256(&entry.body)? != entry.entry_hash {
+        return Err("entry hash mismatch".into());
+    }
+    if let Some(checkpoint) = &record.checkpoint {
+        validate_checkpoint(state, signer, checkpoint, entry)?;
+    }
+    Ok(())
+}
+
+fn validate_checkpoint(
+    state: &LedgerState,
+    signer: &Ed25519Signer,
+    checkpoint: &Checkpoint,
+    entry: &Entry,
+) -> Result<(), String> {
+    let body = &checkpoint.body;
+    if body.api_version != "logger.multiagent.dev/v1"
+        || body.kind != "LoggerCheckpoint"
+        || body.logger_identity != signer.logger_id
+        || body.log_id != entry.body.log_id
+        || body.sequence != entry.body.sequence
+        || body.entry_hash != entry.entry_hash
+        || body.created_at != entry.body.committed_at
+    {
+        return Err("checkpoint does not match its ledger entry".into());
+    }
+    if state.checkpoints.contains_key(&body.checkpoint_id)
+        || state
+            .checkpoints_by_log
+            .get(&body.log_id)
+            .is_some_and(|values| {
+                values
+                    .iter()
+                    .any(|value| value.body.sequence == body.sequence)
+            })
+    {
+        return Err("ledger contains a duplicate checkpoint".into());
+    }
+    if !signer.verify(body, &checkpoint.logger_signature) {
+        return Err("checkpoint signature is invalid".into());
+    }
+    Ok(())
+}
+
+fn insert_record(state: &mut LedgerState, record: LedgerRecord) {
+    let log_id = record.entry.body.log_id.clone();
+    let event_id = record.accepted_event.event.event_id.clone();
+    state.logs.insert(
+        log_id.clone(),
+        LogHead {
+            log_id: log_id.clone(),
+            sequence: record.entry.body.sequence,
+            entry_hash: record.entry.entry_hash.clone(),
+            updated_at: record.entry.body.committed_at.clone(),
+        },
+    );
+    state
+        .entries
+        .entry(log_id.clone())
+        .or_default()
+        .push(record.entry.clone());
+    state.events.insert(
+        event_id,
+        StoredEvent {
+            request_digest: record.request_digest,
+            accepted_event: record.accepted_event,
+            entry: record.entry,
+        },
+    );
+    if let Some(checkpoint) = record.checkpoint {
+        state
+            .checkpoints_by_log
+            .entry(log_id)
+            .or_default()
+            .push(checkpoint.clone());
+        state
+            .checkpoints
+            .insert(checkpoint.body.checkpoint_id.clone(), checkpoint);
+    }
+}
+
+fn create_checkpoint(signer: &Ed25519Signer, entry: &Entry) -> Result<Checkpoint, String> {
     let digest = format!(
         "{:x}",
-        Sha256::digest(format!("{log_id}:{sequence}:{entry_hash}"))
+        Sha256::digest(format!(
+            "{}:{}:{}",
+            entry.body.log_id, entry.body.sequence, entry.entry_hash
+        ))
     );
     let body = CheckpointBody {
         api_version: "logger.multiagent.dev/v1".into(),
         kind: "LoggerCheckpoint".into(),
         checkpoint_id: format!("checkpoint-{}", &digest[..48]),
-        log_id: log_id.into(),
-        sequence,
-        entry_hash: entry_hash.into(),
-        created_at: created_at.into(),
+        log_id: entry.body.log_id.clone(),
+        sequence: entry.body.sequence,
+        entry_hash: entry.entry_hash.clone(),
+        created_at: entry.body.committed_at.clone(),
         logger_identity: signer.logger_id.clone(),
     };
-    let checkpoint = Checkpoint {
+    Ok(Checkpoint {
         logger_signature: signer.sign(&body)?,
         body,
-    };
-    tx.execute("INSERT INTO checkpoints(checkpoint_id,log_id,sequence,entry_hash,created_at,checkpoint_json) VALUES(?1,?2,?3,?4,?5,?6)",params![checkpoint.body.checkpoint_id,log_id,sequence,entry_hash,created_at,canonical::string(&checkpoint)?])?;
+    })
+}
+
+fn write_projection(directory: &Path, log_id: &str, entries: &[Entry]) -> Result<(), String> {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let temporary = directory.join(format!(".{log_id}.{}.{unique}.tmp", std::process::id()));
+    let destination = directory.join(format!("{log_id}.jsonl"));
+    let result = (|| {
+        let mut file = secure_create_new(&temporary)?;
+        for entry in entries {
+            file.write_all(&canonical::bytes(entry)?)
+                .and_then(|()| file.write_all(b"\n"))
+                .map_err(|error| format!("write logger projection: {error}"))?;
+        }
+        file.sync_all()
+            .map_err(|error| format!("sync logger projection: {error}"))?;
+        fs::rename(&temporary, &destination)
+            .map_err(|error| format!("publish logger projection: {error}"))?;
+        protect(&destination, 0o600)?;
+        sync_directory(directory)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn secure_append_file(path: &Path) -> Result<File, String> {
+    let mut options = OpenOptions::new();
+    options.create(true).read(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    }
+    let file = options
+        .open(path)
+        .map_err(|error| format!("open logger ledger: {error}"))?;
+    if !file
+        .metadata()
+        .map_err(|error| format!("inspect logger ledger: {error}"))?
+        .is_file()
+    {
+        return Err("logger ledger must be a regular file".into());
+    }
+    protect_file(&file, 0o600)?;
+    Ok(file)
+}
+
+fn secure_create_new(path: &Path) -> Result<File, String> {
+    let mut options = OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options
+        .open(path)
+        .map_err(|error| format!("create logger projection: {error}"))
+}
+
+#[cfg(unix)]
+fn protect(path: &Path, mode: u32) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))
+        .map_err(|error| format!("protect {}: {error}", path.display()))
+}
+
+#[cfg(unix)]
+fn protect_file(file: &File, mode: u32) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    file.set_permissions(fs::Permissions::from_mode(mode))
+        .map_err(|error| format!("protect logger ledger: {error}"))
+}
+
+#[cfg(not(unix))]
+fn protect(_path: &Path, _mode: u32) -> Result<(), String> {
     Ok(())
 }
-fn json_rows<T: serde::de::DeserializeOwned>(
-    connection: &Connection,
-    sql: &str,
-    params: impl rusqlite::Params,
-) -> Result<Vec<T>, String> {
-    let mut statement = connection.prepare(sql).map_err(|e| e.to_string())?;
-    let rows = statement
-        .query_map(params, |row| {
-            let raw: String = row.get(0)?;
-            serde_json::from_str(&raw).map_err(|e| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    raw.len(),
-                    rusqlite::types::Type::Text,
-                    Box::new(e),
-                )
-            })
-        })
-        .map_err(|e| e.to_string())?;
-    rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
+
+#[cfg(not(unix))]
+fn protect_file(_file: &File, _mode: u32) -> Result<(), String> {
+    Ok(())
 }
-fn read_log_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(String, u64, String)> {
-    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+
+#[cfg(unix)]
+fn lock_single_writer(file: &File) -> Result<(), String> {
+    use std::os::fd::AsRawFd;
+    let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err("another logger process already owns this ledger".into())
+    }
 }
-fn read_string(row: &rusqlite::Row<'_>) -> rusqlite::Result<String> {
-    row.get(0)
+
+#[cfg(not(unix))]
+fn lock_single_writer(_file: &File) -> Result<(), String> {
+    Ok(())
 }
-fn request_digest(connection: &Connection, event_id: &str) -> Result<String, String> {
-    connection
-        .query_row(
-            "SELECT request_digest FROM events WHERE event_id=?1",
-            [event_id],
-            |r| r.get(0),
-        )
-        .map_err(|e| e.to_string())
+
+#[cfg(unix)]
+fn sync_directory(path: &Path) -> Result<(), String> {
+    File::open(path)
+        .and_then(|file| file.sync_all())
+        .map_err(|error| format!("sync logger projection directory: {error}"))
+}
+
+#[cfg(not(unix))]
+fn sync_directory(_path: &Path) -> Result<(), String> {
+    Ok(())
 }
 
 #[cfg(test)]
@@ -502,32 +652,43 @@ mod tests {
     }
 
     #[test]
-    fn chain_is_idempotent_checkpointed_and_fail_closed_on_tampering() {
+    fn file_ledger_is_idempotent_checkpointed_replayable_and_fail_closed() {
         let directory = tempfile::tempdir().unwrap();
-        let database = directory.path().join("ledger.sqlite");
+        let ledger = directory.path().join("ledger.jsonl");
+        {
+            let signer = Ed25519Signer::from_seed([7; 32]);
+            let mut store = Store::open(&ledger, signer, 1, false).unwrap();
+            assert_eq!(
+                store
+                    .append(event("event-1", '1'), "producer-1".into())
+                    .unwrap(),
+                AppendResult::Appended
+            );
+            assert_eq!(
+                store
+                    .append(event("event-1", '1'), "producer-1".into())
+                    .unwrap(),
+                AppendResult::Duplicate
+            );
+            assert!(matches!(
+                store.append(event("event-1", '2'), "producer-1".into()),
+                Err(StoreError::Conflict(_))
+            ));
+            assert!(store.verify(None).unwrap().ok);
+        }
+        {
+            let signer = Ed25519Signer::from_seed([7; 32]);
+            let store = Store::open(&ledger, signer, 1, false).unwrap();
+            assert_eq!(store.head("session-1").unwrap().unwrap().sequence, 1);
+            assert_eq!(store.checkpoints("session-1", 0, 10).unwrap().len(), 1);
+        }
+        OpenOptions::new()
+            .append(true)
+            .open(&ledger)
+            .unwrap()
+            .write_all(b"{\"truncated\":true}")
+            .unwrap();
         let signer = Ed25519Signer::from_seed([7; 32]);
-        let mut store = Store::open(&database, signer, 1, false).unwrap();
-        assert_eq!(
-            store
-                .append(event("event-1", '1'), "producer-1".into())
-                .unwrap(),
-            AppendResult::Appended
-        );
-        assert_eq!(
-            store
-                .append(event("event-1", '1'), "producer-1".into())
-                .unwrap(),
-            AppendResult::Duplicate
-        );
-        assert!(matches!(
-            store.append(event("event-1", '2'), "producer-1".into()),
-            Err(StoreError::Conflict(_))
-        ));
-        assert_eq!(store.head("session-1").unwrap().unwrap().sequence, 1);
-        assert_eq!(store.checkpoints("session-1", 0, 10).unwrap().len(), 1);
-        assert!(store.verify(None).unwrap().ok);
-
-        store.connection.execute("UPDATE events SET entry_hash='sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' WHERE event_id='event-1'", []).unwrap();
-        assert!(!store.verify(None).unwrap().ok);
+        assert!(Store::open(&ledger, signer, 1, false).is_err());
     }
 }
