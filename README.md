@@ -96,7 +96,7 @@ plane.
 - `client/` contains the independently distributed terminal client.
 - `control-server/` contains the authenticated thread gateway.
 - `runtime/` contains the Rust session runtime and supervisor package.
-- `audit-log/` contains the independently deployed, SQLite-backed single writer
+- `logger/` contains the independently deployed, SQLite-backed single writer
   for the authoritative structural audit chain, signed periodic checkpoints,
   and integrity verification. It records evidence but does not control workflow
   progress.

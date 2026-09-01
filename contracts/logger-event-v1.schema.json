@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://multiagent.dev/contracts/audit-log-event-v1.schema.json",
-  "title": "AuditLogEventV1",
+  "$id": "https://multiagent.dev/contracts/logger-event-v1.schema.json",
+  "title": "LoggerEventV1",
   "type": "object",
   "additionalProperties": false,
   "required": ["eventId", "sessionId", "eventType", "payloadDigest", "artifactReferences"],

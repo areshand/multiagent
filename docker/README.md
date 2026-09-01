@@ -13,14 +13,14 @@ runtime package, control server, portable framework assets, and shared
 contracts. Environment-specific deployment configuration is intentionally not
 part of these image definitions.
 
-Build the independently isolated Audit Logger image from the same repository
+Build the independently isolated Logger image from the same repository
 root with:
 
 ```bash
-docker build -f docker/audit-log/Dockerfile -t multiagent-audit-log:local .
+docker build -f docker/logger/Dockerfile -t multiagent-logger:local .
 ```
 
-The Audit Logger image contains only the `audit-log` package. It runs as UID
-10020, uses a dedicated volume at `/var/lib/audit-log`, and expects its
+The Logger image contains only the Rust `logger` package. It runs as UID
+10020, uses a dedicated volume at `/var/lib/logger`, and expects its
 Ed25519 signing key and producer-client authorization file to be mounted by the
 deployment. It contains neither the session runtime nor the control server.

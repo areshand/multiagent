@@ -2147,7 +2147,7 @@ fn reviewed_ops_reviewer_instruction(
     reviewer: &str,
 ) -> String {
     format!(
-        "Independently review the supervisor-owned immutable ops request identified by the bounded artifact descriptor below. Read that exact artifact and certified runbook, and reconstruct evidence rather than relying only on the proposing agent. You may read any session trace under `$MULTIAGENT_LOG_DIR`. When fresh production evidence is material, you may create a request in your own trace directory, preserving the reviewed request's taskId, goal, target, and exact runbook binding, select only an operation that `multiagent ops describe OPERATION_ID` reports as read-only, bind it with `multiagent ops bind-runbook`, and submit it with `multiagent ops evidence-read --request-file PATH --reviewed-request {} --reviewer {}`. This path cannot authorize mutation. Do not modify or execute the reviewed request. Run the required review binding command. If and only if the request is acceptable, use the accepted verdict and reproduce the binding marker exactly. Otherwise request human review with one bounded question; no operation permit will be issued.\n\nrequest-path: {}\n{}\n\nimmutable-request-descriptor:\n{}",
+        "Independently review the supervisor-owned immutable ops request identified by the bounded artifact descriptor below. Read that exact artifact and certified runbook, and reconstruct evidence rather than relying only on the proposing agent. You may read any session trace under `$MULTIAGENT_LOG_DIR`. When fresh production evidence is material, you may create a request in your own trace directory, preserving the reviewed request's taskId, goal, target, and exact runbook binding, select only an operation that `multiagent ops describe OPERATION_ID` reports as read-only, bind it with `multiagent ops bind-runbook`, and submit it through the normal ops path with `multiagent ops execute --request-file PATH --reviewed-request {} --reviewer {}`. This path mechanically rejects mutation. Do not modify or execute the reviewed request. Run the required review binding command. If and only if the request is acceptable, use the accepted verdict and reproduce the binding marker exactly. Otherwise request human review with one bounded question; no operation permit will be issued.\n\nrequest-path: {}\n{}\n\nimmutable-request-descriptor:\n{}",
         request_file.display(),
         reviewer,
         request_file.display(),
@@ -5690,7 +5690,7 @@ mod tests {
         );
         assert!(review.contains("review-binding-sha256=abc"));
         assert!(review.contains("immutable-request-descriptor"));
-        assert!(review.contains("ops evidence-read"));
+        assert!(review.contains("ops execute"));
         assert!(review.contains("ops-reviewer-01"));
         assert!(!review.contains("provider.read"));
         assert!(!review.contains("Slack"));

@@ -1,0 +1,29 @@
+[package]
+name = "multiagent-logger"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.98"
+description = "Independent append-only structural logger for multiagent"
+license = "MIT"
+
+[[bin]]
+name = "logger"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.8.4"
+base64 = "0.22.1"
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde"] }
+ed25519-dalek = { version = "2.2.0", features = ["pem", "pkcs8"] }
+libc = "0.2.175"
+reqwest = { version = "0.12.23", default-features = false, features = ["json", "rustls-tls"] }
+rusqlite = { version = "0.37.0", features = ["bundled"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+sha2 = "0.10.9"
+subtle = "2.6.1"
+tokio = { version = "1.47.1", features = ["macros", "net", "rt-multi-thread", "signal", "time"] }
+
+[dev-dependencies]
+tempfile = "3.22.0"
+tower = { version = "0.5.2", features = ["util"] }

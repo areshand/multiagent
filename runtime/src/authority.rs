@@ -45,7 +45,6 @@ enum AuthorityOperation {
     ValidationLeaseList,
     GateCheck,
     OpsDescribe,
-    OpsEvidenceRead,
     OpsPublishBound,
     OpsPublish,
     OpsExecute,
@@ -62,9 +61,6 @@ impl AuthorityRequest {
             "dag" => (AuthorityOperation::Dag, args),
             "ops" if args.first().map(String::as_str) == Some("describe") => {
                 (AuthorityOperation::OpsDescribe, &args[1..])
-            }
-            "ops" if args.first().map(String::as_str) == Some("evidence-read") => {
-                (AuthorityOperation::OpsEvidenceRead, &args[1..])
             }
             "ops" if args.first().map(String::as_str) == Some("publish-bound") => {
                 (AuthorityOperation::OpsPublishBound, &args[1..])
@@ -175,10 +171,10 @@ impl AuthorityRequest {
             AuthorityOperation::OpsDescribe => {
                 matches!(uid, config::OPS_UID | config::REVIEWER_UID)
             }
-            AuthorityOperation::OpsPublish | AuthorityOperation::OpsExecute => {
-                uid == config::OPS_UID
+            AuthorityOperation::OpsPublish => uid == config::OPS_UID,
+            AuthorityOperation::OpsExecute => {
+                matches!(uid, config::OPS_UID | config::REVIEWER_UID)
             }
-            AuthorityOperation::OpsEvidenceRead => uid == config::REVIEWER_UID,
             AuthorityOperation::OpsPublishBound => uid == config::ORCHESTRATOR_UID,
             AuthorityOperation::FindingCreate => uid == config::READER_UID,
             AuthorityOperation::FindingDismiss | AuthorityOperation::TodoClose => {
@@ -241,7 +237,6 @@ impl AuthorityRequest {
             AuthorityOperation::ValidationLeaseList => ("subagent", Some("validation-lease-list")),
             AuthorityOperation::GateCheck => ("subagent", Some("gate-check")),
             AuthorityOperation::OpsDescribe => ("ops", Some("describe")),
-            AuthorityOperation::OpsEvidenceRead => ("ops", Some("evidence-read")),
             AuthorityOperation::OpsPublishBound => ("ops", Some("publish-bound")),
             AuthorityOperation::OpsPublish => ("ops", Some("publish")),
             AuthorityOperation::OpsExecute => ("ops", Some("execute")),
@@ -305,6 +300,7 @@ mod tests {
         )
         .expect("ops request");
         assert!(ops.authorized_for(config::OPS_UID));
+        assert!(ops.authorized_for(config::REVIEWER_UID));
         assert!(!ops.authorized_for(config::ORCHESTRATOR_UID));
         let describe = AuthorityRequest::from_cli("ops", &strings(&["describe", "github.read"]))
             .expect("ops describe request");
@@ -326,7 +322,7 @@ mod tests {
         let evidence_read = AuthorityRequest::from_cli(
             "ops",
             &strings(&[
-                "evidence-read",
+                "execute",
                 "--request-file",
                 "/state/evidence.json",
                 "--reviewed-request",
@@ -338,7 +334,7 @@ mod tests {
         .expect("reviewer evidence read request");
         assert!(evidence_read.authorized_for(config::REVIEWER_UID));
         assert!(!evidence_read.authorized_for(config::READER_UID));
-        assert!(!evidence_read.authorized_for(config::OPS_UID));
+        assert!(evidence_read.authorized_for(config::OPS_UID));
 
         let external_completion =
             AuthorityRequest::from_cli("orchestrator", &strings(&["complete", "--external-only"]))

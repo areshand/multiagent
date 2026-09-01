@@ -14,7 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_OPERATION_REQUEST_BYTES: u64 = 65_536;
 const MAX_RUNBOOK_BYTES: u64 = 1_048_576;
-const OPS_USAGE: &str = "usage:\n  multiagent ops describe OPERATION_ID\n  multiagent ops template\n  multiagent ops bind-runbook --request-file PATH --runbook-document PATH\n  multiagent ops publish --draft-file PATH --runbook-document PATH\n  multiagent ops review-bind --request-file PATH\n  multiagent ops evidence-read --request-file PATH --reviewed-request PATH --reviewer NAME\n  multiagent ops execute --request-file PATH --reviewer NAME";
+const OPS_USAGE: &str = "usage:\n  multiagent ops describe OPERATION_ID\n  multiagent ops template\n  multiagent ops bind-runbook --request-file PATH --runbook-document PATH\n  multiagent ops publish --draft-file PATH --runbook-document PATH\n  multiagent ops review-bind --request-file PATH\n  multiagent ops execute --request-file PATH --reviewer NAME [--reviewed-request PATH]";
 
 pub(crate) struct PublishedRequest {
     artifact_path: PathBuf,
@@ -50,7 +50,6 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
         Some("publish-bound") => publish_bound(&args[1..]),
         Some("publish") => publish(&args[1..]),
         Some("execute") => execute(&args[1..]),
-        Some("evidence-read") => evidence_read(&args[1..]),
         Some("review-bind") => review_bind(&args[1..]),
         Some("help" | "--help" | "-h") => {
             print_ops_help();
@@ -546,13 +545,9 @@ pub(crate) fn preflight_reviewed_request(
 /// transport credentials or mutation authority. The authority socket admits
 /// this command only from REVIEWER_UID; these checks bind the request further
 /// to the live reviewer identity and the immutable operation under review.
-fn evidence_read(_args: &[String]) -> Result<ExitCode, String> {
-    #[cfg(target_os = "linux")]
-    if unsafe { libc::geteuid() } != crate::config::SUPERVISOR_UID {
-        return Err("ops evidence-read is reserved for the authority supervisor".into());
-    }
+fn execute_reviewer_read(_args: &[String]) -> Result<ExitCode, String> {
     #[cfg(not(target_os = "linux"))]
-    return Err("ops evidence-read requires Linux reviewer isolation".into());
+    return Err("reviewer ops execute requires Linux reviewer isolation".into());
 
     #[cfg(target_os = "linux")]
     {
@@ -610,6 +605,7 @@ fn evidence_read(_args: &[String]) -> Result<ExitCode, String> {
             &evidence_template,
             &[&caller],
             "runbook-observer",
+            reviewer,
             &execution_context_from_environment()?,
             now,
         )?;
@@ -769,6 +765,37 @@ fn validate_read_capability(capability: &Value, template: &Value) -> Result<(), 
 
 fn execute(args: &[String]) -> Result<ExitCode, String> {
     let options = options(args)?;
+    let caller_uid = env::var("MULTIAGENT_AUTHORITY_CALLER_UID")
+        .map_err(|_| "ops execute must be mediated by the authority supervisor")?
+        .parse::<u32>()
+        .map_err(|_| "authority caller UID is invalid")?;
+    match execute_mode(caller_uid, options.contains_key("--reviewed-request"))? {
+        ExecuteMode::ReviewerRead => execute_reviewer_read(args),
+        ExecuteMode::ReviewedOperation => execute_reviewed_operation(args),
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum ExecuteMode {
+    ReviewerRead,
+    ReviewedOperation,
+}
+
+fn execute_mode(caller_uid: u32, has_reviewed_request: bool) -> Result<ExecuteMode, String> {
+    if has_reviewed_request {
+        if matches!(caller_uid, 0 | crate::config::REVIEWER_UID) {
+            return Ok(ExecuteMode::ReviewerRead);
+        }
+        return Err("reviewer evidence reads require the reviewer identity".into());
+    }
+    if matches!(caller_uid, 0 | crate::config::OPS_UID) {
+        return Ok(ExecuteMode::ReviewedOperation);
+    }
+    Err("operation execution requires the ops identity".into())
+}
+
+fn execute_reviewed_operation(args: &[String]) -> Result<ExitCode, String> {
+    let options = options(args)?;
     let reviewer = required(&options, "--reviewer")?;
     let request_file = PathBuf::from(required(&options, "--request-file")?);
     let (state, template, reviewer_approval) = load_reviewed_request(&request_file, reviewer)?;
@@ -797,6 +824,7 @@ fn execute(args: &[String]) -> Result<ExitCode, String> {
         &template,
         &[&caller_approval, &reviewer_approval],
         "runbook-operator",
+        "multiagent-supervisor",
         &execution_context,
         now,
     )?;
@@ -878,10 +906,12 @@ fn build_request(
     template: &Value,
     approvals: &[&TrustedApproval],
     delegated_role: &str,
+    delegated_subject: &str,
     execution_context: &Value,
     now: chrono::DateTime<Utc>,
 ) -> Result<Value, String> {
     validate_request_template(template)?;
+    validate_id("delegated subject", delegated_subject)?;
     let object = template
         .as_object()
         .ok_or("ops request template must be a JSON object")?;
@@ -946,7 +976,7 @@ fn build_request(
         "apiVersion": "prod.moveindustries.io/v1",
         "approvals": approval_values,
         "delegatedRole": delegated_role,
-        "delegatedSubject": "multiagent-supervisor",
+        "delegatedSubject": delegated_subject,
         "authorityProxy": {
             "subject": "multiagent-supervisor",
             "credentialSource": "deployment",
@@ -1812,10 +1842,11 @@ fn base64_decode(value: &str) -> Result<Vec<u8>, String> {
 mod tests {
     use super::{
         base64_decode, base64url_encode, build_request, canonical, curl_command, ecdsa_der_to_raw,
-        operation_capability, parse_mcp_body, private_temp_path, review_binding_marker,
-        review_binding_matches, review_binding_value, review_evidence_is_bound, reviewer_accepted,
-        runbook_content_digest, validate_evidence_scope, validate_read_capability,
-        validate_request_template, write_mcp_headers, TrustedApproval,
+        execute_mode, operation_capability, parse_mcp_body, private_temp_path,
+        review_binding_marker, review_binding_matches, review_binding_value,
+        review_evidence_is_bound, reviewer_accepted, runbook_content_digest,
+        validate_evidence_scope, validate_read_capability, validate_request_template,
+        write_mcp_headers, ExecuteMode, TrustedApproval,
     };
     use chrono::{TimeZone, Utc};
     use serde_json::json;
@@ -1931,7 +1962,7 @@ mod tests {
             "runbookDocument":"runbooks/custom-runbook.md",
             "runbookContentSha256":format!("sha256:{}", "4".repeat(64)),
             "changeTicket":"OPS-123"
-        }), &[&caller, &reviewer], "runbook-operator", &json!({
+        }), &[&caller, &reviewer], "runbook-operator", "multiagent-supervisor", &json!({
             "threadId": "thread-1",
             "sessionId": "session-1",
             "leaseGeneration": 1,
@@ -2000,12 +2031,27 @@ mod tests {
             "runbook":{"id":"observability.investigation","version":"1.1.0","phase":"observe"},
             "runbookDocument":"runbooks/observability.md",
             "runbookContentSha256":format!("sha256:{}", "4".repeat(64))
-        }), &[&caller], "runbook-observer", &json!({
+        }), &[&caller], "runbook-observer", "reviewer-1", &json!({
             "threadId":"thread-1","sessionId":"session-1","leaseGeneration":1,"authorizingEventId":"message-1"
         }), now).unwrap();
         assert_eq!(request["delegatedRole"], "runbook-observer");
+        assert_eq!(request["delegatedSubject"], "reviewer-1");
         assert_eq!(request["approvals"].as_array().unwrap().len(), 1);
         assert_eq!(request["approvals"][0]["reviewerSubject"], "caller-1");
+    }
+
+    #[test]
+    fn shared_execute_path_keeps_reviewer_and_operator_authority_disjoint() {
+        assert_eq!(
+            execute_mode(crate::config::REVIEWER_UID, true).unwrap(),
+            ExecuteMode::ReviewerRead
+        );
+        assert!(execute_mode(crate::config::REVIEWER_UID, false).is_err());
+        assert_eq!(
+            execute_mode(crate::config::OPS_UID, false).unwrap(),
+            ExecuteMode::ReviewedOperation
+        );
+        assert!(execute_mode(crate::config::OPS_UID, true).is_err());
     }
 
     #[test]
