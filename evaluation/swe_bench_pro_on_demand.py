@@ -245,8 +245,10 @@ class OnDemandImageManager:
             "RUN apk add --no-cache musl-dev",
             "WORKDIR /build",
             "COPY multiagent/Cargo.toml multiagent/Cargo.lock ./",
-            "COPY multiagent/src ./src",
-            "RUN cargo build --release --locked",
+            "COPY multiagent/runtime/Cargo.toml runtime/Cargo.toml",
+            "COPY multiagent/runtime/src runtime/src",
+            "COPY multiagent/contracts contracts",
+            "RUN cargo build --release --locked --package multiagent",
         ]
 
     @staticmethod

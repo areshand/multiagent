@@ -23,4 +23,4 @@ command -v cargo >/dev/null 2>&1 || {
   exit 1
 }
 
-exec cargo run --quiet --manifest-path "$SCRIPT_DIR/Cargo.toml" -- launch "$@"
+exec cargo run --quiet --manifest-path "$SCRIPT_DIR/Cargo.toml" --package multiagent -- launch "$@"

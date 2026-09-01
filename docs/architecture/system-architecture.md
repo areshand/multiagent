@@ -87,6 +87,29 @@ The deployment may also place a trusted repository-preparation init container
 in front of a session runtime. That init container is not an agent and is not
 part of the orchestrator's production-operation path.
 
+## Repository component layout
+
+Executable components and deployment integration surfaces have explicit
+top-level ownership boundaries:
+
+- `client/` owns the terminal client package.
+- `control-server/` owns the authenticated control gateway package.
+- `runtime/` owns the Rust session runtime, supervisor, and role-confinement
+  package.
+- `audit-log/` is reserved for the independent audit service planned for a
+  later architecture and implementation phase. Its presence in the phase-one
+  layout grants it no authority and changes no trace behavior.
+- `docker/` owns component image definitions and container entrypoints, but not
+  deployment secrets or environment-specific configuration.
+- `gitops/` documents the application-to-deployment contract. Concrete GitOps
+  resources, identities, endpoints, storage, and secrets remain owned by the
+  separate `InternalServices` repository.
+
+Portable prompts, contracts, and runbook examples remain shared framework
+artifacts at the repository root. Directory placement must not be interpreted
+as authority: the component ownership table and accepted architecture decisions
+remain controlling.
+
 ## Accepted architecture decisions
 
 ### AD-001: The authenticated client user is the authorizing user
@@ -120,10 +143,11 @@ preventing client-only ID or lifecycle behavior from drifting from the server
 contract.
 
 The terminal-client implementation lives in the top-level `client/` package.
-The `control-server/` package contains no client source or executable, and the
-control-server container image excludes `client/`. This filesystem and package
-boundary prevents the independently distributed caller from importing trusted
-server internals; the public HTTP API is their only integration surface.
+The `control-server/` package contains no client source or executable, the
+session runtime implementation lives in the top-level `runtime/` package, and
+the control-server container image excludes `client/`. These filesystem and
+package boundaries prevent the independently distributed caller from importing
+trusted server internals; the public HTTP API is its only integration surface.
 
 ### AD-002: There is one supervisor per execution session
 

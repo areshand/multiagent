@@ -121,8 +121,9 @@ no shared mutable state except declared artifacts.
     scorer-only metadata outside every agent context.
 
 This repository implements the snapshot primitive in
-[`../src/snapshot.rs`](../src/snapshot.rs) and durable hash-bound finding/TODO
-gate integration in [`../src/subagent.rs`](../src/subagent.rs). Benchmark
+[`../runtime/src/snapshot.rs`](../runtime/src/snapshot.rs) and durable hash-bound
+finding/TODO gate integration in
+[`../runtime/src/subagent.rs`](../runtime/src/subagent.rs). Benchmark
 adapters do not repeat these checks before submitting a workspace.
 
 ## Improvements over a single unconstrained agent loop

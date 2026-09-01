@@ -74,8 +74,11 @@ class MigrationCliContractTest(unittest.TestCase):
     def test_launch_is_the_only_production_shell_bootstrap(self):
         self.assertTrue((PROJECT_ROOT / "launch.sh").is_file())
         self.assertEqual(
-            list((PROJECT_ROOT / "bin").glob("*.sh")),
-            [PROJECT_ROOT / "bin" / "container-entrypoint.sh"],
+            list(PROJECT_ROOT.glob("*.sh")),
+            [PROJECT_ROOT / "launch.sh"],
+        )
+        self.assertTrue(
+            (PROJECT_ROOT / "docker" / "runtime" / "container-entrypoint.sh").is_file()
         )
         launch = (PROJECT_ROOT / "launch.sh").read_text(encoding="utf-8")
         self.assertIn('exec "$MULTIAGENT_BIN" launch "$@"', launch)

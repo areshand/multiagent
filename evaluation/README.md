@@ -167,7 +167,7 @@ authority reviewers, workers, verifiers, and final reviews. Build the exact
 checkout before a live multiagent comparison:
 
 ```bash
-docker build -t multiagent:ops-trace-current .
+docker build -f docker/runtime/Dockerfile -t multiagent:ops-trace-current .
 ```
 
 Override that image with `MULTIAGENT_OPS_TRACE_IMAGE`. The optional

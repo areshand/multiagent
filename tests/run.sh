@@ -1083,7 +1083,7 @@ assert_file_contains "$ROOT/runbooks/github-repository-work.md" "explicitly auth
 assert_file_contains "$ROOT/evaluation/README.md" "large-update-300"
 assert_file_contains "$ROOT/evaluation/README.md" "Low-signal orchestration cases"
 assert_file_contains "$ROOT/orchestrator_prompt.md" "MULTIAGENT_PROMPT_MODULE_ROOT"
-assert_file_contains "$ROOT/src/runtime.rs" "MULTIAGENT_PROMPT_MODULE_ROOT"
+assert_file_contains "$ROOT/runtime/src/runtime.rs" "MULTIAGENT_PROMPT_MODULE_ROOT"
 assert_file_not_contains "$ROOT/launch.sh" "python"
 assert_file_contains "$ROOT/prompts/verifier.md" "state-space partition audit"
 assert_file_contains "$ROOT/prompts/verifier.md" "mixed-category, unknown/forward-compatible variant"
@@ -1170,7 +1170,7 @@ assert_file_contains "$ROOT/prompts/contracts/orchestration-invariants.md" "prom
 assert_file_contains "$ROOT/prompts/contracts/orchestration-invariants.md" "build-verification-passed:"
 assert_file_contains "$ROOT/prompts/playbooks/finding-todo-loop.md" "Do not create or reopen a todo from command evidence bound"
 assert_file_contains "$MULTIAGENT" subagent '--own|--owned-path)'
-assert_file_contains "$ROOT/src/runtime.rs" 'crate::snapshot::canonical_diff(&cfg.root, "HEAD")'
+assert_file_contains "$ROOT/runtime/src/runtime.rs" 'crate::snapshot::canonical_diff(&cfg.root, "HEAD")'
 assert_file_contains "$MULTIAGENT" subagent '--source-finding-id|--finding)'
 assert_file_contains "$MULTIAGENT" subagent '--role)'
 assert_file_contains "$ROOT/prompts/roles/acceptance-scout.md" "declared-type ownership risk"

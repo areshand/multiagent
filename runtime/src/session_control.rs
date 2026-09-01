@@ -216,7 +216,7 @@ mod tests {
     #[test]
     fn session_ids_match_the_shared_control_plane_contract() {
         let vectors: serde_json::Value =
-            serde_json::from_str(include_str!("../contracts/session-id-vectors.json")).unwrap();
+            serde_json::from_str(include_str!("../../contracts/session-id-vectors.json")).unwrap();
         for value in vectors["valid"].as_array().unwrap() {
             assert!(validate_session_id(value.as_str().unwrap()).is_ok());
         }

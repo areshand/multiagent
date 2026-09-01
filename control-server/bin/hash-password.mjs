@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 
 const username = process.argv[2];
 if (!username || !/^[a-zA-Z0-9._-]{1,64}$/.test(username)) {
-  console.error("usage: bin/hash-password.mjs USERNAME");
+  console.error("usage: control-server/bin/hash-password.mjs USERNAME");
   process.exit(2);
 }
 

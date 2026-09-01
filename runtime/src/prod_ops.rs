@@ -1773,9 +1773,10 @@ mod tests {
 
     #[test]
     fn shared_action_permit_fixture_matches_the_rust_contract() {
-        let fixture: serde_json::Value =
-            serde_json::from_str(include_str!("../contracts/prod-mcp-action-permit-v1.json"))
-                .unwrap();
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../contracts/prod-mcp-action-permit-v1.json"
+        ))
+        .unwrap();
         let request = fixture.get("request").unwrap();
 
         assert_eq!(

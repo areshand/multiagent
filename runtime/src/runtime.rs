@@ -5179,8 +5179,12 @@ fn is_executable(path: &Path) -> bool {
 }
 
 fn framework_root() -> PathBuf {
-    env_path("MULTIAGENT_FRAMEWORK_ROOT")
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+    env_path("MULTIAGENT_FRAMEWORK_ROOT").unwrap_or_else(|| {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("runtime package must live below the framework root")
+            .to_path_buf()
+    })
 }
 
 fn env_nonempty(key: &str) -> Option<String> {

@@ -108,7 +108,10 @@ class NativeSolverImportModelTest(unittest.TestCase):
                 manager._rust_builder_lines()[0],
                 "FROM rust:1.85-alpine AS multiagent-builder",
             )
-            self.assertIn("RUN cargo build --release --locked", manager._rust_builder_lines())
+            self.assertIn(
+                "RUN cargo build --release --locked --package multiagent",
+                manager._rust_builder_lines(),
+            )
 
     def test_native_modules_have_strict_relative_imports(self) -> None:
         failures = []
