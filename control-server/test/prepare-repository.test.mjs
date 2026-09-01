@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { githubRepositoryFromUrl, issueAppJwt, issueInstallationToken, prepareRepository } from "../../bin/prepare-repository.mjs";
+import { githubRepositoryFromUrl, issueAppJwt, issueInstallationToken, prepareRepository } from "../bin/prepare-repository.mjs";
 
 test("GitHub repository URLs are parsed without accepting credentials or extra paths", () => {
   assert.deepEqual(githubRepositoryFromUrl("https://github.com/MoveIndustries/sdk.git"), { owner: "MoveIndustries", repository: "sdk" });

@@ -20,7 +20,7 @@ Production operations are driven by authoritative Markdown runbooks rather than 
 Users are configured in a mounted JSON file. Passwords must be scrypt hashes, never plaintext:
 
 ```bash
-node bin/hash-password.mjs operator
+node control-server/bin/hash-password.mjs operator
 ```
 
 The mounted file has this shape:
@@ -90,6 +90,21 @@ From a source checkout you need Rust 1.98+, Cargo, Bash, Git, and tmux. Install
 and authenticate at least one supported coding-agent CLI. Python 3.8+ is used
 only by evaluation and evidence-analysis tools, not the production control
 plane.
+
+## Repository layout
+
+- `client/` contains the independently distributed terminal client.
+- `control-server/` contains the authenticated thread gateway.
+- `runtime/` contains the Rust session runtime and supervisor package.
+- `audit-log/` reserves the independent audit-service boundary for the next
+  implementation phase; phase 1 contains no audit-service behavior.
+- `docker/` contains component image definitions and container entrypoints.
+- `gitops/` documents the deployment integration boundary. Production GitOps
+  resources remain owned by the separate `InternalServices` repository.
+
+Portable prompts, contracts, and runbook examples remain at the repository root
+because they are shared framework artifacts rather than executable component
+source.
 
 ## Quick Start
 

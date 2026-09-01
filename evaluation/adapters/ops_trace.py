@@ -191,7 +191,8 @@ class OpsTraceAdapter:
         if inspected.returncode != 0:
             raise RuntimeError(
                 f"production multiagent image is unavailable: {image}; "
-                "build it with `docker build -t multiagent:ops-trace-current .`"
+                "build it with `docker build -f docker/runtime/Dockerfile "
+                "-t multiagent:ops-trace-current .`"
             )
 
         runtime_root = Path(os.environ.get("MULTIAGENT_OPS_TRACE_RUNTIME_ROOT", "/tmp"))

@@ -2,7 +2,7 @@ FROM rust:1.98-bookworm AS multiagent-builder
 
 WORKDIR /src
 COPY . .
-RUN cargo build --release --locked
+RUN cargo build --release --locked --package multiagent
 
 FROM node:22-bookworm-slim
 
@@ -19,7 +19,9 @@ COPY control-server/package*.json control-server/
 RUN cd control-server && npm ci --omit=dev
 COPY . .
 COPY --from=multiagent-builder /src/target/release/multiagent /opt/multiagent/bin/multiagent
-RUN chmod +x launch.sh bin/*.sh bin/*.mjs \
+RUN install -m 0755 docker/runtime/container-entrypoint.sh /opt/multiagent/bin/container-entrypoint.sh \
+ && install -m 0755 control-server/bin/prepare-repository.mjs /opt/multiagent/bin/prepare-repository.mjs \
+ && chmod +x launch.sh control-server/bin/*.mjs \
  && groupadd --gid 10000 multiagent-control \
  && groupadd --gid 10001 multiagent-role \
  && groupadd --gid 10004 multiagent-credentials \
