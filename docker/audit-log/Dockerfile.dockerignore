@@ -1,0 +1,10 @@
+.git
+.worktrees
+InternalServices
+move-ai-audit-prototype
+prod-mcp
+target
+**/node_modules
+**/*.sqlite
+**/*.sqlite-shm
+**/*.sqlite-wal

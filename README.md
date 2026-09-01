@@ -96,8 +96,10 @@ plane.
 - `client/` contains the independently distributed terminal client.
 - `control-server/` contains the authenticated thread gateway.
 - `runtime/` contains the Rust session runtime and supervisor package.
-- `audit-log/` reserves the independent audit-service boundary for the next
-  implementation phase; phase 1 contains no audit-service behavior.
+- `audit-log/` contains the independently deployed, SQLite-backed single writer
+  for the authoritative structural audit chain, signed periodic checkpoints,
+  and integrity verification. It records evidence but does not control workflow
+  progress.
 - `docker/` contains component image definitions and container entrypoints.
 - `gitops/` documents the deployment integration boundary. Production GitOps
   resources remain owned by the separate `InternalServices` repository.

@@ -14,7 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_OPERATION_REQUEST_BYTES: u64 = 65_536;
 const MAX_RUNBOOK_BYTES: u64 = 1_048_576;
-const OPS_USAGE: &str = "usage:\n  multiagent ops describe OPERATION_ID\n  multiagent ops template\n  multiagent ops bind-runbook --request-file PATH --runbook-document PATH\n  multiagent ops publish --draft-file PATH --runbook-document PATH\n  multiagent ops review-bind --request-file PATH\n  multiagent ops execute --request-file PATH --reviewer NAME";
+const OPS_USAGE: &str = "usage:\n  multiagent ops describe OPERATION_ID\n  multiagent ops template\n  multiagent ops bind-runbook --request-file PATH --runbook-document PATH\n  multiagent ops publish --draft-file PATH --runbook-document PATH\n  multiagent ops review-bind --request-file PATH\n  multiagent ops evidence-read --request-file PATH --reviewed-request PATH --reviewer NAME\n  multiagent ops execute --request-file PATH --reviewer NAME";
 
 pub(crate) struct PublishedRequest {
     artifact_path: PathBuf,
@@ -50,6 +50,7 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
         Some("publish-bound") => publish_bound(&args[1..]),
         Some("publish") => publish(&args[1..]),
         Some("execute") => execute(&args[1..]),
+        Some("evidence-read") => evidence_read(&args[1..]),
         Some("review-bind") => review_bind(&args[1..]),
         Some("help" | "--help" | "-h") => {
             print_ops_help();
@@ -541,6 +542,231 @@ pub(crate) fn preflight_reviewed_request(
     load_reviewed_request(request_file, reviewer).map(|_| ())
 }
 
+/// Executes a reviewer-requested observation without granting the reviewer
+/// transport credentials or mutation authority. The authority socket admits
+/// this command only from REVIEWER_UID; these checks bind the request further
+/// to the live reviewer identity and the immutable operation under review.
+fn evidence_read(_args: &[String]) -> Result<ExitCode, String> {
+    #[cfg(target_os = "linux")]
+    if unsafe { libc::geteuid() } != crate::config::SUPERVISOR_UID {
+        return Err("ops evidence-read is reserved for the authority supervisor".into());
+    }
+    #[cfg(not(target_os = "linux"))]
+    return Err("ops evidence-read requires Linux reviewer isolation".into());
+
+    #[cfg(target_os = "linux")]
+    {
+        let args = _args;
+        let options = options(args)?;
+        let reviewer = required(&options, "--reviewer")?;
+        validate_id("reviewer name", reviewer)?;
+        let state = fs::canonicalize(required_env("MULTIAGENT_STATE_DIR")?)
+            .map_err(|error| format!("resolve multiagent state: {error}"))?;
+        validate_live_reviewer(&state, reviewer)?;
+
+        let reviewed_path = PathBuf::from(required(&options, "--reviewed-request")?);
+        let (_, reviewed_bytes) = read_reviewable_request(&state, &reviewed_path)?;
+        let reviewed: Value = serde_json::from_slice(&reviewed_bytes)
+            .map_err(|error| format!("decode reviewed ops request: {error}"))?;
+        validate_request_template(&reviewed)?;
+        verified_runbook_content(&reviewed)?;
+
+        let evidence_path = PathBuf::from(required(&options, "--request-file")?);
+        let evidence_bytes = read_reviewer_request(reviewer, &evidence_path)?;
+        let evidence_template: Value = serde_json::from_slice(&evidence_bytes)
+            .map_err(|error| format!("decode reviewer evidence request: {error}"))?;
+        validate_request_template(&evidence_template)?;
+        verified_runbook_content(&evidence_template)?;
+        validate_evidence_scope(&reviewed, &evidence_template)?;
+
+        let operation_id = evidence_template
+            .pointer("/operation/id")
+            .and_then(Value::as_str)
+            .ok_or("reviewer evidence request has no operation ID")?;
+        let capabilities = call_prod_mcp_tool("operations_capabilities", json!({}))?;
+        let capability = operation_capability(&capabilities, operation_id)?;
+        validate_read_capability(capability, &evidence_template)?;
+
+        let now = Utc::now();
+        let caller_subject = env::var("MULTIAGENT_CALLER_SUBJECT")
+            .ok()
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "multiagent-control".into());
+        validate_id("caller subject", &caller_subject)?;
+        let caller = TrustedApproval {
+            subject: caller_subject,
+            role: "safety-reviewer",
+            evidence_sha256: digest_json(
+                reviewed
+                    .get("goal")
+                    .ok_or("reviewed ops request requires goal")?,
+            )?,
+            approved_at: env::var("MULTIAGENT_CALLER_APPROVED_AT")
+                .ok()
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| now.to_rfc3339_opts(SecondsFormat::Millis, true)),
+        };
+        let request = build_request(
+            &evidence_template,
+            &[&caller],
+            "runbook-observer",
+            &execution_context_from_environment()?,
+            now,
+        )?;
+        let action_id = request["actionId"]
+            .as_str()
+            .ok_or("generated reviewer evidence request has no action ID")?
+            .to_string();
+        let payload = canonical(&json!({
+            "apiVersion":"prod.moveindustries.io/v1",
+            "kind":"ActionPermit",
+            "request": request
+        }))?;
+        let permit = sign_permit(&payload)?;
+        let result = call_prod_mcp(&permit)?;
+        let evidence_dir = state
+            .join("reviewer-live-evidence")
+            .join(reviewer)
+            .join(&action_id);
+        fs::create_dir_all(&evidence_dir)
+            .map_err(|error| format!("create reviewer evidence receipt directory: {error}"))?;
+        secure_publication_path(&evidence_dir, true)?;
+        let request_artifact = evidence_dir.join("request.json");
+        let receipt_artifact = evidence_dir.join("receipt.json");
+        fs::write(
+            &request_artifact,
+            serde_json::to_vec_pretty(&evidence_template).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| format!("persist reviewer evidence request: {error}"))?;
+        fs::write(
+            &receipt_artifact,
+            serde_json::to_vec_pretty(&result).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| format!("persist reviewer evidence receipt: {error}"))?;
+        secure_publication_path(&request_artifact, false)?;
+        secure_publication_path(&receipt_artifact, false)?;
+        let structured = result
+            .pointer("/result/structuredContent")
+            .cloned()
+            .unwrap_or(Value::Null);
+        println!(
+            "{}",
+            serde_json::to_string(&json!({
+                "apiVersion": "multiagent.moveindustries.io/v1",
+                "kind": "ReviewerEvidenceResult",
+                "reviewer": reviewer,
+                "actionId": action_id,
+                "operationId": structured.get("operationId").cloned().unwrap_or(Value::Null),
+                "state": structured.get("state").cloned().unwrap_or(Value::Null),
+                "outcome": structured.get("outcome").cloned().unwrap_or(Value::Null),
+                "code": structured.get("code").cloned().unwrap_or(Value::Null),
+                "message": structured.get("message").cloned().unwrap_or(Value::Null),
+                "evidence": structured.get("summary").cloned().unwrap_or(Value::Null),
+                "receiptPath": receipt_artifact,
+            }))
+            .map_err(|error| format!("encode reviewer evidence result: {error}"))?
+        );
+        Ok(ExitCode::SUCCESS)
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn validate_live_reviewer(state: &Path, reviewer: &str) -> Result<(), String> {
+    let metadata =
+        crate::state::read_env(&state.join("subagents").join(reviewer).join("meta.env"))?;
+    if metadata.get("role").map(String::as_str) != Some("reviewer")
+        || metadata.get("access").map(String::as_str) != Some("read-only")
+    {
+        return Err("reviewer evidence reads require a live read-only reviewer identity".into());
+    }
+    let status = fs::read_to_string(state.join("subagents").join(reviewer).join("status"))
+        .unwrap_or_default();
+    if !matches!(status.trim(), "running" | "waiting" | "restoring") {
+        return Err("reviewer evidence reads require the reviewer to be active".into());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn read_reviewer_request(reviewer: &str, path: &Path) -> Result<Vec<u8>, String> {
+    let logs = fs::canonicalize(required_env("MULTIAGENT_LOG_DIR")?)
+        .map_err(|error| format!("resolve multiagent log directory: {error}"))?;
+    let reviewer_root = fs::canonicalize(logs.join("agents").join(reviewer))
+        .map_err(|error| format!("resolve reviewer trace directory: {error}"))?;
+    let canonical = fs::canonicalize(path)
+        .map_err(|error| format!("resolve reviewer evidence request: {error}"))?;
+    if !canonical.starts_with(&reviewer_root) {
+        return Err("reviewer evidence request must be inside its own trace directory".into());
+    }
+    let (bytes, metadata) = read_bounded_file(&canonical, MAX_OPERATION_REQUEST_BYTES, true)?;
+    if metadata.uid() != crate::config::REVIEWER_UID || metadata.mode() & 0o022 != 0 {
+        return Err(
+            "reviewer evidence request must be reviewer-owned and not group- or world-writable"
+                .into(),
+        );
+    }
+    Ok(bytes)
+}
+
+fn validate_evidence_scope(reviewed: &Value, evidence: &Value) -> Result<(), String> {
+    for pointer in [
+        "/taskId",
+        "/goal",
+        "/target",
+        "/runbook",
+        "/runbookDocument",
+        "/runbookContentSha256",
+    ] {
+        if reviewed.pointer(pointer) != evidence.pointer(pointer) {
+            return Err(format!(
+                "reviewer evidence request widened reviewed scope at {pointer}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_read_capability(capability: &Value, template: &Value) -> Result<(), String> {
+    if capability.get("access").and_then(Value::as_str) != Some("read")
+        || capability.get("mutation").and_then(Value::as_bool) != Some(false)
+    {
+        return Err(
+            "reviewer evidence operation must be advertised as read-only and non-mutating".into(),
+        );
+    }
+    if capability
+        .get("requiredApprovalRoles")
+        .and_then(Value::as_array)
+        .is_none_or(|roles| !roles.is_empty())
+    {
+        return Err("reviewer evidence operation must not require mutation approvals".into());
+    }
+    if capability.get("version") != template.pointer("/operation/version") {
+        return Err(
+            "reviewer evidence operation version does not match prod-mcp capability".into(),
+        );
+    }
+    let runbook = format!(
+        "{}@{}",
+        template
+            .pointer("/runbook/id")
+            .and_then(Value::as_str)
+            .unwrap_or(""),
+        template
+            .pointer("/runbook/version")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+    );
+    let allowed = capability
+        .get("allowedRunbooks")
+        .and_then(Value::as_array)
+        .is_some_and(|values| values.iter().any(|value| value.as_str() == Some(&runbook)));
+    if !allowed {
+        return Err("reviewer evidence operation is not allowed by the reviewed runbook".into());
+    }
+    Ok(())
+}
+
 fn execute(args: &[String]) -> Result<ExitCode, String> {
     let options = options(args)?;
     let reviewer = required(&options, "--reviewer")?;
@@ -569,8 +795,8 @@ fn execute(args: &[String]) -> Result<ExitCode, String> {
     let execution_context = execution_context_from_environment()?;
     let request = build_request(
         &template,
-        &caller_approval,
-        &reviewer_approval,
+        &[&caller_approval, &reviewer_approval],
+        "runbook-operator",
         &execution_context,
         now,
     )?;
@@ -650,8 +876,8 @@ fn execute(args: &[String]) -> Result<ExitCode, String> {
 
 fn build_request(
     template: &Value,
-    caller: &TrustedApproval,
-    reviewer: &TrustedApproval,
+    approvals: &[&TrustedApproval],
+    delegated_role: &str,
     execution_context: &Value,
     now: chrono::DateTime<Utc>,
 ) -> Result<Value, String> {
@@ -687,10 +913,11 @@ fn build_request(
     if object.contains_key("approvals") {
         return Err("ops request approvals are derived by the supervisor and cannot be supplied by an agent".into());
     }
-    if caller.subject == reviewer.subject {
-        return Err("caller and operations reviewer must be distinct subjects".into());
-    }
-    for approval in [caller, reviewer] {
+    let mut subjects = std::collections::BTreeSet::new();
+    for approval in approvals {
+        if !subjects.insert(approval.subject.as_str()) {
+            return Err("trusted approval subjects must be distinct".into());
+        }
         let approved_at = chrono::DateTime::parse_from_rfc3339(&approval.approved_at)
             .map_err(|_| "trusted approval has an invalid timestamp")?;
         if approved_at > now {
@@ -702,26 +929,23 @@ fn build_request(
         .duration_since(UNIX_EPOCH)
         .map_err(|error| error.to_string())?
         .as_millis();
+    let approval_values = approvals
+        .iter()
+        .map(|approval| {
+            json!({
+                "reviewerSubject": approval.subject,
+                "reviewerRole": approval.role,
+                "decision": "approve",
+                "evidenceSha256": approval.evidence_sha256,
+                "approvedAt": approval.approved_at
+            })
+        })
+        .collect::<Vec<_>>();
     let mut request = json!({
         "actionId": format!("ops-{unique}-{}", std::process::id()),
         "apiVersion": "prod.moveindustries.io/v1",
-        "approvals": [
-            {
-                "reviewerSubject": caller.subject,
-                "reviewerRole": caller.role,
-                "decision": "approve",
-                "evidenceSha256": caller.evidence_sha256,
-                "approvedAt": caller.approved_at
-            },
-            {
-                "reviewerSubject": reviewer.subject,
-                "reviewerRole": reviewer.role,
-                "decision": "approve",
-                "evidenceSha256": reviewer.evidence_sha256,
-                "approvedAt": reviewer.approved_at
-            }
-        ],
-        "delegatedRole": "runbook-operator",
+        "approvals": approval_values,
+        "delegatedRole": delegated_role,
         "delegatedSubject": "multiagent-supervisor",
         "authorityProxy": {
             "subject": "multiagent-supervisor",
@@ -1590,7 +1814,8 @@ mod tests {
         base64_decode, base64url_encode, build_request, canonical, curl_command, ecdsa_der_to_raw,
         operation_capability, parse_mcp_body, private_temp_path, review_binding_marker,
         review_binding_matches, review_binding_value, review_evidence_is_bound, reviewer_accepted,
-        runbook_content_digest, validate_request_template, write_mcp_headers, TrustedApproval,
+        runbook_content_digest, validate_evidence_scope, validate_read_capability,
+        validate_request_template, write_mcp_headers, TrustedApproval,
     };
     use chrono::{TimeZone, Utc};
     use serde_json::json;
@@ -1706,7 +1931,7 @@ mod tests {
             "runbookDocument":"runbooks/custom-runbook.md",
             "runbookContentSha256":format!("sha256:{}", "4".repeat(64)),
             "changeTicket":"OPS-123"
-        }), &caller, &reviewer, &json!({
+        }), &[&caller, &reviewer], "runbook-operator", &json!({
             "threadId": "thread-1",
             "sessionId": "session-1",
             "leaseGeneration": 1,
@@ -1718,6 +1943,69 @@ mod tests {
         assert_eq!(request["changeTicket"], "OPS-123");
         assert_eq!(request["approvals"][0]["reviewerSubject"], "caller-1");
         assert_eq!(request["approvals"][1]["reviewerSubject"], "reviewer-1");
+    }
+
+    #[test]
+    fn reviewer_evidence_scope_and_live_capability_are_fail_closed() {
+        let reviewed = json!({
+            "taskId":"task-1",
+            "goal":"investigate service",
+            "target":{"environment":"production","cluster":"cluster-a","namespace":"service-a","service":"api"},
+            "runbook":{"id":"observability.investigation","version":"1.1.0","phase":"observe"},
+            "runbookDocument":"runbooks/observability.md",
+            "runbookContentSha256":format!("sha256:{}", "4".repeat(64)),
+            "operation":{"id":"observability.query","version":"1.0.0"},
+            "parameters":{}
+        });
+        let evidence = reviewed.clone();
+        assert!(validate_evidence_scope(&reviewed, &evidence).is_ok());
+        let mut widened = evidence.clone();
+        widened["target"]["service"] = "other".into();
+        assert!(validate_evidence_scope(&reviewed, &widened)
+            .unwrap_err()
+            .contains("/target"));
+
+        let capability = json!({
+            "id":"observability.query",
+            "version":"1.0.0",
+            "access":"read",
+            "mutation":false,
+            "allowedRunbooks":["observability.investigation@1.1.0"],
+            "requiredApprovalRoles":[]
+        });
+        assert!(validate_read_capability(&capability, &evidence).is_ok());
+        let mut mutating = capability.clone();
+        mutating["mutation"] = true.into();
+        assert!(validate_read_capability(&mutating, &evidence).is_err());
+        let mut wrong_runbook = capability;
+        wrong_runbook["allowedRunbooks"] = json!(["other@1.0.0"]);
+        assert!(validate_read_capability(&wrong_runbook, &evidence).is_err());
+    }
+
+    #[test]
+    fn reviewer_observation_permit_uses_observer_role_and_no_model_approval() {
+        let now = Utc.with_ymd_and_hms(2026, 8, 22, 12, 0, 0).unwrap();
+        let caller = TrustedApproval {
+            subject: "caller-1".into(),
+            role: "safety-reviewer",
+            evidence_sha256: format!("sha256:{}", "1".repeat(64)),
+            approved_at: now.to_rfc3339(),
+        };
+        let request = build_request(&json!({
+            "taskId":"task-1",
+            "goal":"observe",
+            "operation":{"id":"observability.query","version":"1.0.0"},
+            "target":{"environment":"production","cluster":"cluster-a","namespace":"service-a","service":"api"},
+            "parameters":{},
+            "runbook":{"id":"observability.investigation","version":"1.1.0","phase":"observe"},
+            "runbookDocument":"runbooks/observability.md",
+            "runbookContentSha256":format!("sha256:{}", "4".repeat(64))
+        }), &[&caller], "runbook-observer", &json!({
+            "threadId":"thread-1","sessionId":"session-1","leaseGeneration":1,"authorizingEventId":"message-1"
+        }), now).unwrap();
+        assert_eq!(request["delegatedRole"], "runbook-observer");
+        assert_eq!(request["approvals"].as_array().unwrap().len(), 1);
+        assert_eq!(request["approvals"][0]["reviewerSubject"], "caller-1");
     }
 
     #[test]

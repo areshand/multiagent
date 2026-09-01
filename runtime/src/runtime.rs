@@ -92,7 +92,20 @@ type CodexAccess = RoleAccess;
 const ORCHESTRATOR_UID: u32 = config::ORCHESTRATOR_UID;
 const WRITER_UID: u32 = config::WRITER_UID;
 const READER_UID: u32 = config::READER_UID;
+const REVIEWER_UID: u32 = config::REVIEWER_UID;
 const ROLE_GID: u32 = config::ROLE_GID;
+
+fn role_runtime_uid(role: &str, access: CodexAccess) -> u32 {
+    if role == "ops" {
+        config::OPS_UID
+    } else if role == "reviewer" {
+        REVIEWER_UID
+    } else if access == CodexAccess::WorkspaceWrite {
+        WRITER_UID
+    } else {
+        READER_UID
+    }
+}
 
 impl RuntimeConfig {
     fn load() -> Result<Self, String> {
@@ -206,6 +219,12 @@ pub fn container_bootstrap() -> Result<ExitCode, String> {
                 0o700,
             ),
             (
+                base.join("role-homes/reviewer"),
+                config::REVIEWER_UID,
+                config::ROLE_GID,
+                0o700,
+            ),
+            (
                 base.join("role-homes/supervisor"),
                 config::SUPERVISOR_UID,
                 config::ROLE_GID,
@@ -308,16 +327,12 @@ pub fn role_agent_exec(args: &[String]) -> Result<ExitCode, String> {
     .then(|| native_resume_session(&trace_dir))
     .flatten();
     let executable = env::current_exe().map_err(io_error("resolve multiagent executable"))?;
-    let role_uid = if authorization.role == "ops" {
-        config::OPS_UID
-    } else if access == CodexAccess::WorkspaceWrite {
-        WRITER_UID
-    } else {
-        READER_UID
-    };
+    let role_uid = role_runtime_uid(&authorization.role, access);
     if let Some(root) = env_nonempty("MULTIAGENT_CODEX_HOME_ROOT") {
         let role_home = Path::new(&root).join(if authorization.role == "ops" {
             "ops"
+        } else if authorization.role == "reviewer" {
+            "reviewer"
         } else if access == CodexAccess::WorkspaceWrite {
             "writer"
         } else {
@@ -1190,7 +1205,7 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
             .iter()
             .any(|arg| matches!(arg.as_str(), "-h" | "--help"))
     {
-        println!("Usage:\n  multiagent orchestrator complete\n  multiagent orchestrator complete --direct-response --result-file PATH\n  multiagent orchestrator complete --clarification --result-file PATH\n  multiagent orchestrator complete --auto-clarification --result-file PATH\n  multiagent orchestrator complete --read-only --result-file PATH --reviewer NAME\n  multiagent orchestrator complete --external-only --result-file PATH\n\nRuns the supervisor completion gates. Shortcut and external-only completion require a self-contained caller result under MULTIAGENT_STATE_DIR.");
+        println!("Usage:\n  multiagent orchestrator complete\n  multiagent orchestrator complete --direct-response --result-file PATH\n  multiagent orchestrator complete --clarification --result-file PATH\n  multiagent orchestrator complete --auto-clarification --result-file PATH\n  multiagent orchestrator complete --read-only --result-file PATH --reviewer NAME\n  multiagent orchestrator complete --human-review --result-file PATH --reviewer NAME\n  multiagent orchestrator complete --external-only --result-file PATH\n\nRuns the supervisor completion gates. Shortcut and external-only completion require a self-contained caller result under MULTIAGENT_STATE_DIR.");
         return Ok(ExitCode::SUCCESS);
     }
     #[derive(Clone, Copy)]
@@ -1200,6 +1215,7 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
         Clarification(&'a str),
         AutoClarification(&'a str),
         ReadOnly { result: &'a str, reviewer: &'a str },
+        HumanReview { result: &'a str, reviewer: &'a str },
         External(&'a str),
     }
     let route = if args.len() == 1 && args[0] == "complete" {
@@ -1238,6 +1254,16 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
             result: &args[3],
             reviewer: &args[5],
         }
+    } else if args.len() == 6
+        && args[0] == "complete"
+        && args[1] == "--human-review"
+        && args[2] == "--result-file"
+        && args[4] == "--reviewer"
+    {
+        CompletionRoute::HumanReview {
+            result: &args[3],
+            reviewer: &args[5],
+        }
     } else {
         return Err(format!("unknown command: {}", args[0]));
     };
@@ -1247,7 +1273,9 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
         | CompletionRoute::Clarification(path)
         | CompletionRoute::AutoClarification(path)
         | CompletionRoute::External(path) => Some(path),
-        CompletionRoute::ReadOnly { result, .. } => Some(result),
+        CompletionRoute::ReadOnly { result, .. } | CompletionRoute::HumanReview { result, .. } => {
+            Some(result)
+        }
     };
     if let CompletionRoute::Clarification(path) = route {
         validate_bounded_clarification(path)?;
@@ -1272,6 +1300,9 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
             }
             CompletionRoute::ReadOnly { reviewer, .. } => {
                 crate::workflow::supervisor_complete_read_only(&workflow_id, reviewer)?
+            }
+            CompletionRoute::HumanReview { reviewer, .. } => {
+                crate::workflow::supervisor_complete_human_review(&workflow_id, reviewer)?
             }
             CompletionRoute::External(_) => {
                 crate::workflow::supervisor_complete_external(&workflow_id)?
@@ -2050,11 +2081,7 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
             &command,
             &executable,
             role_write_roots(&cfg.root, &cfg.state, access == CodexAccess::WorkspaceWrite),
-            if access == CodexAccess::WorkspaceWrite {
-                WRITER_UID
-            } else {
-                READER_UID
-            },
+            role_runtime_uid(authority_role, access),
         )
     };
     let command = subagent_shell_command(cfg, name, cli, &executable, &cli_command, access, false);
@@ -2117,9 +2144,12 @@ fn reviewed_ops_reviewer_instruction(
     request_file: &Path,
     descriptor: &str,
     binding: &str,
+    reviewer: &str,
 ) -> String {
     format!(
-        "Independently review the supervisor-owned immutable ops request identified by the bounded artifact descriptor below. Read that exact artifact, compare it with its stated goal, operation, target, parameters, and certified runbook, and do not modify or execute it. If and only if it is acceptable, end with an accepted verdict and reproduce the binding marker exactly. Otherwise reject it with concrete findings.\n\nrequest-path: {}\n{}\n\nimmutable-request-descriptor:\n{}",
+        "Independently review the supervisor-owned immutable ops request identified by the bounded artifact descriptor below. Read that exact artifact and certified runbook, and reconstruct evidence rather than relying only on the proposing agent. You may read any session trace under `$MULTIAGENT_LOG_DIR`. When fresh production evidence is material, you may create a request in your own trace directory, preserving the reviewed request's taskId, goal, target, and exact runbook binding, select only an operation that `multiagent ops describe OPERATION_ID` reports as read-only, bind it with `multiagent ops bind-runbook`, and submit it with `multiagent ops evidence-read --request-file PATH --reviewed-request {} --reviewer {}`. This path cannot authorize mutation. Do not modify or execute the reviewed request. Run the required review binding command. If and only if the request is acceptable, use the accepted verdict and reproduce the binding marker exactly. Otherwise request human review with one bounded question; no operation permit will be issued.\n\nrequest-path: {}\n{}\n\nimmutable-request-descriptor:\n{}",
+        request_file.display(),
+        reviewer,
         request_file.display(),
         binding,
         descriptor
@@ -2130,6 +2160,24 @@ const REVIEWED_OPS_RUNTIME_CONTRACT: &str = r#"<reviewed-ops-runtime phase="inte
 const FRESH_CONTEXT_CONTRACT: &str =
     r#"<model-context kind="fresh" prior-transcript="excluded" />"#;
 const REVIEWED_OPS_TERMINAL_FILE: &str = "reviewed-ops-terminal";
+
+fn complete_reviewer_human_fallback(
+    cfg: &RuntimeConfig,
+    reviewer: &str,
+    question: &str,
+) -> Result<(), String> {
+    let candidate = cfg.state.join("human-review-result-candidate.md");
+    write_state(&candidate, &format!("{}\n", question.trim()))?;
+    run_self_owned(&[
+        "orchestrator".into(),
+        "complete".into(),
+        "--human-review".into(),
+        "--result-file".into(),
+        candidate.display().to_string(),
+        "--reviewer".into(),
+        reviewer.into(),
+    ])
+}
 
 const ITERATION_PLAN_API_VERSION: &str = "multiagent.moveindustries.io/v1";
 const ITERATION_PLAN_KIND: &str = "IterationPlan";
@@ -2287,6 +2335,19 @@ fn execute_iteration(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String>
             &authority_name,
         )?;
         if authority_verdict == "findings" {
+            if let Some((question, _)) =
+                workflow::reviewer_human_review_question(&plan.workflow_id, &authority_name)?
+            {
+                complete_reviewer_human_fallback(cfg, &authority_name, &question)?;
+                emit_iteration_result(
+                    "human_review_required",
+                    &plan,
+                    &plan_sha256,
+                    "decision-authority-user-choice",
+                    None,
+                )?;
+                return Ok(());
+            }
             emit_iteration_result(
                 "needs_replan",
                 &plan,
@@ -3039,7 +3100,7 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
     let (request_file, descriptor) = publish_reviewed_ops_request(&ops_request_file)?;
     let binding = crate::prod_ops::review_binding_for_request(&request_file)?;
     let reviewer_instruction =
-        reviewed_ops_reviewer_instruction(&request_file, &descriptor, &binding);
+        reviewed_ops_reviewer_instruction(&request_file, &descriptor, &binding, &reviewer);
     spawn(
         cfg,
         &[
@@ -3062,6 +3123,37 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
         ));
     }
     finalize(cfg, std::slice::from_ref(&reviewer))?;
+    let workflow_id = env_nonempty("MULTIAGENT_WORKFLOW_ID")
+        .ok_or("reviewed-ops-cycle requires MULTIAGENT_WORKFLOW_ID")?;
+    if let Some((question, reason)) =
+        workflow::reviewer_human_review_question(&workflow_id, &reviewer)?
+    {
+        complete_reviewer_human_fallback(cfg, &reviewer, &question)?;
+        fs::write(
+            ops_dir.join(REVIEWED_OPS_TERMINAL_FILE),
+            format!("requestSha256={reviewed_request_sha256}\nstatus=human-review-required\n"),
+        )
+        .map_err(io_error("write reviewed ops human-review terminal marker"))?;
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "apiVersion": "multiagent.moveindustries.io/v1",
+                "kind": "ReviewedOpsCycleResult",
+                "opsName": ops_name,
+                "reviewer": reviewer,
+                "opsStatus": "human_review_required",
+                "cycleWaitedForCompletion": true,
+                "additionalWaitRequired": false,
+                "terminal": true,
+                "executionResult": serde_json::Value::Null,
+                "opsResult": question,
+                "followUpRequest": serde_json::Value::Null,
+                "humanReview": {"status": "pending", "reason": reason, "question": question},
+            }))
+            .map_err(|error| format!("encode reviewed ops human-review result: {error}"))?
+        );
+        return Ok(());
+    }
     crate::prod_ops::preflight_reviewed_request(&request_file, &reviewer)?;
 
     let request_argument = request_file
@@ -3625,11 +3717,10 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
             &command,
             &executable,
             role_write_roots(&cfg.root, &cfg.state, access == CodexAccess::WorkspaceWrite),
-            if access == CodexAccess::WorkspaceWrite {
-                WRITER_UID
-            } else {
-                READER_UID
-            },
+            role_runtime_uid(
+                metadata.get("role").map(String::as_str).unwrap_or("reader"),
+                access,
+            ),
         )
     };
     let command = subagent_shell_command(cfg, name, &cli, &executable, &cli_command, access, true);
@@ -5595,9 +5686,12 @@ mod tests {
             request,
             "{\"path\":\"/state/request.json\",\"digest\":\"abc\",\"bytes\":42,\"mediaType\":\"application/json\",\"truncated\":false}",
             "review-binding-sha256=abc",
+            "ops-reviewer-01",
         );
         assert!(review.contains("review-binding-sha256=abc"));
         assert!(review.contains("immutable-request-descriptor"));
+        assert!(review.contains("ops evidence-read"));
+        assert!(review.contains("ops-reviewer-01"));
         assert!(!review.contains("provider.read"));
         assert!(!review.contains("Slack"));
         assert!(!review.contains("Grafana"));
@@ -5617,6 +5711,19 @@ mod tests {
         assert!(!result.contains("authenticate"));
         assert!(!result.contains("OPS_UID"));
         assert!(!result.contains("multiagent ops execute"));
+    }
+
+    #[test]
+    fn reviewer_has_a_distinct_kernel_identity() {
+        assert_eq!(
+            role_runtime_uid("reviewer", CodexAccess::ReadOnly),
+            REVIEWER_UID
+        );
+        assert_eq!(
+            role_runtime_uid("reader", CodexAccess::ReadOnly),
+            READER_UID
+        );
+        assert_ne!(REVIEWER_UID, READER_UID);
     }
 
     #[test]

@@ -31,6 +31,7 @@ RUN install -m 0755 docker/runtime/container-entrypoint.sh /opt/multiagent/bin/c
  && useradd --no-create-home --uid 10003 --gid 10001 multiagent-reader \
  && useradd --no-create-home --uid 10004 --gid 10001 --groups 10004 multiagent-supervisor \
  && useradd --no-create-home --uid 10005 --gid 10001 multiagent-ops \
+ && useradd --no-create-home --uid 10007 --gid 10001 multiagent-reviewer \
  && chown root:multiagent-role /opt/multiagent/bin/multiagent \
  && chmod 4755 /opt/multiagent/bin/multiagent \
  && ln -s /opt/multiagent/bin/multiagent /usr/local/bin/multiagent \
@@ -38,11 +39,13 @@ RUN install -m 0755 docker/runtime/container-entrypoint.sh /opt/multiagent/bin/c
     /var/lib/multiagent/role-homes/orchestrator \
     /var/lib/multiagent/role-homes/writer \
     /var/lib/multiagent/role-homes/reader \
+    /var/lib/multiagent/role-homes/reviewer \
     /var/lib/multiagent/role-homes/supervisor \
     /var/lib/multiagent/role-homes/ops \
  && chown -R 10001:10001 /var/lib/multiagent/repositories /var/lib/multiagent/role-homes/orchestrator \
  && chown -R 10002:10001 /var/lib/multiagent/role-homes/writer \
  && chown -R 10003:10001 /var/lib/multiagent/role-homes/reader \
+ && chown -R 10007:10001 /var/lib/multiagent/role-homes/reviewer \
  && chown -R 10004:10001 /var/lib/multiagent/role-homes/supervisor \
  && chown -R 10005:10001 /var/lib/multiagent/role-homes/ops \
  && chmod 0700 /var/lib/multiagent/role-homes/*
