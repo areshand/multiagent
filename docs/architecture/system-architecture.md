@@ -171,6 +171,12 @@ authenticated original task and treats the latest follow-up as additive unless
 the user explicitly replaces earlier scope, so transport recovery cannot erase
 unfinished thread requirements.
 
+A fresh headless execution also receives the bounded authenticated original
+task in its initial model envelope. The same task is persisted as a
+supervisor-bound artifact and digest; prompt delivery is context, not a new
+source of authorization, and grants no authority beyond the authenticated
+request text.
+
 ### AD-016: Deployment repository preparation is isolated from agent authority
 
 `InternalServices` may mount a deployment-owned GitHub App credential into a
@@ -239,6 +245,23 @@ period so a gateway restart does not lose the public result. The gateway
 persists the report before projecting the assistant event and finalizing the
 session. This protocol contains no S3 location or provider credential;
 deployment-managed trace export remains the independent audit path.
+
+The worker report separates its bounded caller message from lifecycle and trace
+metadata. The gateway projects that explicit message for both completed and
+interrupted executions, while retaining only session-scoped trace references
+in the public transcript. If a worker subagent-status endpoint stops responding,
+the gateway reconciles the deployment-owned session record once and retries
+only when reconciliation identifies a different live worker address. A
+completed or stopped worker is not presented as an unavailable running worker.
+
+The typed workflow context exposes one bounded `resultCandidate.path` under
+session state so the orchestrator can hand a caller result to the supervisor
+without writing into supervisor-owned workflow directories. The supervisor
+validates and canonically persists that result before any public projection.
+External-only completion normally requires a successful reviewed receipt, but
+may instead terminate with an honest structural blocker when at least one
+reviewed receipt is classified `blocked` and no receipt is classified `failed`.
+An executor failure without a success remains fail-closed.
 
 `multiagent` owns the thread manifest and single-writer lifecycle semantics.
 `InternalServices` provisions the gateway PVC, versioned S3 backup, IAM,

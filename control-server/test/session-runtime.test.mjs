@@ -17,6 +17,8 @@ import {
   shouldAutomaticallyResume,
   submitLocalFollowup,
   validResourceId,
+  workerReportInterruptedEvent,
+  workerReportPublicEvent,
 } from "../src/session-runtime.mjs";
 
 test("session workers report outcomes to the gateway instead of projecting a private thread store", () => {
@@ -99,6 +101,38 @@ test("completed session reports prefer the explicit bounded caller result", () =
   });
   assert.equal(normalizeWorkerReport({ report: "" }), null);
   assert.equal(normalizeWorkerReport({ report: "x".repeat(64 * 1024 + 1) }), null);
+});
+
+test("production-shaped reports publish the user result instead of lifecycle metadata", () => {
+  const report = normalizeWorkerReport({
+    report: "# thread-latest-open-pr\n\nStatus: completed\nWorkflow: run-1\n\n## Final agent message\nLatest open PR: #421\n\n## Trace references\n- agents/ops-01/events.jsonl",
+    message: "Latest open PR: #421 — fix: remove global waypoint signature-verification bypass",
+    completionRoute: "external-only",
+    transcript: { traceReferences: ["agents/ops-01/events.jsonl"] },
+  });
+  assert.deepEqual(workerReportPublicEvent("session-1", report), {
+    type: "assistant_message",
+    payload: {
+      text: "Latest open PR: #421 — fix: remove global waypoint signature-verification bypass",
+      transcript: { traceReferences: ["trace://session/session-1/logs/agents/ops-01/events.jsonl"] },
+    },
+  });
+});
+
+test("failed sessions publish their bounded blocker instead of a generic interruption", () => {
+  const report = normalizeWorkerReport({
+    report: "# session-1\n\nStatus: failed\n\n## Final agent message\nThe Grafana read is blocked by an operation version mismatch.",
+    message: "The Grafana read is blocked: the runbook requests 1.0.0 but prod-mcp certifies 1.1.0.",
+    completionRoute: "external-only",
+    transcript: { traceReferences: ["agents/ops-01/events.jsonl"] },
+  });
+  assert.deepEqual(workerReportInterruptedEvent("session-1", report, "Execution session failed"), {
+    type: "session_interrupted",
+    payload: {
+      text: "The Grafana read is blocked: the runbook requests 1.0.0 but prod-mcp certifies 1.1.0.",
+      transcript: { traceReferences: ["trace://session/session-1/logs/agents/ops-01/events.jsonl"] },
+    },
+  });
 });
 
 test("only bounded direct-response questions project as clarification events", () => {

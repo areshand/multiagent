@@ -678,11 +678,15 @@ function claudeStreamProgress(lines) {
 
 const inactiveAgentStatuses = new Set(["complete", "done", "completed", "closed", "cancelled", "canceled", "failed", "released", "skipped", "finalized", "killed", "missing"]);
 
-function paneOutcomeForEvent(event) {
+export function paneOutcomeForEvent(event) {
   const type = String(event?.type || "");
   if (type === "user_message") return { status: "", summary: "" };
   if (type === "session_started") return { status: "running", summary: "" };
-  if (type === "assistant_message") return { status: "complete", summary: compactOutcomeSummary(event) };
+  if (type === "assistant_message") {
+    const summary = compactOutcomeSummary(event);
+    const status = /^(?:blocker\s*:|.*\bblocked\b)/i.test(summary) ? "blocked" : "complete";
+    return { status, summary };
+  }
   if (type === "question") return { status: "waiting", summary: compactOutcomeSummary(event) };
   if (type === "session_interrupted") return { status: "interrupted", summary: compactOutcomeSummary(event) };
   if (type === "progress") return { status: "working", summary: compactOutcomeSummary(event) };
@@ -690,9 +694,18 @@ function paneOutcomeForEvent(event) {
   return null;
 }
 
-function compactOutcomeSummary(event) {
-  const entries = String(event?.payload?.text || event?.payload?.report || "")
-    .split(/\r?\n/)
+export function finalAgentMessageText(value) {
+  const sources = String(value || "").split(/\r?\n/);
+  const finalMessageHeading = sources.findIndex((source) => /^\s*#{1,6}\s+final agent message\s*$/i.test(source));
+  if (finalMessageHeading < 0) return String(value || "").trim();
+  const finalSection = sources.slice(finalMessageHeading + 1);
+  const traceHeading = finalSection.findIndex((source) => /^\s*#{1,6}\s+trace references\s*$/i.test(source));
+  return (traceHeading >= 0 ? finalSection.slice(0, traceHeading) : finalSection).join("\n").trim();
+}
+
+export function compactOutcomeSummary(event) {
+  const sources = finalAgentMessageText(event?.payload?.text || event?.payload?.report || "").split(/\r?\n/);
+  const entries = sources
     .map((source) => {
       const tableRow = /^\s*\|/.test(source) && /\|\s*$/.test(source);
       let text = source
@@ -708,6 +721,8 @@ function compactOutcomeSummary(event) {
     .filter(({ text }) => text);
   const meaningful = entries.filter(({ text }) =>
     !/^(?:result|summary|outcome|answer|final answer)$/i.test(text)
+    && !/^(?:status|workflow|session|task)\s*:/i.test(text)
+    && !/^trace references$/i.test(text)
     && !/^(?:-+)(?:\s+—\s+-+)*$/.test(text));
   const latestIndex = meaningful.findIndex(({ text }) => /\b(?:most recently|latest)\b/i.test(text));
   if (latestIndex >= 0) {
@@ -719,7 +734,7 @@ function compactOutcomeSummary(event) {
   }
   const lines = meaningful.map(({ text }) => text);
   const preferred = lines.find((line) => /\b(?:most recently|latest)\b/i.test(line))
-    || lines.find((line) => /^(?:result|answer|outcome)\s*:/i.test(line))
+    || lines.find((line) => /^(?:result|answer|outcome|blocker|finding|conclusion)\s*:/i.test(line))
     || lines.find((line) => /\b(?:found|fixed|created|updated|merged|deployed|completed)\b/i.test(line))
     || lines[0]
     || entries[0]?.text
@@ -774,7 +789,7 @@ export function renderAgentPane(agents, {
 
 function agentStatusGlyph(status) {
   const value = String(status || "").toLowerCase();
-  if (new Set(["failed", "killed", "cancelled", "canceled", "delivery-blocked", "interrupted"]).has(value)) return "×";
+  if (new Set(["blocked", "failed", "killed", "cancelled", "canceled", "delivery-blocked", "interrupted"]).has(value)) return "×";
   if (inactiveAgentStatuses.has(value)) return "✓";
   if (new Set(["starting", "queued", "connecting", "restoring", "waiting"]).has(value)) return "◌";
   if (new Set(["running", "working", "in-progress", "planning"]).has(value)) return "●";
@@ -907,7 +922,10 @@ function selectThread(threads, selector) {
 }
 
 function renderInteractiveEvent(stdout, event) {
-  const text = String(event.payload?.text || event.payload?.report || "").trim();
+  const rawText = String(event.payload?.text || event.payload?.report || "").trim();
+  const text = new Set(["assistant_message", "question", "session_interrupted"]).has(event.type)
+    ? finalAgentMessageText(rawText)
+    : rawText;
   if (event.type === "user_message") stdout.write(`\nyou> ${text}\n`);
   else if (event.type === "assistant_message") stdout.write(`\nassistant> ${text}\n`);
   else if (event.type === "question") stdout.write(`\nassistant? ${text}\n`);

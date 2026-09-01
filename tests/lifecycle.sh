@@ -56,6 +56,7 @@ PROMPT_BUNDLE="$TEST_TMP/orchestrator-bundle.md"
   --output "$PROMPT_BUNDLE" >/dev/null
 assert_contains "$PROMPT_BUNDLE" "BEGIN ORCHESTRATION ROUTING CONTRACT"
 assert_contains "$PROMPT_BUNDLE" "--direct-response"
+assert_contains "$PROMPT_BUNDLE" "resultCandidate.path"
 assert_contains "$PROMPT_BUNDLE" "BEGIN MANDATORY IMPLEMENTATION LIFECYCLE"
 assert_contains "$PROMPT_BUNDLE" "post-implementation -> pre-implementation"
 
@@ -588,8 +589,46 @@ assert_contains "$EXTERNAL_STATE/workflows/WF-EXTERNAL/lifecycle/lifecycle.env" 
 assert_contains "$EXTERNAL_STATE/workflows/WF-EXTERNAL/lifecycle/events.log" \
   "route=external-only"
 assert_contains "$EXTERNAL_STATE/workflows/WF-EXTERNAL/lifecycle/events.log" \
-  $'operations=1\tfailed_operations=3'
+  $'operations=1\tfailed_operations=2\tblocked_operations=1'
 assert_contains "$EXTERNAL_STATE/orchestrator-result.md" \
   "External operation completed with reviewed evidence."
+
+BLOCKED_EXTERNAL_STATE="$TEST_TMP/blocked-external-state"
+mkdir -p "$BLOCKED_EXTERNAL_STATE/operations/OP-BLOCKED"
+MULTIAGENT_STATE_DIR="$BLOCKED_EXTERNAL_STATE" \
+  "$MULTIAGENT" workflow init WF-BLOCKED-EXTERNAL >/dev/null
+cp "$EXTERNAL_STATE/operations/OP-BLOCKED/receipt.json" \
+  "$BLOCKED_EXTERNAL_STATE/operations/OP-BLOCKED/receipt.json"
+BLOCKED_EXTERNAL_RESULT="$BLOCKED_EXTERNAL_STATE/external-result-candidate.md"
+printf 'The reviewed operation reached a terminal structural blocker.\n' \
+  >"$BLOCKED_EXTERNAL_RESULT"
+MULTIAGENT_ROOT="$EXTERNAL_ROOT" MULTIAGENT_STATE_DIR="$BLOCKED_EXTERNAL_STATE" \
+  MULTIAGENT_WORKFLOW_ID=WF-BLOCKED-EXTERNAL MULTIAGENT_RUN_ID=RUN-BLOCKED-EXTERNAL \
+  MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
+  "$MULTIAGENT" orchestrator complete --external-only \
+    --result-file "$BLOCKED_EXTERNAL_RESULT" >"$TEST_TMP/blocked-external-complete.out"
+assert_contains "$BLOCKED_EXTERNAL_STATE/workflows/WF-BLOCKED-EXTERNAL/lifecycle/events.log" \
+  $'operations=0\tfailed_operations=0\tblocked_operations=1'
+assert_contains "$BLOCKED_EXTERNAL_STATE/orchestrator-result.md" \
+  "terminal structural blocker"
+
+FAILED_EXTERNAL_STATE="$TEST_TMP/failed-external-state"
+mkdir -p "$FAILED_EXTERNAL_STATE/operations/OP-FAILED"
+MULTIAGENT_STATE_DIR="$FAILED_EXTERNAL_STATE" \
+  "$MULTIAGENT" workflow init WF-FAILED-EXTERNAL >/dev/null
+cp "$EXTERNAL_STATE/operations/OP-FAILED/receipt.json" \
+  "$FAILED_EXTERNAL_STATE/operations/OP-FAILED/receipt.json"
+FAILED_EXTERNAL_RESULT="$FAILED_EXTERNAL_STATE/external-result-candidate.md"
+printf 'The executor failed.\n' >"$FAILED_EXTERNAL_RESULT"
+if MULTIAGENT_ROOT="$EXTERNAL_ROOT" MULTIAGENT_STATE_DIR="$FAILED_EXTERNAL_STATE" \
+  MULTIAGENT_WORKFLOW_ID=WF-FAILED-EXTERNAL MULTIAGENT_RUN_ID=RUN-FAILED-EXTERNAL \
+  MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
+  "$MULTIAGENT" orchestrator complete --external-only \
+    --result-file "$FAILED_EXTERNAL_RESULT" >"$TEST_TMP/failed-external-complete.out" 2>&1; then
+  echo "expected executor failure without success or blocker to reject completion" >&2
+  exit 1
+fi
+assert_contains "$TEST_TMP/failed-external-complete.out" \
+  "terminal reviewed blocker without executor failures"
 
 echo "implementation lifecycle tests passed"

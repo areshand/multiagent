@@ -63,3 +63,18 @@ test("provider JSON and terminal markers fall back to the explicit task assignme
   assert.equal(agent.workingOn, "Inspect the repository HEAD without modifying files.");
   assert.doesNotMatch(agent.workingOn, /provider|uuid|final status/);
 });
+
+test("fragmented provider JSON, runbook text, and commands never replace the assignment", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "multiagent-subagent-fragments-"));
+  await mkdir(path.join(root, "subagents", "ops-grafana-01"), { recursive: true });
+  await writeFile(path.join(root, "subagents", "ops-grafana-01", "status"), "running\n");
+  await writeFile(path.join(root, "subagents", "ops-grafana-01", "instruction.txt"), "# Ops Role\n\n## Task Assignment\n\nCheck testnet validator logs for errors.\n");
+  await writeFile(path.join(root, "subagents", "ops-grafana-01", "current.txt"), [
+    'thinking":"","signature":"opaque-provider-fragment',
+    'rvice.\\n\\n## Procedure\\n\\n1. Identify the target',
+    '"datasourceUid\\\\|loki" /opt/multiagent/ 2>/dev/null',
+  ].join("\n"));
+
+  const [agent] = readSubagentSnapshot(root);
+  assert.equal(agent.workingOn, "Check testnet validator logs for errors.");
+});

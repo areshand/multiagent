@@ -109,3 +109,23 @@ export function scopedThreadTranscript(sessionId, transcript) {
     : [];
   return { ...transcript, traceReferences };
 }
+
+export function workerReportPublicEvent(sessionId, report) {
+  return {
+    type: report.responseType,
+    payload: {
+      text: selectFinalMessage(report.message, report.report),
+      transcript: scopedThreadTranscript(sessionId, report.transcript),
+    },
+  };
+}
+
+export function workerReportInterruptedEvent(sessionId, report, fallback) {
+  return {
+    type: "session_interrupted",
+    payload: {
+      text: report ? selectFinalMessage(report.message, fallback) : String(fallback || "").trim(),
+      transcript: report ? scopedThreadTranscript(sessionId, report.transcript) : null,
+    },
+  };
+}

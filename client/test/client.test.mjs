@@ -4,7 +4,16 @@ import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { ControlClient, main, renderAgentPane, terminalDelta, terminalProgressView } from "../src/client.mjs";
+import {
+  compactOutcomeSummary,
+  ControlClient,
+  finalAgentMessageText,
+  main,
+  paneOutcomeForEvent,
+  renderAgentPane,
+  terminalDelta,
+  terminalProgressView,
+} from "../src/client.mjs";
 
 function writer() {
   return { output: "", write(value) { this.output += String(value); } };
@@ -537,7 +546,36 @@ test("completed outcome summary wraps within the terminal width", () => {
   assert.ok(lines.every((line) => line.length <= 52));
 });
 
-test("asynchronous status redraw restores the active input prompt", async () => {
+test("interrupted orchestrator pane shows the bounded blocker instead of a generic failure", () => {
+  const lines = renderAgentPane([], {
+    columns: 64,
+    maxRows: 6,
+    thread: { id: "thread-blocked", state: "interrupted" },
+    outcomeStatus: "interrupted",
+    taskSummary: "Grafana read blocked: runbook requests 1.0.0 but prod-mcp certifies 1.1.0.",
+  });
+  assert.deepEqual(lines.slice(0, 3), [
+    "× orchestrator · interrupted",
+    "   ↳ Grafana read blocked: runbook requests 1.0.0 but prod-mcp",
+    "     certifies 1.1.0.",
+  ]);
+});
+
+test("structured PR review reports expose the blocker and hide the runtime envelope", () => {
+  const report = "# session-pr-review\n\nStatus: completed\nWorkflow: run-pr-review\n\n## Final agent message\n# PR #68 Review — Blocked\n\n**Blocker:** GitHub read access does not expose the PR diff, changed files, or CI checks.\n\n## Trace references\n- agents/ops-01/events.jsonl";
+  assert.equal(finalAgentMessageText(report), "# PR #68 Review — Blocked\n\n**Blocker:** GitHub read access does not expose the PR diff, changed files, or CI checks.");
+  assert.equal(compactOutcomeSummary({ payload: { text: report } }), "Blocker: GitHub read access does not expose the PR diff, changed files, or CI checks.");
+  assert.deepEqual(paneOutcomeForEvent({ type: "assistant_message", payload: { text: report } }), {
+    status: "blocked",
+    summary: "Blocker: GitHub read access does not expose the PR diff, changed files, or CI checks.",
+  });
+  assert.equal(renderAgentPane([], {
+    outcomeStatus: "blocked",
+    taskSummary: "Blocker: GitHub read access does not expose the PR diff.",
+  })[0], "× orchestrator · blocked");
+});
+
+test("latest-open-PR interaction ends with an informative summary, completed agent graph, and active prompt", async () => {
   const sessionFile = await sessionFixture();
   const output = ttyWriter();
   let questionCount = 0;
@@ -559,9 +597,19 @@ test("asynchronous status redraw restores the active input prompt", async () => 
               sequence: 1,
               type: "assistant_message",
               payload: {
-                text: "# Open PRs — movement-network/aptos-core\n\nChecked current open pull requests.\n\n## Latest opened PR\n\n| PR | Title |\n| --- | --- |\n| **#421** | fix: remove global waypoint signature-verification bypass |",
+                text: "# thread-latest-open-pr\n\nStatus: completed\nWorkflow: run-latest-open-pr\n\n## Final agent message\nLatest open PR: **#421** — fix: remove global waypoint signature-verification bypass\n- Author: contributor\n- URL: https://github.com/movement-network/aptos-core/pull/421\n\n## Trace references\n- agents/ops-01/attempt-0001/events.jsonl",
               },
             },
+          })));
+          threadSocket.emit("message", Buffer.from(JSON.stringify({
+            type: "agents",
+            agents: [{
+              name: "ops-01",
+              status: "done",
+              role: "ops",
+              workingOn: "Found latest open PR #421",
+            }],
+            available: true,
           })));
           setImmediate(() => resolve("/quit"));
         });
@@ -595,8 +643,12 @@ test("asynchronous status redraw restores the active input prompt", async () => 
   });
 
   assert.match(output.output, /● orchestrator · running/);
-  assert.match(output.output, /assistant> # Open PRs/);
+  assert.match(output.output, /assistant> Latest open PR: \*\*#421\*\*/);
   assert.match(output.output, /✓ orchestrator · complete/);
-  assert.match(output.output, /↳ Latest opened PR: #421 — fix: remove global waypoint/);
+  assert.match(output.output, /↳ Latest open PR: #421 — fix: remove global waypoint/);
+  assert.match(output.output, /✓ ops-01 · ops · done/);
+  assert.match(output.output, /↳ Found latest open PR #421/);
+  assert.doesNotMatch(output.output, /↳ Status: completed/);
+  assert.doesNotMatch(output.output, /assistant> # thread-latest-open-pr|Status: completed|Workflow: run-latest-open-pr|Trace references/);
   assert.ok(prompts.some((prompt) => prompt.label === "› " && prompt.preserveCursor === true));
 });
