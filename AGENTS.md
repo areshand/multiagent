@@ -31,3 +31,17 @@ In particular:
 
 Pull requests that change an architecture boundary must update
 `docs/architecture/system-architecture.md` in the same pull request.
+
+## Deferred Work Tracking
+
+`docs/TODO.md` is the canonical repository backlog. When a change identifies
+accepted but unfinished work, add a concrete unchecked item there in the same
+pull request. Do not leave the only record of deferred work in review comments,
+commit messages, or scattered documentation.
+
+A TODO must state the missing outcome and enough completion evidence to remove
+it. Do not add TODOs for work completed by the current change, and do not remove
+or mark an item complete until its implementation, applicable deployment
+integration, and relevant tests or operational evidence exist. A TODO never
+substitutes for an architecture decision: changes to ownership or trust
+boundaries must still update `docs/architecture/system-architecture.md`.

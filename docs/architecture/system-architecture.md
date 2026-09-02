@@ -813,36 +813,7 @@ mock Grafana response does not satisfy this acceptance path.
 
 ## Known target-state work
 
-The following items are compatible with the accepted architecture but may not
-yet be fully implemented:
-
-- Add stale runtime cleanup, artifact materialization, and child-process reaping
-  around the file-backed thread manifest and existing S3 trace lifecycle.
-- Separate gateway and session S3 identities or add independently verified
-  manifest integrity before enabling automatic S3 bootstrap.
-- Harden filesystem operations against descriptor-relative path and race
-  attacks where pathname policy is insufficient.
-- Complete cross-account Route53, ACM validation, load balancer routing, and
-  health verification in deployment code.
-- Move from shared contract fixtures toward one canonical generated or
-  machine-validated permit schema.
-- Strengthen deterministic assignment/result binding and immutable
-  pre-execution evidence.
-- Enforce provider-native tool capability restrictions where operating-system
-  confinement cannot express the required boundary.
-- Define retention, redaction, migration, and replay policy for historical S3
-  evidence.
-- Complete Logger storage rollback detection: publish signed checkpoints to an
-  independently retained witness, allow verification against the last trusted
-  checkpoint, require scheduled checkpoints during replay, and add restart
-  tests for newline-aligned tail truncation and missing checkpoints. This does
-  not require producer-assigned sequence numbers; the Logger remains the sole
-  sequencer.
-- Integrate producer outboxes or a deployment-owned durable queue so Logger
-  delivery retries independently and backlog alerts are testable.
-- Add deployment-owned Loki/OpenTelemetry projections if operational demand
-  justifies them; these must remain derived from the authoritative ledger.
-
-Items must remain in the tracked security or architecture backlog until their
-implementation and end-to-end behavior are complete. Remove a TODO only when
-the enforcing code, deployment configuration, and relevant evidence all exist.
+Deferred work compatible with this architecture is tracked in the canonical
+[project TODO](../TODO.md). The TODO backlog records implementation status; it
+does not replace or override the ownership and trust-boundary decisions in this
+document.

@@ -1,5 +1,47 @@
 # Project TODO
 
+This is the canonical backlog for deferred repository work. Architecture
+decisions remain in `docs/architecture/system-architecture.md`; this file tracks
+work that is accepted by those decisions but not yet implemented or proven.
+
+Add newly discovered deferred work here in the same pull request that identifies
+it. Keep an item open until its implementation, deployment integration when
+applicable, and relevant evidence are complete.
+
+## Architecture Target-State Work
+
+- [ ] Add stale runtime cleanup, artifact materialization, and child-process
+  reaping around the file-backed thread manifest and existing S3 trace
+  lifecycle.
+- [ ] Separate gateway and session S3 identities or add independently verified
+  manifest integrity before enabling automatic S3 bootstrap.
+- [ ] Harden filesystem operations against descriptor-relative path and race
+  attacks where pathname policy is insufficient.
+- [ ] Complete cross-account Route53, ACM validation, load balancer routing,
+  and health verification in deployment code.
+- [ ] Move from shared contract fixtures toward one canonical generated or
+  machine-validated permit schema.
+- [ ] Strengthen deterministic assignment/result binding and immutable
+  pre-execution evidence.
+- [ ] Enforce provider-native tool capability restrictions where
+  operating-system confinement cannot express the required boundary.
+- [ ] Define retention, redaction, migration, and replay policy for historical
+  S3 evidence.
+- [ ] Complete Logger storage rollback detection: publish signed checkpoints to
+  an independently retained witness, allow verification against the last
+  trusted checkpoint, require scheduled checkpoints during replay, and add
+  restart tests for newline-aligned tail truncation and missing checkpoints.
+  This does not require producer-assigned sequence numbers; the Logger remains
+  the sole sequencer.
+- [ ] Integrate producer outboxes or a deployment-owned durable queue so Logger
+  delivery retries independently and backlog alerts are testable.
+- [ ] Add deployment-owned Loki/OpenTelemetry projections if operational demand
+  justifies them; these must remain derived from the authoritative ledger.
+
+Security-specific deferred work that predates this canonical backlog remains
+detailed in [Known Security TODOs](known-security-todos.md). New security TODOs
+must also be represented or linked from this file.
+
 ## Production MCP Joint Test
 
 - [x] Activate the existing Linux UID and Landlock boundary in the production container.

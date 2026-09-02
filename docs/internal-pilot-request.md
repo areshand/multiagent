@@ -43,7 +43,7 @@ log. The guide defines the final review and summary procedure.
 
 ## Completion Evidence Required
 
-The Internal Validation items in [TODO.md](../TODO.md) stay unchecked until
+The Internal Validation items in [TODO.md](TODO.md) stay unchecked until
 these artifacts exist:
 
 1. A record that the pitch was actually delivered internally (date, audience).
