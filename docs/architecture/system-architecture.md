@@ -832,6 +832,12 @@ yet be fully implemented:
   confinement cannot express the required boundary.
 - Define retention, redaction, migration, and replay policy for historical S3
   evidence.
+- Complete Logger storage rollback detection: publish signed checkpoints to an
+  independently retained witness, allow verification against the last trusted
+  checkpoint, require scheduled checkpoints during replay, and add restart
+  tests for newline-aligned tail truncation and missing checkpoints. This does
+  not require producer-assigned sequence numbers; the Logger remains the sole
+  sequencer.
 - Integrate producer outboxes or a deployment-owned durable queue so Logger
   delivery retries independently and backlog alerts are testable.
 - Add deployment-owned Loki/OpenTelemetry projections if operational demand
