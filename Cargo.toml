@@ -1,4 +1,4 @@
 [workspace]
-members = ["runtime"]
+members = ["runtime", "logger"]
 default-members = ["runtime"]
 resolver = "2"

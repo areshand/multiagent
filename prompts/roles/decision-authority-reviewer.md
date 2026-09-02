@@ -17,6 +17,11 @@ Do not write generic verdicts such as `ACCEPTED`, `REJECTED`, `PASS`, `FAIL`, or
 `BLOCKING`. Do not add an introduction, Markdown heading, or code fence before
 the verdict.
 
+When the verdict is `user-choice-required`, the supervisor mechanically seals
+the `user-question`, terminates the execution session without issuing further
+authority, and returns that question to the human. Ask exactly one bounded
+question ending in a question mark.
+
 Return exactly these fields in this order:
 
 1. `verdict:` using one value from the exact vocabulary above.

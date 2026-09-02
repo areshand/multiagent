@@ -1,0 +1,6 @@
+.git
+.worktrees
+target
+**/node_modules
+**/*.jsonl
+**/*.pem

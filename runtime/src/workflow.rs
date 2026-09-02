@@ -48,6 +48,11 @@ const ENV_ORDER: &[&str] = &[
     "iteration_worker_count",
     "candidate_diff_hash",
     "reviewed_diff_hash",
+    "human_review_status",
+    "human_review_request",
+    "human_review_request_sha256",
+    "human_review_reviewer",
+    "human_review_reason",
     "resume_count",
     "created_at",
     "updated_at",
@@ -534,6 +539,11 @@ fn initialize_id(id: &str, resume: bool) -> Result<(), String> {
         ("iteration_worker_count", ""),
         ("candidate_diff_hash", ""),
         ("reviewed_diff_hash", ""),
+        ("human_review_status", ""),
+        ("human_review_request", ""),
+        ("human_review_request_sha256", ""),
+        ("human_review_reviewer", ""),
+        ("human_review_reason", ""),
         ("resume_count", "0"),
     ] {
         state.insert(key.into(), value.into());
@@ -1638,6 +1648,137 @@ pub fn supervisor_complete_direct(id: &str) -> Result<String, String> {
     let result = format!("direct-response:{result_hash}");
     complete_shortcut(&p, &mut state, "direct-response", &result)?;
     Ok(result)
+}
+
+/// Returns the bounded question only for a mechanically recognized reviewer
+/// escalation. The evidence must already have been finalized and sealed by the
+/// supervisor for this workflow.
+pub fn reviewer_human_review_question(
+    id: &str,
+    reviewer: &str,
+) -> Result<Option<(String, String)>, String> {
+    valid_id("human-review reviewer", reviewer)?;
+    let store = Store::configured()?;
+    let evidence_dir = store.state_dir.join("reviewer-evidence").join(reviewer);
+    let metadata = read_simple_env(&evidence_dir.join("evidence.env"))?;
+    if state_value(&metadata, "role") != "reviewer"
+        || state_value(&metadata, "access") != "read-only"
+        || state_value(&metadata, "workflow_id") != id
+        || state_value(&metadata, "state") != "completed"
+    {
+        return Err(
+            "human review requires supervisor-sealed reviewer evidence for this workflow".into(),
+        );
+    }
+    let report_path = evidence_dir.join("last-message.txt");
+    let report =
+        fs::read_to_string(&report_path).map_err(io_error("read human-review evidence"))?;
+    let actual = format!("{:x}", Sha256::digest(report.as_bytes()));
+    if !actual.eq_ignore_ascii_case(state_value(&metadata, "output_sha256")) {
+        return Err("human-review evidence failed its supervisor output seal".into());
+    }
+    parse_human_review_request(&report)
+}
+
+/// Safe terminal fallback for a reviewer that cannot approve. This does not
+/// claim successful completion and does not clear outstanding work; it seals a
+/// question so the control server can return authority to the human.
+pub fn supervisor_complete_human_review(id: &str, reviewer: &str) -> Result<String, String> {
+    require_supervisor_completion_authority()?;
+    let (question, reason) = reviewer_human_review_question(id, reviewer)?
+        .ok_or("reviewer evidence does not request human review")?;
+    let store = Store::configured()?;
+    let p = store.paths(id)?;
+    let _lock = store.lock(&p)?;
+    let mut state = read_env(&p.state, id)?;
+    let phase = state_value(&state, "phase").to_string();
+    if phase == "complete" {
+        return Err("human-review completion requires an active workflow".into());
+    }
+    let persisted = fs::read_to_string(store.state_dir.join("orchestrator-result.md"))
+        .map_err(io_error("read persisted human-review question"))?;
+    if persisted.trim() != question {
+        return Err(
+            "persisted orchestrator result does not match the sealed human-review question".into(),
+        );
+    }
+    let request_path = p.base.join("human-review-request.md");
+    atomic_write(&request_path, &format!("{question}\n"))?;
+    let digest = sha256(&request_path)?;
+    let result = format!("human-review:{digest}");
+    state.insert("phase".into(), "complete".into());
+    state.insert("candidate_diff_hash".into(), result.clone());
+    state.insert("reviewed_diff_hash".into(), result.clone());
+    state.insert("human_review_status".into(), "pending".into());
+    state.insert(
+        "human_review_request".into(),
+        request_path.display().to_string(),
+    );
+    state.insert("human_review_request_sha256".into(), digest.clone());
+    state.insert("human_review_reviewer".into(), reviewer.into());
+    state.insert("human_review_reason".into(), reason.clone());
+    state.insert("updated_at".into(), timestamp());
+    write_env(&p.state, &state)?;
+    event(
+        &p.events,
+        "human_review_required",
+        &format!(
+            "from={phase}\tto=complete\titeration={}\tauthority=supervisor\treviewer={reviewer}\treason={reason}\trequest_sha256={digest}",
+            state_value(&state, "iteration")
+        ),
+    )?;
+    Ok(result)
+}
+
+fn parse_human_review_request(report: &str) -> Result<Option<(String, String)>, String> {
+    let lines = report
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    let first = lines.first().copied().unwrap_or("");
+    let reason = if first.eq_ignore_ascii_case("Verdict: HUMAN_REVIEW_REQUIRED") {
+        Some("ops-verification")
+    } else if first.eq_ignore_ascii_case("verdict: user-choice-required") {
+        Some("decision-authority")
+    } else {
+        None
+    };
+    let Some(reason) = reason else {
+        return Ok(None);
+    };
+    let labels: &[&str] = if reason == "ops-verification" {
+        &["Human-review-question:"]
+    } else {
+        &["user-question:"]
+    };
+    let questions = lines
+        .iter()
+        .filter_map(|line| {
+            labels.iter().find_map(|label| {
+                line.get(..label.len())
+                    .filter(|prefix| prefix.eq_ignore_ascii_case(label))
+                    .map(|_| line[label.len()..].trim())
+            })
+        })
+        .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("none"))
+        .collect::<Vec<_>>();
+    if questions.len() != 1 {
+        return Err("human-review evidence requires exactly one bounded question".into());
+    }
+    let question = questions[0];
+    let punctuation = question
+        .chars()
+        .filter(|character| matches!(character, '?' | '？'))
+        .count();
+    if question.len() > 2_000
+        || punctuation == 0
+        || punctuation > 3
+        || !(question.ends_with('?') || question.ends_with('？'))
+    {
+        return Err("human-review question must be bounded and end with a question mark".into());
+    }
+    Ok(Some((question.into(), reason.into())))
 }
 
 /// Completes a repository investigation whose workers and independent reviewer

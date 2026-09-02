@@ -85,7 +85,7 @@ impl AuthorityRequest {
                             )
                             && args[2] == "--result-file")
                         || (args.len() == 6
-                            && args[1] == "--read-only"
+                            && matches!(args[1].as_str(), "--read-only" | "--human-review")
                             && args[2] == "--result-file"
                             && args[4] == "--reviewer")) =>
             {
@@ -168,9 +168,13 @@ impl AuthorityRequest {
             | AuthorityOperation::TodoAssign
             | AuthorityOperation::TodoStatus
             | AuthorityOperation::GateCheck => uid == config::ORCHESTRATOR_UID,
-            AuthorityOperation::OpsDescribe
-            | AuthorityOperation::OpsPublish
-            | AuthorityOperation::OpsExecute => uid == config::OPS_UID,
+            AuthorityOperation::OpsDescribe => {
+                matches!(uid, config::OPS_UID | config::REVIEWER_UID)
+            }
+            AuthorityOperation::OpsPublish => uid == config::OPS_UID,
+            AuthorityOperation::OpsExecute => {
+                matches!(uid, config::OPS_UID | config::REVIEWER_UID)
+            }
             AuthorityOperation::OpsPublishBound => uid == config::ORCHESTRATOR_UID,
             AuthorityOperation::FindingCreate => uid == config::READER_UID,
             AuthorityOperation::FindingDismiss | AuthorityOperation::TodoClose => {
@@ -296,10 +300,12 @@ mod tests {
         )
         .expect("ops request");
         assert!(ops.authorized_for(config::OPS_UID));
+        assert!(ops.authorized_for(config::REVIEWER_UID));
         assert!(!ops.authorized_for(config::ORCHESTRATOR_UID));
         let describe = AuthorityRequest::from_cli("ops", &strings(&["describe", "github.read"]))
             .expect("ops describe request");
         assert!(describe.authorized_for(config::OPS_UID));
+        assert!(describe.authorized_for(config::REVIEWER_UID));
         assert!(!describe.authorized_for(config::ORCHESTRATOR_UID));
         assert_eq!(
             describe.into_cli(),
@@ -312,6 +318,23 @@ mod tests {
         .expect("ops publish-bound request");
         assert!(publish_bound.authorized_for(config::ORCHESTRATOR_UID));
         assert!(!publish_bound.authorized_for(config::OPS_UID));
+
+        let evidence_read = AuthorityRequest::from_cli(
+            "ops",
+            &strings(&[
+                "execute",
+                "--request-file",
+                "/state/evidence.json",
+                "--reviewed-request",
+                "/state/reviewed.json",
+                "--reviewer",
+                "ops-reviewer-01",
+            ]),
+        )
+        .expect("reviewer evidence read request");
+        assert!(evidence_read.authorized_for(config::REVIEWER_UID));
+        assert!(!evidence_read.authorized_for(config::READER_UID));
+        assert!(evidence_read.authorized_for(config::OPS_UID));
 
         let external_completion =
             AuthorityRequest::from_cli("orchestrator", &strings(&["complete", "--external-only"]))
@@ -399,6 +422,20 @@ mod tests {
         .expect("read-only completion request");
         assert!(read_only_completion.authorized_for(config::ORCHESTRATOR_UID));
         assert!(!read_only_completion.authorized_for(config::READER_UID));
+        let human_review_completion = AuthorityRequest::from_cli(
+            "orchestrator",
+            &strings(&[
+                "complete",
+                "--human-review",
+                "--result-file",
+                "/state/question.md",
+                "--reviewer",
+                "ops-reviewer-01",
+            ]),
+        )
+        .expect("human review completion request");
+        assert!(human_review_completion.authorized_for(config::ORCHESTRATOR_UID));
+        assert!(!human_review_completion.authorized_for(config::REVIEWER_UID));
         assert!(AuthorityRequest::from_cli(
             "orchestrator",
             &strings(&["complete", "--unsupported"]),

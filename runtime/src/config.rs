@@ -8,6 +8,7 @@ pub const READER_UID: u32 = 10003;
 #[cfg(target_os = "linux")]
 pub const SUPERVISOR_UID: u32 = 10004;
 pub const OPS_UID: u32 = 10005;
+pub const REVIEWER_UID: u32 = 10007;
 pub const ROLE_GID: u32 = 10001;
 #[cfg(target_os = "linux")]
 pub const TRACE_EXPORT_GID: u32 = 10006;

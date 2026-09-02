@@ -258,6 +258,7 @@ function workflowCompletionRoute(id) {
   if (result.startsWith("direct-response:")) return "direct-response";
   if (result.startsWith("read-only:")) return "read-only";
   if (result.startsWith("external-only:")) return "external-only";
+  if (result.startsWith("human-review:")) return "human-review";
   return result ? "source" : null;
 }
 

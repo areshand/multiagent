@@ -460,7 +460,7 @@ pub fn seal_role_output(
                     .map_err(|error| format!("inspect ops review binding: {error}"))?;
                 if !binding_file_metadata.is_file()
                     || binding_file_metadata.file_type().is_symlink()
-                    || binding_file_metadata.uid() != config::READER_UID
+                    || binding_file_metadata.uid() != config::REVIEWER_UID
                     || binding_file_metadata.permissions().mode() & 0o077 != 0
                 {
                     return Err(
@@ -676,7 +676,11 @@ fn server_child() -> bool {
 fn authority_client_uid() -> bool {
     matches!(
         unsafe { libc::getuid() },
-        config::ORCHESTRATOR_UID | config::WRITER_UID | config::READER_UID | config::OPS_UID
+        config::ORCHESTRATOR_UID
+            | config::WRITER_UID
+            | config::READER_UID
+            | config::OPS_UID
+            | config::REVIEWER_UID
     )
 }
 
@@ -839,7 +843,11 @@ fn serve_connection(stream: &mut UnixStream) -> Result<bool, String> {
     };
     if !matches!(
         peer_uid,
-        0 | config::ORCHESTRATOR_UID | config::WRITER_UID | config::READER_UID | config::OPS_UID
+        0 | config::ORCHESTRATOR_UID
+            | config::WRITER_UID
+            | config::READER_UID
+            | config::OPS_UID
+            | config::REVIEWER_UID
     ) {
         let _ = write_response(
             stream,

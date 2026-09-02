@@ -34,7 +34,9 @@ This command:
 1. validates that the bound request belongs to the named ops identity and
    publishes it as a supervisor-owned immutable artifact;
 2. binds the reviewer to the immutable request and exact runbook;
-3. passes only a bounded artifact descriptor to the reviewer;
+3. passes the immutable descriptor to the reviewer and gives the reviewer
+   independent read access to the session trace corpus plus a supervisor-bound,
+   same-scope, read-only `prod-mcp` evidence path;
 4. finalizes accepted review evidence before execution; and
 5. launches a deterministic executor under the existing ops Linux identity,
    which submits the accepted request through the digest- and reviewer-bound
@@ -53,10 +55,12 @@ runbook, and authority-produced execution result to decide the next runbook
 step.
 
 Never pass the supervisor-owned published artifact back as `--request-file`;
-that path is intentionally outside the ops identity directory. On rejection or
-preflight failure, report the blocker. A changed request needs a new publication
-and reviewer. A review correction may use a fresh reviewer on the same immutable
-request. Never create a second ops identity.
+that path is intentionally outside the ops identity directory. When the
+reviewer cannot accept, the cycle issues no operation permit, persists the
+supervisor-sealed reviewer evidence and one bounded human-review question,
+marks the workflow complete with the `human-review` route, and returns a
+terminal `human_review_required` result. A later caller answer starts a new
+execution session. Never create a second ops identity.
 
 The cycle already waits. Do not call `subagent wait` afterward, and do not read,
 tail, grep, find, or list unrelated agent logs, transcripts, role homes, or

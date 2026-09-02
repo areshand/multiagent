@@ -55,14 +55,21 @@ Multiagent session runtime
   |                                               |
   | Trace collector sidecar ------------------+   |
   +-------------------------------------------|---+
+                                              +-----------> S3
+                                              |
                                               v
-                                             S3
+                                      Logger service
+                                              ^
+                                              |
+Control server / supervisor / reviewers ------+
 
 Supervisor -- bearer token + KMS-signed permit --> prod-mcp
                                                     |
                                                     +--> Grafana/Loki
                                                     +--> Kubernetes
                                                     +--> AWS services/accounts
+                                                    |
+                                                    +--> Logger service
 
 InternalServices owns all Kubernetes, IAM, KMS, secret, ingress, DNS, and
 storage configuration shown above.
@@ -77,9 +84,10 @@ storage configuration shown above.
 | Supervisor | One session's authority, role bootstrap, role confinement, privileged-request mediation, KMS signing | Service-specific operational procedures |
 | Orchestrator | Goal decomposition, role routing, workflow coordination | Grafana/Loki knowledge, concrete production operations, `prod-mcp` parameters, provider-specific prompts |
 | Ops agent | Reading a selected Markdown runbook, planning and requesting its steps, reporting evidence | Deployment secrets, KMS private authority, infrastructure provisioning |
-| Ops reviewer | Comparing the proposed or observed operation with the authorized goal and runbook | Production credentials, independent execution authority |
+| Ops reviewer | Independently reconstructing evidence and comparing the proposed or observed operation with the authorized goal and runbook | Production credentials, mutating production authority, or authority to widen the reviewed scope |
 | Other role agents | Their assigned reasoning or implementation role | Supervisor authority and unrelated role capabilities |
 | `prod-mcp` | Authentication verification, signed-permit validation, operation schemas, target allowlists, execution, receipts | Multiagent workflow orchestration and model-provider behavior |
+| Logger | Authenticated structural event ingestion, authoritative ordering, canonical encoding, hash-chain construction, replay prevention, signed periodic checkpoints, ledger verification, and non-authoritative audit projections | Semantic review, workflow progression, runbook interpretation, model credentials, production credentials, permit issuance, or production execution |
 | `InternalServices` | Images, deployments, secrets, IAM, KMS, service accounts, endpoints, ingress, DNS, certificates, S3 trace export, and distribution of deployment-specific Markdown runbook artifacts | Agent reasoning, procedure logic embedded in deployment code, and environment-specific secrets inside runbooks |
 | Markdown runbooks | Human-readable operational procedure, operation version, allowed phase progression | Credentials and environment-specific secrets |
 
@@ -96,9 +104,9 @@ top-level ownership boundaries:
 - `control-server/` owns the authenticated control gateway package.
 - `runtime/` owns the Rust session runtime, supervisor, and role-confinement
   package.
-- `audit-log/` is reserved for the independent audit service planned for a
-  later architecture and implementation phase. Its presence in the phase-one
-  layout grants it no authority and changes no trace behavior.
+- `logger/` owns the independent single-writer Logger executable,
+  canonical event contract, append-only JSONL ledger, integrity checks, and
+  producer client utilities.
 - `docker/` owns component image definitions and container entrypoints, but not
   deployment secrets or environment-specific configuration.
 - `gitops/` documents the application-to-deployment contract. Concrete GitOps
@@ -336,9 +344,31 @@ the authenticated user's goal, the selected runbook, the current runbook phase,
 and collected evidence. The reviewer does not replace deterministic policy in
 `prod-mcp` and cannot expand an operation beyond the server allowlist.
 
+The reviewer is not limited to evidence selected by the proposing agent. It
+may read all session traces and immutable artifacts and may request fresh,
+bounded read-only evidence through `prod-mcp`. Reviewer evidence requests use
+the same supervisor-mediated ops execution command and `prod-mcp`
+`operations_execute` surface as other operations; there is no parallel
+evidence-read authority. The reviewer-specific operating-system identity is
+preserved across the supervisor boundary. Before signing, the supervisor
+mechanically binds the request to the same session, task, goal, runbook, and
+target, requires the delegated observer subject to be the live reviewer, and
+requires `prod-mcp` to advertise `access=read` and `mutation=false`. The
+reviewer never receives transport credentials or KMS authority, and the shared
+path cannot issue a mutating permit for a reviewer.
+
 Reviewer approval is bound to the task, intent, history, runbook content,
 runbook context, operation, parameters, target, actor, and expiry through
 digests in the permit.
+
+If independent reconstruction cannot establish that the next action is within
+the authorized contract, the system uses a Simplex-style fallback: it issues no
+next operation permit, persists a supervisor-verified human-review request,
+ends the execution session in `human-review-required` state, and asks the user
+one bounded question. This is the same terminal authority pattern used when a
+decision-authority review detects a user-owned scope or risk choice. A later
+user answer starts a new execution session; model prose alone cannot clear the
+pending human boundary in the completed session.
 
 ### AD-007: `prod-mcp` is the production execution boundary
 
@@ -440,6 +470,59 @@ retry, object naming, and status reporting. Trace export failures must be
 observable without preventing the session from retaining local evidence until
 the configured retention limit.
 
+Bulk traces continue to use this path rather than passing through the Logger.
+After a successful export, the sidecar submits a bounded
+`trace.artifact_exported` event containing the artifact digest, storage
+reference, size, and media type. The Logger commits the reference and
+digest but does not fetch, interpret, or proxy the trace body.
+
+### AD-018: One independently isolated Logger advances authoritative audit history
+
+The Logger is a long-lived service in a security domain separate from
+the control server, session runtimes, reviewers, trace sidecars, and
+`prod-mcp`. Many authenticated producers may submit structural audit events,
+but only the Logger assigns a sequence number and previous hash, appends
+an entry, and advances the authoritative per-session chain head.
+
+For each append, the service authenticates the producer, authorizes the event
+type and session, validates a bounded schema, rejects conflicting event-ID
+replays, serializes each append as one canonical JSONL record, fsyncs it before
+acknowledgement, hashes the entry, and then advances the in-memory head. Exact
+idempotent replay is a no-op. The HTTP append endpoint returns `204 No Content`;
+this is transport acknowledgement, not evidence that authorizes workflow progress. Periodic
+signed checkpoints commit the current chain head. Startup and explicit
+verification recompute the chain and verify checkpoint signatures; an
+integrity failure makes the service unready and prevents further authoritative
+appends.
+
+The append-only ledger file and its dedicated volume are internal implementation
+details of the single writer, not a database or shared organizational storage.
+The service takes an exclusive process lock, rejects truncated or non-canonical
+records during startup replay, and rebuilds read indexes in memory. Deployment
+must run at most one active writer for a ledger volume. A cold standby has no
+write authority until deployment fencing transfers ownership. Producers may
+call the append API but cannot update or delete entries, choose the chain head,
+or read the logger signing key.
+
+The Logger signing identity, producer credentials, volume, network
+policy, backups, retention, and concrete endpoints are deployment-owned. The
+service receives no model, supervisor KMS, `prod-mcp`, Grafana, Kubernetes, or
+repository credentials and cannot issue permits or perform production work.
+Its verification is structural and cryptographic; independent reviewers retain
+ownership of semantic correctness and scope review.
+
+Authoritative appends complete before derived exports. Optional JSONL
+projections are non-authoritative and are rebuilt atomically from the ledger;
+their outage must not invalidate or block a committed append. Producers retain
+and retry undelivered events through a local outbox or deployment-owned durable
+queue, and delivery backlog is observable. Neither logger availability, append
+acknowledgement, nor a checkpoint grants or denies a workflow transition. The
+supervisor remains the sole workflow authority, and independent reviewers use
+the logger's read interface, original traces, and read-only `prod-mcp` evidence
+to reconstruct and evaluate behavior. A missing or inconsistent audit event is
+review evidence that may cause the supervisor to request human review; the
+Logger itself does not perform that semantic decision.
+
 ### AD-012: Public ingress is deployment-managed
 
 The control server is reached through a deployment-managed reverse proxy and
@@ -480,8 +563,11 @@ Quality gates are not optional routing hints. The supervisor derives and stores
 review obligations from the artifacts and actions actually produced. The
 orchestrator may request additional review but cannot remove a pending
 obligation, and completion is denied until every applicable obligation has
-passing evidence bound to the exact artifact. Reviewers receive only the goal,
-their role instructions, and the immutable artifacts needed for their review.
+passing evidence bound to the exact artifact. Reviewers receive the goal, their
+role instructions, and the immutable artifacts needed for their review. They
+also have read access to the session trace corpus and the supervisor-mediated,
+read-only `prod-mcp` evidence path defined in AD-006, so evidence selection by
+another agent is not a trust boundary.
 Before implementation, the supervisor generates an immutable decision capsule
 containing the workflow revision, committed decision, selected alternative,
 original-task digest, and contract digest. Decision-authority evidence and the
@@ -547,21 +633,31 @@ authorized iteration without granting the runtime semantic decision authority.
 4. The orchestrator delegates production work without encoding the procedure.
 5. The ops agent selects and reads the exact versioned Markdown runbook.
 6. The ops agent proposes the next operation and supplies runbook evidence.
-7. The ops reviewer checks the proposal against the user goal and runbook.
-8. The supervisor creates a short-lived permit containing all required digests,
+7. The ops reviewer reconstructs evidence from immutable artifacts and session
+   traces and, when needed, requests a same-scope read-only query through the
+   supervisor and `prod-mcp`.
+8. The ops reviewer checks the proposal against the user goal and runbook. If
+   it cannot safely accept, the supervisor persists a human-review request,
+   issues no next permit, and terminates the execution session with the bounded
+   question.
+9. The supervisor creates a short-lived permit containing all required digests,
    target information, approvals, authority-proxy data, and expiry.
-9. AWS KMS signs the permit under the supervisor's deployment-provided role.
-10. The supervisor calls `prod-mcp` with the bearer token and signed permit.
-11. `prod-mcp` authenticates transport, verifies the signature and permit,
-    applies operation and target allowlists, then executes the operation.
-12. `prod-mcp` returns a digest-bound receipt and appropriately classified
-    output.
-13. The reviewer and supervisor evaluate the result before another runbook
-    phase or operation is allowed.
-14. The trace sidecar persists session evidence to S3.
-15. The session runtime delivers its bounded result to the gateway with its
-    session-scoped token, and the gateway persists it before finalization.
-16. The control server returns or streams user-safe progress and results to the terminal client.
+10. AWS KMS signs the permit under the supervisor's deployment-provided role.
+11. The supervisor calls `prod-mcp` with the bearer token and signed permit.
+12. `prod-mcp` authenticates transport, verifies the signature and permit,
+   applies operation and target allowlists, then executes the operation.
+13. `prod-mcp` returns a digest-bound receipt and appropriately classified
+   output.
+14. The reviewer and supervisor evaluate the result before another runbook
+   phase or operation is allowed.
+15. Authenticated producers submit bounded structural events to the Logger,
+   which independently advances the authoritative chain without
+   participating in workflow progression.
+16. The trace sidecar persists session evidence to S3 and submits the exported
+   artifact commitment to the Logger without sending the trace body.
+17. The session runtime delivers its bounded result to the gateway with its
+   session-scoped token, and the gateway persists it before finalization.
+18. The control server returns or streams user-safe progress and results to the terminal client.
 
 ## Deployment topology
 
@@ -574,8 +670,9 @@ The desired production topology is:
 | --- | --- | --- | --- |
 | Control server | Long-lived, one writer | Reverse proxy or approved private ingress | Client/session authentication only |
 | Session runtime | One per execution session | Private | Model keys as needed, supervisor KMS and `prod-mcp` client authority |
-| Trace sidecar | Same lifetime as session | S3 egress | Narrow S3 write role |
+| Trace sidecar | Same lifetime as session | S3 and Logger egress | Narrow S3 write role and a trace-commitment-only Logger producer identity |
 | `prod-mcp` | Long-lived central service | Private service endpoint | Grafana token and narrow cross-account execution roles |
+| Logger | Long-lived, one active writer per ledger | Private append/read endpoints | Logger signing key and producer-authentication configuration only |
 
 If session runtimes initially share a deployment with the control server, that
 is a transitional implementation rather than a change to the one-supervisor-
@@ -603,7 +700,7 @@ share mutable authority across sessions.
 | --- | --- | --- |
 | Orchestrator | Role routing, decomposition, workflow coordination, generic production delegation | Grafana queries, Loki labels, operation IDs, runbook steps, provider lifecycle, credentials |
 | Ops agent | How to interpret and follow a Markdown runbook, how to report evidence and blockers | Hard-coded service procedures, deployment secrets, direct KMS use |
-| Ops reviewer | Goal-alignment criteria, runbook-phase verification, rejection behavior | Independent execution instructions and credentials |
+| Ops reviewer | Goal-alignment criteria, independent evidence reconstruction, bounded read-only evidence-request protocol, runbook-phase verification, human-review fallback | Mutating execution instructions and credentials |
 | Other role prompts | Cross-cutting responsibility and safety boundaries needed by that role | Unrelated production operations, language/framework recipes, and scenario-specific procedures |
 
 Model-provider instructions belong in deployment or provider adapters. Prompts
@@ -628,7 +725,8 @@ Prompts communicate responsibilities but are not trusted enforcement.
 
 Operational procedure belongs to runbooks, operation validation belongs to
 `prod-mcp`, coordination belongs to the orchestrator, authority belongs to the
-supervisor, and infrastructure belongs to `InternalServices`.
+supervisor, structural audit history belongs to the Logger, and
+infrastructure belongs to `InternalServices`.
 
 ### Exact and inspectable authorization
 
@@ -703,33 +801,19 @@ The deployment is working only when a real test jointly verifies:
    access.
 10. The result and receipt return to the session and user.
 11. The trace sidecar persists the complete redacted trace to S3.
-12. Health and readiness endpoints report each integration accurately.
+12. The trace sidecar submits a digest and storage-reference commitment to the
+    independently isolated Logger.
+13. The Logger exposes the advanced chain and signed periodic checkpoints
+    through its read interface and survives a restart without losing or forking
+    history; its append response is not consumed as workflow authorization.
+14. Health and readiness endpoints report each integration accurately.
 
 A test that only proves image startup, simulated execution, a log emitter, or a
 mock Grafana response does not satisfy this acceptance path.
 
 ## Known target-state work
 
-The following items are compatible with the accepted architecture but may not
-yet be fully implemented:
-
-- Add stale runtime cleanup, artifact materialization, and child-process reaping
-  around the file-backed thread manifest and existing S3 trace lifecycle.
-- Separate gateway and session S3 identities or add independently verified
-  manifest integrity before enabling automatic S3 bootstrap.
-- Harden filesystem operations against descriptor-relative path and race
-  attacks where pathname policy is insufficient.
-- Complete cross-account Route53, ACM validation, load balancer routing, and
-  health verification in deployment code.
-- Move from shared contract fixtures toward one canonical generated or
-  machine-validated permit schema.
-- Strengthen deterministic assignment/result binding and immutable
-  pre-execution evidence.
-- Enforce provider-native tool capability restrictions where operating-system
-  confinement cannot express the required boundary.
-- Define retention, redaction, migration, and replay policy for historical S3
-  evidence.
-
-Items must remain in the tracked security or architecture backlog until their
-implementation and end-to-end behavior are complete. Remove a TODO only when
-the enforcing code, deployment configuration, and relevant evidence all exist.
+Deferred work compatible with this architecture is tracked in the canonical
+[project TODO](../TODO.md). The TODO backlog records implementation status; it
+does not replace or override the ownership and trust-boundary decisions in this
+document.
