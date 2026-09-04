@@ -3202,7 +3202,7 @@ mod tests {
     }
 
     #[test]
-    fn rejected_clone_persists_an_allowlisted_redacted_receipt() {
+    fn rejected_clone_receipt_is_allowlisted_and_persistence_is_owner_gated() {
         let state = private_temp_path(
             &std::env::temp_dir(),
             "multiagent-rejected-clone-receipt",
@@ -3223,15 +3223,33 @@ mod tests {
                 "structuredContent":{"state":"failed","message":"protected failure detail"}
             }
         });
-        persist_direct_receipt(
+        let persistence = persist_direct_receipt(
             &state,
             "action-rejected",
             10005,
             "reader",
             &template,
             &result,
-        )
-        .unwrap();
+        );
+        #[cfg(target_os = "linux")]
+        if unsafe { libc::geteuid() } != 0
+            && unsafe { libc::geteuid() } != crate::config::SUPERVISOR_UID
+        {
+            assert_eq!(
+                persistence.unwrap_err(),
+                "operation request store must be supervisor-owned"
+            );
+            let redacted = redacted_direct_receipt(&template, &result).unwrap();
+            let receipt = serde_json::to_string(&redacted).unwrap();
+            assert!(!receipt.contains("http://prod-mcp.test/git"));
+            assert!(!receipt.contains("X-Prod-MCP-Permit"));
+            assert!(!receipt.contains("protected failure detail"));
+            assert!(receipt.contains("github.clone failed"));
+            assert!(!receipt.contains("github.clone succeeded"));
+            fs::remove_dir_all(state).unwrap();
+            return;
+        }
+        persistence.unwrap();
         let receipt =
             fs::read_to_string(state.join("operations/action-rejected/receipt.redacted.json"))
                 .unwrap();
