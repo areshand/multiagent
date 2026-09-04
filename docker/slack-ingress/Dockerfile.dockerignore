@@ -1,0 +1,5 @@
+*
+!slack-ingress/package.json
+!slack-ingress/
+!slack-ingress/src/
+!slack-ingress/src/**

@@ -42,6 +42,22 @@ Security-specific deferred work that predates this canonical backlog remains
 detailed in [Known Security TODOs](known-security-todos.md). New security TODOs
 must also be represented or linked from this file.
 
+## Slack Hangout Diagnosis And Human Review
+
+- [ ] Provision the Slack app and Events API callback in `InternalServices`,
+  inject the signing secret, immutable Hangout channel ID, internal delivery
+  token, Slack diagnosis repository, durable ingress volume, and `production-e2e`
+  review owner, and project the session `authority-scope` secret into the runtime
+  Job template.
+- [ ] Pass the deployed acceptance paths in `slack-ingress/README.md`: a real
+  Hangout message must create exactly one diagnosis-only thread, `no` must
+  permanently close its continuation path, and `yes` must start a fresh
+  human-authorized session linked to the original thread and exact review
+  question. Preserve evidence that no repair operation ran before approval.
+- [ ] Add production queue observability, bounded exponential retry, corrupt
+  event quarantine, retention, and recovery exercises before running more than
+  one Slack ingress replica or relying on it as a paging system.
+
 ## Production MCP Joint Test
 
 - [x] Activate the existing Linux UID and Landlock boundary in the production container.

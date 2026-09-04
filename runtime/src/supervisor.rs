@@ -916,6 +916,24 @@ fn serve_connection(stream: &mut UnixStream) -> Result<bool, String> {
         );
         return Ok(false);
     }
+    let authority_scope = env::var("MULTIAGENT_AUTHORITY_SCOPE")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "human".into());
+    if !request.allowed_for_authority_scope(&authority_scope) {
+        let _ = write_response(
+            stream,
+            &Response {
+                code: 1,
+                stdout: String::new(),
+                stderr: format!(
+                    "authority supervisor: scope {authority_scope} is not authorized for: {}\n",
+                    request.display()
+                ),
+            },
+        );
+        return Ok(false);
+    }
     let response = execute(request, peer_uid)?;
     if let Err(error) = write_response(stream, &response) {
         eprintln!("authority supervisor: {error}");

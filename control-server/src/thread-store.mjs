@@ -6,9 +6,12 @@ const acceptingSessionStates = new Set(["queued", "starting", "running", "waitin
 const terminalSessionStates = new Set(["completed", "failed", "interrupted", "cancelled"]);
 const publicEventTypes = new Set([
   "user_message",
+  "system_message",
   "assistant_message",
   "progress",
   "question",
+  "review_requested",
+  "review_resolved",
   "artifact_available",
   "session_started",
   "session_completed",
@@ -54,7 +57,7 @@ export class InMemoryThreadStore {
   }
 
   restoreSnapshot(snapshot = null) {
-    if (snapshot && snapshot.schemaVersion !== 1) throw new Error("unsupported thread manifest schema");
+    if (snapshot && !new Set([1, 2]).has(snapshot.schemaVersion)) throw new Error("unsupported thread manifest schema");
     const entries = (name) => {
       const value = snapshot?.[name] || [];
       if (!Array.isArray(value)) throw new Error(`thread manifest ${name} must be an array`);
@@ -66,21 +69,23 @@ export class InMemoryThreadStore {
     this.idempotency = new Map(entries("idempotency"));
     this.checkpoints = new Map(entries("checkpoints"));
     this.artifacts = new Map(entries("artifacts"));
+    this.reviews = new Map(entries("reviews"));
   }
 
   snapshot() {
     return clone({
-      schemaVersion: 1,
+      schemaVersion: 2,
       threads: [...this.threads.entries()],
       sessions: [...this.sessions.entries()],
       events: [...this.events.entries()],
       idempotency: [...this.idempotency.entries()],
       checkpoints: [...this.checkpoints.entries()],
       artifacts: [...this.artifacts.entries()],
+      reviews: [...this.reviews.entries()],
     });
   }
 
-  createThread({ id, ownerSubject, repository, title = "", now = new Date().toISOString() }) {
+  createThread({ id, ownerSubject, repository, title = "", source = null, now = new Date().toISOString() }) {
     requiredString(id, "thread id", 63);
     requiredString(ownerSubject, "owner subject", 256);
     requiredString(repository, "repository", 128);
@@ -94,6 +99,9 @@ export class InMemoryThreadStore {
       headSequence: 0,
       activeSessionId: null,
       queuedSessionId: null,
+      pendingReviewId: null,
+      continuationBlocked: false,
+      source: source === null ? null : boundedPayload(source),
       leaseGeneration: 0,
       createdAt: now,
       updatedAt: now,
@@ -125,6 +133,8 @@ export class InMemoryThreadStore {
     leaseTtlMs = 60_000,
   }) {
     const thread = this.#authorizedThread(threadId, actor);
+    if (thread.pendingReviewId) throw conflict(`resolve pending review ${thread.pendingReviewId} before continuing`);
+    if (thread.continuationBlocked) throw conflict("thread cannot continue after its repair review was rejected");
     requiredString(messageId, "message id", 128);
     const message = requiredString(text, "message");
     const key = `${threadId}:${actor}:${messageId}`;
@@ -146,6 +156,7 @@ export class InMemoryThreadStore {
         threadId,
         ordinal: [...this.sessions.values()].filter((candidate) => candidate.threadId === threadId).length + 1,
         actorSubject: actor,
+        authorityScope: "human",
         triggerMessageId: messageId,
         status: "queued",
         leaseGeneration: generation,
@@ -179,6 +190,68 @@ export class InMemoryThreadStore {
     session.updatedAt = now;
     thread.updatedAt = now;
     const result = { event, session: clone(session), createdSession };
+    this.idempotency.set(key, result);
+    return clone(result);
+  }
+
+  createExternalThreadAndRoute({
+    id,
+    ownerSubject,
+    repository,
+    title = "",
+    sourceActor,
+    source,
+    eventId,
+    text,
+    newSessionId,
+    now = new Date().toISOString(),
+    leaseTtlMs = 60_000,
+  }) {
+    requiredString(sourceActor, "source actor", 256);
+    const externalId = requiredString(source?.eventId, "external event id", 256);
+    const sourceType = requiredString(source?.type, "external source type", 64);
+    const key = `external:${sourceType}:${externalId}`;
+    const existing = this.idempotency.get(key);
+    if (existing) return clone({ ...existing, duplicate: true });
+
+    const thread = this.createThread({ id, ownerSubject, repository, title, source, now });
+    requiredString(eventId, "message id", 128);
+    const message = requiredString(text, "message");
+    requiredString(newSessionId, "new session id", 63);
+    if (this.sessions.has(newSessionId)) throw conflict("session already exists");
+    const session = {
+      id: newSessionId,
+      threadId: thread.id,
+      ordinal: 1,
+      actorSubject: sourceActor,
+      authorityScope: "diagnosis-only",
+      triggerMessageId: eventId,
+      status: "queued",
+      leaseGeneration: 1,
+      leaseExpiresAt: new Date(Date.parse(now) + leaseTtlMs).toISOString(),
+      inboxHeadSequence: 0,
+      inboxAckSequence: 0,
+      contextHeadSequence: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.sessions.set(session.id, session);
+    const mutableThread = this.threads.get(thread.id);
+    mutableThread.activeSessionId = session.id;
+    mutableThread.leaseGeneration = 1;
+    mutableThread.state = "starting";
+    const event = this.#appendEvent(mutableThread, {
+      eventId,
+      sessionId: session.id,
+      actorSubject: sourceActor,
+      type: "system_message",
+      payload: { text: message, source: boundedPayload(source) },
+      createdAt: now,
+    });
+    session.inboxHeadSequence = event.sequence;
+    session.updatedAt = now;
+    mutableThread.updatedAt = now;
+    const result = { thread: clone(mutableThread), event: clone(event), session: clone(session), createdSession: true, duplicate: false };
     this.idempotency.set(key, result);
     return clone(result);
   }
@@ -271,6 +344,147 @@ export class InMemoryThreadStore {
     }
     thread.updatedAt = now;
     return clone({ session, activatedSession });
+  }
+
+  finalizeSessionWithReview({
+    threadId,
+    sessionId,
+    generation,
+    reviewId,
+    question,
+    sourceEventId,
+    now = new Date().toISOString(),
+  }) {
+    requiredString(reviewId, "review id", 128);
+    const boundedQuestion = requiredString(question, "review question", 2_000);
+    requiredString(sourceEventId, "review source event id", 128);
+    if (this.reviews.has(reviewId)) throw conflict("review already exists");
+    const finalized = this.finalizeSession({ threadId, sessionId, generation, now });
+    if (finalized.activatedSession) throw conflict("human review cannot activate queued input");
+    const thread = this.threads.get(threadId);
+    const review = {
+      id: reviewId,
+      threadId,
+      ownerSubject: thread.ownerSubject,
+      sourceSessionId: sessionId,
+      sourceEventId,
+      question: boundedQuestion,
+      questionSha256: `sha256:${crypto.createHash("sha256").update(boundedQuestion).digest("hex")}`,
+      status: "pending",
+      requestedAt: now,
+      decidedAt: null,
+      decidedBy: null,
+      decision: null,
+      decisionEventId: null,
+    };
+    this.reviews.set(review.id, review);
+    thread.pendingReviewId = review.id;
+    thread.state = "review_required";
+    thread.updatedAt = now;
+    return clone({ ...finalized, review, thread });
+  }
+
+  listReviewsForActor({ actor, status = "pending" }) {
+    requiredString(actor, "actor", 256);
+    const allowed = new Set(["pending", "approved", "rejected", "all"]);
+    if (!allowed.has(status)) throw new Error("invalid review status");
+    return [...this.reviews.values()]
+      .filter((review) => review.ownerSubject === actor && (status === "all" || review.status === status))
+      .sort((left, right) => right.requestedAt.localeCompare(left.requestedAt))
+      .map(clone);
+  }
+
+  decideReviewAndRoute({
+    reviewId,
+    actor,
+    decision,
+    decisionId,
+    messageId,
+    newSessionId,
+    now = new Date().toISOString(),
+    leaseTtlMs = 60_000,
+  }) {
+    requiredString(reviewId, "review id", 128);
+    requiredString(actor, "actor", 256);
+    requiredString(decisionId, "decision id", 128);
+    if (!new Set(["approve", "reject"]).has(decision)) throw new Error("decision must be approve or reject");
+    const key = `review:${reviewId}:${actor}:${decisionId}`;
+    const existing = this.idempotency.get(key);
+    if (existing) return clone(existing);
+    const review = this.reviews.get(reviewId);
+    if (!review || review.ownerSubject !== actor) throw notFound();
+    if (review.status !== "pending") throw conflict(`review is already ${review.status}`);
+    const thread = this.#authorizedThread(review.threadId, actor);
+    if (thread.pendingReviewId !== review.id || thread.activeSessionId) throw conflict("review is not the active thread boundary");
+
+    review.status = decision === "approve" ? "approved" : "rejected";
+    review.decision = decision;
+    review.decidedAt = now;
+    review.decidedBy = actor;
+    review.decisionEventId = decisionId;
+    const resolvedEvent = this.#appendEvent(thread, {
+      eventId: decisionId,
+      sessionId: review.sourceSessionId,
+      actorSubject: actor,
+      type: "review_resolved",
+      payload: { reviewId: review.id, decision, questionSha256: review.questionSha256 },
+      createdAt: now,
+    });
+    thread.pendingReviewId = null;
+    thread.updatedAt = now;
+
+    let event = null;
+    let session = null;
+    if (decision === "approve") {
+      requiredString(messageId, "message id", 128);
+      requiredString(newSessionId, "new session id", 63);
+      if (this.sessions.has(newSessionId)) throw conflict("session already exists");
+      const approvalText = [
+        `I approve repair review ${review.id} (${review.questionSha256}).`,
+        "Continue this durable thread in a fresh execution session, limited to the exact reviewed request:",
+        review.question,
+      ].join("\n");
+      session = {
+        id: newSessionId,
+        threadId: thread.id,
+        ordinal: [...this.sessions.values()].filter((candidate) => candidate.threadId === thread.id).length + 1,
+        actorSubject: actor,
+        authorityScope: "human",
+        triggerMessageId: messageId,
+        status: "queued",
+        leaseGeneration: thread.leaseGeneration + 1,
+        leaseExpiresAt: new Date(Date.parse(now) + leaseTtlMs).toISOString(),
+        inboxHeadSequence: 0,
+        inboxAckSequence: 0,
+        contextHeadSequence: thread.headSequence,
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.sessions.set(session.id, session);
+      thread.activeSessionId = session.id;
+      thread.leaseGeneration = session.leaseGeneration;
+      thread.state = "starting";
+      thread.continuationBlocked = false;
+      event = this.#appendEvent(thread, {
+        eventId: messageId,
+        sessionId: session.id,
+        actorSubject: actor,
+        type: "user_message",
+        payload: { text: approvalText, reviewId: review.id, questionSha256: review.questionSha256 },
+        createdAt: now,
+      });
+      session.inboxHeadSequence = event.sequence;
+    } else {
+      thread.state = "review_rejected";
+      thread.continuationBlocked = true;
+    }
+    thread.updatedAt = now;
+    const result = {
+      review: clone(review), resolvedEvent: clone(resolvedEvent), event: clone(event),
+      session: clone(session), thread: clone(thread),
+    };
+    this.idempotency.set(key, result);
+    return clone(result);
   }
 
   publishCheckpoint({ threadId, sessionId, generation, throughSequence, content, sourceDigest, now = new Date().toISOString() }) {
@@ -381,6 +595,7 @@ export class InMemoryThreadStore {
 
 const mutatingMethods = new Set([
   "createThread",
+  "createExternalThreadAndRoute",
   "appendUserMessageAndRoute",
   "markSessionRunning",
   "acknowledgeInbox",
@@ -388,6 +603,8 @@ const mutatingMethods = new Set([
   "appendFencedSessionEvent",
   "renewSessionLease",
   "finalizeSession",
+  "finalizeSessionWithReview",
+  "decideReviewAndRoute",
   "publishCheckpoint",
   "registerArtifact",
 ]);
