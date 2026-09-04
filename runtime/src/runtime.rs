@@ -981,6 +981,10 @@ fn launch_environment(
             env_nonempty("MULTIAGENT_CODEX_HOME_ROOT").unwrap_or_default(),
         ),
         (
+            "MULTIAGENT_WIKI_URL",
+            env_nonempty("MULTIAGENT_WIKI_URL").unwrap_or_default(),
+        ),
+        (
             "MULTIAGENT_TMUX_SOCKET",
             env_nonempty("MULTIAGENT_TMUX_SOCKET").unwrap_or_default(),
         ),

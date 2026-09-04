@@ -51,6 +51,8 @@ jobs:
         run: cargo test --locked
       - name: Run control-server session contracts
         run: npm test --prefix control-server
+      - name: Run Wiki service contracts
+        run: npm test --prefix wiki-service
       - name: Run independent logger contracts
         run: cargo test --locked -p multiagent-logger
       - name: Install terminal-client dependencies

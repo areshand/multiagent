@@ -1,0 +1,4 @@
+*
+!wiki-service/package.json
+!wiki-service/bin/**
+!wiki-service/src/**

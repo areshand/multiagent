@@ -1,0 +1,2038 @@
+{
+  "schema": "wiki-catalog-seed/v1",
+  "repositories": [
+    {
+      "catalogId": "analysis-various",
+      "repository": "MoveIndustries/analysis-various",
+      "url": "https://github.com/MoveIndustries/analysis-various",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "f1777365faf38e890f1c8581af8afe14b02c8ede",
+      "summary": "Collection of code and research for assorted Movement blockchain analyses.",
+      "description": "This repository groups analyses without a single overarching topic. Its documented projects cover Movement mainnet block times, addresses lacking an Account resource, and a research and implementation plan for a Movement-operated NEAR Intents solver; the repository uses Git submodules.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "58e2d739fa841936d2b6345a7a7b84b7296f3d756e30869635e66688047c409e"
+        }
+      ]
+    },
+    {
+      "catalogId": "analytics_bridge_indexer",
+      "repository": "MoveIndustries/analytics_bridge_indexer",
+      "url": "https://github.com/MoveIndustries/analytics_bridge_indexer",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "5f0d1382018c5a23c965446a40de29d36969468d",
+      "summary": "Movement bridge analytics indexer that feeds BigQuery and DuckDB data to an authenticated REST API.",
+      "description": "The service indexes LayerZero OFT and Circle USDCx transfers involving Movement, maintains analytics data in BigQuery, and mirrors dashboard-oriented subsets into local DuckDB. A single Docker container runs its ingesters, materializer, synchronization loop, audits, and FastAPI server on a Linux VM, with persistent watermarks in BigQuery and a Docker volume for DuckDB.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "e8d8b98cbfcf3e2a33fd693575d0d28de74bb23141242a0494d60438e5a835ab"
+        }
+      ]
+    },
+    {
+      "catalogId": "aptos_move_analytics_indexer",
+      "repository": "MoveIndustries/aptos_move_analytics_indexer",
+      "url": "https://github.com/MoveIndustries/aptos_move_analytics_indexer",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "055307c0958c0d124817416dc4010d00ba5471fe",
+      "summary": "Data-science repository containing analytics indexers for the Movement network.",
+      "description": "This repository holds code for assorted network-related data-science projects and describes itself as the current means of chain analytics. Its contents are organized into production, testnet, and bridge-indexer categories.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "cba009a24dba6a6ef52611fc57999aecfc5b0f7c796dbf0b27ae540a9ce70033"
+        }
+      ]
+    },
+    {
+      "catalogId": "aptos-core",
+      "repository": "movement-network/aptos-core",
+      "url": "https://github.com/movement-network/aptos-core",
+      "visibility": "public",
+      "defaultBranch": "m1",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "95b5a3bfa217c6ed1920485225afb4583990c7f2",
+      "summary": "Core codebase for the Move-based Movement layer-one blockchain, with reproducible Nix build support.",
+      "description": "The repository presents Movement as a layer-one blockchain for applications built with Move and provides contribution and ecosystem entry points. Its Nix architecture supplies flake-based, locked, modular definitions for development, CI/CD, Docker builds, and production builds, including handling for complex native dependencies such as RocksDB.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "a56c7ab089267be50ef2b91c1528fef215f7a520d9d793d6deaac631de3619b1"
+        },
+        {
+          "path": "nix/ARCHITECTURE.md",
+          "sha256": "97cfff254470ae4f7570c37a8d71f68ab832e2198cea57015379c29a11637b8e"
+        }
+      ]
+    },
+    {
+      "catalogId": "audit-collection",
+      "repository": "MoveIndustries/Audit-Collection",
+      "url": "https://github.com/MoveIndustries/Audit-Collection",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "59599293c88c5051d5421db0e3f32ab1b2dfb50a",
+      "summary": "Structured archive of security-audit findings, metadata, summaries, and original reports.",
+      "description": "The collection consolidates past audit results sourced from Slack messages, Markdown, Notion, and PDF reports, with an index showing projects, severity counts, and completion status. Each project can include structured metadata, a consolidated summary, individual finding files, and raw report artifacts; audited source code is referenced by repository URL and commit rather than stored here.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "5537ae88d04b16ec2a854a1bc0eb5d6165f278f2d6a1c56459e8bbf0e1b0088b"
+        }
+      ]
+    },
+    {
+      "catalogId": "bcs",
+      "repository": "MoveIndustries/bcs",
+      "url": "https://github.com/MoveIndustries/bcs",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "174354d917d0ed0ad5cac5b75135ad34ed2ae80a",
+      "summary": "Rust implementation of the Binary Canonical Serialization format for Serde data types.",
+      "description": "BCS provides concise, performant binary representations while enforcing one canonical encoding for each supported value. The Rust crate integrates with Serde, supports common structured data types, and applies limits to large or deeply nested inputs to reduce risks from malicious serialized data.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "e914fac73999df4691e1d5b29649ed18301fd6ad894a5e89cb1878e52a3d8d2e"
+        }
+      ]
+    },
+    {
+      "catalogId": "bridge-dashboard",
+      "repository": "MoveIndustries/bridge-dashboard",
+      "url": "https://github.com/MoveIndustries/bridge-dashboard",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "a1a8c32d75109e43c30b1643eeaef92830f5b725",
+      "summary": "Next.js operations dashboard for monitoring Movement bridge activity.",
+      "description": "The dashboard provides overview, transfer, asset, route, and incident views for bridge operations and engineering users. Its UI calls Next.js API routes through a stale-while-revalidate cache, while a provider interface supplies data; the documented initial version uses mock data and is deployed on Vercel, with Upstash Redis or an in-process cache.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "ff5f8f6b05d2bf0629e116c7de982ce5a3adaf299aa39d50f943afabed8def69"
+        }
+      ]
+    },
+    {
+      "catalogId": "calldata_decoder",
+      "repository": "MoveIndustries/calldata_decoder",
+      "url": "https://github.com/MoveIndustries/calldata_decoder",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "b8656a3fe2c8d223f246e78ae8985afdf3082587",
+      "summary": "Offline Ethereum calldata decoder with support for nested Safe and LayerZero calls.",
+      "description": "The Python tool recursively decodes function calldata, including calls nested in Gnosis Safe multiSend transactions and LayerZero configurations. Users provide hexadecimal calldata in an input file and invoke the decoder for a selected chain; the documentation warns that results may contain errors and that Movement-specific JSON requires conversion or additional parser support.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "8cd68135203ba73b5d9052fe0466697f4a8e2913277e0d6ef776fb3e9d824af1"
+        }
+      ]
+    },
+    {
+      "catalogId": "canopy-curator-vault",
+      "repository": "MoveIndustries/canopy-curator-vault",
+      "url": "https://github.com/MoveIndustries/canopy-curator-vault",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "d022c4a18f0bc2d9b2d28e118b95e685953f4c1a",
+      "summary": "Aptos-dialect Move contracts for Canopy's permissioned yield vaults on Movement.",
+      "description": "The contracts implement USDC vaults that allocate capital to curator-managed strategies, issue transferable fungible-asset shares, and process redemptions through compliance checks and queues. The package separates governance, compliance, core vault logic, routing, and adapters, with distinct Owner, Curator, Allocator, and Guardian responsibilities. The documented milestone was deployed and smoke-tested on Movement testnet but had not received a third-party audit and was not intended for real funds.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "aa794ce3535f96a265bf771eca692020437fb0ad742cde7f3c9a10f83a1ec619"
+        },
+        {
+          "path": "ARCHITECTURE.md",
+          "sha256": "0040193e182daac26377f8d66224a572d1a89f7b119b6aea5bb816bab6436469"
+        }
+      ]
+    },
+    {
+      "catalogId": "cctp-xreserve-relayer",
+      "repository": "MoveIndustries/cctp-xreserve-relayer",
+      "url": "https://github.com/MoveIndustries/cctp-xreserve-relayer",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "599966b526173fc7490ea19b216a346fedd532eb",
+      "summary": "Relayer that forwards CCTP V2 burn-with-hook transfers from EVM and Solana through Ethereum xReserve.",
+      "description": "The relayer scans source chains, validates discovered messages against acceptance rules, stores state in SQLite, retrieves Circle attestations, simulates transactions, and submits redemption plus xReserve forwarding on Ethereum. It is a Rust service configured through a TOML file and environment variables, with AWS KMS signing documented for production and local-key signing reserved for testing.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "68449ed2f1173e20fe10c5cfcf085a247a7d84509f81fb6b4c2ae0ad4a704be9"
+        }
+      ]
+    },
+    {
+      "catalogId": "circom-audit-exercise",
+      "repository": "MoveIndustries/circom-audit-exercise",
+      "url": "https://github.com/MoveIndustries/circom-audit-exercise",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "89a9f58efe7a6604e87e48bd2ba0775a7eb9807e",
+      "summary": "Time-boxed Circom security exercise focused on auditing and repairing a one-hot selector.",
+      "description": "The exercise asks participants to analyze the soundness of a OneHotMask gadget used to select token bytes in a zero-knowledge JWT authentication circuit. Deliverables include locating any under-constrained signal, constructing an adversarial witness, implementing a minimal fix, explaining its soundness, and assessing authentication impact.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "d5f72d34e2beb0d76e181d32860b6129ce36e9b3493b90699980efeee8ab6979"
+        }
+      ]
+    },
+    {
+      "catalogId": "claim-backend",
+      "repository": "MoveIndustries/claim-backend",
+      "url": "https://github.com/MoveIndustries/claim-backend",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "123b41457606b7630576af85fd29d3f55e5ba24a",
+      "summary": "Backend for bot-protected, gas-sponsored MOVE faucet claims in the Movement mobile app.",
+      "description": "The service verifies device integrity with Firebase App Check, hashes device identifiers, checks wallet and device claim status on-chain, and signs claim approvals for contract verification. It also signs as a transaction fee payer so new users can claim without holding MOVE, while claim tracking remains on-chain and requires no external database.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "7d36535d254b36d0361107f0f6a39bb16d598bee5e082f3ec2f36c29378682b8"
+        }
+      ]
+    },
+    {
+      "catalogId": "claude-toolkit",
+      "repository": "MoveIndustries/claude-toolkit",
+      "url": "https://github.com/MoveIndustries/claude-toolkit",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "49c44c149a3f3f53146ccaf2062769977abea2d2",
+      "summary": "Deprecated repository formerly containing Claude commands and skills.",
+      "description": "The repository is no longer maintained and is not expected to receive updates. Its commands and skills have moved to the MoveIndustries/Internal-skills repository, which the documentation directs users to adopt instead.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "14da73320898c2b836cd6d4ce17872ffac284440719eaeb4940c149d404c7a11"
+        }
+      ]
+    },
+    {
+      "catalogId": "confidential-asset-wasm-bindings",
+      "repository": "MoveIndustries/confidential-asset-wasm-bindings",
+      "url": "https://github.com/MoveIndustries/confidential-asset-wasm-bindings",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "527d22312a71c10c53344bdd802ce1e1ce684d80",
+      "summary": "WebAssembly bindings for Movement confidential-asset cryptographic operations.",
+      "description": "The repository builds WASM bindings from its pollard-kangaroo and range-proofs subdirectories using Docker-backed scripts. A root script combines those generated artifacts into a unified npm package, which can then be published publicly.",
+      "sources": [
+        {
+          "path": "readme.md",
+          "sha256": "568923a01e4c0a23e03848352fd7dba6a2f6a5787738a0716a391fd1c1bd6686"
+        }
+      ]
+    },
+    {
+      "catalogId": "confidential-payroll",
+      "repository": "MoveIndustries/confidential-payroll",
+      "url": "https://github.com/MoveIndustries/confidential-payroll",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "079fba4677591f8d616a77a446302d740b50b639",
+      "summary": "Movement testnet demo for confidential payroll administration, employee enrollment, and private payouts.",
+      "description": "The application lets Google keyless-authenticated administrators create companies and make batch confidential payments, while employees register, join a company, decrypt incoming pay locally, and cash out. It combines a Move payroll package with a Next.js web application and workspace-local wallet adapters, building on Movement testnet's experimental confidential-asset module.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "ba0cba8c89256422c7e95a6700b90a058baf15484e68a74f5a890979c58419e4"
+        }
+      ]
+    },
+    {
+      "catalogId": "create-movement-app",
+      "repository": "MoveIndustries/create-movement-app",
+      "url": "https://github.com/MoveIndustries/create-movement-app",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "316ee0e4b9cecc36f1f3f1f96b5ec2f5fc6a4ce6",
+      "summary": "Interactive CLI for scaffolding Movement mini applications from hosted templates.",
+      "description": "The command validates an application name, lets the user choose a basic or design-system template, and downloads that template from the mini-app-examples repository. It can detect a package manager and editor, install dependencies, open the generated project, and optionally start its development server.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "359254eac345d7427e3bfa16569d8c8c0bdc1e66eadcda0fa4acfdc26afb024f"
+        }
+      ]
+    },
+    {
+      "catalogId": "cryptography-take-home-kf",
+      "repository": "MoveIndustries/cryptography-take-home-kf",
+      "url": "https://github.com/MoveIndustries/cryptography-take-home-kf",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "ef0f5248c832d5f28a599aeb832505979f4fcb07",
+      "summary": "Cryptography engineering take-home covering Circom soundness and post-quantum signature design.",
+      "description": "The exercise has two parts: auditing and repairing a Circom circuit in this repository, and designing a lattice-based post-quantum signature primitive in an aptos-core fork. Participants submit incremental commits, written answers, and pull requests, with the work evaluated for security reasoning, practical protocol design, and honest treatment of uncertainty.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "5b14f9f8b6da59bd694d6f469647c3b8068076cb0abbf08a1da00eace27d1f89"
+        }
+      ]
+    },
+    {
+      "catalogId": "cryptography-take-home-ms",
+      "repository": "MoveIndustries/cryptography-take-home-ms",
+      "url": "https://github.com/MoveIndustries/cryptography-take-home-ms",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "ae68364f39448c4c7fd2cee60e92be5d2aba2d84",
+      "summary": "Cryptography engineering take-home covering Circom soundness and post-quantum signature design.",
+      "description": "The exercise has two parts: auditing and repairing a Circom circuit in this repository, and designing a lattice-based post-quantum signature primitive in an aptos-core fork. Participants submit incremental commits, written answers, and pull requests, with the work evaluated for security reasoning, practical protocol design, and honest treatment of uncertainty.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "5b14f9f8b6da59bd694d6f469647c3b8068076cb0abbf08a1da00eace27d1f89"
+        }
+      ]
+    },
+    {
+      "catalogId": "curator-dashboard",
+      "repository": "MoveIndustries/curator-dashboard",
+      "url": "https://github.com/MoveIndustries/curator-dashboard",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "d4137cc4a68a04ecd81228ec6c91b7006086b7de",
+      "summary": "Administrative console for operating Curator Vault contracts and reviewing vault state.",
+      "description": "The dashboard exposes role-specific controls and data for Curators, Owners, Allocators, and Guardians, including capital positions, limits, timelock work, redemption queues, and emergency actions. It is a locally runnable web application with a production build path; because the vault package lacked a published address, the documented version operated in a clearly labeled demo mode backed by typed fixtures.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "4fa332a4ec8bd654ef8ba5d0930c8f042eba325329f2484fcd89b006ce8449ca"
+        }
+      ]
+    },
+    {
+      "catalogId": "data-science-dashboard",
+      "repository": "MoveIndustries/data-science-dashboard",
+      "url": "https://github.com/MoveIndustries/data-science-dashboard",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "c59ae6f41742cdca47201eb83174d09890a04fcd",
+      "summary": "Streamlit staging repository for developing Movement analytics dashboard pages and features.",
+      "description": "This repository is a staging environment whose updates are manually integrated into a separately deployed Cloud Run application. The dashboard runs locally with Streamlit in a Python virtual environment and expects local Streamlit configuration for required secrets.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "c0d57d63c310d3ace4ba498edf59e927f790dec1eb15258cb15a0f32679c2f2f"
+        }
+      ]
+    },
+    {
+      "catalogId": "defi-mm",
+      "repository": "MoveIndustries/defi-mm",
+      "url": "https://github.com/MoveIndustries/defi-mm",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "a6aa7437484f8552a3f9fb80fbece0e40a0ef29d",
+      "summary": "Next.js application scaffold using the standard create-next-app development workflow.",
+      "description": "The documented repository is a Next.js project whose main page can be edited under app/page.tsx with automatic development refresh. It uses next/font for Geist font loading, supports the standard Node package-manager development commands, and can be deployed through Vercel.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "60b55ff7df79af72590f9524208e46642bc32bdc175cdad41349681c0e2f958f"
+        }
+      ]
+    },
+    {
+      "catalogId": "design-system",
+      "repository": "MoveIndustries/design-system",
+      "url": "https://github.com/MoveIndustries/design-system",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "bec9f64df92b260d603f180fcea39ac0e93b85da",
+      "summary": "Lean replacement package for Move Industries' previous component design system.",
+      "description": "The package separates generic primitives, branded layout elements, wallet UI, brand icons, hooks, utilities, and CSS tokens into deliberate entry points. It is documented as scaffolding with placeholder tokens, stubbed brand icons, and Storybook and tests still unwired, allowing consuming applications to migrate gradually alongside the older package.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "b6dd1be16a40f3906626067a8f364d16d92bdf18355ea7fdb5614f7dcf2d1166"
+        }
+      ]
+    },
+    {
+      "catalogId": "discord_pipeline",
+      "repository": "MoveIndustries/discord_pipeline",
+      "url": "https://github.com/MoveIndustries/discord_pipeline",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "75a0d95534a397fdfb96c61acf61ad4974c3d384",
+      "summary": "Discord ingestion pipeline with catch-up and real-time synchronization to SQLite or BigQuery.",
+      "description": "The CLI configures one-shot or continuous execution, database selection, channel exclusions, user blacklisting, and message retention. Its Discord client first synchronizes members and message history, then enables real-time event ingestion to avoid advancing cursors before catch-up completes; storage is selected through a common backend interface supporting SQLite and BigQuery.",
+      "sources": [
+        {
+          "path": "discord_pipeline/__main__.py",
+          "sha256": "effa6a106414ea2f9daffa8ecfe691944ea9b215dc132a73842e1eb5cc5402dc"
+        },
+        {
+          "path": "discord_pipeline/bot.py",
+          "sha256": "db74243b524706ad9a41a013e54c4fcedba4cdfc39111a1b03f8a9b36aafa241"
+        }
+      ]
+    },
+    {
+      "catalogId": "ecosystem_analytics",
+      "repository": "MoveIndustries/ecosystem_analytics",
+      "url": "https://github.com/MoveIndustries/ecosystem_analytics",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "cb4da50ebe8af59a21a358f16a9aa338bf003c7f",
+      "summary": "Incremental Movement ecosystem analytics pipeline that produces curated BigQuery datasets.",
+      "description": "The pipeline discovers protocols, curates assets, indexes prices from CoinGecko and liquidity pools, and computes daily asset, protocol, network, collection, pool, fee, and balance tables. An orchestrator runs its resource, protocol, asset, pricing, and analytics modules from checkpoints, automatically performing a full genesis scan on first use. It supports local Python execution and Docker-based status, full-pipeline, or module-specific runs.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "927a106984f480251828d44e3fc353445f47df9dbb7084c6edeb5b4e40f6ffa1"
+        }
+      ]
+    },
+    {
+      "catalogId": "engineering-standards",
+      "repository": "MoveIndustries/engineering-standards",
+      "url": "https://github.com/MoveIndustries/engineering-standards",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "ea89204976deb10c438d88e815e267210adf6b19",
+      "summary": "Version-controlled coding standards and development-process runbooks for Move Industries engineering.",
+      "description": "The repository contains review, release, testing, and secrets-hygiene rules, development runbooks, and a map connecting these artifacts to the organization's ISO 27001 policies. Governance policies remain in Notion, infrastructure material remains in the SRE repository referenced as a Git submodule, and enforcement remains within individual repositories and CI systems.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "02ff81690ac7163e12a1d8506c423393889e59422e68b21d48e1ab146aa505e5"
+        }
+      ]
+    },
+    {
+      "catalogId": "exchange-alerts",
+      "repository": "MoveIndustries/exchange-alerts",
+      "url": "https://github.com/MoveIndustries/exchange-alerts",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "8299bf0955418817b09120f57b65fe6ef5b037fa",
+      "summary": "Telegram bot that monitors MOVE deposit and withdrawal availability across seven exchanges.",
+      "description": "The bot exposes status commands and periodically checks Binance, OKX, Bybit, Gate, MEXC, Bitget, and Coinbase for changes. In production, Telegram webhooks and Vercel cron invoke serverless handlers while state is persisted through a pinned Telegram message; local development uses long polling, an in-memory state, and interval-based checks.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "c1a6547ccd60bb712ef4b7c39a6c370c90bff5f7fadebd01da2d32b2d3101545"
+        }
+      ]
+    },
+    {
+      "catalogId": "faucet-rebrand",
+      "repository": "MoveIndustries/faucet-rebrand",
+      "url": "https://github.com/MoveIndustries/faucet-rebrand",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "997df5bd5096801878202eb6d086f5e62ac4f871",
+      "summary": "Next.js faucet for distributing MOVE and test assets on Movement testnet.",
+      "description": "Users can paste a testnet address to request MOVE through a captcha-protected, rate-limited server endpoint or connect a wallet to mint supported test tokens through a client-signed transaction. The server-side route handles Turnstile verification, faucet authorization, and Upstash-backed limits while keeping server configuration out of the client bundle.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "edc4a5569f6d5dd10d1593b4a08a5b8cc583e911388694ae12f3223a35773659"
+        }
+      ]
+    },
+    {
+      "catalogId": "fe-e2e-testing",
+      "repository": "MoveIndustries/fe-e2e-testing",
+      "url": "https://github.com/MoveIndustries/fe-e2e-testing",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "e6b603026f9bdc80dcd5132e6c94c9b046b4fca6",
+      "summary": "Playwright and TypeScript end-to-end test framework for Movement Bridge wallet flows.",
+      "description": "The framework follows the Page Object Model and provides fixtures, page abstractions, helpers, shared components, and test data for MetaMask and Nightly wallets. It supports wallet-connection tests and bridge flows in headed Chromium, with separate Playwright configurations for MetaMask, Nightly, and combined scenarios.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "f9eadea73353a79b2cc97302b43557f919fce209a40f6b09b8b72ddfa057f6fa"
+        }
+      ]
+    },
+    {
+      "catalogId": "forklift",
+      "repository": "MoveIndustries/forklift",
+      "url": "https://github.com/MoveIndustries/forklift",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "3cc7283f3ae5ebedd869a669efb216d7ef66ddfb",
+      "summary": "TypeScript framework for simulating, testing, and scripting Movement Move contracts.",
+      "description": "Forklift exposes a unified Harness interface for in-memory local simulation, forks of Movement network state, and live-network execution. It provides isolated and repeatable sessions for development and CI while avoiding manual validator management, and uses the Movement CLI for simulation, forking, and live commands.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "324f9bdf68a704d1c2372d13a5eda3764e9124af3f788be829861b6017427fb1"
+        }
+      ]
+    },
+    {
+      "catalogId": "gmove-multisig",
+      "repository": "MoveIndustries/gmove-multisig",
+      "url": "https://github.com/MoveIndustries/gmove-multisig",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "9b242c7ca5de278110c7533b41535dba83488040",
+      "summary": "Web-based native multisig manager for Movement accounts and fungible assets.",
+      "description": "The application creates and discovers multisigs, displays balances and owners, submits transfers or arbitrary Move calls, and manages proposal approval, rejection, execution, and cleanup. Its Next.js and React interface uses the Aptos TypeScript SDK and wallet adapter, supports Movement mainnet and testnet, integrates Nightly and Ledger, and is designed for Vercel deployment.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "f2e3bf4d6905deb9115b1a48e9508cc1773f6752fb927c7d607fc31e1b0203c4"
+        }
+      ]
+    },
+    {
+      "catalogId": "governanceproposal",
+      "repository": "MoveIndustries/GovernanceProposal",
+      "url": "https://github.com/MoveIndustries/GovernanceProposal",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "9bf337d6cb97bde470a240379f5554bb4ed5e98d",
+      "summary": "Repository and workflow guidance for Movement governance proposal scripts and metadata.",
+      "description": "The documentation covers defining proposals manually or with the Aptos release builder, generating framework and gas-schedule upgrade scripts, and organizing proposal artifacts under mainnet or testnet directories. It describes the lifecycle from proposal creation through voting, approval or rejection, and execution, together with repository naming conventions.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "b31da62a234ced47335fb1eb7c8b30531d347293b57a9605d285edc6689a8720"
+        }
+      ]
+    },
+    {
+      "catalogId": "hermes-vuln-monitor",
+      "repository": "MoveIndustries/hermes-vuln-monitor",
+      "url": "https://github.com/MoveIndustries/hermes-vuln-monitor",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "dfc0e69dc57fe8a9f4e095a236482908ba09727b",
+      "summary": "Reproducible on-prem Hermes agent profile for monitoring vulnerabilities affecting Move Industries.",
+      "description": "The repository defines the monitor's non-secret configuration, persona and delivery rules, environment template, provisioning script, and launchd service template. Provisioning creates an isolated local profile that uses an existing Hermes installation and local Ollama model, preserves separately stored credentials, and installs the launch agent without automatically loading it.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "abb9f811f07b8812240a082821080490c8370e1b3823f7293200d7d018993d9f"
+        }
+      ]
+    },
+    {
+      "catalogId": "homebrew-movement",
+      "repository": "MoveIndustries/homebrew-movement",
+      "url": "https://github.com/MoveIndustries/homebrew-movement",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "10b1dd97a16dcffdb5ec42150100d1df5d99573e",
+      "summary": "Homebrew tap for installing and upgrading the Movement blockchain CLI.",
+      "description": "The tap distributes Movement CLI builds for Apple Silicon and Intel macOS as well as x86-64 Linux. Its update script downloads release archives, calculates platform-specific SHA-256 checksums, and updates the Homebrew formula with the new version and hashes before maintainers review and publish the change.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "348a2e8091da9e78f7dc0c567fa3b18cc3361c06bd710cf5e777de401cf3614c"
+        }
+      ]
+    },
+    {
+      "catalogId": "int3nts",
+      "repository": "MoveIndustries/int3nts",
+      "url": "https://github.com/MoveIndustries/int3nts",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "d87f6bc5725e4d44022b6e6578123299827dfebe",
+      "summary": "Experimental framework for cross-chain intents across Movement, EVM, and Solana environments.",
+      "description": "The repository combines chain-specific intent frameworks, a coordinator, an integrated generic-message-passing relay, a frontend, SDK, solver tooling, and Docker-based integration tests. Validation occurs in on-chain contracts while the relay polls outbound messages and delivers them between an MVM hub and connected MVM, EVM, or SVM chains. The project is explicitly under active development and not production-ready.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "4a529a6ba20a28b87690e62e75e04aec1a992cdc03207e14f3ffcec5b0e5b2e5"
+        },
+        {
+          "path": "docs/integrated-gmp/architecture.md",
+          "sha256": "44a304febfbfa60baa6c8d84eed9be689a8ffc135671c8089503086d9bdd86a0"
+        }
+      ]
+    },
+    {
+      "catalogId": "internal-ops",
+      "repository": "MoveIndustries/internal-ops",
+      "url": "https://github.com/MoveIndustries/internal-ops",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "sourceStatus": "empty",
+      "resolvedCommitSha": null,
+      "summary": "Empty private repository with no source material available for cataloging.",
+      "description": "GitHub reports that this repository is empty. No source-backed description of its purpose, components, data flow, runtime, or deployment shape is available.",
+      "sources": []
+    },
+    {
+      "catalogId": "internal-skills",
+      "repository": "MoveIndustries/Internal-skills",
+      "url": "https://github.com/MoveIndustries/Internal-skills",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "02bc875f684b5474cd070caa213bf838221b01c7",
+      "summary": "Internal plugin marketplace for reusable Claude Code skills across Move Industries engineering teams.",
+      "description": "The repository provides a template, installation guidance, best practices, and a marketplace catalog for prompt-based extensions covering reference material, verification, analysis, automation, scaffolding, review, deployment, runbooks, and infrastructure operations. Contributors create a plugin directory with a manifest and SKILL.md, test it locally, register it in the marketplace, and submit it through a documented promotion and review process.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "48d78ff6e72bd9f769fe94583fc9d8d2b987ecb8e0c285e30723ddb1e0d11f03"
+        }
+      ]
+    },
+    {
+      "catalogId": "internalops",
+      "repository": "MoveIndustries/InternalOps",
+      "url": "https://github.com/MoveIndustries/InternalOps",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "e90923586812a6aeacf17c493d1051ec57d60934",
+      "summary": "Deployment tooling for isolated Movement validator environments backed by NodeInfra.",
+      "description": "Each validator has its own environment and identity material under a validator directory and is managed through a repository-level Python deployment tool. The workflow uses Poetry, AWS CLI, kubectl, and Git submodules to deploy, validate, inspect, and destroy individual or parallel groups of AWS-based validator, validator-fullnode, and fullnode resources. End-to-end tests exercise the real deployment, health-check, and teardown lifecycle.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "85de8193c2ae7003d63949f4eb82056cba68ca96b7025ca224d2096da99c7a98"
+        }
+      ]
+    },
+    {
+      "catalogId": "internalservices",
+      "repository": "MoveIndustries/InternalServices",
+      "url": "https://github.com/MoveIndustries/InternalServices.git",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "82cbdbe1fdad94912c2effb4c8badbd5b8667401",
+      "summary": "Catalog-managed AWS and Kubernetes deployments for Movement internal services.",
+      "description": "InternalServices is the deployment and infrastructure repository for internal Movement workloads. Its catalog defines services, AWS accounts, regions, cluster identity, and cross-layer facts; its OpenTofu roots separate account bootstrap, shared platform and cluster add-ons, state backends, and service releases. The documented trust model keeps administrator-owned platform provisioning separate from reviewer-gated GitHub service plan/apply workflows, and gives runtime pods service-specific IRSA rather than deployment credentials.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "10b5a3bffa4676c441bb285c6ebee7937369bdd39e70ffc16f72ba108354535d"
+        }
+      ]
+    },
+    {
+      "catalogId": "kast-airdrop-api",
+      "repository": "MoveIndustries/kast-airdrop-api",
+      "url": "https://github.com/MoveIndustries/kast-airdrop-api.git",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "2d37c212fad140664b72b234d9ae346a953fdbe8",
+      "summary": "A MOVE-token airdrop system with a Next.js API, Move contracts, and an operator documentation site.",
+      "description": "This repository groups an API backend, on-chain Move contracts, and a Nextra documentation site for distributing MOVE on Movement Network. The documented controls include bearer-token, API-key, and HMAC authentication, privacy-preserving on-chain handling, pause/unpause, rate limiting, balance monitoring, and Slack alerts.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "76da3c1e81952bffb7c4e67fa0f8feb7399b55ab663351c192c034d5a9ecb206"
+        }
+      ]
+    },
+    {
+      "catalogId": "keyless-playground",
+      "repository": "MoveIndustries/keyless-playground",
+      "url": "https://github.com/MoveIndustries/keyless-playground.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "8f5ae5d9350997f472b8a2dd7890a37ddeb9d1d7",
+      "summary": "A web playground for Movement keyless Google sign-in and AIP-62 wallet flows.",
+      "description": "This pnpm workspace contains a Next.js demonstration that combines Google keyless authentication and AIP-62 wallet behavior in one connect-wallet interface. It consumes the published Movement keyless SDK and keyless/passkey wallet adapters, can proxy proof requests to a hosted or local prover, and is documented as testnet-only at the captured commit.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "ff33e21edda9cb3b6d86b967c4762c0ee53d8accbea7ae36f940ee55fd910668"
+        }
+      ]
+    },
+    {
+      "catalogId": "keyless-zk-proofs",
+      "repository": "MoveIndustries/keyless-zk-proofs",
+      "url": "https://github.com/MoveIndustries/keyless-zk-proofs.git",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "25729d026b9f5335bd4bdbc12781ee9df49ee4b0",
+      "summary": "Circom circuits and a proving service for the AIP-61 keyless zero-knowledge relation.",
+      "description": "The repository implements the Aptos AIP-61 keyless ZK relation in Circom and includes the associated proving service. It also contains circuit and prover tests, shared Rust code, development/setup scripts, and a verification-key diff tool for comparing VK material.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "fbac04035e8f64267147336bab9d43bf7dc02f772ad19cd3e508deabcd5279c4"
+        }
+      ]
+    },
+    {
+      "catalogId": "large-packages",
+      "repository": "MoveIndustries/large-packages",
+      "url": "https://github.com/MoveIndustries/large-packages.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "f79a77c6e9a5abdf1a925c0c2a436286d0b47ac7",
+      "summary": "A Move module for staging and publishing packages whose bytecode must be uploaded in chunks.",
+      "description": "The immutable `large_packages` Move package accumulates serialized metadata and indexed module byte chunks in a SmartTable-backed staging resource. Final entry functions assemble contiguous chunks and publish to an account or object, or upgrade object code, then clean up the staging area; missing chunk indices cause assembly to abort.",
+      "sources": [
+        {
+          "path": "Move.toml",
+          "sha256": "7bb318d9f588b925a59a694e79b97760d6116dd9b5aa962907e794229831b019"
+        },
+        {
+          "path": "sources/large_packages.move",
+          "sha256": "27d66958efded7640b8b29fb21f64c2163f475207727ac79f97b305ff0ee24c4"
+        }
+      ]
+    },
+    {
+      "catalogId": "m1-upstream-watch-prototype",
+      "repository": "MoveIndustries/m1-upstream-watch-prototype",
+      "url": "https://github.com/MoveIndustries/m1-upstream-watch-prototype.git",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "4522ec47564912343f77efd65e1cc3d2d8096cef",
+      "summary": "A daily monitor for upstream aptos-core fixes that may need backporting to Movement's m1 fork.",
+      "description": "A scheduled GitHub Actions workflow invokes a focused Claude Code skill to compare m1 with upstream aptos-core, classify recent security and correctness changes, and run relevance analyzers. It writes BackportCandidate JSON records and posts a digest to Slack; the README states that the workflow has no write access to protected branches.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "9905281cbe96ffa2374baaeb7d261016f4d339d28e1ff181ca7c08a3b1e790cd"
+        }
+      ]
+    },
+    {
+      "catalogId": "merlin",
+      "repository": "MoveIndustries/merlin",
+      "url": "https://github.com/MoveIndustries/merlin.git",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "3454ccc85e37355c729ba40e6dac6e867ddf59f5",
+      "summary": "A Rust implementation of composable STROBE-based proof transcripts for public-coin arguments of knowledge.",
+      "description": "Merlin automates the Fiat-Shamir transform so non-interactive proofs can be implemented using an interactive transcript interface. Its transcript construction supplies domain separation, message framing, multi-round protocol support, composition, and a transcript-derived RNG intended as defense in depth against weak prover entropy.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "7b184bfaa764e36cc7ea05bb7ee74e3fb270ea8d1e0a9aef50f35b5a1244b2bc"
+        }
+      ]
+    },
+    {
+      "catalogId": "mesh-playground",
+      "repository": "MoveIndustries/mesh-playground",
+      "url": "https://github.com/MoveIndustries/mesh-playground.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "515e13dc90ca1be7a583358ddab5d2d05a3dece0",
+      "summary": "A Next.js playground for demonstrating Mesh Connect integrations to Movement partners.",
+      "description": "The application explores Mesh networks and tokens, launches Mesh Link, and displays crypto holdings and fiat balances across sandbox and production modes. Mesh credentials remain in a server-side proxy or HTTP-only cookie, while a redacted in-memory inspector streams API events to the UI; transfer support is documented as planned rather than complete.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "e309eb4323a6cb1857215ad595443f120fc5b75c15467587ef00a1babe3f9bca"
+        }
+      ]
+    },
+    {
+      "catalogId": "mike-ross-legal-agent",
+      "repository": "MoveIndustries/mike-ross-legal-agent",
+      "url": "https://github.com/MoveIndustries/mike-ross-legal-agent.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "a0c55242acc5154ced8063b3e1ba3252a48352e0",
+      "summary": "A Next.js legal chat portal backed by the Mike Ross model through Hermes APIs.",
+      "description": "This repository implements a private Next.js `legal-portal` with authentication and a legal chat interface. Its Hermes client calls responses, runs, event-stream, and chat-completions endpoints with the `mike-ross` model; package dependencies include DOCX generation and Word/PDF/Markdown processing.",
+      "sources": [
+        {
+          "path": "lib/hermes.ts",
+          "sha256": "9d13334ef45973300641a3074c4a050b7e1279bcf2255af64d5c11175c60f85a"
+        },
+        {
+          "path": "package.json",
+          "sha256": "fe8e76fc29db75d7bbef47dcaf9ff4fee42b592259b105c4f20139b053443b7b"
+        },
+        {
+          "path": "README.md",
+          "sha256": "60b55ff7df79af72590f9524208e46642bc32bdc175cdad41349681c0e2f958f"
+        }
+      ]
+    },
+    {
+      "catalogId": "mini-app-examples",
+      "repository": "MoveIndustries/mini-app-examples",
+      "url": "https://github.com/MoveIndustries/mini-app-examples.git",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "43a4cda4e669159b88f81465a6470425f075d6de",
+      "summary": "Example Movement Mini Apps, builder documentation, contracts, and publishing tools.",
+      "description": "The repository contains starter and demonstration apps for the Movement Mini App SDK, including token sending, bridging, social, staking, sharing, and a broad SDK feature showcase. It also carries builder documentation, a Move app-registry contract, and a publishing administration UI. The docs cover wallet transactions, native device features, storage, biometrics, navigation, validation, and Movement design-system conventions.",
+      "sources": [
+        {
+          "path": "builders-apps-docs/docs/guidelines/design.md",
+          "sha256": "7e7f21b23c5961841ddc7fc4e514667f10e9939812c7a665d4fea9b7b5ed3dc1"
+        },
+        {
+          "path": "builders-apps-docs/docs/sdk/overview.md",
+          "sha256": "4d274fd67470251fcc0be9876e1b7268954841fe96c28c7b02e2bd28bc0f3de4"
+        },
+        {
+          "path": "README.md",
+          "sha256": "000224f71f0e80e0879e4d90e5bbe9194236dfc55eb208c255d7313bd7b86b6f"
+        }
+      ]
+    },
+    {
+      "catalogId": "mini-app-sdk",
+      "repository": "MoveIndustries/mini-app-sdk",
+      "url": "https://github.com/MoveIndustries/mini-app-sdk.git",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "cf8be7b3ff7d06aa0eb31c9f2999b71c8fc92523",
+      "summary": "The TypeScript SDK used by blockchain-powered Mini Apps inside the Movement Everything app.",
+      "description": "The package exposes vanilla JavaScript and React interfaces for detecting the host, connecting the user's wallet, reading the account, sending transactions, and signing messages. Optional host capabilities include haptics, notifications, URL navigation, and closing an app, with TypeScript types and React hooks supplied for integration.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "3f64d311578424360d967437f32808056ebbd5fe308722d14d4ff61c7b967051"
+        }
+      ]
+    },
+    {
+      "catalogId": "mip",
+      "repository": "MoveIndustries/MIP",
+      "url": "https://github.com/MoveIndustries/MIP.git",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "54cc2e8ab312d2d29fc44f88f048c0739e8de9f9",
+      "summary": "The canonical repository for Movement Improvement Proposals and their lifecycle documentation.",
+      "description": "MIPs describe proposed standards and changes spanning the Movement protocol, Move development platform, smart contracts and verification, network operation, and public APIs. The repository defines the proposal template, file naming, submission workflow, proposal types, status progression, categories, feedback process, and treatment of rejected or stale proposals.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "5a055a98897228d45d31ae901f89e0b7241b29f55d7d9dc5be30bd8a97ac7a4f"
+        }
+      ]
+    },
+    {
+      "catalogId": "mobile-app-notifications",
+      "repository": "MoveIndustries/mobile-app-notifications",
+      "url": "https://github.com/MoveIndustries/mobile-app-notifications.git",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "e6dc74bfc93aadf3514710469c5e831e1cacd853",
+      "summary": "A push-notification API and administration dashboard for the Movement wallet ecosystem.",
+      "description": "This Next.js service registers iOS and Android devices, associates wallet addresses with devices, and delivers notifications through Expo Push Notifications. It supports audience targeting by wallet, provider, or registration state, provides an admin sending dashboard, and records delivery counts and notification history in Supabase/PostgreSQL.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "07cb0134ef516d3bbf1b216efecfa97d64c543e65c9d8f97c1908fa261c89660"
+        }
+      ]
+    },
+    {
+      "catalogId": "motion_landing_page",
+      "repository": "MoveIndustries/motion_landing_page",
+      "url": "https://github.com/MoveIndustries/motion_landing_page.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "1a806a1acdaeac3cb5158ae7910e5eab5723e8d8",
+      "summary": "The public Next.js landing site for the Motion browser wallet.",
+      "description": "This marketing application presents Motion as a Movement-native, self-custodial Chrome wallet and links users to its Chrome Web Store listing. It uses the Movement design system, animated React components, product imagery, and published audit PDFs, with product copy emphasizing local key custody and Movement-focused send, swap, and signing flows.",
+      "sources": [
+        {
+          "path": "package.json",
+          "sha256": "b60dcbe8e94611668f2fb49500f6fb19ad91585df975bdbdb98cf3eb2d717a65"
+        },
+        {
+          "path": "README.md",
+          "sha256": "60b55ff7df79af72590f9524208e46642bc32bdc175cdad41349681c0e2f958f"
+        },
+        {
+          "path": "src/app/page.tsx",
+          "sha256": "51b8235c713e5b99211a91b482023ff2b0d1c1466527230642e92d2aed409c57"
+        }
+      ]
+    },
+    {
+      "catalogId": "motion-wallet",
+      "repository": "MoveIndustries/motion-wallet",
+      "url": "https://github.com/MoveIndustries/motion-wallet.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "6adfa2570a539563e68b2a3e296fd693c776683e",
+      "summary": "A self-custodial Chrome extension wallet for the Movement blockchain.",
+      "description": "Motion Wallet creates or imports accounts from BIP39 phrases, private keys, or Ledger devices and supports multiple local wallets. Its documented user flows cover MOVE transfers, balances and history, Yuzu swaps, bridge links, testnet/mainnet selection, and AIP-62 dApp connections. Key material is encrypted locally, with hardware-wallet signing delegated to Ledger over WebHID.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "a6cab0283cb195b40ef32af2cf9d7faf54b89d5fd1cf23d0e903692c5931cf69"
+        }
+      ]
+    },
+    {
+      "catalogId": "motion-wallet-mobile-apps",
+      "repository": "MoveIndustries/motion-wallet-mobile-apps",
+      "url": "https://github.com/MoveIndustries/motion-wallet-mobile-apps.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "26f753f0f9c164c529428150d43e2c49f202b3ee",
+      "summary": "Native iOS and Android ports of Motion Wallet for Movement Network.",
+      "description": "The repository contains a SwiftUI iOS application and Kotlin/Compose Android application aligned with the browser extension's derivation, signing, and self-custody rules. Its architecture separates UI, wallet core, RPC and signing services, and secure key storage; documented flows include wallet creation/import, MOVE transfers, dApp connections, biometrics/PIN protection, and network switching.",
+      "sources": [
+        {
+          "path": "docs/IOS-TEST-REPORT.md",
+          "sha256": "d18aa9486fea8e267bce3612ed1c5b94c1e11e3df1e1339ad9023820f45af426"
+        },
+        {
+          "path": "ios/MovementWallet/Resources/MovementWallet.docc/Architecture.md",
+          "sha256": "cea4f1a29cb6ae159363f387e96e2d79643ecbb49abb95141b65f54500cbd46a"
+        },
+        {
+          "path": "README.md",
+          "sha256": "f6d4c89da8d9b69750e23b9da13d6e84d0d22f038d4859da9e5231dcd22ab255"
+        }
+      ]
+    },
+    {
+      "catalogId": "move-africa",
+      "repository": "MoveIndustries/move-africa",
+      "url": "https://github.com/MoveIndustries/move-africa.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "1a1364bbba7cb0553cca59ad83bfa2b8e57e7541",
+      "summary": "The MoveAfrica website for stablecoin accounts, payments, and on/off-ramps in Africa and the Middle East.",
+      "description": "This Next.js site describes MoveAfrica as a Djibouti-based digital-asset fintech building stable-dollar accounts and wallets, cross-border payment rails, and on/off-ramp APIs. Its repository-provided machine-readable copy states that the service is powered by Movement and is designed around fully backed balances, traceability, KYC, AML, and local rules.",
+      "sources": [
+        {
+          "path": "app/page.tsx",
+          "sha256": "8e9e1001e7f193585e6717edb9dbe1343ef4817f5c320cfec6d4e8f069704fee"
+        },
+        {
+          "path": "public/llms.txt",
+          "sha256": "1c84d55d3f8978f5666b6c39f0a42a00edf1a8e5f065e2f365a3590f5879c660"
+        }
+      ]
+    },
+    {
+      "catalogId": "move-ai-audit-prototype",
+      "repository": "MoveIndustries/move-ai-audit-prototype",
+      "url": "https://github.com/MoveIndustries/move-ai-audit-prototype.git",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "aec5d14e2abd4375858d80df95750dcb4a2c4b6f",
+      "summary": "A Claude Code plugin marketplace for evidence-driven Move smart-contract security audits.",
+      "description": "The repository packages a `move-audit` plugin that organizes an audit into reconnaissance, breadth, depth, chain analysis, verification, and reporting stages using parallel agents. The README also documents optional Prod MCP pull-request audit integration, vulnerability-database access, confidence scoring, and an optimization feedback loop.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "5acd50b134409da45d16615b0e4193f0eb4c91933bf58c89609eb4dcae254345"
+        }
+      ]
+    },
+    {
+      "catalogId": "move-auto-audit",
+      "repository": "MoveIndustries/move-auto-audit",
+      "url": "https://github.com/MoveIndustries/move-auto-audit.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "cc923c4761c3ccb8a25c04bdfaa1083f2cbc6537",
+      "summary": "A Rust CLI for LLM-assisted Move security review with static evidence and sandboxed verification.",
+      "description": "The tool collects compiler and test logs, parser summaries, bytecode disassembly, and static call graphs under fixed evidence budgets before asking a model to rank and explain risks. High-severity findings can drive bounded, template-based local verification in a later round; generated shell strings are not executed, and human source/deployment confirmation remains required.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "1f1167491d7d441b7e3adc7d968af9f49294fe72f5bc2d6d966b54f5b38392ee"
+        }
+      ]
+    },
+    {
+      "catalogId": "move-by-examples",
+      "repository": "MoveIndustries/move-by-examples",
+      "url": "https://github.com/MoveIndustries/move-by-examples.git",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "50fe2af87660b9a602b7df50dfc792dc10d8b510",
+      "summary": "A collection of Aptos Move examples for developers learning common smart-contract patterns.",
+      "description": "Examples cover contract creation, custom data structures, read/write entry points, events, fungible and non-fungible tokens, transfers, cross-contract calls, tests, deployment, and upgrades. Some examples include Solidity or Solana counterparts to help developers compare equivalent concepts across ecosystems.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "5a1d30911f26d926a0e392e79647765152c37b3fda99f26795158853cb174d9c"
+        }
+      ]
+    },
+    {
+      "catalogId": "move-fuzzer",
+      "repository": "MoveIndustries/move-fuzzer",
+      "url": "https://github.com/MoveIndustries/move-fuzzer.git",
+      "visibility": "public",
+      "defaultBranch": "master",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "01f7e0c829c2f2ef3e17bedee0ead5195e191529",
+      "summary": "A Move smart-contract fuzzer supporting Aptos and Sui dialects.",
+      "description": "This Rust project is a fork of sui-fuzzer extended for Aptos Move and positioned as a general Move fuzzer. It uses chain-specific framework and VM dependencies and provides stateless and stateful runners with feedback such as coverage or gas-informed mutation, plus native and Docker build/run paths.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "bab1d946004c3a504ca0ae1e94627d1173612f8cc829ad9e62a7d8e435ee2059"
+        }
+      ]
+    },
+    {
+      "catalogId": "move-skills",
+      "repository": "MoveIndustries/move-skills",
+      "url": "https://github.com/MoveIndustries/move-skills.git",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "dba67f2efafffad51224f068deb943eacea28f66",
+      "summary": "Agent skills and MCP tools for developing Move contracts on Movement.",
+      "description": "This plugin provides Move project templates, example and pattern search, compiler-error assistance, and a Move expert skill for Claude Code-compatible environments. The README documents installation through skills tooling or a plugin marketplace and lists its supported commands, MCP tools, network configuration, and prerequisites.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "3c9f03cb1cd017c1f4b9c5ed11ffc800a32e85b85074f2575e27df7d2a0862e2"
+        }
+      ]
+    },
+    {
+      "catalogId": "move-ts-auditor-prototype",
+      "repository": "MoveIndustries/move-ts-auditor-prototype",
+      "url": "https://github.com/MoveIndustries/move-ts-auditor-prototype.git",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "sourceStatus": "empty",
+      "resolvedCommitSha": null,
+      "summary": "Empty repository; no source-grounded functional summary is available.",
+      "description": "GitHub reports this private repository with a default branch named `main`, but it contains no commit and no readable source files at the captured time. Catalog generation therefore cannot describe an implementation without inventing information.",
+      "sources": []
+    },
+    {
+      "catalogId": "movement-blog-agent",
+      "repository": "MoveIndustries/movement-blog-agent",
+      "url": "https://github.com/MoveIndustries/movement-blog-agent.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "70e774abd1fe3e126a44d313b97dadb1d65631df",
+      "summary": "A dashboard for AI-assisted Movement blog drafting, review, and publication workflows.",
+      "description": "The design documents specify a Next.js application backed by Supabase for posts, social snippets, AI logs, and stored assets. It uses Claude for outline, draft, rewrite, and social-content generation, publishes through Contentful, and includes an evolving review workflow with encrypted fields, assigned reviewers, comments, email requests, and Slack integration.",
+      "sources": [
+        {
+          "path": "docs/superpowers/plans/2026-04-22-review-redesign.md",
+          "sha256": "81954a3f8588167c121a7a7503020e6276d9b53aac56a62084b94dac4bd426aa"
+        },
+        {
+          "path": "docs/superpowers/specs/2026-04-15-movement-ai-blog-design.md",
+          "sha256": "52fa375509e7d4af1b5564e5f3bc9b8067f56befc63127001945934338c9dda4"
+        },
+        {
+          "path": "README.md",
+          "sha256": "60b55ff7df79af72590f9524208e46642bc32bdc175cdad41349681c0e2f958f"
+        }
+      ]
+    },
+    {
+      "catalogId": "movement-cli",
+      "repository": "MoveIndustries/movement-cli",
+      "url": "https://github.com/MoveIndustries/movement-cli.git",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "77553161b3e6bd57376ce83876b77ad961274e32",
+      "summary": "A Movement-maintained CLI package intended for use from Node.js projects.",
+      "description": "This repository provides the Movement CLI in a form described by its GitHub metadata as usable inside Node.js projects. The captured README primarily records that the code was forked from aptos-labs before a licensing change and is maintained and distributed under the earlier Apache 2.0 terms; it does not document a broader component architecture.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "ea54ac20b0bc55b5085ae8bc24aef2fd6304fc01eafe74c3fdb86475486ca3f0"
+        }
+      ]
+    },
+    {
+      "catalogId": "movement-client",
+      "repository": "MoveIndustries/movement-client",
+      "url": "https://github.com/MoveIndustries/movement-client.git",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "9d8b95edb8e714e32c3fbd4ad0bed1b442041066",
+      "summary": "A TypeScript client package for applications interacting with Movement Network.",
+      "description": "The repository publishes the `@moveindustries/movement-client` npm package for Node.js consumers. Its captured README identifies it as Movement Client and records its pre-license-change aptos-labs fork lineage and Apache 2.0 distribution terms; detailed API or architecture documentation is not present in that source.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "352deaa57f7f2e73c7525416ed13844e857d5bf8bd17ddaa357e14782ddfa41c"
+        }
+      ]
+    },
+    {
+      "catalogId": "movement-design-system",
+      "repository": "MoveIndustries/movement-design-system",
+      "url": "https://github.com/MoveIndustries/movement-design-system.git",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "f8db2375fcb432c7b9dff3bec07125018f0648c2",
+      "summary": "A reusable React component and styling system for Movement websites and applications.",
+      "description": "The library combines React, TypeScript, Tailwind CSS, shadcn-style component architecture, Radix accessible primitives, Vite, and Storybook. Consumers import its theme and components to share styling and behavior across Movement products; the repository documents package installation, peer dependencies, optional wallet UI, Storybook development, builds, and tests.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "958d4d2b2bfe8be4ff28d8666b75ce03d3df698eb4d6ba2267c285811629d95a"
+        }
+      ]
+    },
+    {
+      "catalogId": "movement-external-alerting",
+      "repository": "MoveIndustries/movement-external-alerting",
+      "url": "https://github.com/MoveIndustries/movement-external-alerting.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "6a17b143eca09b1a8bd88e874533f92511ee0a1b",
+      "summary": "Off-chain Movement alerting tools, currently including a Governed Gas Pool balance metrics exporter.",
+      "description": "The Rust workspace contains a GGP exporter that reads Movement REST data and exposes Prometheus metrics for pool balance, validator counts, stake limits, total stake, and reward rates. Prometheus scrapes the service, while Grafana performs threshold calculations and sends alerts to Slack or PagerDuty; the process intentionally exits on collection errors so Kubernetes can restart it.",
+      "sources": [
+        {
+          "path": "Cargo.toml",
+          "sha256": "8cc132f90eccd530f667c6d8b939f52e2b206d312d1c2759ca48a276be433162"
+        },
+        {
+          "path": "ggp-balance-alert-bot/README.md",
+          "sha256": "bb99a7fe033e98728a6564a8653f8c781384f12a96effeab42386f6e4f23a1bb"
+        }
+      ]
+    },
+    {
+      "catalogId": "movement-keyless",
+      "repository": "MoveIndustries/movement-keyless",
+      "url": "https://github.com/MoveIndustries/movement-keyless.git",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "4066ecf59983f46d7c8dbbe86eeffecdcdcef9fd",
+      "summary": "An end-to-end proof of concept for keyless Movement accounts authenticated with social login and zero-knowledge proofs.",
+      "description": "The system derives an account from a Google JWT commitment and ephemeral key, then uses a Groth16 proof so a transaction can authenticate without revealing the JWT. The repository includes prover, pepper-service, circuit artifacts, SDK and wallet integration instructions, and Movement testnet E2E procedures; its README marks the captured implementation as a working testnet POC.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "56492908bd1c78df50601364d50f013ecc3940a090ffb4a8b3ea7bb9510a7efa"
+        }
+      ]
+    },
+    {
+      "catalogId": "movement-lst",
+      "repository": "MoveIndustries/movement-lst",
+      "url": "https://github.com/MoveIndustries/movement-lst.git",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "79f45a927b19939d1a3868b945838d5eab2aca30",
+      "summary": "The gMOVE liquid-staking protocol and integration documentation for Movement Network.",
+      "description": "The Move contracts accept MOVE stake and issue gMOVE whose exchange rate tracks delegated stake and compounded rewards. The initial configuration uses one trusted validator while retaining multi-validator architecture, and implements stake/mint, burn/unstake, delayed claims, slippage bounds, pause controls, and administrative validator management. Separate guides document deployment initialization and frontend view/entry functions.",
+      "sources": [
+        {
+          "path": "docs/FRONTEND_INTEGRATION.md",
+          "sha256": "165943213d76de1b2766aa9899219e1c9160ceb4e73d367a21c3a0ef1b160ad0"
+        },
+        {
+          "path": "docs/initialize.md",
+          "sha256": "8737ec8acef9aff227136ebe5d30f6b9395cf003f4dcf86eb8e10c347158d194"
+        },
+        {
+          "path": "README.md",
+          "sha256": "fcbd3569fa39c0616e23d995ed6830fafc86b6a2b9b0f2c2bf4c5718db9b6b0c"
+        }
+      ]
+    },
+    {
+      "catalogId": "movement-mobile-app",
+      "repository": "MoveIndustries/movement-mobile-app",
+      "url": "https://github.com/MoveIndustries/movement-mobile-app.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "ca259a6d1b957530483e83eae4173efcfd8e91f5",
+      "summary": "The React Native Movement super-app for iOS and Android.",
+      "description": "The application combines Movement account and wallet flows with mini-app discovery and execution on React Native, with native iOS and Android projects in the same repository. Its launch checklist identifies email, phone, and passkey account creation, external-wallet connection, transfers, transaction history, biometrics/PIN, notifications, contacts, and mainnet/testnet switching as release-critical flows; the captured default remains testnet.",
+      "sources": [
+        {
+          "path": "LAUNCH_CHECKLIST.md",
+          "sha256": "d6620fb652e9643d2ce032aaa0684f2261a89cee87a6446810359fab9f5def8c"
+        },
+        {
+          "path": "package.json",
+          "sha256": "447f69e3f52536ece4c377f464a304a71521f24ddc3fc9934843770484f40ac8"
+        },
+        {
+          "path": "README.md",
+          "sha256": "c42a08a4345f688509695c400ebd47cbe6642a5c5d0d8c8ba777a024d0656039"
+        }
+      ]
+    },
+    {
+      "catalogId": "movement-passkey-demo",
+      "repository": "MoveIndustries/movement-passkey-demo",
+      "url": "https://github.com/MoveIndustries/movement-passkey-demo.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "8a54543b34153e989cb6b6f4d9dfb7923c51145a",
+      "summary": "A web proof of concept for Movement accounts controlled by WebAuthn passkeys.",
+      "description": "The demo creates a P-256 credential in the device authenticator, derives a Movement account address from the public key, funds it on testnet, and submits transactions using AIP-66 WebAuthn signatures. Discoverable credentials support account recovery through the operating-system passkey picker after local browser state is lost.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "9ae913e0c45bac5c9d5cdf0766f6ad5cca6f2ab4305468122f4c4fd6dd38831d"
+        }
+      ]
+    },
+    {
+      "catalogId": "movement-portal",
+      "repository": "MoveIndustries/movement-portal",
+      "url": "https://github.com/MoveIndustries/movement-portal.git",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "4eb47463cdf42db408f158663b4c211c9641031e",
+      "summary": "A Next.js proof-of-concept portal for Movement ecosystem navigation and wallet-connected actions.",
+      "description": "The portal assembles home, bridge, staking, quests, ecosystem, and Move Everything sections around a shared layout. Its package integrates the Aptos TypeScript SDK, wallet-adapter React bindings, and the Movement design system, and provides wallet, theme, SWR data, and notification dependencies for the web interface.",
+      "sources": [
+        {
+          "path": "package.json",
+          "sha256": "48c712541bf538ad5af20ae2f8e4d4a09b203fe63e0f35e6535e53916ce3f9d8"
+        },
+        {
+          "path": "README.md",
+          "sha256": "60b55ff7df79af72590f9524208e46642bc32bdc175cdad41349681c0e2f958f"
+        },
+        {
+          "path": "src/app/page.tsx",
+          "sha256": "4379813c4810770b95ca22bf1c8ce24b88142eaea655090e5f9c48ade805ca36"
+        }
+      ]
+    },
+    {
+      "catalogId": "movement-stream-channel",
+      "repository": "MoveIndustries/movement-stream-channel",
+      "url": "https://github.com/MoveIndustries/movement-stream-channel.git",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "781ce4a5bac9efac905c7a575266a705b18849a0",
+      "summary": "A Move implementation of Tempo-style streaming payment channels on Movement Network.",
+      "description": "The contract escrows tokens while a payer authorizes cumulative off-chain payment vouchers; the payee settles one or more vouchers on-chain and closes the channel to refund any remainder. The repository includes deployment/test instructions and examples for pay-per-use APIs, subscriptions, and freelancer milestone payouts.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "43f10b3a031ad84f420f551698598d141fb3c35ba6381c02bfb4eeae2aba3f38"
+        }
+      ]
+    },
+    {
+      "catalogId": "movement-universal",
+      "repository": "MoveIndustries/movement-universal",
+      "url": "https://github.com/MoveIndustries/movement-universal.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "82f9a1c782807e47e583eba935edb8fddccd5317",
+      "summary": "A universal keyless authentication and wallet system for Movement applications.",
+      "description": "Movement Universal maps familiar OAuth logins such as Google, Apple, Discord, GitHub, Twitter, and phone to deterministic keyless blockchain accounts without exposing seed phrases. It combines an SDK and web/mobile integration with OIDC proxy support for providers that do not directly meet keyless requirements, plus a ZK prover and Movement network verification flow.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "bdc227c22bc29dc1c133e1b1d04c64e1e5d912d457dd047fc4e11c68bd47929d"
+        }
+      ]
+    },
+    {
+      "catalogId": "movement-wallet-adapter",
+      "repository": "MoveIndustries/movement-wallet-adapter",
+      "url": "https://github.com/MoveIndustries/movement-wallet-adapter.git",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "6fe37f6cdae156ccecf8913f2cc8130a21d4f09a",
+      "summary": "A modular wallet-adapter monorepo for Movement wallet and dApp builders.",
+      "description": "This repository is maintained by Move Industries as the shared wallet-adapter codebase for integrating wallets with Movement applications. The captured README identifies its monorepo purpose and records that it was forked from movement-labs before a licensing change, retaining the earlier Apache 2.0 terms; no deeper architecture is documented there.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "85a55fc247b39cc4326e4672c079431823b8a5cd601cb9834e7eec28458fb48b"
+        }
+      ]
+    },
+    {
+      "catalogId": "moveposition-move",
+      "repository": "MoveIndustries/moveposition-move",
+      "url": "https://github.com/MoveIndustries/moveposition-move.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "905289f1c807887041910894fce8bec67d26017f",
+      "summary": "The on-chain Move contracts for MovePosition.",
+      "description": "The repository identifies itself as the MovePosition on-chain contract package and is primarily implemented in Move. The captured README contains no additional protocol, module, deployment, or operational description, so this catalog entry intentionally makes no broader claims.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "0b5be758918b7886995aa48671137481e57fdc411f67509373d6780f3a92ad94"
+        }
+      ]
+    },
+    {
+      "catalogId": "movescan-explorer",
+      "repository": "MoveIndustries/movescan-explorer",
+      "url": "https://github.com/MoveIndustries/movescan-explorer.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "dac9355b68c757f3151eb8da2d5fdfc53ea28f9a",
+      "summary": "A Next.js blockchain explorer for Movement blocks, transactions, accounts, assets, and network analytics.",
+      "description": "Movement Explorer is a Next.js 15 and Tailwind CSS application for browsing blocks and transactions, inspecting accounts, balances, resources and modules, searching chain identifiers, and visualizing network, gas and token-flow data. The captured repository also contains approved design documents for a phased developer API portal and for surfacing fungible-asset transfers in transaction overviews; those documents describe planned work, not necessarily shipped functionality.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "ff46cb2331dd78e8f555f991c582e2c621d71b7d7a12684bd78bcbbb4ec1d708"
+        },
+        {
+          "path": "docs/api-key/2026-03-23-developer-api-portal-design.md",
+          "sha256": "cf60fd79b9cc6239df899b22f566c0eed06cf6fd1d6e94b3f90672337b6853d4"
+        },
+        {
+          "path": "docs/plans/2026-03-16-token-transfers-overview-design.md",
+          "sha256": "827894461c6c894f1ad85c87ef3f03388e044633829e3f74e4b434f5882faa06"
+        }
+      ]
+    },
+    {
+      "catalogId": "movewatch",
+      "repository": "MoveIndustries/MoveWatch",
+      "url": "https://github.com/MoveIndustries/MoveWatch.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "ce7c819534674ad1ff883408a09c2bc9a2e9ea7e",
+      "summary": "A Movement mainnet monitor that detects suspicious activity and sends actionable Telegram alerts.",
+      "description": "MoveWatch polls the Movement GraphQL indexer, persists transactions and alerts in SQLite, and sends Telegram notifications with response context. Its documented detectors cover configured exploit patterns and statistical anomalies such as outsized withdrawals, new-wallet activity, cross-protocol withdrawals, rapid calls, whale transfers, slow drains and velocity spikes, with optional Claude-assisted analysis; the README notes that thresholds and protocol coverage still require tuning.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "88c3004d23e55ada92472ea99bd37c117b8feeb88904b62ed35b95e7ebc379c8"
+        }
+      ]
+    },
+    {
+      "catalogId": "mpp-movement",
+      "repository": "MoveIndustries/mpp-movement",
+      "url": "https://github.com/MoveIndustries/mpp-movement.git",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "8f7ba3e374488e90b18fc35e99cab25e8251648a",
+      "summary": "A Rust SDK for HTTP 402 machine payments settled with Movement tokens and payment channels.",
+      "description": "This Rust SDK integrates the Machine Payments Protocol with Movement Network. It supports one-time HTTP 402 charges and streaming payments through MovementStreamChannel payment channels, handles native MOVE and other fungible assets, and provides client, server, Axum, Tower and observability feature flags. The examples cover paid endpoints, automatic pay-and-retry requests, off-chain vouchers, multi-fetch sessions and pay-per-token SSE streams.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "1426a4e7618489bcc357bb9faab682580b0a87d4306b1bd7d1cd978aae5ebb08"
+        }
+      ]
+    },
+    {
+      "catalogId": "multiagent",
+      "repository": "areshand/multiagent",
+      "url": "https://github.com/areshand/multiagent.git",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "4736623cbf5774e5fc00f043199df57deeb2c144",
+      "summary": "A Rust control plane that coordinates isolated coding-agent roles with durable state and reviewed production operations.",
+      "description": "Multiagent runs existing Codex, Claude Code and Qwen Code processes in fixed, isolated roles behind an authenticated HTTP/WebSocket control server and terminal client. It maintains durable threads and session state, binds accepted reviewer evidence to the final Git diff, and mediates production operations through supervisor-signed permits and prod-mcp rather than giving agents credentials. The architecture documents define the process, filesystem, session-authority, runbook and deployment trust boundaries.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "3e5e74de23b4abb3cde48da8e5f22192ccd5f3f5f74b5559b1a61e92396d474c"
+        },
+        {
+          "path": "docs/architecture/system-architecture.md",
+          "sha256": "7932442ad8bf729cb34891af527025cbdf219eb880417a428a08b0dcac898fe2"
+        },
+        {
+          "path": "docs/architecture.md",
+          "sha256": "344b0e94fbd4137e9476f7cb733d3dd2e6eb6488a9bdbb9f9282d0ff7257f92c"
+        }
+      ]
+    },
+    {
+      "catalogId": "nameservice-lists",
+      "repository": "MoveIndustries/nameservice-lists",
+      "url": "https://github.com/MoveIndustries/nameservice-lists.git",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "c5b5203634a2bb11190b5b30d1836ad899344837",
+      "summary": "The Movement Name Service reservation-list database and multisig proposal generator.",
+      "description": "This repository keeps MNS celebrity, disallowed, team, community, partner and brand reservations in a CSV file and generates Movement multisig transaction scripts for mainnet or testnet. Its generator validates name rules, groups entries by list type, maps each list to the corresponding on-chain call, supports dry runs and selected-list generation, and splits proposals when estimated BCS payloads approach Ledger transaction-size limits.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "770c02a88d146457dbb169377a935db8cc3d0695e2013a5e5afb228710855ae4"
+        }
+      ]
+    },
+    {
+      "catalogId": "namespaces",
+      "repository": "MoveIndustries/namespaces",
+      "url": "https://github.com/MoveIndustries/namespaces.git",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "3fee8ee8c3983136862bb20957e8a42402d77102",
+      "summary": "Chain-agnostic namespace specifications and CAIP profiles for blockchain ecosystems.",
+      "description": "Namespaces organizes each blockchain ecosystem as a folder with a high-level overview and zero or more Chain Agnostic Improvement Proposal profiles. The documentation is aimed at wallet and dapp developers and explains namespace-specific blockchain IDs, account identifiers, asset identifiers, sign-in conventions, actor models, runtimes and interoperability assumptions, together with draft, last-call and accepted lifecycle states.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "b4e4b77e8054338d6bb4833e7201bda93320714a86f4eec9892ad063923a5b05"
+        }
+      ]
+    },
+    {
+      "catalogId": "near-intents-rebalancer",
+      "repository": "MoveIndustries/near-intents-rebalancer",
+      "url": "https://github.com/MoveIndustries/near-intents-rebalancer.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "2e31b52f7dc17dd4b7ce5781fe5d9ade0fe1ed5e",
+      "summary": "A manual-trigger rebalancer that replenishes the Movement-operated NEAR Intents solver's USDCx inventory.",
+      "description": "The mini-MVP moves accumulated stablecoin source balances from intents.near through 1Click to Ethereum USDC, Circle xReserve to Movement USDCx, and omft back to the solver's Movement-USDCx bucket. It exposes separate rebalance and forward actions, performs chain-specific preflight and slippage checks, signs through AWS KMS, and remains stateless so recovery is driven from on-chain balances; the captured documentation labels the workflow manual-trigger and inflow-only.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "bbb113a8eb27aff868067093812daf61dbb65f6ef77ba9ed9fb6227523a13096"
+        },
+        {
+          "path": "docs/architecture.md",
+          "sha256": "ec8ce2b3747c1249ed3e281e3049928f0f86e86d7552da0435ab91d3041afc1d"
+        },
+        {
+          "path": "docs/routes.md",
+          "sha256": "25893d05b160560be0634df99b180905de42dfac46fdc49e01b2999e6b4b048f"
+        }
+      ]
+    },
+    {
+      "catalogId": "near-intents-sdk",
+      "repository": "MoveIndustries/near-intents-sdk",
+      "url": "https://github.com/MoveIndustries/near-intents-sdk.git",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "17c77d6e6a275cd568943d9df61d1d32be47fbb9",
+      "summary": "A thin TypeScript SDK for routing supported USDC and USDT assets into Movement through NEAR Intents 1Click.",
+      "description": "The SDK pins transfer destinations to Movement and wraps the 1Click quote, deposit-address, deposit-submission and status flow without holding keys. It can prepare unsigned transfers for supported chain families, lets the caller sign and broadcast them, enforces a caller-provided minimum output, and supports unauthenticated transfers or an optional server-held 1Click JWT for fee attribution and rate limits.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "6259cbd6ff29f1d1c096c6320766d3912d6af02272731e0f2ab934087aaec7c3"
+        }
+      ]
+    },
+    {
+      "catalogId": "near-intents-stablecoin-solver",
+      "repository": "MoveIndustries/near-intents-stablecoin-solver",
+      "url": "https://github.com/MoveIndustries/near-intents-stablecoin-solver.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "3c4e5727ef0f661d137d6893cae984c0d3b35a63",
+      "summary": "A directional NEAR Intents solver for stablecoin inventory and pricing-backed MOVE quotes into Movement assets.",
+      "description": "This TypeScript solver serves allowlisted conversions using output inventory already deposited in intents.near, applying configured basis-point fees to stablecoin routes and requiring a confident MOVE/USD price for MOVE output. It validates a closed asset registry, polls opaque Intents token identifiers, supports legacy environment signing and AWS KMS signing, and documents operational deposit, balance-verification and withdrawal procedures for Movement USDCx inventory.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "1d76875bdd94e9b8cc7ad1482ad7cc864fd86a60d03915b4d68e6d6082a69830"
+        },
+        {
+          "path": "docs/near-intents-inventory-operations.md",
+          "sha256": "9d66f080926211e0968a49d8dc95d7058e9ff8ad3b0268aa1f3b96551d2a2146"
+        }
+      ]
+    },
+    {
+      "catalogId": "nodeinfra",
+      "repository": "MoveIndustries/NodeInfra",
+      "url": "https://github.com/MoveIndustries/NodeInfra.git",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "d73c287f578feecb965b71d2d609432b3de5c73e",
+      "summary": "Terraform, Helm, and Python automation for deploying Movement validators and fullnodes on AWS EKS.",
+      "description": "NodeInfra provides reusable AWS VPC, EKS, IAM and storage Terraform modules, a unified movement-node Helm chart, Python deployment orchestration and integration-test configurations. The documented deployment patterns include public fullnodes and a three-tier validator, validator-fullnode and public-fullnode topology, with validator identity material stored in AWS Secrets Manager and health checks driven through Kubernetes.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "d76c4b995aa0ffc07a47b1ca2cb89966691ed829e752ba74da943b921add044a"
+        }
+      ]
+    },
+    {
+      "catalogId": "orchard-contracts",
+      "repository": "MoveIndustries/orchard-contracts",
+      "url": "https://github.com/MoveIndustries/orchard-contracts.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "99aec96b1df5d492249e90500f8bc0047fc4578a",
+      "summary": "A custodial multi-asset Move ledger for Juicyway X on Movement.",
+      "description": "Orchard implements registry, administration, ledger, compliance, wallet-provisioning, price and event modules. Its documented controls include mint, burn, transfer and forced operations, wallet freeze and blacklist checks, reason-hash auditing, IPO conversion, a display-only reference price, two-step administrator transfer and a seven-day timelocked upgrade path. The README states that pricing and KYC remain in the backend and that the package was audit-ready but not deployed at the captured commit.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "6294d3a214a63ee800f1da482031178c1b6849b79120638fe3f73954aa9afe35"
+        }
+      ]
+    },
+    {
+      "catalogId": "parthenon-claiming-utils",
+      "repository": "MoveIndustries/parthenon-claiming-utils",
+      "url": "https://github.com/MoveIndustries/parthenon-claiming-utils.git",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "ad99ca4baf76cbba77a7ad1982dc3d08b21b2a40",
+      "summary": "Interactive tools for generating and verifying Merkle claims data for Parthenon MOVE distributions.",
+      "description": "The TypeScript utilities ingest wallet-and-amount CSV rows, collect claim metadata, generate a Merkle root and sample proofs, and optionally persist claims and proofs in a Supabase-backed claims table. A companion verification flow can rebuild and verify every CSV proof or fetch database records for a contract and stop on the first invalid proof, while recording verification errors.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "f6e4cc5dc5449fcd8eff24dd5624293ffa889418d3c7af0f66276c676447e283"
+        }
+      ]
+    },
+    {
+      "catalogId": "pmip",
+      "repository": "MoveIndustries/PMIP",
+      "url": "https://github.com/MoveIndustries/PMIP.git",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "3b2f7b4aa6c2222cc578672dd8c32034243f85cc",
+      "summary": "A private repository for Movement improvement proposals.",
+      "description": "The captured repository documentation is intentionally minimal: its README identifies the project only as private MIPs and points readers to the separate public MIP repository. No proposal inventory, process details or architecture are documented in the cited source, so a more specific description cannot be verified from this commit.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "3e57bce56adb582023020f284227403ee555f09b3e51e7d29fb7f4161fa8aedc"
+        }
+      ]
+    },
+    {
+      "catalogId": "privy-gas-sponsorship",
+      "repository": "MoveIndustries/privy-gas-sponsorship",
+      "url": "https://github.com/MoveIndustries/privy-gas-sponsorship.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "7818262b62abf8a12ad326e3f80b6828fc1a03e5",
+      "summary": "Reference templates combining Privy Movement wallets with native or Shinami gas sponsorship.",
+      "description": "This repository presents a matrix of wallet-signing and fee-sponsorship patterns for Movement. It includes backend-controlled Privy server wallets, passkey-owned server wallets and React Native embedded wallets, paired with either a self-managed native fee-payer account or Shinami Gas Station. The templates use an HTTP and BCS-byte boundary so a wallet pattern can switch sponsor backends without redesigning wallet-side signing.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "2dcc6159f81e9a5f0d84d18789f4a245af469b4c0fdcd4b378f38a1e6400efc0"
+        }
+      ]
+    },
+    {
+      "catalogId": "prod-mcp",
+      "repository": "MoveIndustries/prod-mcp",
+      "url": "https://github.com/MoveIndustries/prod-mcp.git",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "d0d717a5eeb88325269f16e1243849a8a940363f",
+      "summary": "A policy-enforcing MCP service for fixed production operations authorized by short-lived signed permits.",
+      "description": "prod-mcp is the executable policy boundary between agent proposals and production systems. It authenticates the supervisor, verifies canonical ES256 action permits, enforces exact operation versions, roles, target and parameter allowlists, review requirements and expiry, and returns durable idempotent receipts. Its catalog contains bounded AWS, Kubernetes, Grafana and GitHub operations, while arbitrary commands, URLs, environment variables and agent-selected authority are denied by construction.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "7a168f73a6a3c958c42b5a9d904883d9d927fb73bdf87d7dea8e2c8f81b510b9"
+        },
+        {
+          "path": "docs/protocol-v1.md",
+          "sha256": "cf613385da5f593bc562273b6c19cc0a5f4e4f2a241df7009e470e2a4362a897"
+        },
+        {
+          "path": "docs/security.md",
+          "sha256": "c1cc1570ed5fac4756a0e36c3b5b7d3d74ccb7da765533b6014ffda13e04a35a"
+        }
+      ]
+    },
+    {
+      "catalogId": "programmatic-seo",
+      "repository": "MoveIndustries/programmatic-seo",
+      "url": "https://github.com/MoveIndustries/programmatic-seo.git",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "1db4432c41a7f7a2c4fb8b0a4e141b51a5dcf06e",
+      "summary": "Architecture and TypeScript tooling for operating a distributed programmatic-SEO publishing network.",
+      "description": "The repository separates untrusted agent-driven content generation from a credential-holding publisher reached through a forced-command SSH boundary. Its publishing design applies content, compliance, author-reuse and cross-site-similarity gates before WordPress delivery, while the tooling manages domain inventory, privacy checks, tier assignment, DNS, site provisioning, themes and shared-footprint audits. The captured commit has no root README; this record is grounded in its publishing-architecture document and tooling README.",
+      "sources": [
+        {
+          "path": "PUBLISHING-ARCHITECTURE.md",
+          "sha256": "24f76eb6a32300d6841f27a4adbb4ae306bc1d4f39505310fff9ae6bd8a3b94c"
+        },
+        {
+          "path": "tooling/README.md",
+          "sha256": "5ca472034150bdba8c2cb82a1f3a7b9204036cb958013f97312bcb81ce801c9f"
+        }
+      ]
+    },
+    {
+      "catalogId": "rahat-handoff-docs",
+      "repository": "MoveIndustries/rahat-handoff-docs",
+      "url": "https://github.com/MoveIndustries/rahat-handoff-docs.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "2bc2637e2d7ea83119b07638867c41b89e0e2758",
+      "summary": "Cold-start handoff documentation for internally operated AI, wallet, infrastructure, bot, and Zoth projects.",
+      "description": "This documentation-only repository organizes takeover material for the on-prem Hermes agent platform, Motion Wallet, machine access, an exchange-tracker bot and zPayments research. Its index distinguishes live systems from design-only work, provides suggested reading order, and records known operational debt and open items. The README explicitly states that the described systems live in other repositories or environments and that this repository contains no source code.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "926944736b903265f8d1dd4ecf8fb12cd48a3caaf0ec7199be3e8d4b9e33540a"
+        }
+      ]
+    },
+    {
+      "catalogId": "rewards-distribution-api",
+      "repository": "MoveIndustries/rewards-distribution-api",
+      "url": "https://github.com/MoveIndustries/rewards-distribution-api.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "7ca5d66c03c89cd3468df391261357c356a4e9a9",
+      "summary": "A Move custody contract and authenticated API for bounded MOVE reward distributions.",
+      "description": "The system holds treasury funds in a contract-controlled resource account with no private key and splits authority between a cold owner and a hot API operator. The owner can fund, reclaim, rotate, cap and pause, while the operator can only call a capped distribute function; the backend authenticates and validates requests, signs distributions, and relies on the contract to enforce pause state, per-transaction limits and duplicate-hash prevention. The repository also includes a public documentation site.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "0ba193ebc553e784da48f705f30af292579c695f9695e7783e4ff715081738dc"
+        }
+      ]
+    },
+    {
+      "catalogId": "rust-sdk",
+      "repository": "MoveIndustries/rust-sdk",
+      "url": "https://github.com/MoveIndustries/rust-sdk.git",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "4cf8eb6fb5de977449e62a57a53962ff89e440cb",
+      "summary": "An idiomatic Rust SDK for accounts, transactions, cryptography, and contract interaction on Movement.",
+      "description": "This Movement adaptation of the Aptos Rust SDK provides asynchronous clients, account management, transaction builders and multiple signature schemes, including Ed25519, Secp256k1, P-256, BLS12-381, multi-key, multisig and keyless accounts. Its workspace includes the main movement-sdk crate, procedural macros for ABI-derived bindings, and confidential-asset support with cryptographic proofs and a corresponding Move-module client.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "a87e84e51de5b350d539e2d429970bdd5d0753ea9f3b70cd319b3542bed7a2f2"
+        }
+      ]
+    },
+    {
+      "catalogId": "script-composer-pack",
+      "repository": "MoveIndustries/script-composer-pack",
+      "url": "https://github.com/MoveIndustries/script-composer-pack.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "ff15b1a7294a7ab1178e5d3e44dfae703ed92d79",
+      "summary": "A low-level JavaScript binding that embeds the dynamic Move transaction composer WASM.",
+      "description": "The package base64-inlines the dynamic transaction composer's WebAssembly so consumers can initialize it synchronously without a runtime asset fetch. It exposes low-level APIs for composing and serializing batched Move function calls into script payloads, depends on the Movement TypeScript SDK and composer peer package, and directs users needing building, signing and submission to the higher-level script-composer SDK.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "e30297660b320d6d954d43aae52ac0d5ae00a2a73a7e125633ba6775b9712336"
+        }
+      ]
+    },
+    {
+      "catalogId": "script-composer-sdk",
+      "repository": "MoveIndustries/script-composer-sdk",
+      "url": "https://github.com/MoveIndustries/script-composer-sdk.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "0a6d0b89dc5312a13889d0a68819a8e539201023",
+      "summary": "A pnpm monorepo containing the Movement Script Composer SDK and usage examples.",
+      "description": "This Movement-maintained derivative of the Aptos Script Composer SDK separates core packages under packages and example implementations under examples. It documents workspace-wide build and test commands and uses a Changesets workflow that creates or updates a version-packages pull request before publishing immutable package versions to npm through trusted publishing.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "d2924e8411dc1856d6e15a7d7f6bc04db244c7df26d38128ad471c3db93e438c"
+        }
+      ]
+    },
+    {
+      "catalogId": "sentry-relay",
+      "repository": "MoveIndustries/sentry-relay",
+      "url": "https://github.com/MoveIndustries/sentry-relay.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "9cdeeeab52e7ae5250ac80adf6fc3afc54a90b7c",
+      "summary": "A minimal Vercel relay that forwards Sentry internal-integration alerts to Slack.",
+      "description": "The repository documents a Sentry-to-Slack webhook service intended to avoid installing Sentry's Slack application. Its setup consists of a Sentry client secret and Slack webhook configured in Vercel, plus a Sentry Internal Integration pointed at the service's API route. The cited README contains no further processing, storage or reliability architecture.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "df31070df6c47e480157ca5ddced98eb2a08ca8e6926db05ba76996bd57cdb80"
+        }
+      ]
+    },
+    {
+      "catalogId": "shielded-pool",
+      "repository": "MoveIndustries/shielded-pool",
+      "url": "https://github.com/MoveIndustries/shielded-pool.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "b2536d81edcc94a6496f5ebb7727569231a00aea",
+      "summary": "A research-only, compliance-gated shielded stablecoin pool for Movement using Groth16 proofs.",
+      "description": "The proof of concept implements private-note UTXOs, Poseidon commitments, nullifiers, an incremental Merkle tree, KYC attestations, spending and viewing keys, and Move-side custody for deposit, transfer and withdrawal. Circom circuits and an on-chain BN254 Groth16 verifier replace the Ethereum reference's UltraHonk design, while a Next.js client performs wallet interaction and in-browser proving. The repository explicitly labels the system a testnet research demo rather than production software.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "bdc33ec09cb4c1fe5208de5148f79762d199b7d5c06f2315b5e31295e96d31aa"
+        }
+      ]
+    },
+    {
+      "catalogId": "slack-bots",
+      "repository": "MoveIndustries/slack-bots",
+      "url": "https://github.com/MoveIndustries/slack-bots.git",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "19345cef7961fc226770c816350af51ade9c6891",
+      "summary": "A Next.js and Vercel Cron collection that posts Movement operational and analytics reports to Slack.",
+      "description": "The documented cron routes report daily Parthenon BigQuery statistics, monitor MOVE bridge rate limits every six hours, and summarize daily on-chain airdrop totals. Each route uses a dedicated Slack webhook and Vercel cron authentication; local development disables Slack delivery unless explicitly enabled and returns the message blocks that would be posted.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "38641f27c394c38aa13779717d69e15a297c3434632e5edc63d823c42cb58339"
+        }
+      ]
+    },
+    {
+      "catalogId": "slips",
+      "repository": "MoveIndustries/slips",
+      "url": "https://github.com/MoveIndustries/slips.git",
+      "visibility": "public",
+      "defaultBranch": "master",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "7b2221588644e965dc579c56dd3410b6016758d5",
+      "summary": "The SatoshiLabs Improvement Proposal specification repository.",
+      "description": "SLIPs extend the Bitcoin Improvement Proposal process for SatoshiLabs technical decisions and features whose scope falls outside Bitcoin or cryptocurrencies. The repository maintains numbered Markdown proposals with type and lifecycle status, and requires each proposal to provide a concise technical specification and rationale. This catalog entry points to a MoveIndustries-hosted copy of that public specification collection.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "f1e27d4da87d97efa258fc8f3d8f31549d7aa285f84ee4019096090cdf5836f4"
+        }
+      ]
+    },
+    {
+      "catalogId": "staking",
+      "repository": "MoveIndustries/staking",
+      "url": "https://github.com/MoveIndustries/staking.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "d70d05ff352f1c5ff0bc72e56eaec22ff0fbc2ec",
+      "summary": "A Next.js application identified by its repository metadata as the Movement staking site.",
+      "description": "The repository metadata identifies this TypeScript project as the Movement network staking site. Its captured README is still the generic create-next-app quickstart and documents only local development and framework setup; it does not describe staking flows, contract integration, deployment architecture or operational status, so those details cannot be verified from the cited source.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "272598349d8fb95f05967515ab51d2fd0345e8ada44c80797ed8ae1252e3d030"
+        }
+      ]
+    },
+    {
+      "catalogId": "swap-interface",
+      "repository": "MoveIndustries/swap-interface",
+      "url": "https://github.com/MoveIndustries/swap-interface.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "279e8a539c71227f7e79e4900b50bfd7b9a75e30",
+      "summary": "A standalone interface for one-way cross-chain swaps into Movement through NEAR Intents 1Click.",
+      "description": "Movement Swap discovers supported tokens through the 1Click API, requests a quote and ephemeral deposit address, lets users transfer a supported source asset, and polls until USDCx or MOVE reaches the Movement recipient. The captured implementation is inbound-only and uses server-side proxy routes for authenticated 1Click calls; its design document describes the swap module as isolated from the existing LayerZero and Circle bridge paths.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "47eaf63a722eff87d2a4883c5529bb123c7aa39e2dd2ddf2bb04adfea4c8832a"
+        },
+        {
+          "path": "docs/superpowers/specs/2026-06-17-swap-near-intents-design.md",
+          "sha256": "ec0785d02e773e85ce8d90051f4f9df736a1e87a1280b8d996e830d4f071ea20"
+        }
+      ]
+    },
+    {
+      "catalogId": "tavo",
+      "repository": "MoveIndustries/tavo",
+      "url": "https://github.com/MoveIndustries/tavo.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "8e6f41383ca1e5cbbc30c2c0381c82e3e92638ea",
+      "summary": "A TypeScript repository identified by its metadata as the Tavo lending and vaults website.",
+      "description": "GitHub metadata identifies the repository as the Tavo Lending and Vaults website. The captured README is an uncustomized create-next-app document covering only the development server, app/page.tsx, fonts and Vercel deployment; it provides no verifiable product flows, contract integration or application architecture, so this catalog entry intentionally does not infer them.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "60b55ff7df79af72590f9524208e46642bc32bdc175cdad41349681c0e2f958f"
+        }
+      ]
+    },
+    {
+      "catalogId": "tavo-curator",
+      "repository": "MoveIndustries/tavo-curator",
+      "url": "https://github.com/MoveIndustries/tavo-curator.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "d9efe2ed51dd17fb1df8e79d17b9bdbb2591acb1",
+      "summary": "An operator dashboard for role-separated Tavo Curator Vault administration.",
+      "description": "The dashboard presents live vault state, capital across custody boundaries, caps and velocity limits, timelocked actions, redemption queues and guardian emergency controls for Curator Vault contracts kept in a separate repository. Its data layer models Move view structs and role capabilities, but the captured commit defaults to typed fixtures because the vault package has no published address and the chain view-call fan-out and wallet adapter are not yet implemented.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "4fa332a4ec8bd654ef8ba5d0930c8f042eba325329f2484fcd89b006ce8449ca"
+        }
+      ]
+    },
+    {
+      "catalogId": "tavo-curator-dashboard",
+      "repository": "MoveIndustries/tavo-curator-dashboard",
+      "url": "https://github.com/MoveIndustries/tavo-curator-dashboard.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "c4e34f2fc9380db41affe9e1cf1e44642e963299",
+      "summary": "A repository named tavo-curator-dashboard with insufficient documentation to verify its purpose.",
+      "description": "The repository resolves to a valid commit, but its cited README contains only the heading tavo-curator-dashboard and GitHub reports no primary language or repository description. No functionality, architecture, runtime or deployment claims can be verified from the available source at this commit.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "7f2f6d2da95bc9e3eea7e4b33042110ea39bab50eda4ac21348f508343334c95"
+        }
+      ]
+    },
+    {
+      "catalogId": "token-minter",
+      "repository": "MoveIndustries/token-minter",
+      "url": "https://github.com/MoveIndustries/token-minter.git",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "6b3fd0c3903c0579ba0319bd13454bfafee6d1b0",
+      "summary": "A Move-based token-management tool for Aptos-compatible blockchains.",
+      "description": "The captured README identifies TokenMinter only as a tool for managing tokens on the Aptos blockchain, while GitHub classifies Move as the repository's primary language. The cited source does not document supported token standards, operations, interfaces, deployment state or Movement-specific adaptations, so this record makes no further claims.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "046bdf9eb298224c10d1efc6725268c19ef14d33df1a3ff4eb33ef83b16338ee"
+        }
+      ]
+    },
+    {
+      "catalogId": "ts-sdk",
+      "repository": "MoveIndustries/ts-sdk",
+      "url": "https://github.com/MoveIndustries/ts-sdk.git",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "6609d4c835d0a82344defe72ebe8ee34a9b44c2d",
+      "summary": "The official TypeScript SDK for accounts, transactions, and application integrations on Movement.",
+      "description": "This Movement-maintained fork provides client configuration, account generation and import, transaction construction, signing, submission and confirmation. Its documentation also covers Movement Name Service registration, resolution and management, while the versioned docs index tracks published @moveindustries/ts-sdk documentation releases. The repository states that it derives from the Apache-licensed Aptos TypeScript SDK.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "31ee137a4383befb559293b15de21f0e5179b999f86a0b470a165fa295fd81ed"
+        },
+        {
+          "path": "docs/index.md",
+          "sha256": "80203a0474fbacbc688b66c9a496fa0cddef12ae1e4c4ce9e7156e662d8177e0"
+        }
+      ]
+    },
+    {
+      "catalogId": "usdc-bridge",
+      "repository": "MoveIndustries/usdc-bridge",
+      "url": "https://github.com/MoveIndustries/usdc-bridge.git",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "8a0d963a05ef3e9a2ba3f32d2a84dd232e77c92a",
+      "summary": "Movement contracts, relayer, monitoring, and interface components for Circle xReserve USDC bridging.",
+      "description": "The project integrates Movement with Circle xReserve so verified deposit attestations mint USDCx on Movement and Movement burn events initiate withdrawals to other compatible chains. Its design assigns attestation relay, event monitoring, supply reconciliation and crash recovery to off-chain services, and mint, burn and custody invariants to Move contracts controlled through a resource account and multisig upgrade authority. The relayer is designed for at-least-once processing and concurrent high-availability instances.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "5d064365c29876e2bb410bb9b4e90f152bf00363b70e87004cc84d385c759192"
+        },
+        {
+          "path": "docs/relayer_conception.md",
+          "sha256": "5e5def3a9269218366edc572fbcfed9694818558d65603b1c08ae5d1cc33ab9b"
+        },
+        {
+          "path": "docs/relayer_usages.md",
+          "sha256": "dbfc33510a11a16071baef014c9d1674bea747ad6b3d898df21a57cf1f6ba6e8"
+        }
+      ]
+    },
+    {
+      "catalogId": "wallet-standard",
+      "repository": "MoveIndustries/wallet-standard",
+      "url": "https://github.com/MoveIndustries/wallet-standard.git",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "a6057c81e63cf1ae5d29ea4c9ddc0159b66289f7",
+      "summary": "Standard TypeScript interfaces for Movement wallets, accounts, discovery, and application integration.",
+      "description": "Movement Wallet Standard adapts the chain-agnostic Wallet Standard conventions for the Movement ecosystem. It defines MovementWallet and MovementWalletAccount interfaces, wallet registration and application-side wallet detection, and includes a basic integration example. The repository documents its lineage from the Apache-licensed Aptos wallet-standard codebase.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "d2b0e46a1d7eee03ec2746457e2f8625d755cac22cbcbc938a0fc40c5dbe7fe0"
+        }
+      ]
+    },
+    {
+      "catalogId": "x25519-dalek",
+      "repository": "MoveIndustries/x25519-dalek",
+      "url": "https://github.com/MoveIndustries/x25519-dalek.git",
+      "visibility": "public",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "b9cdbaf36bf2a83438d9f660e5a708c82ed60d8e",
+      "summary": "A pure-Rust implementation of X25519 elliptic-curve Diffie-Hellman key exchange.",
+      "description": "The crate implements the RFC 7748 X25519 function using curve25519-dalek and exposes both a bare byte-oriented function and higher-level static and ephemeral Diffie-Hellman APIs. Its documentation includes shared-secret examples, calls out ephemeral-key non-reuse, states its Rust version requirements, and notes compatibility with RFC test vectors and best-effort resistance to software side channels.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "b74309382c32fc75d342a75997ee88d3c6c47cf280caa27d873ffd5aa8ee7e82"
+        }
+      ]
+    },
+    {
+      "catalogId": "zoth-movement-admin-dashboard",
+      "repository": "MoveIndustries/zoth-movement-admin-dashboard",
+      "url": "https://github.com/MoveIndustries/zoth-movement-admin-dashboard.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "bbbae016bb8bc0eaedad1acbf82ced6330102d03",
+      "summary": "An operations dashboard for administering zOPAL vaults on Movement.",
+      "description": "The dashboard combines Movement GraphQL history and fungible-asset data with fullnode REST views for live vault state, reconciles them into a typed server read model, and presents NAV, APY, TVL, flows, queues, holders, permissions and transaction history. Operator actions run role, compliance, liquidity, freshness and deployment-integrity checks, simulate before wallet signing, and verify finalized chain state afterward; the documented build has no application database and requires production access through a private SSO gateway.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "6d198416b95fa4cfb8ccefd73e0bfb28f29eeeb48890d191b74ee5ee3b9c9da8"
+        },
+        {
+          "path": "docs/architecture.md",
+          "sha256": "e0a8b7ebc982214aa15800236b3f0c308bf58cf84b34a03ed48670806b03fd72"
+        },
+        {
+          "path": "docs/operator-runbook.md",
+          "sha256": "c60d688ecc8f41b11781c50e72947b6fff93216b6c7d43806f9c934998b8a0c5"
+        }
+      ]
+    },
+    {
+      "catalogId": "zvault-movement",
+      "repository": "MoveIndustries/zvault-movement",
+      "url": "https://github.com/MoveIndustries/zvault-movement.git",
+      "visibility": "internal",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "2fb43f00699853446761000c539bbc013249e19c",
+      "summary": "A native Move port of the Zoth zVault protocol and zOPAL token for Movement.",
+      "description": "The repository separates an immutable oracle package from a multisig-owned compatible-upgrade core package containing access control, compliance, vault accounting, zOPAL, deposits and redemptions. Its design uses base-8 accounting, fungible-asset metadata for payment-token decimals, controlled mint and burn entry paths, oracle deviation and staleness guards, and vault-level pause controls. Deployment tooling publishes, initializes, finalizes and verifies the packages, with Move tests and prover scripts included.",
+      "sources": [
+        {
+          "path": "README.md",
+          "sha256": "349fe9f35b1c758856c911d21ecbed343a559fdd9ac1cd905550e62f92e2402e"
+        }
+      ]
+    }
+  ]
+}
