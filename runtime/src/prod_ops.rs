@@ -128,7 +128,7 @@ fn template(args: &[String]) -> Result<ExitCode, String> {
             "goal": "replace with the bounded operation goal",
             "operation": {
                 "id": "replace.with.operation-id",
-                "version": "1.0.0"
+                "version": "replace-with-version-from-ops-describe"
             },
             "parameters": {},
             "runbook": {

@@ -34,15 +34,21 @@ export function acceptsLiveInput(live, headless) {
   return Boolean(live) && !headless;
 }
 
-export function automaticResumeLimit(value = process.env.MULTIAGENT_SESSION_MAX_AUTO_RESUMES) {
-  const parsed = value === undefined || value === "" ? 3 : Number(value);
-  return Number.isInteger(parsed) ? Math.min(Math.max(parsed, 0), 10) : 3;
+const terminalOutcomes = new Set(["succeeded", "failed", "review_requested"]);
+
+export function executionTerminalOutcome({ phase, outcome, live }) {
+  if (phase === "complete") {
+    if (terminalOutcomes.has(outcome)) return outcome;
+    // Workflows created before terminal_outcome was introduced completed only
+    // through supervisor-owned success gates.
+    return outcome ? "failed" : "succeeded";
+  }
+  return live ? null : "failed";
 }
 
-export function shouldAutomaticallyResume(record, limit) {
-  return record?.status === "running"
-    && record.autoResume === true
-    && Number(record.automaticResumeAttempts || 0) < limit;
+export function sessionStatusForTerminalOutcome(outcome) {
+  if (!terminalOutcomes.has(outcome)) throw new Error(`invalid terminal outcome: ${outcome}`);
+  return outcome === "failed" ? "failed" : "completed";
 }
 
 export function findActiveSession(sessionIds, candidate, isAlive) {
@@ -89,12 +95,21 @@ export function normalizeWorkerReport(value) {
   if (message && Buffer.byteLength(message, "utf8") > 6000) return null;
   const completionRoute = new Set(["direct-response", "read-only", "external-only", "human-review", "source"])
     .has(value.completionRoute) ? value.completionRoute : null;
+  if (value.terminalOutcome !== undefined && !terminalOutcomes.has(value.terminalOutcome)) return null;
+  const terminalOutcome = terminalOutcomes.has(value.terminalOutcome)
+    ? value.terminalOutcome
+    : value.status === "failed" ? "failed"
+      : completionRoute === "human-review" ? "review_requested" : "succeeded";
+  const responseType = responseTypeForMessage(message, completionRoute);
+  if ((completionRoute === "human-review") !== (terminalOutcome === "review_requested")) return null;
+  if (terminalOutcome === "review_requested" && responseType !== "question") return null;
   return {
     report: value.report,
     transcript,
     message,
     completionRoute,
-    responseType: responseTypeForMessage(message, completionRoute),
+    terminalOutcome,
+    responseType,
   };
 }
 

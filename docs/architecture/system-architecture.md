@@ -103,7 +103,7 @@ storage configuration shown above.
 | Logger | Authenticated structural event ingestion, authoritative ordering, canonical encoding, hash-chain construction, replay prevention, signed periodic checkpoints, ledger verification, and non-authoritative audit projections | Semantic review, workflow progression, runbook interpretation, model credentials, production credentials, permit issuance, or production execution |
 | Wiki service and steward | Bounded cited retrieval from canonical Markdown, source-backed catalog organization, and asynchronous retrieval-gap processing informed by session traces | Session or production-operation authority, concrete deployment configuration, repository cloning, trace mutation, or treating untrusted traces as factual instructions |
 | `InternalServices` | Images, deployments, secrets, IAM, KMS, service accounts, endpoints, ingress, DNS, certificates, S3 trace export, Wiki storage and identities, and distribution of deployment-specific Markdown runbook artifacts | Agent reasoning, procedure logic embedded in deployment code, and environment-specific secrets inside runbooks |
-| Markdown runbooks | Human-readable operational procedure, operation version, allowed phase progression | Credentials and environment-specific secrets |
+| Markdown runbooks | Human-readable operational procedure, runbook version, operation IDs, allowed phase progression | Operation contract versions, credentials, and environment-specific secrets |
 
 The deployment may also place a trusted repository-preparation init container
 in front of a session runtime. That init container is not an agent and is not
@@ -242,13 +242,21 @@ the supervisor creates role processes and confines them after creation.
 The orchestrator and role processes run with the thread-selected repository as
 their working tree; session state and trace directories remain separate and
 must not replace the repository working directory.
-Headless orchestrators do not accept terminal-style live input. A follow-up
-therefore remains in the same execution session but is delivered by a native
-resume, and incomplete lifecycle passes are retried by the session worker with
-a deployment-bounded automatic-resume limit. Each native resume restates the
-authenticated original task and treats the latest follow-up as additive unless
-the user explicitly replaces earlier scope, so transport recovery cannot erase
-unfinished thread requirements.
+Headless orchestrators do not accept terminal-style live input. An authenticated
+follow-up may deliberately resume an execution that is still owned by the same
+session, and each such resume restates the original task and treats the latest
+follow-up as additive unless the user explicitly replaces earlier scope.
+Process exit is not a transport-recovery signal: an incomplete workflow whose
+process exits fails that execution immediately and is never automatically
+resumed by the worker or Kubernetes.
+
+Every session Job is a single attempt. Its Job template must use
+`spec.backoffLimit: 0` and pod `restartPolicy: Never`, and the control gateway
+rejects a template that does not. A provider error, quota error, agent crash, or
+failed operation therefore cannot silently spend another attempt. The
+orchestrator may recommend retry in its bounded result while it is alive, but a
+retry occurs only through a new supervisor-authorized session, such as a later
+authenticated follow-up or approved review continuation.
 
 A fresh headless execution also receives the bounded authenticated original
 task in its initial model envelope. The same task is persisted as a
@@ -298,6 +306,16 @@ reviewer decisions, and permits. No prior agent is revived. The new orchestrator
 receives bounded context derived from public messages, final reports,
 checkpoints, and verified S3 trace references, not the previous session's
 credentials, permits, unbounded raw trace, provider home, or writable filesystem.
+
+Each execution session reaches exactly one sealed terminal outcome:
+`succeeded`, `failed`, or `review_requested`. Route-specific safety checks still
+decide whether the supervisor may seal that outcome, but they do not create
+parallel session state machines. A completed operation receipt whose canonical
+`outcome.disposition` is `failed` or `blocked` seals the session as `failed`
+instead of leaving it running for an infrastructure retry. Human review seals
+the current session as `review_requested`; an approval creates a fresh session,
+and a rejection closes continuation. Process exit without a sealed workflow
+outcome is `failed`.
 
 User messages are durably and idempotently appended before acknowledgement.
 When a thread still has a live execution session, the gateway forwards each
@@ -681,15 +699,26 @@ application health are verified together.
 
 ### AD-013: Contracts and runbooks are versioned and digest-bound
 
-Every operation and runbook has an explicit version. A semantic change to a
-request schema, allowed behavior, or runbook procedure requires a version
-change. Permits and receipts bind the exact runbook content digest and contract
-fields.
+Every operation contract and runbook has an explicit version, but each has one
+owner. The exact read-only Markdown file mounted at the framework-relative path
+inside a deployed session is the authoritative runbook for that session. The
+runtime does not compare it with a source-tree or deployment-repository copy.
+Requests, permits, and receipts bind its exact content digest and runbook
+version.
 
-A deployment-specific runbook's source of truth may live in the deployment
-repository. The service catalog must select the exact artifact, mount it
-read-only within the framework runbooks directory, and bind the same content
-digest in the corresponding `prod-mcp` target policy.
+`prod-mcp` is the authoritative source for an operation's current contract and
+version. Runbooks name operation IDs but do not duplicate operation versions.
+The requesting role obtains the version from `multiagent ops describe`; the
+supervisor rechecks it against the live capability before signing and execution.
+That version check remains necessary because it binds the immutable request to
+the exact schema and behavior authorized by `prod-mcp`; removing the duplicate
+Markdown value avoids drift without weakening the trust boundary.
+
+A deployment may select and mount a deployment-specific runbook artifact over
+the image default. Once mounted, those exact deployed bytes are the sole
+procedure source of truth. `prod-mcp` policy may allow only specified runbook
+IDs, versions, and digests, but no second runbook copy participates in runtime
+consistency checking.
 
 The Rust permit producer and TypeScript permit consumer must share conformance
 fixtures. In the longer term, a canonical machine-readable schema should be

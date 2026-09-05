@@ -17,6 +17,15 @@ export function renderSessionTemplate(value, replacements) {
   return rendered;
 }
 
+export function validateSingleAttemptJob(job) {
+  if (job?.kind !== "Job") throw new Error("session template must render a Kubernetes Job");
+  if (job.spec?.backoffLimit !== 0) throw new Error("session Job must set spec.backoffLimit to 0");
+  if (job.spec?.template?.spec?.restartPolicy !== "Never") {
+    throw new Error("session Job must set spec.template.spec.restartPolicy to Never");
+  }
+  return job;
+}
+
 export function sessionSecret(id, namespace, task, actor, threadId = id, leaseGeneration = 1, authorizingEventId = id, gatewayToken = "", authorityScope = "human") {
   return {
     apiVersion: "v1",
@@ -124,6 +133,7 @@ export class KubernetesSessionClient {
       AUTHORITY_SCOPE: authorityScope,
       RESUME: resume ? "1" : "0",
     });
+    validateSingleAttemptJob(job);
     await apiRequest(this.connection, "POST", this.corePath("secrets"), secret);
     try {
       return await apiRequest(this.connection, "POST", this.path("jobs"), job);

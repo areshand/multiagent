@@ -26,7 +26,9 @@ multiagent ops template > "$DRAFT_FILE"
    Preserve the generated field shapes exactly. Set `taskId`, `goal`,
    `operation.id`, `operation.version`, `parameters`, `runbook.id`,
    `runbook.phase`, and `runbook.version` from the authenticated goal,
-   selected runbook, and the `ops describe` result. Do not add `target`;
+   selected runbook, and the `ops describe` result. The operation version comes
+   only from `ops describe`; never infer it from a runbook or earlier request.
+   Do not add `target`;
    runbook binding derives the canonical four-field target from the Markdown
    runbook. Add `changeTicket` only when required. Never add `approvals`,
    `runbookDocument`, or `runbookContentSha256`.

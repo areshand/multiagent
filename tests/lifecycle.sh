@@ -370,6 +370,7 @@ if ! MULTIAGENT_ROOT="$TEST_REPO" MULTIAGENT_STATE_DIR="$LOOP_STATE" \
 fi
 assert_contains "$TEST_TMP/complete.out" $'run completed\tRUN-LIFECYCLE'
 assert_contains "$LOOP_STATE/workflows/WF-LOOP/lifecycle/lifecycle.env" "phase=complete"
+assert_contains "$LOOP_STATE/workflows/WF-LOOP/lifecycle/lifecycle.env" "terminal_outcome=succeeded"
 assert_contains "$LOOP_STATE/workflows/WF-LOOP/lifecycle/events.log" "authority=supervisor"
 
 SHORTCUT_REPO="$TEST_TMP/shortcut-repo"
@@ -395,6 +396,7 @@ MULTIAGENT_ROOT="$SHORTCUT_REPO" MULTIAGENT_STATE_DIR="$DIRECT_STATE" \
   "$MULTIAGENT" orchestrator complete --direct-response --result-file "$DIRECT_RESULT" \
   >"$TEST_TMP/direct-shortcut.out"
 assert_contains "$DIRECT_STATE/workflows/WF-DIRECT/lifecycle/lifecycle.env" "phase=complete"
+assert_contains "$DIRECT_STATE/workflows/WF-DIRECT/lifecycle/lifecycle.env" "terminal_outcome=succeeded"
 assert_contains "$DIRECT_STATE/workflows/WF-DIRECT/lifecycle/events.log" "route=direct-response"
 assert_contains "$DIRECT_STATE/orchestrator-result.md" "The direct conversational answer."
 
@@ -461,6 +463,7 @@ MULTIAGENT_ROOT="$SHORTCUT_REPO" MULTIAGENT_STATE_DIR="$READ_ONLY_STATE" \
   "$MULTIAGENT" orchestrator complete --read-only --result-file "$READ_ONLY_RESULT" \
     --reviewer "$READ_ONLY_REVIEWER" >"$TEST_TMP/read-only-shortcut.out"
 assert_contains "$READ_ONLY_STATE/workflows/WF-READ-ONLY/lifecycle/lifecycle.env" "phase=complete"
+assert_contains "$READ_ONLY_STATE/workflows/WF-READ-ONLY/lifecycle/lifecycle.env" "terminal_outcome=succeeded"
 assert_contains "$READ_ONLY_STATE/workflows/WF-READ-ONLY/lifecycle/events.log" "route=read-only"
 assert_contains "$READ_ONLY_STATE/workflows/WF-READ-ONLY/lifecycle/reviews.tsv" \
   $'read-only-integrity\tpass'
@@ -530,7 +533,7 @@ cat >"$EXTERNAL_STATE/operations/OP-BLOCKED/receipt.json" <<'EOF'
 {
   "result": {
     "structuredContent": {
-      "state": "blocked",
+      "state": null,
       "outcome": {
         "disposition": "blocked",
         "terminal": true,
@@ -586,6 +589,8 @@ MULTIAGENT_ROOT="$EXTERNAL_ROOT" MULTIAGENT_STATE_DIR="$EXTERNAL_STATE" \
 assert_contains "$TEST_TMP/external-complete.out" $'run completed\tRUN-EXTERNAL'
 assert_contains "$EXTERNAL_STATE/workflows/WF-EXTERNAL/lifecycle/lifecycle.env" \
   "phase=complete"
+assert_contains "$EXTERNAL_STATE/workflows/WF-EXTERNAL/lifecycle/lifecycle.env" \
+  "terminal_outcome=failed"
 assert_contains "$EXTERNAL_STATE/workflows/WF-EXTERNAL/lifecycle/events.log" \
   "route=external-only"
 assert_contains "$EXTERNAL_STATE/workflows/WF-EXTERNAL/lifecycle/events.log" \
@@ -609,6 +614,8 @@ MULTIAGENT_ROOT="$EXTERNAL_ROOT" MULTIAGENT_STATE_DIR="$BLOCKED_EXTERNAL_STATE" 
     --result-file "$BLOCKED_EXTERNAL_RESULT" >"$TEST_TMP/blocked-external-complete.out"
 assert_contains "$BLOCKED_EXTERNAL_STATE/workflows/WF-BLOCKED-EXTERNAL/lifecycle/events.log" \
   $'operations=0\tfailed_operations=0\tblocked_operations=1'
+assert_contains "$BLOCKED_EXTERNAL_STATE/workflows/WF-BLOCKED-EXTERNAL/lifecycle/lifecycle.env" \
+  "terminal_outcome=failed"
 assert_contains "$BLOCKED_EXTERNAL_STATE/orchestrator-result.md" \
   "terminal structural blocker"
 
@@ -620,15 +627,12 @@ cp "$EXTERNAL_STATE/operations/OP-FAILED/receipt.json" \
   "$FAILED_EXTERNAL_STATE/operations/OP-FAILED/receipt.json"
 FAILED_EXTERNAL_RESULT="$FAILED_EXTERNAL_STATE/external-result-candidate.md"
 printf 'The executor failed.\n' >"$FAILED_EXTERNAL_RESULT"
-if MULTIAGENT_ROOT="$EXTERNAL_ROOT" MULTIAGENT_STATE_DIR="$FAILED_EXTERNAL_STATE" \
+MULTIAGENT_ROOT="$EXTERNAL_ROOT" MULTIAGENT_STATE_DIR="$FAILED_EXTERNAL_STATE" \
   MULTIAGENT_WORKFLOW_ID=WF-FAILED-EXTERNAL MULTIAGENT_RUN_ID=RUN-FAILED-EXTERNAL \
   MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
   "$MULTIAGENT" orchestrator complete --external-only \
-    --result-file "$FAILED_EXTERNAL_RESULT" >"$TEST_TMP/failed-external-complete.out" 2>&1; then
-  echo "expected executor failure without success or blocker to reject completion" >&2
-  exit 1
-fi
-assert_contains "$TEST_TMP/failed-external-complete.out" \
-  "terminal reviewed blocker without executor failures"
+    --result-file "$FAILED_EXTERNAL_RESULT" >"$TEST_TMP/failed-external-complete.out"
+assert_contains "$FAILED_EXTERNAL_STATE/workflows/WF-FAILED-EXTERNAL/lifecycle/lifecycle.env" \
+  "terminal_outcome=failed"
 
 echo "implementation lifecycle tests passed"

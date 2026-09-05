@@ -5,7 +5,6 @@
 - Runbook ID: `github.repository-work`
 - Version: `1.1.0`
 - Prod MCP operations: `github.read`, `github.clone`, `github.create-pr`, `github.create-pr-review`
-- Operation versions: `github.read@1.1.0`; `github.clone@1.0.0`; `github.create-pr@1.0.0`; `github.create-pr-review@1.0.0`
 - Set `target` to `{"cluster":"external-services","environment":"production","namespace":"github","service":"installation"}`.
 
 ## Goal
@@ -47,7 +46,7 @@ container's GitHub App credential or token.
 
 1. Continue only when the authenticated user explicitly authorizes publishing review comments; a request to inspect or summarize a pull request is not publication authority.
 2. Complete the read phase and the independently sealed repository review against the exact current head, then prepare one bounded review containing a summary and at most 50 single-line inline comments on changed-file paths and diff lines.
-3. Set the phase to `publish` and operation to `github.create-pr-review@1.0.0`. Supply the exact repository, pull-request number, previously observed head SHA, review body, and inline comments. The operation publishes only GitHub's neutral `COMMENT` event and cannot approve or request changes.
+3. Set the phase to `publish` and operation to `github.create-pr-review` at the version returned by its live capability descriptor. Supply the exact repository, pull-request number, previously observed head SHA, review body, and inline comments. The operation publishes only GitHub's neutral `COMMENT` event and cannot approve or request changes.
 4. Submit the complete immutable review request for independent operations review. The reviewer must verify every comment against the sealed read evidence and the user's publication authority.
 5. Execute once and persist the returned review URL and durable receipt. If the head moved, return to the read phase and obtain fresh independent review; never publish comments authorized for a stale head.
 

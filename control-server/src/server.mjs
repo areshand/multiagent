@@ -25,17 +25,17 @@ import {
 } from "./slack-ingress.mjs";
 import {
   acceptsLiveInput,
-  automaticResumeLimit,
   completionExitDelayMs,
   controlMode,
+  executionTerminalOutcome,
   findActiveSession,
   normalizeWorkerReport,
   ownsThreadProjection,
   responseTypeForMessage,
   selectFinalMessage,
+  sessionStatusForTerminalOutcome,
   sessionControlInvocation,
   sessionLaunchInvocation,
-  shouldAutomaticallyResume,
   submitLocalFollowup,
   validResourceId,
   workerReportInterruptedEvent,
@@ -59,7 +59,6 @@ const captureLines = Math.min(Number(process.env.MULTIAGENT_CAPTURE_LINES || "12
 const snapshotIntervalMs = Math.max(Number(process.env.MULTIAGENT_SNAPSHOT_INTERVAL_SECONDS || "60"), 15) * 1000;
 const idleTimeoutMs = Math.max(Number(process.env.MULTIAGENT_IDLE_TIMEOUT_SECONDS || "86400"), 300) * 1000;
 const completionGraceMs = completionExitDelayMs();
-const maxAutomaticResumes = automaticResumeLimit();
 const workerReportDeliveryTimeoutMs = reportDeliveryTimeoutMs();
 const sessionWorkerTokenTtlMs = Math.min(
   Math.max(Number(process.env.MULTIAGENT_SESSION_WORKER_TOKEN_TTL_SECONDS || "86400"), 3600),
@@ -298,6 +297,10 @@ function workflowCompletionRoute(id) {
   return result ? "source" : null;
 }
 
+function workflowTerminalOutcome(id) {
+  return workflowLifecycleValue(id, "terminal_outcome");
+}
+
 function traceReferences(id) {
   const root = traceRoot(id);
   const references = [];
@@ -325,6 +328,11 @@ function writeTraceSummary(id, status) {
   try { fallback = conciseTail(fs.readFileSync(path.join(sessionStateDir(id), "orchestrator-last-message.txt"), "utf8"), 40, 6000); } catch {}
   const finalMessage = selectFinalMessage(result, fallback);
   const completionRoute = workflowCompletionRoute(id);
+  const terminalOutcome = executionTerminalOutcome({
+    phase: workflowPhase(id),
+    outcome: workflowTerminalOutcome(id),
+    live: false,
+  });
   const references = traceReferences(id);
   const report = {
     taskId: id,
@@ -333,6 +341,7 @@ function writeTraceSummary(id, status) {
     completedAt: registry.sessions[id]?.completedAt || null,
     finalMessage,
     completionRoute,
+    terminalOutcome,
     responseType: responseTypeForMessage(finalMessage, completionRoute),
     traceReferences: references,
   };
@@ -401,14 +410,13 @@ function launchSession(id, repository, resume, actor, originalTask = "", metadat
   run(invocation.command, invocation.args, { cwd: launcherRoot, env });
   if (env.MULTIAGENT_USER_MESSAGE_FILE) fs.rmSync(env.MULTIAGENT_USER_MESSAGE_FILE, { force: true });
   registry.sessions[id] = {
-    ...existing, id, repository, status: "running", autoResume: true,
+    ...existing, id, repository, status: "running",
     threadId: metadata.threadId || existing?.threadId || id,
     leaseGeneration: metadata.leaseGeneration || existing?.leaseGeneration || 1,
     authorizingEventId: metadata.authorizingEventId || existing?.authorizingEventId || id,
     createdBy: existing?.createdBy || metadata.ownerSubject || actor, createdAt: existing?.createdAt || now,
     authorityActor, authorityApprovedAt,
     authorityScope: metadata.authorityScope || existing?.authorityScope || "human",
-    automaticResumeAttempts: resume ? Number(existing?.automaticResumeAttempts || 0) : 0,
     resumedBy: resume ? actor : undefined, resumedAt: resume ? now : undefined,
     updatedAt: now, lastActivityAt: now,
   };
@@ -448,7 +456,6 @@ async function launchGatewaySession(id, repository, resume, actor, originalTask 
     repository,
     status: "pending",
     live: false,
-    autoResume: true,
     createdBy: metadata.ownerSubject || actor,
     authorityActor: actor,
     authorityScope: metadata.authorityScope || "human",
@@ -482,6 +489,8 @@ function readLocalWorkerReport(id) {
       transcript: JSON.parse(fs.readFileSync(path.join(traceRoot(id), "transcript-index.json"), "utf8")),
       message: finalReport.finalMessage,
       completionRoute: finalReport.completionRoute,
+      terminalOutcome: finalReport.terminalOutcome,
+      status: finalReport.status,
     });
   } catch { return null; }
 }
@@ -773,8 +782,12 @@ async function launchThreadExecution(thread, session) {
 async function projectSessionToThread(id, status, reportReader = readGatewayReport) {
   const record = registry.sessions[id];
   if (!record?.threadId || record.threadProjectedAt) return;
-  if (status === "completed") {
-    const report = reportReader(id);
+  const report = reportReader(id);
+  const terminalOutcome = report?.terminalOutcome
+    || (status === "failed" || status === "paused" ? "failed" : null);
+  if (!terminalOutcome) return;
+  record.terminalOutcome = terminalOutcome;
+  if (terminalOutcome === "succeeded" || terminalOutcome === "review_requested") {
     if (!report?.report) return;
     const sessions = await threadStore.listSessionsForActor({ threadId: record.threadId, actor: record.createdBy });
     const session = sessions.find((candidate) => candidate.id === id);
@@ -789,7 +802,7 @@ async function projectSessionToThread(id, status, reportReader = readGatewayRepo
       ...publicEvent,
     });
     await threadStore.markSessionFinishing({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration });
-    const reviewRequired = report.completionRoute === "human-review" && publicEvent.type === "question";
+    const reviewRequired = terminalOutcome === "review_requested" && publicEvent.type === "question";
     const finalized = reviewRequired
       ? await threadStore.finalizeSessionWithReview({
         threadId: record.threadId,
@@ -803,9 +816,9 @@ async function projectSessionToThread(id, status, reportReader = readGatewayRepo
     record.threadProjectedAt = new Date().toISOString();
     await saveRegistry();
     if (finalized.activatedSession) await launchActivatedThreadSession(record, finalized.activatedSession);
-  } else if (status === "failed" || status === "paused") {
+  } else {
     const fallback = status === "paused" ? "Execution session paused" : "Execution session failed";
-    const publicEvent = workerReportInterruptedEvent(id, reportReader(id), fallback);
+    const publicEvent = workerReportInterruptedEvent(id, report, fallback);
     await threadStore.appendFencedSessionEvent({
       threadId: record.threadId,
       sessionId: id,
@@ -897,7 +910,6 @@ function restartWithUserMessage(id, text, actor) {
     if (uidSandbox) runSessionControl(id, "stop");
     else runTmux(id, ["kill-session", "-t", id]);
   }
-  registry.sessions[id].automaticResumeAttempts = 0;
   return launchSession(id, registry.sessions[id].repository, true, actor);
 }
 
@@ -932,7 +944,7 @@ async function checkpointAll() {
   }
 }
 
-async function retireSession(id, status, actor) {
+async function retireSession(id, status, actor, terminalOutcome = status === "failed" ? "failed" : null) {
   const record = registry.sessions[id];
   if (!record) throw new Error("unknown task");
   checkpoint(id);
@@ -942,7 +954,7 @@ async function retireSession(id, status, actor) {
   }
   const now = new Date().toISOString();
   record.status = status;
-  record.autoResume = false;
+  record.terminalOutcome = terminalOutcome;
   record.updatedAt = now;
   record[`${status}At`] = now;
   record[`${status}By`] = actor;
@@ -1407,22 +1419,20 @@ if (workerMode) {
 }
 
 for (const record of gatewayMode ? [] : Object.values(registry.sessions)) {
-  if (record.status === "running" && workflowPhase(record.id) === "complete") {
-    const now = new Date().toISOString();
-    record.status = "completed";
-    record.autoResume = false;
-    record.completedAt = now;
-    record.completedBy = "workflow-supervisor";
-    record.updatedAt = now;
-    writeTraceSummary(record.id, "completed");
-    saveRegistry();
+  if (record.status !== "running") continue;
+  const outcome = executionTerminalOutcome({
+    phase: workflowPhase(record.id),
+    outcome: workflowTerminalOutcome(record.id),
+    live: tmuxAlive(record.id),
+  });
+  if (outcome) {
+    const status = sessionStatusForTerminalOutcome(outcome);
+    await retireSession(record.id, status, outcome === "failed" ? "process-exit" : "workflow-supervisor", outcome);
     if (workerMode) {
       deliverWorkerOutcomeReport(record.id)
         .catch((error) => console.error(`worker report delivery failed for ${record.id}`, error))
-        .finally(() => setTimeout(() => process.exit(0), completionGraceMs));
+        .finally(() => setTimeout(() => process.exit(outcome === "failed" ? 1 : 0), completionGraceMs));
     }
-  } else if (record.status === "running" && record.autoResume && !tmuxAlive(record.id)) {
-    try { launchSession(record.id, record.repository, true, "system"); } catch (error) { console.error(`restore failed for ${record.id}`, error); }
   }
 }
 
@@ -1433,35 +1443,21 @@ const retirementTimer = setInterval(() => {
   if (gatewayMode) return;
   const now = Date.now();
   for (const record of Object.values(registry.sessions)) {
-    if (record.status === "running" && workflowPhase(record.id) === "complete") {
-      retireSession(record.id, "completed", "workflow-supervisor").then(async () => {
+    if (record.status !== "running") continue;
+    const outcome = executionTerminalOutcome({
+      phase: workflowPhase(record.id),
+      outcome: workflowTerminalOutcome(record.id),
+      live: tmuxAlive(record.id),
+    });
+    if (outcome) {
+      const status = sessionStatusForTerminalOutcome(outcome);
+      retireSession(record.id, status, outcome === "failed" ? "process-exit" : "workflow-supervisor", outcome).then(async () => {
         if (workerMode) {
           try { await deliverWorkerOutcomeReport(record.id); }
           catch (error) { console.error(`worker report delivery failed for ${record.id}`, error); }
-          setTimeout(() => process.exit(0), completionGraceMs);
+          setTimeout(() => process.exit(outcome === "failed" ? 1 : 0), completionGraceMs);
         }
       }).catch((error) => console.error(`completion retirement failed for ${record.id}`, error));
-      continue;
-    }
-    if (record.status === "running" && !tmuxAlive(record.id)) {
-      if (process.env.MULTIAGENT_AGENT_HEADLESS === "1" && shouldAutomaticallyResume(record, maxAutomaticResumes)) {
-        record.automaticResumeAttempts = Number(record.automaticResumeAttempts || 0) + 1;
-        record.updatedAt = new Date().toISOString();
-        saveRegistry();
-        try {
-          launchSession(record.id, record.repository, true, "system");
-          continue;
-        } catch (error) {
-          console.error(`automatic resume failed for ${record.id}`, error);
-        }
-      }
-      retireSession(record.id, "failed", "process-exit").then(async () => {
-        if (workerMode) {
-          try { await deliverWorkerOutcomeReport(record.id); }
-          catch (error) { console.error(`worker outcome report delivery failed for ${record.id}`, error); }
-          setTimeout(() => process.exit(1), 1000);
-        }
-      }).catch((error) => console.error(`failed retirement failed for ${record.id}`, error));
       continue;
     }
     const lastActivity = Date.parse(record.lastActivityAt || record.updatedAt || record.createdAt);

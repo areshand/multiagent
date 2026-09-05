@@ -48,6 +48,7 @@ const ENV_ORDER: &[&str] = &[
     "iteration_worker_count",
     "candidate_diff_hash",
     "reviewed_diff_hash",
+    "terminal_outcome",
     "human_review_status",
     "human_review_request",
     "human_review_request_sha256",
@@ -539,6 +540,7 @@ fn initialize_id(id: &str, resume: bool) -> Result<(), String> {
         ("iteration_worker_count", ""),
         ("candidate_diff_hash", ""),
         ("reviewed_diff_hash", ""),
+        ("terminal_outcome", ""),
         ("human_review_status", ""),
         ("human_review_request", ""),
         ("human_review_request_sha256", ""),
@@ -1503,6 +1505,7 @@ pub fn supervisor_complete(id: &str) -> Result<String, String> {
     let diff = state_value(&state, "candidate_diff_hash").to_string();
     state.insert("phase".into(), "complete".into());
     state.insert("reviewed_diff_hash".into(), diff.clone());
+    state.insert("terminal_outcome".into(), "succeeded".into());
     state.insert("updated_at".into(), timestamp());
     write_env(&p.state, &state)?;
     event(
@@ -1591,41 +1594,44 @@ pub fn supervisor_complete_external(id: &str) -> Result<String, String> {
                     receipt_path.display()
                 ));
             }
-            match (
-                structured.get("state").and_then(serde_json::Value::as_str),
-                structured
-                    .pointer("/outcome/disposition")
-                    .and_then(serde_json::Value::as_str),
-            ) {
-                (Some("succeeded"), Some("succeeded")) => successful_operations += 1,
-                (Some("failed"), Some("failed")) => failed_operations += 1,
-                (Some("blocked"), Some("blocked")) => blocked_operations += 1,
-                _ => {
-                    return Err(format!(
-                        "external-only completion requires consistently classified terminal receipts; {} has mismatched state and disposition",
-                        receipt_path.display()
-                    ));
-                }
+            match structured
+                .pointer("/outcome/disposition")
+                .and_then(serde_json::Value::as_str)
+            {
+                Some("succeeded") => successful_operations += 1,
+                Some("failed") => failed_operations += 1,
+                Some("blocked") => blocked_operations += 1,
+                _ => return Err(format!(
+                    "external-only completion requires outcome.disposition=succeeded, failed, or blocked; {} has no recognized terminal disposition",
+                    receipt_path.display()
+                )),
             }
         }
     }
-    if successful_operations == 0 && (blocked_operations == 0 || failed_operations > 0) {
+    if successful_operations + failed_operations + blocked_operations == 0 {
         return Err(
-            "external-only completion requires a successful reviewed operation receipt or a terminal reviewed blocker without executor failures".into(),
+            "external-only completion requires at least one terminal reviewed operation receipt"
+                .into(),
         );
     }
     crate::subagent::external_completion_gate_check()?;
     let result = format!("external-only:{successful_operations}");
+    let terminal_outcome = if failed_operations + blocked_operations > 0 {
+        "failed"
+    } else {
+        "succeeded"
+    };
     state.insert("phase".into(), "complete".into());
     state.insert("candidate_diff_hash".into(), result.clone());
     state.insert("reviewed_diff_hash".into(), result.clone());
+    state.insert("terminal_outcome".into(), terminal_outcome.into());
     state.insert("updated_at".into(), timestamp());
     write_env(&p.state, &state)?;
     event(
         &p.events,
         "phase_transitioned",
         &format!(
-            "from=pre-implementation\tto=complete\titeration={}\tauthority=supervisor\troute=external-only\toperations={successful_operations}\tfailed_operations={failed_operations}\tblocked_operations={blocked_operations}",
+            "from=pre-implementation\tto=complete\titeration={}\tauthority=supervisor\troute=external-only\tterminal_outcome={terminal_outcome}\toperations={successful_operations}\tfailed_operations={failed_operations}\tblocked_operations={blocked_operations}",
             state_value(&state, "iteration")
         ),
     )?;
@@ -1709,6 +1715,7 @@ pub fn supervisor_complete_human_review(id: &str, reviewer: &str) -> Result<Stri
     state.insert("phase".into(), "complete".into());
     state.insert("candidate_diff_hash".into(), result.clone());
     state.insert("reviewed_diff_hash".into(), result.clone());
+    state.insert("terminal_outcome".into(), "review_requested".into());
     state.insert("human_review_status".into(), "pending".into());
     state.insert(
         "human_review_request".into(),
@@ -2004,6 +2011,7 @@ fn complete_shortcut(
     state.insert("phase".into(), "complete".into());
     state.insert("candidate_diff_hash".into(), result.into());
     state.insert("reviewed_diff_hash".into(), result.into());
+    state.insert("terminal_outcome".into(), "succeeded".into());
     state.insert("updated_at".into(), timestamp());
     write_env(&paths.state, state)?;
     event(
