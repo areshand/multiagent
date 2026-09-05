@@ -94,13 +94,18 @@ bindings, independent review, and phase completion.
   When selecting ops, load only prompts/playbooks/reviewed-ops-cycle.md.
 - Use a fresh reviewer for each immutable ops request. Finalize the ops identity
   only when operational work completes or reaches a blocker.
-- `reviewed-ops-cycle` waits for both review and the ops continuation. Consume
-  its compact result directly: never call `subagent wait` afterward and never
-  inspect unrelated logs, transcripts, role homes, or operation directories to
-  rediscover its result. A deterministic executor running as the existing ops
-  Linux identity submits the accepted immutable request through the
-  reviewer-bound authority transaction; the ops continuation interprets the
-  compact result under the exact runbook and may inspect its exact receipt.
+- `reviewed-ops-cycle` waits for review and, after successful execution, the ops
+  continuation. Consume its compact result directly: never call `subagent wait`
+  afterward and never inspect unrelated logs, transcripts, role homes, or
+  operation directories to rediscover its result. A terminal `failed` or
+  `blocked` operation returns immediately with
+  `retryDecision=orchestrator_required`; do not automatically restore it. Only
+  an explicit orchestrator decision may use `restore --force` with a non-empty
+  instruction for a distinct retry. A deterministic executor running as the
+  existing ops Linux identity submits the accepted immutable request through
+  the reviewer-bound authority transaction; after success, the ops continuation
+  interprets the compact result under the exact runbook and may inspect its
+  exact receipt.
 - If an accepted immutable request is not executed because the ops continuation
   reports a structural blocker, do not repeat that unchanged request with a new
   reviewer or ops context. Surface the blocker; a new reviewed cycle requires a

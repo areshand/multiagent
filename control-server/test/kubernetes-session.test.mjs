@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { jobPhase, renderSessionTemplate, sessionSecret, validateSingleAttemptJob } from "../src/kubernetes-session.mjs";
+import { jobPhase, renderSessionTemplate, sessionSecret } from "../src/kubernetes-session.mjs";
 
 test("deployment-owned session templates accept only named bounded substitutions", () => {
   const rendered = renderSessionTemplate({ metadata: { name: "session-{{SESSION_ID}}" }, value: "{{RESUME}}", authentication: "{{REPOSITORY_AUTHENTICATION}}" }, {
@@ -30,20 +30,4 @@ test("Kubernetes Job status maps to the public session lifecycle", () => {
   assert.equal(jobPhase({ status: { active: 1 } }), "running");
   assert.equal(jobPhase({ status: { succeeded: 1 } }), "completed");
   assert.equal(jobPhase({ status: { failed: 1 } }), "failed");
-});
-
-test("session Jobs cannot retry a failed execution behind the orchestrator", () => {
-  const singleAttempt = {
-    kind: "Job",
-    spec: { backoffLimit: 0, template: { spec: { restartPolicy: "Never" } } },
-  };
-  assert.equal(validateSingleAttemptJob(singleAttempt), singleAttempt);
-  assert.throws(
-    () => validateSingleAttemptJob({ ...singleAttempt, spec: { ...singleAttempt.spec, backoffLimit: 3 } }),
-    /backoffLimit to 0/,
-  );
-  assert.throws(
-    () => validateSingleAttemptJob({ kind: "Job", spec: { backoffLimit: 0, template: { spec: { restartPolicy: "OnFailure" } } } }),
-    /restartPolicy to Never/,
-  );
 });

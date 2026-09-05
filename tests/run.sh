@@ -1044,6 +1044,9 @@ assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "If ever
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "do not find, list, or read role prompt files"
 assert_file_contains "$ROOT/prompts/orchestrator.md" "When selecting ops, load only prompts/playbooks/reviewed-ops-cycle.md"
 assert_file_contains "$ROOT/prompts/playbooks/reviewed-ops-cycle.md" "multiagent subagent spawn OPS_NAME --role ops"
+assert_file_contains "$ROOT/prompts/playbooks/reviewed-ops-cycle.md" "retryDecision=orchestrator_required"
+assert_file_contains "$ROOT/prompts/playbooks/recovery.md" '`skip-failed`'
+assert_file_contains "$ROOT/docs/getting-started.md" '`skip-failed`'
 assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "Do not use this lifecycle for an external-only task"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "required-path-outside-owned:"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "ownership blocker"
@@ -1910,7 +1913,7 @@ fi
 
 printf 'Final status: completed\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"
 finalize_output="$("$MULTIAGENT" subagent finalize subagent-watch)"
-[[ "$finalize_output" == "finalized subagent-watch" ]]
+[[ "$finalize_output" == $'finalized subagent-watch\tfinalized' ]]
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/status" "finalized"
 if grep -Fqx -- "subagent-watch" "$MOCK_TMUX_WINDOWS"; then
   echo "expected finalize to close the subagent window" >&2
@@ -1919,6 +1922,14 @@ fi
 
 inspect_output="$("$MULTIAGENT" subagent inspect subagent-watch --lines 5)"
 [[ "$inspect_output" == *"Final status: completed"* ]]
+
+mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-failed-finalize"
+printf 'failed\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-failed-finalize/status"
+printf 'final status: codex exec exited rc=1\n' \
+  >"$MULTIAGENT_STATE_DIR/subagents/subagent-failed-finalize/current.txt"
+failed_finalize_output="$("$MULTIAGENT" subagent finalize subagent-failed-finalize)"
+[[ "$failed_finalize_output" == $'finalized subagent-failed-finalize\tfailed' ]]
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-failed-finalize/status" "failed"
 
 mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-restore"
 printf 'running\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-restore/status"
@@ -1998,9 +2009,10 @@ mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-unknown"
 
 recover_plan="$("$MULTIAGENT" subagent recover-plan)"
 [[ "$recover_plan" == *$'subagent-watch\tskip-finalized\tstatus-finalized\tfinalized\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-watch"* ]]
+[[ "$recover_plan" == *$'subagent-failed-finalize\tskip-failed\tterminal-failure-failed\tfailed\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-failed-finalize"* ]]
 [[ "$recover_plan" == *$'subagent-restore\trestore\tclosed-with-recoverable-context\trunning\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-restore"* ]]
 [[ "$recover_plan" == *$'subagent-blocked\tskip-blocked\trequires-orchestrator-decision\trunning\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-blocked"* ]]
-[[ "$recover_plan" == *$'subagent-prompt-only\trestore\tclosed-with-recoverable-context\tmissing\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-prompt-only"* ]]
+[[ "$recover_plan" == *$'subagent-prompt-only\tskip-failed\tterminal-failure-missing\tmissing\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-prompt-only"* ]]
 [[ "$recover_plan" == *$'subagent-open\tskip-open\ttmux-window-already-open\trunning\topen\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-open"* ]]
 [[ "$recover_plan" == *$'subagent-unknown\tskip-unknown\tno-current-or-transcript\tunknown\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-unknown"* ]]
 [[ "$recover_plan" == *$'subagent-structured\trestore\tcheckpoint-resumable\trunning\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-structured"* ]]
@@ -2049,8 +2061,9 @@ restore_all_output="$("$MULTIAGENT" subagent restore-all)"
 [[ "$restore_all_output" == *$'skipped subagent-blocked\tskip-blocked'* ]]
 [[ "$restore_all_output" == *$'skipped subagent-open\tskip-open'* ]]
 [[ "$restore_all_output" == *$'skipped subagent-watch\tskip-finalized'* ]]
-[[ "$restore_all_output" == *"restored subagent-prompt-only"* ]]
-[[ "$restore_all_output" == *"restore-all complete: restored=1"* ]]
+[[ "$restore_all_output" == *$'skipped subagent-failed-finalize\tskip-failed'* ]]
+[[ "$restore_all_output" == *$'skipped subagent-prompt-only\tskip-failed'* ]]
+[[ "$restore_all_output" == *"restore-all complete: restored=0"* ]]
 
 # Test organizational learning functionality
 

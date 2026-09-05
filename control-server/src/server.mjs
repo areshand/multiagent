@@ -25,6 +25,7 @@ import {
 } from "./slack-ingress.mjs";
 import {
   acceptsLiveInput,
+  automaticResumeLimit,
   completionExitDelayMs,
   controlMode,
   executionTerminalOutcome,
@@ -36,6 +37,7 @@ import {
   sessionStatusForTerminalOutcome,
   sessionControlInvocation,
   sessionLaunchInvocation,
+  shouldAutomaticallyResume,
   submitLocalFollowup,
   validResourceId,
   workerReportInterruptedEvent,
@@ -59,6 +61,7 @@ const captureLines = Math.min(Number(process.env.MULTIAGENT_CAPTURE_LINES || "12
 const snapshotIntervalMs = Math.max(Number(process.env.MULTIAGENT_SNAPSHOT_INTERVAL_SECONDS || "60"), 15) * 1000;
 const idleTimeoutMs = Math.max(Number(process.env.MULTIAGENT_IDLE_TIMEOUT_SECONDS || "86400"), 300) * 1000;
 const completionGraceMs = completionExitDelayMs();
+const maxAutomaticResumes = automaticResumeLimit();
 const workerReportDeliveryTimeoutMs = reportDeliveryTimeoutMs();
 const sessionWorkerTokenTtlMs = Math.min(
   Math.max(Number(process.env.MULTIAGENT_SESSION_WORKER_TOKEN_TTL_SECONDS || "86400"), 3600),
@@ -410,13 +413,14 @@ function launchSession(id, repository, resume, actor, originalTask = "", metadat
   run(invocation.command, invocation.args, { cwd: launcherRoot, env });
   if (env.MULTIAGENT_USER_MESSAGE_FILE) fs.rmSync(env.MULTIAGENT_USER_MESSAGE_FILE, { force: true });
   registry.sessions[id] = {
-    ...existing, id, repository, status: "running",
+    ...existing, id, repository, status: "running", autoResume: true,
     threadId: metadata.threadId || existing?.threadId || id,
     leaseGeneration: metadata.leaseGeneration || existing?.leaseGeneration || 1,
     authorizingEventId: metadata.authorizingEventId || existing?.authorizingEventId || id,
     createdBy: existing?.createdBy || metadata.ownerSubject || actor, createdAt: existing?.createdAt || now,
     authorityActor, authorityApprovedAt,
     authorityScope: metadata.authorityScope || existing?.authorityScope || "human",
+    automaticResumeAttempts: resume ? Number(existing?.automaticResumeAttempts || 0) : 0,
     resumedBy: resume ? actor : undefined, resumedAt: resume ? now : undefined,
     updatedAt: now, lastActivityAt: now,
   };
@@ -456,6 +460,7 @@ async function launchGatewaySession(id, repository, resume, actor, originalTask 
     repository,
     status: "pending",
     live: false,
+    autoResume: true,
     createdBy: metadata.ownerSubject || actor,
     authorityActor: actor,
     authorityScope: metadata.authorityScope || "human",
@@ -910,6 +915,7 @@ function restartWithUserMessage(id, text, actor) {
     if (uidSandbox) runSessionControl(id, "stop");
     else runTmux(id, ["kill-session", "-t", id]);
   }
+  registry.sessions[id].automaticResumeAttempts = 0;
   return launchSession(id, registry.sessions[id].repository, true, actor);
 }
 
@@ -955,6 +961,7 @@ async function retireSession(id, status, actor, terminalOutcome = status === "fa
   const now = new Date().toISOString();
   record.status = status;
   record.terminalOutcome = terminalOutcome;
+  record.autoResume = false;
   record.updatedAt = now;
   record[`${status}At`] = now;
   record[`${status}By`] = actor;
@@ -1433,6 +1440,8 @@ for (const record of gatewayMode ? [] : Object.values(registry.sessions)) {
         .catch((error) => console.error(`worker report delivery failed for ${record.id}`, error))
         .finally(() => setTimeout(() => process.exit(outcome === "failed" ? 1 : 0), completionGraceMs));
     }
+  } else if (record.autoResume && !tmuxAlive(record.id)) {
+    try { launchSession(record.id, record.repository, true, "system"); } catch (error) { console.error(`restore failed for ${record.id}`, error); }
   }
 }
 
@@ -1458,6 +1467,27 @@ const retirementTimer = setInterval(() => {
           setTimeout(() => process.exit(outcome === "failed" ? 1 : 0), completionGraceMs);
         }
       }).catch((error) => console.error(`completion retirement failed for ${record.id}`, error));
+      continue;
+    }
+    if (!tmuxAlive(record.id)) {
+      if (process.env.MULTIAGENT_AGENT_HEADLESS === "1" && shouldAutomaticallyResume(record, maxAutomaticResumes)) {
+        record.automaticResumeAttempts = Number(record.automaticResumeAttempts || 0) + 1;
+        record.updatedAt = new Date().toISOString();
+        saveRegistry();
+        try {
+          launchSession(record.id, record.repository, true, "system");
+          continue;
+        } catch (error) {
+          console.error(`automatic resume failed for ${record.id}`, error);
+        }
+      }
+      retireSession(record.id, "failed", "process-exit", "failed").then(async () => {
+        if (workerMode) {
+          try { await deliverWorkerOutcomeReport(record.id); }
+          catch (error) { console.error(`worker outcome report delivery failed for ${record.id}`, error); }
+          setTimeout(() => process.exit(1), 1000);
+        }
+      }).catch((error) => console.error(`failed retirement failed for ${record.id}`, error));
       continue;
     }
     const lastActivity = Date.parse(record.lastActivityAt || record.updatedAt || record.createdAt);

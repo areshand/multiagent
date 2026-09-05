@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   acceptsLiveInput,
+  automaticResumeLimit,
   completionExitDelayMs,
   controlMode,
   executionTerminalOutcome,
@@ -15,6 +16,7 @@ import {
   sessionControlInvocation,
   sessionLaunchInvocation,
   sessionStatusForTerminalOutcome,
+  shouldAutomaticallyResume,
   submitLocalFollowup,
   validResourceId,
   workerReportInterruptedEvent,
@@ -27,10 +29,17 @@ test("session workers report outcomes to the gateway instead of projecting a pri
   assert.equal(ownsThreadProjection("local"), true);
 });
 
-test("headless sessions restart only for explicit follow-ups", () => {
+test("headless sessions restart for follow-ups and recover incomplete lifecycle passes within a bound", () => {
   assert.equal(acceptsLiveInput(true, false), true);
   assert.equal(acceptsLiveInput(true, true), false);
   assert.equal(acceptsLiveInput(false, false), false);
+  assert.equal(automaticResumeLimit(), 3);
+  assert.equal(automaticResumeLimit("0"), 0);
+  assert.equal(automaticResumeLimit("99"), 10);
+  assert.equal(automaticResumeLimit("invalid"), 3);
+  assert.equal(shouldAutomaticallyResume({ status: "running", autoResume: true, automaticResumeAttempts: 2 }, 3), true);
+  assert.equal(shouldAutomaticallyResume({ status: "running", autoResume: true, automaticResumeAttempts: 3 }, 3), false);
+  assert.equal(shouldAutomaticallyResume({ status: "completed", autoResume: true, automaticResumeAttempts: 0 }, 3), false);
 });
 
 test("every stopped execution maps immediately to one terminal outcome", () => {

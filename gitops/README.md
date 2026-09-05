@@ -53,9 +53,6 @@ The application-owned Slack ingress deployment contract is:
   `MULTIAGENT_SLACK_DIAGNOSIS_CONTEXT`;
 - configure the session Job template to project immutable Secret key
   `authority-scope` into `MULTIAGENT_AUTHORITY_SCOPE`;
-- configure every session Job with `spec.backoffLimit: 0` and pod
-  `restartPolicy: Never`; the control gateway rejects templates that can retry
-  a failed execution;
 - do not grant the Slack ingress model, repository, GitHub, KMS, `prod-mcp`,
   Kubernetes, Grafana, client-cookie, or production credentials;
 - alert when `/readyz` fails or queue depth remains non-zero; and

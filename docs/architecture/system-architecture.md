@@ -242,21 +242,13 @@ the supervisor creates role processes and confines them after creation.
 The orchestrator and role processes run with the thread-selected repository as
 their working tree; session state and trace directories remain separate and
 must not replace the repository working directory.
-Headless orchestrators do not accept terminal-style live input. An authenticated
-follow-up may deliberately resume an execution that is still owned by the same
-session, and each such resume restates the original task and treats the latest
-follow-up as additive unless the user explicitly replaces earlier scope.
-Process exit is not a transport-recovery signal: an incomplete workflow whose
-process exits fails that execution immediately and is never automatically
-resumed by the worker or Kubernetes.
-
-Every session Job is a single attempt. Its Job template must use
-`spec.backoffLimit: 0` and pod `restartPolicy: Never`, and the control gateway
-rejects a template that does not. A provider error, quota error, agent crash, or
-failed operation therefore cannot silently spend another attempt. The
-orchestrator may recommend retry in its bounded result while it is alive, but a
-retry occurs only through a new supervisor-authorized session, such as a later
-authenticated follow-up or approved review continuation.
+Headless orchestrators do not accept terminal-style live input. A follow-up
+therefore remains in the same execution session but is delivered by a native
+resume, and incomplete lifecycle passes are retried by the session worker with
+a deployment-bounded automatic-resume limit. Each native resume restates the
+authenticated original task and treats the latest follow-up as additive unless
+the user explicitly replaces earlier scope, so transport recovery cannot erase
+unfinished thread requirements.
 
 A fresh headless execution also receives the bounded authenticated original
 task in its initial model envelope. The same task is persisted as a
@@ -311,11 +303,12 @@ Each execution session reaches exactly one sealed terminal outcome:
 `succeeded`, `failed`, or `review_requested`. Route-specific safety checks still
 decide whether the supervisor may seal that outcome, but they do not create
 parallel session state machines. A completed operation receipt whose canonical
-`outcome.disposition` is `failed` or `blocked` seals the session as `failed`
-instead of leaving it running for an infrastructure retry. Human review seals
-the current session as `review_requested`; an approval creates a fresh session,
-and a rejection closes continuation. Process exit without a sealed workflow
-outcome is `failed`.
+`outcome.disposition` is `failed` or `blocked` seals the session as `failed`.
+The reviewed-ops runtime returns such a terminal operation result directly to
+the orchestrator and must not automatically restore the failed ops sub-agent.
+Only an explicit orchestrator decision may start a distinct retry attempt.
+Human review seals the current session as `review_requested`; an approval
+creates a fresh session, and a rejection closes continuation.
 
 User messages are durably and idempotently appended before acknowledgement.
 When a thread still has a live execution session, the gateway forwards each

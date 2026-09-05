@@ -26,6 +26,10 @@ subagents persisted memory.
 - `restore`: closed subagent with recoverable context. Report the restore, then run `multiagent subagent restore NAME` when appropriate.
 - `skip-open`: active tmux window already exists. Poll or inspect it; do not restore it.
 - `skip-finalized`: appears done, finalized, killed, or intentionally stopped. Do not restore by default.
+- `skip-failed`: the sub-agent exited or failed without a successful terminal
+  report. Never restore it through `restore-all`; the orchestrator must decide
+  whether a distinct retry is justified and use an explicit `restore --force`
+  instruction.
 - `skip-blocked`: blocked or waiting for input. Report the blocker and ask the user or make an explicit orchestrator decision before `restore --force`.
 - `skip-unknown`: state is stale or unclear. Inspect the state directory before deciding.
 
