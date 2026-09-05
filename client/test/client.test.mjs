@@ -635,6 +635,7 @@ test("latest-open-PR interaction ends with an informative summary, completed age
     },
     fetchImpl: async (url) => {
       const value = String(url);
+      if (value.endsWith("/api/reviews?status=pending")) return jsonResponse({ reviews: [] });
       if (value.endsWith("/api/threads")) return jsonResponse({ threads: [{ id: "thread-1", state: "running", repository: "multiagent" }] });
       if (value.endsWith("/api/threads/thread-1")) return jsonResponse({ thread: { id: "thread-1", state: "running", repository: "multiagent" } });
       if (value.includes("/events?after_sequence=0")) return jsonResponse({ events: [] });
@@ -651,4 +652,146 @@ test("latest-open-PR interaction ends with an informative summary, completed age
   assert.doesNotMatch(output.output, /↳ Status: completed/);
   assert.doesNotMatch(output.output, /assistant> # thread-latest-open-pr|Status: completed|Workflow: run-latest-open-pr|Trace references/);
   assert.ok(prompts.some((prompt) => prompt.label === "› " && prompt.preserveCursor === true));
+});
+
+test("scriptable review commands list and decide with yes or no", async () => {
+  const sessionFile = await sessionFixture({ threadIds: [] });
+  const listed = writer();
+  const review = { id: "review-1", threadId: "thread-slack", status: "pending", question: "Approve restart?" };
+  await main([
+    "--server", "https://control.example", "--session-file", sessionFile, "reviews", "list",
+  ], {
+    stdout: listed,
+    fetchImpl: async (url) => {
+      assert.equal(String(url), "https://control.example/api/reviews?status=pending");
+      return jsonResponse({ reviews: [review] });
+    },
+  });
+  assert.deepEqual(JSON.parse(listed.output), [review]);
+
+  const decided = writer();
+  await main([
+    "--server", "https://control.example", "--session-file", sessionFile, "reviews", "decide", "review-1", "yes",
+  ], {
+    stdout: decided,
+    fetchImpl: async (url, options) => {
+      assert.equal(String(url), "https://control.example/api/reviews/review-1/decision");
+      assert.deepEqual(JSON.parse(options.body), { decision: "approve" });
+      assert.ok(options.headers["idempotency-key"]);
+      return jsonResponse({
+        review: { ...review, status: "approved" },
+        thread: { id: "thread-slack", state: "starting" },
+        session: { id: "session-repair", status: "running" },
+      }, { status: 202 });
+    },
+  });
+  assert.equal(JSON.parse(decided.output).session.id, "session-repair");
+  assert.deepEqual(JSON.parse(await readFile(`${sessionFile}.threads.json`, "utf8")).profiles[0].threadIds, ["thread-slack"]);
+});
+
+test("open TTY announces a repair review that arrives after startup", async () => {
+  const sessionFile = await sessionFixture({ threadIds: [] });
+  const output = ttyWriter();
+  let tick = null;
+  let cleared = false;
+  let questionCount = 0;
+  let reviewFetches = 0;
+  await main([
+    "--server", "https://control.example", "--session-file", sessionFile,
+  ], {
+    stdin: { isTTY: true },
+    stdout: output,
+    createInterface: () => ({
+      async question() {
+        if (questionCount++ === 0) {
+          tick();
+          await new Promise((resolve) => setImmediate(resolve));
+          return "no";
+        }
+        return "/quit";
+      },
+      setPrompt() {},
+      prompt() {},
+      close() {},
+    }),
+    setInterval(callback, milliseconds) {
+      assert.equal(milliseconds, 2_000);
+      tick = callback;
+      return { unref() {} };
+    },
+    clearInterval() { cleared = true; },
+    fetchImpl: async (url, options = {}) => {
+      const value = String(url);
+      if (value.endsWith("/api/reviews?status=pending")) {
+        reviewFetches += 1;
+        return jsonResponse({ reviews: reviewFetches === 2 ? [{
+          id: "review-background",
+          threadId: "thread-background",
+          requestedAt: "2026-09-04T00:00:00.000Z",
+          question: "Approve the bounded background repair?",
+        }] : [] });
+      }
+      if (value.endsWith("/api/reviews/review-background/decision")) {
+        assert.deepEqual(JSON.parse(options.body), { decision: "reject" });
+        return jsonResponse({
+          review: { id: "review-background", status: "rejected" },
+          thread: { id: "thread-background", state: "review_rejected" },
+          session: null,
+        });
+      }
+      throw new Error(`unexpected request: ${value}`);
+    },
+  });
+  assert.match(output.output, /REPAIR REVIEW REQUIRED/);
+  assert.match(output.output, /Approve the bounded background repair\?/);
+  assert.match(output.output, /Rejected review-background\. Thread thread-background cannot continue\./);
+  assert.equal(cleared, true);
+});
+
+test("TTY startup shows a pending repair and yes starts its fresh session", async () => {
+  const sessionFile = await sessionFixture({ threadIds: [] });
+  const output = ttyWriter();
+  const answers = ["yes", "/quit"];
+  let reviewFetches = 0;
+  await main([
+    "--server", "https://control.example", "--session-file", sessionFile,
+  ], {
+    stdin: { isTTY: true },
+    stdout: output,
+    sleep: async () => {},
+    createInterface: () => ({ question: async () => answers.shift(), setPrompt() {}, prompt() {}, close() {} }),
+    createWebSocket: terminalSocketFactory([]),
+    fetchImpl: async (url, options = {}) => {
+      const value = String(url);
+      if (value.endsWith("/api/reviews?status=pending")) {
+        reviewFetches += 1;
+        return jsonResponse({ reviews: reviewFetches === 1 ? [{
+          id: "review-session-diagnose",
+          threadId: "thread-slack",
+          requestedAt: "2026-09-04T00:00:00.000Z",
+          question: "Approve restarting api in testnet?",
+        }] : [] });
+      }
+      if (value.endsWith("/api/reviews/review-session-diagnose/decision")) {
+        assert.deepEqual(JSON.parse(options.body), { decision: "approve" });
+        return jsonResponse({
+          review: { id: "review-session-diagnose", status: "approved" },
+          thread: { id: "thread-slack", state: "starting", activeSessionId: "session-repair", repository: "multiagent" },
+          session: { id: "session-repair", status: "running" },
+        }, { status: 202 });
+      }
+      if (value.includes("/api/threads/thread-slack/events?after_sequence=0")) {
+        return jsonResponse({ events: [
+          { sequence: 1, type: "system_message", payload: { text: "Slack alert" } },
+          { sequence: 2, type: "question", payload: { text: "Approve restarting api in testnet?" } },
+          { sequence: 3, type: "user_message", payload: { text: "I approve repair review" } },
+        ] });
+      }
+      throw new Error(`unexpected request: ${value}`);
+    },
+  });
+  assert.match(output.output, /REPAIR REVIEW REQUIRED/);
+  assert.match(output.output, /Approve restarting api in testnet\?/);
+  assert.match(output.output, /Approved review-session-diagnose\. Started fresh execution session-repair/);
+  assert.match(output.output, /slack> Slack alert/);
 });

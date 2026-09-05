@@ -17,7 +17,7 @@ export function renderSessionTemplate(value, replacements) {
   return rendered;
 }
 
-export function sessionSecret(id, namespace, task, actor, threadId = id, leaseGeneration = 1, authorizingEventId = id, gatewayToken = "") {
+export function sessionSecret(id, namespace, task, actor, threadId = id, leaseGeneration = 1, authorizingEventId = id, gatewayToken = "", authorityScope = "human") {
   return {
     apiVersion: "v1",
     kind: "Secret",
@@ -38,6 +38,7 @@ export function sessionSecret(id, namespace, task, actor, threadId = id, leaseGe
       "thread-id": Buffer.from(threadId, "utf8").toString("base64"),
       "lease-generation": Buffer.from(String(leaseGeneration), "utf8").toString("base64"),
       "authorizing-event-id": Buffer.from(authorizingEventId, "utf8").toString("base64"),
+      "authority-scope": Buffer.from(authorityScope, "utf8").toString("base64"),
       ...(gatewayToken ? { "gateway-token": Buffer.from(gatewayToken, "utf8").toString("base64") } : {}),
     },
   };
@@ -108,8 +109,8 @@ export class KubernetesSessionClient {
     return `/api/v1/namespaces/${encodeURIComponent(this.namespace)}/${resource}${name ? `/${encodeURIComponent(name)}` : ""}${query}`;
   }
 
-  async createSession({ id, threadId = id, leaseGeneration = 1, authorizingEventId = id, gatewayToken = "", task, actor, repositoryName, repositoryUrl, repositoryAuthentication = "anonymous", resume, template }) {
-    const secret = sessionSecret(id, this.namespace, task, actor, threadId, leaseGeneration, authorizingEventId, gatewayToken);
+  async createSession({ id, threadId = id, leaseGeneration = 1, authorizingEventId = id, gatewayToken = "", task, actor, authorityScope = "human", repositoryName, repositoryUrl, repositoryAuthentication = "anonymous", resume, template }) {
+    const secret = sessionSecret(id, this.namespace, task, actor, threadId, leaseGeneration, authorizingEventId, gatewayToken, authorityScope);
     const job = renderSessionTemplate(template, {
       SESSION_ID: id,
       THREAD_ID: threadId,
@@ -120,6 +121,7 @@ export class KubernetesSessionClient {
       REPOSITORY_URL: repositoryUrl,
       REPOSITORY_AUTHENTICATION: repositoryAuthentication,
       CALLER_SUBJECT: actor,
+      AUTHORITY_SCOPE: authorityScope,
       RESUME: resume ? "1" : "0",
     });
     await apiRequest(this.connection, "POST", this.corePath("secrets"), secret);

@@ -15,6 +15,14 @@ import { fetchWorkerSubagents, fetchWorkerSubagentsWithReconciliation } from "./
 import { configuredRepository, parseRepositoryCatalog } from "./repository-catalog.mjs";
 import { visibleLegacySessionIds } from "./session-visibility.mjs";
 import {
+  bearerToken,
+  normalizeSlackIngressEvent,
+  renderSlackDiagnosisTask,
+  secureTokenEqual,
+  slackEventMessageId,
+  slackThreadTitle,
+} from "./slack-ingress.mjs";
+import {
   acceptsLiveInput,
   automaticResumeLimit,
   completionExitDelayMs,
@@ -65,6 +73,9 @@ const workerReportTokenFile = workerMode ? String(process.env.MULTIAGENT_GATEWAY
 const registryFile = path.join(stateRoot, "control-server", "sessions.json");
 const sessionJobTemplateFile = process.env.MULTIAGENT_SESSION_JOB_TEMPLATE_FILE || "/etc/multiagent-session/job-template.json";
 const repositoryCatalog = gatewayMode ? parseRepositoryCatalog(process.env.MULTIAGENT_REPOSITORIES_JSON || "{}") : {};
+const slackRepository = String(process.env.MULTIAGENT_SLACK_REPOSITORY || "").trim();
+const slackIngressTokenFile = String(process.env.MULTIAGENT_SLACK_INGRESS_TOKEN_FILE || "");
+const slackReviewOwner = String(process.env.MULTIAGENT_SLACK_REVIEW_OWNER || "").trim();
 const kubernetes = gatewayMode ? new KubernetesSessionClient() : null;
 const sessionJobTemplate = gatewayMode ? JSON.parse(fs.readFileSync(sessionJobTemplateFile, "utf8")) : null;
 const threadStore = await createThreadStore({
@@ -139,6 +150,22 @@ function verifySession(token) {
 
 function currentUser(request) {
   return verifySession(parseCookies(request).multiagent_session)?.username || null;
+}
+
+function configuredSlackIngressToken() {
+  if (!slackIngressTokenFile) return "";
+  try { return fs.readFileSync(slackIngressTokenFile, "utf8").trim(); }
+  catch { return ""; }
+}
+
+function slackIngressAuthorized(request) {
+  return secureTokenEqual(bearerToken(request.headers.authorization), configuredSlackIngressToken());
+}
+
+function configuredReviewOwner() {
+  const user = authConfig.users.find((candidate) => candidate.username === slackReviewOwner && candidate.disabled !== true);
+  if (!user) throw new Error("MULTIAGENT_SLACK_REVIEW_OWNER must name an enabled terminal user");
+  return user.username;
 }
 
 function verifyPassword(password, encoded) {
@@ -217,6 +244,13 @@ function repositoryPath(name) {
     throw new Error(`repository is not bootstrapped: ${name}`);
   }
   return candidate;
+}
+
+function resolveSlackRepository() {
+  if (!slackRepository) throw new Error("MULTIAGENT_SLACK_REPOSITORY is required for Slack-triggered diagnosis");
+  if (gatewayMode) configuredRepository(repositoryCatalog, slackRepository);
+  else repositoryPath(slackRepository);
+  return slackRepository;
 }
 
 function sessionStateDir(id) {
@@ -360,6 +394,7 @@ function launchSession(id, repository, resume, actor, originalTask = "", metadat
       : "",
     MULTIAGENT_CALLER_SUBJECT: `caller-${crypto.createHash("sha256").update(authorityActor).digest("hex").slice(0, 32)}`,
     MULTIAGENT_CALLER_APPROVED_AT: authorityApprovedAt,
+    MULTIAGENT_AUTHORITY_SCOPE: metadata.authorityScope || existing?.authorityScope || "human",
   };
   run(invocation.command, invocation.args, { cwd: launcherRoot, env });
   if (env.MULTIAGENT_USER_MESSAGE_FILE) fs.rmSync(env.MULTIAGENT_USER_MESSAGE_FILE, { force: true });
@@ -368,8 +403,9 @@ function launchSession(id, repository, resume, actor, originalTask = "", metadat
     threadId: metadata.threadId || existing?.threadId || id,
     leaseGeneration: metadata.leaseGeneration || existing?.leaseGeneration || 1,
     authorizingEventId: metadata.authorizingEventId || existing?.authorizingEventId || id,
-    createdBy: existing?.createdBy || actor, createdAt: existing?.createdAt || now,
+    createdBy: existing?.createdBy || metadata.ownerSubject || actor, createdAt: existing?.createdAt || now,
     authorityActor, authorityApprovedAt,
+    authorityScope: metadata.authorityScope || existing?.authorityScope || "human",
     automaticResumeAttempts: resume ? Number(existing?.automaticResumeAttempts || 0) : 0,
     resumedBy: resume ? actor : undefined, resumedAt: resume ? now : undefined,
     updatedAt: now, lastActivityAt: now,
@@ -394,6 +430,7 @@ async function launchGatewaySession(id, repository, resume, actor, originalTask 
     gatewayToken: issueWorkerToken(id, sessionWorkerTokenTtlMs),
     task,
     actor: callerSubject,
+    authorityScope: metadata.authorityScope || "human",
     repositoryName: repository,
     repositoryUrl: repositoryConfig.url,
     repositoryAuthentication: repositoryConfig.authentication,
@@ -410,7 +447,10 @@ async function launchGatewaySession(id, repository, resume, actor, originalTask 
     status: "pending",
     live: false,
     autoResume: true,
-    createdBy: actor,
+    createdBy: metadata.ownerSubject || actor,
+    authorityActor: actor,
+    authorityScope: metadata.authorityScope || "human",
+    authorityApprovedAt: now,
     createdAt: now,
     updatedAt: now,
     lastActivityAt: now,
@@ -685,16 +725,20 @@ async function launchThreadExecution(thread, session) {
   const task = renderThreadTask(envelope, session.triggerMessageId);
   try {
     if (gatewayMode) {
-      await launchGatewaySession(session.id, thread.repository, false, thread.ownerSubject, task, {
+      await launchGatewaySession(session.id, thread.repository, false, session.actorSubject, task, {
         threadId: thread.id,
         leaseGeneration: session.leaseGeneration,
         authorizingEventId: session.triggerMessageId,
+        ownerSubject: thread.ownerSubject,
+        authorityScope: session.authorityScope || "human",
       });
     } else {
-      launchSession(session.id, thread.repository, false, thread.ownerSubject, task, {
+      launchSession(session.id, thread.repository, false, session.actorSubject, task, {
         threadId: thread.id,
         leaseGeneration: session.leaseGeneration,
         authorizingEventId: session.triggerMessageId,
+        ownerSubject: thread.ownerSubject,
+        authorityScope: session.authorityScope || "human",
       });
     }
     const running = await threadStore.markSessionRunning({
@@ -743,7 +787,17 @@ async function projectSessionToThread(id, status, reportReader = readGatewayRepo
       ...publicEvent,
     });
     await threadStore.markSessionFinishing({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration });
-    const finalized = await threadStore.finalizeSession({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration });
+    const reviewRequired = report.completionRoute === "human-review" && publicEvent.type === "question";
+    const finalized = reviewRequired
+      ? await threadStore.finalizeSessionWithReview({
+        threadId: record.threadId,
+        sessionId: id,
+        generation: record.leaseGeneration,
+        reviewId: `review-${id}`,
+        question: publicEvent.payload.text,
+        sourceEventId: `final-${id}`,
+      })
+      : await threadStore.finalizeSession({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration });
     record.threadProjectedAt = new Date().toISOString();
     await saveRegistry();
     if (finalized.activatedSession) await launchActivatedThreadSession(record, finalized.activatedSession);
@@ -945,6 +999,41 @@ const server = http.createServer(async (request, response) => {
         readiness: "/readyz",
       });
     }
+    if (request.method === "POST" && url.pathname === "/internal/integrations/slack/events") {
+      if (workerMode) return json(response, 404, { error: "not found" });
+      if (!slackIngressAuthorized(request)) return json(response, 401, { error: "integration authentication required" });
+      const event = normalizeSlackIngressEvent(await readBody(request));
+      const ownerSubject = configuredReviewOwner();
+      const repository = resolveSlackRepository();
+      const threadId = generateThreadId();
+      const source = {
+        type: "slack",
+        eventId: event.eventId,
+        workspaceId: event.workspaceId,
+        channelId: event.channelId,
+        messageTs: event.messageTs,
+        threadTs: event.threadTs,
+        senderId: event.senderId,
+      };
+      const routed = await threadStore.createExternalThreadAndRoute({
+        id: threadId,
+        ownerSubject,
+        repository,
+        title: slackThreadTitle(event),
+        sourceActor: `integration:slack:${event.workspaceId}`,
+        source,
+        eventId: slackEventMessageId(event.eventId),
+        text: renderSlackDiagnosisTask(event),
+        newSessionId: threadSessionId(threadId),
+      });
+      if (!routed.duplicate) await launchThreadExecution(routed.thread, routed.session);
+      return json(response, 202, {
+        accepted: true,
+        duplicate: routed.duplicate,
+        thread: routed.thread,
+        session: routed.session,
+      });
+    }
     if (!validOrigin(request)) return json(response, 403, { error: "origin rejected" });
     if (request.method === "POST" && url.pathname === "/api/login") {
       const address = request.socket.remoteAddress || "unknown";
@@ -966,6 +1055,32 @@ const server = http.createServer(async (request, response) => {
     if (!username && !workerSessionId) return json(response, 401, { error: "authentication required" });
     if (request.method === "POST" && url.pathname === "/api/logout") {
       return json(response, 200, { ok: true }, { "set-cookie": "multiagent_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0" });
+    }
+    if (request.method === "GET" && url.pathname === "/api/reviews") {
+      return json(response, 200, { reviews: await threadStore.listReviewsForActor({
+        actor: username,
+        status: String(url.searchParams.get("status") || "pending"),
+      }) });
+    }
+    const reviewDecisionMatch = url.pathname.match(/^\/api\/reviews\/([a-z0-9-]+)\/decision$/);
+    if (request.method === "POST" && reviewDecisionMatch) {
+      if (workerMode) throw new Error("session workers cannot decide reviews");
+      const idempotencyKey = String(request.headers["idempotency-key"] || "").trim();
+      if (!idempotencyKey || idempotencyKey.length > 128) return json(response, 400, { error: "valid Idempotency-Key is required" });
+      const body = await readBody(request);
+      const rawDecision = String(body.decision || "").toLowerCase();
+      const decision = rawDecision === "yes" ? "approve" : rawDecision === "no" ? "reject" : rawDecision;
+      const digest = crypto.createHash("sha256").update(`${reviewDecisionMatch[1]}:${username}:${idempotencyKey}`).digest("hex").slice(0, 32);
+      const routed = await threadStore.decideReviewAndRoute({
+        reviewId: reviewDecisionMatch[1],
+        actor: username,
+        decision,
+        decisionId: `review-decision-${digest}`,
+        messageId: `review-message-${digest}`,
+        newSessionId: threadSessionId(reviewDecisionMatch[1]),
+      });
+      if (routed.session) await launchThreadExecution(routed.thread, routed.session);
+      return json(response, routed.session ? 202 : 200, routed);
     }
     if (request.method === "GET" && url.pathname === "/api/me") return json(response, 200, { username });
     if (request.method === "GET" && url.pathname === "/api/trace-export/status") return json(response, 200, traceExportStatus());

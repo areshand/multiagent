@@ -18,6 +18,8 @@ Commands:
   logout
   whoami
   repositories list
+  reviews list [--status pending|approved|rejected|all]
+  reviews decide REVIEW_ID yes|no
   threads list
   threads show THREAD_ID
   threads create --repository NAME [--title TITLE] (--message TEXT | --message-file PATH)
@@ -32,6 +34,7 @@ thread watch emits one JSON event per line. Run without a command for the
 interactive terminal client.`;
 
 const interactiveHelp = `Commands:
+  /reviews                 Refresh pending repair reviews
   /list                    List threads created by this local client
   /open THREAD_ID          Open a thread
   /new REPO [TITLE]        Create and open a server-assigned thread
@@ -89,6 +92,8 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
   const sleep = dependencies.sleep || ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
   const readPassword = dependencies.readPassword || (() => readSecret(stdin, stderr));
   const createInterfaceImpl = dependencies.createInterface || createInterface;
+  const setIntervalImpl = dependencies.setInterval || setInterval;
+  const clearIntervalImpl = dependencies.clearInterval || clearInterval;
   const createWebSocketImpl = dependencies.createWebSocket || ((url, options) => new WebSocket(url, options));
   const parsed = parseGlobalOptions(argv);
   const sessionFile = path.resolve(parsed.sessionFile || environment.MULTIAGENT_CLIENT_SESSION_FILE || defaultSessionFile());
@@ -113,7 +118,7 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
     if (!client.cookie) throw new ClientError(`not logged in to ${normalizedServer}; run the login command first`);
     const initialThreadId = command === "connect" ? parsed.args.shift() || "" : "";
     rejectExtraArguments(parsed.args);
-    return runInteractive({ client, stdin, stdout, sleep, createInterfaceImpl, createWebSocketImpl, initialThreadId, threadIndex });
+    return runInteractive({ client, stdin, stdout, sleep, createInterfaceImpl, createWebSocketImpl, setIntervalImpl, clearIntervalImpl, initialThreadId, threadIndex });
   }
 
   if (command === "login") {
@@ -131,6 +136,10 @@ export async function main(argv = process.argv.slice(2), dependencies = {}) {
   }
 
   if (!client.cookie) throw new ClientError(`not logged in to ${normalizedServer}; run the login command first`);
+
+  if (command === "reviews") {
+    return runReviews({ client, args: parsed.args, stdout, threadIndex });
+  }
 
   if (command === "logout") {
     rejectExtraArguments(parsed.args);
@@ -173,6 +182,8 @@ export async function runInteractive({
   sleep,
   createInterfaceImpl = createInterface,
   createWebSocketImpl = (url, options) => new WebSocket(url, options),
+  setIntervalImpl = setInterval,
+  clearIntervalImpl = clearInterval,
   initialThreadId = "",
   threadIndex,
 }) {
@@ -183,8 +194,11 @@ export async function runInteractive({
   let cursor = 0;
   let monitor = null;
   let threadConnection = null;
+  let reviewTimer = null;
   let promptActive = false;
   let promptLabel = "› ";
+  let reviews = [];
+  const announcedReviewIds = new Set();
   const refreshPrompt = () => {
     if (!promptActive) return;
     if (typeof terminal.setPrompt !== "function" || typeof terminal.prompt !== "function") return;
@@ -217,6 +231,37 @@ export async function runInteractive({
     });
   };
 
+
+  const showReviews = () => {
+    if (!reviews.length) {
+      interactiveOutput.write("\nNo pending repair reviews.\n");
+      return;
+    }
+    for (const review of reviews) {
+      if (announcedReviewIds.has(review.id)) continue;
+      announcedReviewIds.add(review.id);
+      interactiveOutput.write([
+        "",
+        "=== REPAIR REVIEW REQUIRED ===",
+        `Review: ${review.id}`,
+        `Thread: ${review.threadId}`,
+        `Requested: ${review.requestedAt}`,
+        "",
+        review.question,
+        "",
+        "Enter yes to approve and start a fresh session, or no to reject and close this thread.",
+        "",
+      ].join("\n"));
+    }
+  };
+
+  const refreshReviews = async ({ announce = false, showEmpty = false } = {}) => {
+    reviews = (await client.request("/api/reviews?status=pending")).value.reviews || [];
+    if (announce && (reviews.length || showEmpty)) showReviews();
+    promptLabel = reviews[0] ? `review ${reviews[0].id} [yes/no]> ` : current ? "› " : "multiagent> ";
+    refreshPrompt();
+    return reviews;
+  };
   const replay = async ({ all = false } = {}) => {
     if (!current) return [];
     const after = all ? 0 : cursor;
@@ -277,6 +322,9 @@ export async function runInteractive({
         cursor = sequence;
         applyPaneEvent(event);
         renderInteractiveEvent(interactiveOutput, event);
+        if (event.type === "question" && stdout.isTTY) {
+          void refreshReviews({ announce: true }).catch((error) => interactiveOutput.write(`[review refresh error] ${error.message}\n`));
+        }
         if (new Set(["assistant_message", "question", "session_interrupted"]).has(event.type)) {
           monitor?.controller.abort();
         }
@@ -329,9 +377,16 @@ export async function runInteractive({
 
   stdout.write("Multiagent — /help\n");
   try {
+    if (stdout.isTTY) {
+      await refreshReviews({ announce: true, showEmpty: true });
+      reviewTimer = setIntervalImpl(() => {
+        void refreshReviews({ announce: true }).catch((error) => interactiveOutput.write(`[review refresh error] ${error.message}\n`));
+      }, 2_000);
+      reviewTimer?.unref?.();
+    }
     if (initialThreadId) await openThread(initialThreadId);
     while (true) {
-      promptLabel = current ? "› " : "multiagent> ";
+      promptLabel = reviews[0] ? `review ${reviews[0].id} [yes/no]> ` : current ? "› " : "multiagent> ";
       promptActive = true;
       let answer;
       try {
@@ -344,6 +399,7 @@ export async function runInteractive({
       try {
         if (line === "/quit" || line === "/exit") return 0;
         if (line === "/help") { stdout.write(`\n${interactiveHelp}\n`); continue; }
+        if (line === "/reviews") { announcedReviewIds.clear(); await refreshReviews({ announce: true, showEmpty: true }); continue; }
         if (line === "/list" || line === "/threads") { await listThreads(); continue; }
         if (line === "/refresh") { await replay(); continue; }
         if (line === "/wait") {
@@ -378,6 +434,44 @@ export async function runInteractive({
           stdout.write(`\nOpened ${current.id}. Enter its first message.\n`);
           continue;
         }
+        if (reviews[0]) {
+          const review = reviews[0];
+          const answer = line.toLowerCase();
+          if (!new Set(["yes", "y", "no", "n"]).has(answer)) {
+            stdout.write(`Review ${review.id} is pending. Enter yes or no, or use /help.\n`);
+            continue;
+          }
+          const approve = answer === "yes" || answer === "y";
+          const routed = (await client.request(`/api/reviews/${encodeURIComponent(review.id)}/decision`, {
+            method: "POST",
+            headers: { "idempotency-key": crypto.randomUUID() },
+            body: { decision: approve ? "approve" : "reject" },
+          })).value;
+          reviews = reviews.filter((candidate) => candidate.id !== review.id);
+          if (approve) {
+            await rememberLocalThread(threadIndex, routed.thread.id);
+            await stopMonitor();
+            await stopThreadConnection();
+            current = routed.thread;
+            cursor = 0;
+            threads = [...threads.filter((thread) => thread.id !== current.id), current];
+            agentPane.setOutcome("", "");
+            agentPane.setThread(current, routed.session?.status || "starting");
+            stdout.write(`\nApproved ${review.id}. Started fresh execution ${routed.session.id} for ${current.id}.\n`);
+            await replay({ all: true });
+            startThreadConnection(current.id);
+            await startMonitor(routed.session.id);
+          } else {
+            if (current?.id === routed.thread.id) {
+              current = routed.thread;
+              agentPane.setThread(current);
+              agentPane.setOutcome("blocked", "Repair review rejected; this thread is closed.");
+            }
+            stdout.write(`\nRejected ${review.id}. Thread ${routed.thread.id} cannot continue.\n`);
+          }
+          await refreshReviews({ announce: true });
+          continue;
+        }
         if (line.startsWith("/")) { stdout.write(`Unknown command: ${line.split(/\s+/, 1)[0]}. Type /help.\n`); continue; }
         if (!current) {
           await openThread(line);
@@ -405,6 +499,7 @@ export async function runInteractive({
       }
     }
   } finally {
+    if (reviewTimer) clearIntervalImpl(reviewTimer);
     await stopMonitor();
     await stopThreadConnection();
     agentPane.close();
@@ -927,8 +1022,11 @@ function renderInteractiveEvent(stdout, event) {
     ? finalAgentMessageText(rawText)
     : rawText;
   if (event.type === "user_message") stdout.write(`\nyou> ${text}\n`);
+  else if (event.type === "system_message") stdout.write(`\nslack> ${text}\n`);
   else if (event.type === "assistant_message") stdout.write(`\nassistant> ${text}\n`);
   else if (event.type === "question") stdout.write(`\nassistant? ${text}\n`);
+  else if (event.type === "review_resolved") stdout.write(`\n[review ${event.payload?.decision}] ${event.payload?.reviewId || ""}\n`);
+  else if (event.type === "review_requested") stdout.write(`\n[review required] ${text || event.payload?.reviewId || ""}\n`);
   else if (event.type === "artifact_available") stdout.write(`\n[artifact] ${text || JSON.stringify(event.payload)}\n`);
   else stdout.write(`\n[${event.type.replaceAll("_", " ")}] ${text || JSON.stringify(event.payload)}\n`);
 }
@@ -995,6 +1093,34 @@ async function runThreads({ client, args, stdout, stdin, sleep, threadIndex }) {
     return 0;
   }
   throw new ClientError(`unknown threads action: ${action}`);
+}
+
+async function runReviews({ client, args, stdout, threadIndex }) {
+  const action = requiredArgument(args.shift(), "reviews action");
+  if (action === "list") {
+    const options = parseOptions(args, new Set(["--status"]));
+    const status = options.get("--status") || "pending";
+    if (!new Set(["pending", "approved", "rejected", "all"]).has(status)) {
+      throw new ClientError("--status must be pending, approved, rejected, or all");
+    }
+    writeJson(stdout, (await client.request(`/api/reviews?status=${encodeURIComponent(status)}`)).value.reviews || []);
+    return 0;
+  }
+  if (action === "decide") {
+    const reviewId = requiredArgument(args.shift(), "review ID");
+    const answer = requiredArgument(args.shift(), "yes or no").toLowerCase();
+    rejectExtraArguments(args);
+    if (!new Set(["yes", "no", "y", "n"]).has(answer)) throw new ClientError("review decision must be yes or no");
+    const result = (await client.request(`/api/reviews/${encodeURIComponent(reviewId)}/decision`, {
+      method: "POST",
+      headers: { "idempotency-key": crypto.randomUUID() },
+      body: { decision: new Set(["yes", "y"]).has(answer) ? "approve" : "reject" },
+    })).value;
+    if (result.thread?.id) await rememberLocalThread(threadIndex, result.thread.id);
+    writeJson(stdout, result);
+    return 0;
+  }
+  throw new ClientError(`unknown reviews action: ${action}`);
 }
 
 async function runLegacy({ client, args, stdout }) {

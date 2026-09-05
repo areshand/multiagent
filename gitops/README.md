@@ -33,3 +33,30 @@ The application-owned Logger deployment contract is:
 
 Concrete Kubernetes resources, secret names, PVC classes, S3 destinations,
 network identities, and retention policy remain in `InternalServices`.
+
+The application-owned Slack ingress deployment contract is:
+
+- build `docker/slack-ingress/Dockerfile` as a separate non-root workload;
+- expose only `/slack/events`, `/healthz`, and `/readyz` through the
+  deployment-managed public ingress;
+- mount the Slack signing secret and the independent internal gateway token as
+  read-only files; mount neither secret into session agents;
+- configure the immutable Hangout channel ID through
+  `SLACK_ALLOWED_CHANNEL_IDS`, not a channel name;
+- mount one durable writable queue volume at `SLACK_INGRESS_STATE_DIR` and run
+  at most one queue writer for that volume;
+- allow egress only to the private control-server internal event endpoint;
+- configure the control server with the same internal token file, an enabled
+  `MULTIAGENT_SLACK_REVIEW_OWNER` terminal username, and the bounded
+  `MULTIAGENT_SLACK_REPOSITORY` diagnosis repository;
+- configure the session Job template to project immutable Secret key
+  `authority-scope` into `MULTIAGENT_AUTHORITY_SCOPE`;
+- do not grant the Slack ingress model, repository, GitHub, KMS, `prod-mcp`,
+  Kubernetes, Grafana, client-cookie, or production credentials;
+- alert when `/readyz` fails or queue depth remains non-zero; and
+- verify the real Hangout message, terminal no, and terminal yes acceptance
+  paths documented in `slack-ingress/README.md`.
+
+Concrete Slack app IDs, workspace/channel IDs, callback hostnames, secret
+names, PVC class, replica policy, NetworkPolicy, certificates, and public
+ingress remain `InternalServices` configuration.

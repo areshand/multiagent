@@ -763,6 +763,41 @@ fn validate_read_capability(capability: &Value, template: &Value) -> Result<(), 
     Ok(())
 }
 
+fn validate_diagnosis_capability(capability: &Value) -> Result<(), String> {
+    let access = capability.get("access").and_then(Value::as_str);
+    if !matches!(access, Some("read" | "materialize"))
+        || capability.get("mutation").and_then(Value::as_bool) != Some(false)
+    {
+        return Err("diagnosis-only sessions may execute only non-mutating read or materialize capabilities".into());
+    }
+    if capability
+        .get("requiredApprovalRoles")
+        .and_then(Value::as_array)
+        .is_none_or(|roles| !roles.is_empty())
+    {
+        return Err("diagnosis-only capability must not require mutation approval roles".into());
+    }
+    Ok(())
+}
+
+fn enforce_authority_scope(template: &Value) -> Result<(), String> {
+    match env::var("MULTIAGENT_AUTHORITY_SCOPE")
+        .as_deref()
+        .unwrap_or("human")
+    {
+        "human" => Ok(()),
+        "diagnosis-only" => {
+            let operation_id = template
+                .pointer("/operation/id")
+                .and_then(Value::as_str)
+                .ok_or("ops request has no operation ID")?;
+            let capabilities = call_prod_mcp_tool("operations_capabilities", json!({}))?;
+            validate_diagnosis_capability(operation_capability(&capabilities, operation_id)?)
+        }
+        _ => Err("MULTIAGENT_AUTHORITY_SCOPE is invalid".into()),
+    }
+}
+
 fn execute(args: &[String]) -> Result<ExitCode, String> {
     let options = options(args)?;
     let caller_uid = env::var("MULTIAGENT_AUTHORITY_CALLER_UID")
@@ -799,6 +834,7 @@ fn execute_reviewed_operation(args: &[String]) -> Result<ExitCode, String> {
     let reviewer = required(&options, "--reviewer")?;
     let request_file = PathBuf::from(required(&options, "--request-file")?);
     let (state, template, reviewer_approval) = load_reviewed_request(&request_file, reviewer)?;
+    enforce_authority_scope(&template)?;
     let now = Utc::now();
     let caller_subject = env::var("MULTIAGENT_CALLER_SUBJECT")
         .ok()
@@ -1845,8 +1881,8 @@ mod tests {
         execute_mode, operation_capability, parse_mcp_body, private_temp_path,
         review_binding_marker, review_binding_matches, review_binding_value,
         review_evidence_is_bound, reviewer_accepted, runbook_content_digest,
-        validate_evidence_scope, validate_read_capability, validate_request_template,
-        write_mcp_headers, ExecuteMode, TrustedApproval,
+        validate_diagnosis_capability, validate_evidence_scope, validate_read_capability,
+        validate_request_template, write_mcp_headers, ExecuteMode, TrustedApproval,
     };
     use chrono::{TimeZone, Utc};
     use serde_json::json;
@@ -2004,6 +2040,16 @@ mod tests {
             "allowedRunbooks":["observability.investigation@1.1.0"],
             "requiredApprovalRoles":[]
         });
+        assert!(validate_diagnosis_capability(&capability).is_ok());
+        let mut materialize = capability.clone();
+        materialize["access"] = "materialize".into();
+        assert!(validate_diagnosis_capability(&materialize).is_ok());
+        let mut requires_approval = capability.clone();
+        requires_approval["requiredApprovalRoles"] = json!(["human"]);
+        assert!(validate_diagnosis_capability(&requires_approval).is_err());
+        let mut diagnosis_mutation = capability.clone();
+        diagnosis_mutation["mutation"] = true.into();
+        assert!(validate_diagnosis_capability(&diagnosis_mutation).is_err());
         assert!(validate_read_capability(&capability, &evidence).is_ok());
         let mut mutating = capability.clone();
         mutating["mutation"] = true.into();

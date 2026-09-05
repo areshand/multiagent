@@ -41,6 +41,11 @@ Bounded clarification responses are shown as questions and wait for ordinary
 follow-up input. HTTP event replay repairs gaps after a disconnect and
 reconstructs that summary when a thread is reopened.
 
+Pending Slack repair proposals are shown before the normal prompt in a clearly
+labelled review window. Enter `yes` to bind the exact review question to a fresh
+human-authorized execution session, or `no` to reject it and permanently close
+that thread to further messages. Use `/reviews` to refresh the pending queue.
+
 The first command securely prompts for the password. For a non-interactive
 caller, provide the password on stdin. Do not put it in a command argument:
 
@@ -62,6 +67,8 @@ and debugging:
 
 ```text
 connect [THREAD_ID]
+reviews list [--status pending|approved|rejected|all]
+reviews decide REVIEW_ID yes|no
 repositories list
 threads list  # only threads created by this local client profile
 threads show THREAD_ID

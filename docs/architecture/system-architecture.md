@@ -37,6 +37,13 @@ hard-coded orchestration logic.
 ## System context
 
 ```text
+Slack Hangout channel -- Events API --> Slack ingress adapter
+                                             |
+                                             | signed, filtered, durable event
+                                             v
+                                     Internal control API
+                                             |
+                                             v
 Terminal client and authenticated user
               |
               v
@@ -80,7 +87,8 @@ storage configuration shown above.
 | Component | Owns | Must not own or know |
 | --- | --- | --- |
 | Terminal client | User login, local session-cookie storage, a separate local index of thread IDs created by that client profile, interactive durable-thread conversation, scriptable commands, result presentation | Server-wide thread discovery, runbook implementation, KMS signing, production credentials |
-| Control server | Treating the authenticated client caller as the user, durable thread ownership and public history, execution-session creation, message transport, event replay, trace-derived context, result streaming | Provider lifecycle logic, agent/model turn storage, Grafana procedures, operation IDs, runbook steps, production credentials |
+| Slack ingress adapter | Slack request-signature verification, configured channel-ID filtering, fast acknowledgement, durable event deduplication and retry, bounded event normalization | Human authority, session workflow, repository selection, production procedures or credentials |
+| Control server | Treating authenticated client callers as users, bounded internally authenticated alert-event admission, durable thread ownership and public history, execution-session creation, message transport, human-review queue and decisions, event replay, trace-derived context, result streaming | Provider lifecycle logic, agent/model turn storage, Grafana procedures, operation IDs, runbook steps, production credentials |
 | Supervisor | One session's authority, role bootstrap, role confinement, privileged-request mediation, KMS signing | Service-specific operational procedures |
 | Orchestrator | Goal decomposition, role routing, workflow coordination | Grafana/Loki knowledge, concrete production operations, `prod-mcp` parameters, provider-specific prompts |
 | Ops agent | Reading a selected Markdown runbook, planning and requesting its steps, reporting evidence | Deployment secrets, KMS private authority, infrastructure provisioning |
@@ -102,6 +110,7 @@ top-level ownership boundaries:
 
 - `client/` owns the terminal client package.
 - `control-server/` owns the authenticated control gateway package.
+- `slack-ingress/` owns the independently deployed Slack Events adapter and durable delivery queue.
 - `runtime/` owns the Rust session runtime, supervisor, and role-confinement
   package.
 - `logger/` owns the independent single-writer Logger executable,
@@ -156,6 +165,50 @@ session runtime implementation lives in the top-level `runtime/` package, and
 the control-server container image excludes `client/`. These filesystem and
 package boundaries prevent the independently distributed caller from importing
 trusted server internals; the public HTTP API is its only integration surface.
+
+### AD-019: Slack alerts may trigger diagnosis but never repair authority
+
+A deployment may subscribe a dedicated Slack ingress adapter to one or more
+deployment-allowlisted on-call channel IDs. The adapter verifies Slack's timestamped
+request signatures over raw request bodies, rejects stale or unapproved events,
+durably deduplicates by Slack event ID, acknowledges Slack without waiting for
+agent execution, and retries delivery to a narrow internal control-server endpoint.
+The Slack signing secret and separate internal delivery token are deployment-
+injected files. The control server does not hold the Slack signing secret, and
+the adapter receives no client cookie, model, repository, KMS, `prod-mcp`, or
+production credential.
+
+A Slack message is untrusted incident evidence, not authenticated human intent.
+The internal event endpoint maps it to a durable thread owned by one deployment-
+configured terminal reviewer and the deployment-selected
+`MULTIAGENT_SLACK_REPOSITORY`, while attributing its initial execution to a
+distinct Slack integration actor. That first execution has the mechanical
+`diagnosis-only` authority scope: the supervisor rejects workspace-write and
+implementation-worker launches, and permit construction accepts only live
+`prod-mcp` capabilities advertised as non-mutating read or materialize operations
+with no mutation approval role. Prompt instructions explain the boundary but do
+not enforce it.
+
+If diagnosis identifies no repair, the session may complete with its bounded
+evidence-backed result. If repair is proposed, the supervisor-owned human-
+review completion route ends the diagnosis execution and the control server
+atomically persists a pending review item bound to the exact source session,
+question event, question digest, thread, and owner. While that review is pending,
+ordinary follow-up cannot bypass it.
+
+Only the configured owner authenticated through the terminal client may decide
+the review. Approval appends a human-attributed authorization event containing
+the exact reviewed question and digest, then creates a fresh isolated execution
+session with normal human authority and bounded prior-thread context. It never
+revives the diagnosis agents, filesystem, credentials, or permits. Rejecting the
+review creates no session and mechanically closes the thread to further
+continuation. Both decisions are idempotent and durable.
+
+Human approval of the proposal does not bypass later runbook, independent
+reviewer, signed-permit, target-allowlist, or `prod-mcp` checks. It supplies the
+missing human intent for only the exact proposed repair. Provider-specific
+workspace IDs, channel IDs, app identities, callback hostname, secrets, storage,
+and network policy remain `InternalServices` configuration.
 
 ### AD-002: There is one supervisor per execution session
 
@@ -659,6 +712,24 @@ authorized iteration without granting the runtime semantic decision authority.
    session-scoped token, and the gateway persists it before finalization.
 18. The control server returns or streams user-safe progress and results to the terminal client.
 
+### Slack-triggered diagnosis and review flow
+
+1. Slack sends a signed message event to the dedicated adapter.
+2. The adapter verifies the raw request, filters by channel ID, writes the
+   normalized event to its durable queue, and acknowledges Slack.
+3. The adapter retries the event against the token-authenticated internal
+   gateway endpoint until the gateway durably deduplicates it.
+4. The gateway creates a reviewer-owned thread and a Slack-attributed,
+   diagnosis-only execution session in the configured Slack repository.
+5. The session gathers read-only evidence and either reports its diagnosis or
+   terminates through the bounded human-review route.
+6. The gateway atomically completes that execution and exposes the pending
+   review to only its configured terminal owner.
+7. A terminal `yes` appends exact human authority and launches a fresh session;
+   a terminal `no` records rejection and closes the thread without execution.
+8. Any approved repair continues through normal reviewer, runbook, signed
+   permit, allowlist, receipt, Logger, and trace controls.
+
 ## Deployment topology
 
 `multiagent` and `prod-mcp` are separate deployments with separate secrets,
@@ -669,6 +740,7 @@ The desired production topology is:
 | Workload | Lifetime | Network exposure | Credentials |
 | --- | --- | --- | --- |
 | Control server | Long-lived, one writer | Reverse proxy or approved private ingress | Client/session authentication only |
+| Slack ingress adapter | Long-lived, one queue writer per volume | Public Slack Events callback; private gateway egress | Slack signing secret and narrow internal delivery token only |
 | Session runtime | One per execution session | Private | Model keys as needed, supervisor KMS and `prod-mcp` client authority |
 | Trace sidecar | Same lifetime as session | S3 and Logger egress | Narrow S3 write role and a trace-commitment-only Logger producer identity |
 | `prod-mcp` | Long-lived central service | Private service endpoint | Grafana token and narrow cross-account execution roles |

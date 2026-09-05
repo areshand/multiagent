@@ -201,6 +201,23 @@ impl AuthorityRequest {
         }
     }
 
+    pub fn allowed_for_authority_scope(&self, scope: &str) -> bool {
+        match scope {
+            "human" => true,
+            "diagnosis-only" => match self.operation {
+                AuthorityOperation::ResolutionCreate => false,
+                AuthorityOperation::AssignmentCreate => {
+                    !has_option_value(&self.args, "--role", "exploitation")
+                }
+                AuthorityOperation::SupervisorRegisterLaunch => {
+                    !has_option_value(&self.args, "--access", "workspace-write")
+                }
+                _ => true,
+            },
+            _ => false,
+        }
+    }
+
     pub fn into_cli(self) -> (String, Vec<String>) {
         let (command, subcommand) = match self.operation {
             AuthorityOperation::Workflow => ("workflow", None),
@@ -239,6 +256,7 @@ impl AuthorityRequest {
             AuthorityOperation::OpsDescribe => ("ops", Some("describe")),
             AuthorityOperation::OpsPublishBound => ("ops", Some("publish-bound")),
             AuthorityOperation::OpsPublish => ("ops", Some("publish")),
+
             AuthorityOperation::OpsExecute => ("ops", Some("execute")),
         };
         let mut args = self.args;
@@ -256,6 +274,10 @@ impl AuthorityRequest {
             None => command,
         }
     }
+}
+fn has_option_value(args: &[String], option: &str, expected: &str) -> bool {
+    args.windows(2)
+        .any(|pair| pair[0] == option && pair[1] == expected)
 }
 
 #[cfg(test)]
@@ -446,6 +468,38 @@ mod tests {
             &strings(&["complete", "--external-only", "--result-file"]),
         )
         .is_none());
+    }
+
+    #[test]
+    fn diagnosis_only_scope_denies_writer_authority() {
+        let writer_assignment = AuthorityRequest::from_cli(
+            "subagent",
+            &strings(&["assignment-create", "writer", "--role", "exploitation"]),
+        )
+        .expect("writer assignment");
+        assert!(!writer_assignment.allowed_for_authority_scope("diagnosis-only"));
+
+        let reader_assignment = AuthorityRequest::from_cli(
+            "subagent",
+            &strings(&["assignment-create", "reader", "--role", "exploration"]),
+        )
+        .expect("reader assignment");
+        assert!(reader_assignment.allowed_for_authority_scope("diagnosis-only"));
+
+        let writer_launch = AuthorityRequest::from_cli(
+            "supervisor",
+            &strings(&["register-launch", "writer", "--access", "workspace-write"]),
+        )
+        .expect("writer launch");
+        assert!(!writer_launch.allowed_for_authority_scope("diagnosis-only"));
+
+        let reader_launch = AuthorityRequest::from_cli(
+            "supervisor",
+            &strings(&["register-launch", "reader", "--access", "read-only"]),
+        )
+        .expect("reader launch");
+        assert!(reader_launch.allowed_for_authority_scope("diagnosis-only"));
+        assert!(!reader_launch.allowed_for_authority_scope("unknown"));
     }
 
     #[test]
