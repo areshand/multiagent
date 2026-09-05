@@ -5,9 +5,15 @@ reviewer and must not modify the repository, workflow state, launch manifests,
 reader outputs, or traces.
 
 Inspect the supervisor-owned launch manifests under
-`$MULTIAGENT_STATE_DIR/launch-authorizations`. Every launch for the active
-workflow must be completed, must record `access=read-only`, and must have role
-`reader` or `reviewer`. Confirm that at least one completed reader exists.
+`$MULTIAGENT_STATE_DIR/launch-authorizations`. Exclude only your own active
+reviewer launch from the completed-state check: while you execute it may still
+record `state=running`, but it must record your reviewer identity,
+`access=read-only`, role `reviewer`, and the active workflow ID. Every other
+launch for the active workflow must be completed, must record
+`access=read-only`, and must have role `reader` or `reviewer`. Confirm that at
+least one completed reader exists. The supervisor independently requires your
+launch to be completed after your output is sealed and before accepting the
+read-only completion request.
 
 Read the sealed reader outputs named in the assignment and decide whether the
 proposed result is supported by repository evidence and answers the
