@@ -48,7 +48,9 @@ The application-owned Slack ingress deployment contract is:
 - allow egress only to the private control-server internal event endpoint;
 - configure the control server with the same internal token file, an enabled
   `MULTIAGENT_SLACK_REVIEW_OWNER` terminal username, and the bounded
-  `MULTIAGENT_SLACK_REPOSITORY` diagnosis repository;
+  `MULTIAGENT_SLACK_REPOSITORY` diagnosis repository; optionally inject bounded,
+  non-secret read-only target metadata through
+  `MULTIAGENT_SLACK_DIAGNOSIS_CONTEXT`;
 - configure the session Job template to project immutable Secret key
   `authority-scope` into `MULTIAGENT_AUTHORITY_SCOPE`;
 - do not grant the Slack ingress model, repository, GitHub, KMS, `prod-mcp`,
