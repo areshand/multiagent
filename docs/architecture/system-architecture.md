@@ -607,16 +607,24 @@ and is not deployed as a scheduled synchronization workload.
 
 Repository evidence is obtained by confined session agents through the direct
 supervisor-mediated `prod-mcp` read/materialize path in AD-020. The query service
-reads but never mutates the mounted corpus. A future steward treats candidate
-knowledge from agents and traces as untrusted until it is verified against
-commit- and digest-bound repository evidence. Neither the query service nor a
-future steward receives a GitHub credential or performs a repository clone.
+reads but never mutates the mounted corpus. The deterministic `wiki-steward`
+intake scans a bounded local projection of normalized JSONL traces and recognizes
+only structurally valid successful Wiki query results. Zero results, a fallback
+result, or truncated fallback scanning produces a deduplicated immutable gap
+proposal and retrieval eval; an immutable run manifest is published last as the
+commit marker. It never changes the catalog or topic pages. Candidate knowledge
+from agents and traces remains untrusted until it is verified against commit- and
+digest-bound repository evidence. Neither the query service nor the steward
+receives a GitHub credential or performs a repository clone.
 
-The trace bucket remains separate. A future singleton steward may receive
-read-only access to bounded trace prefixes and write access to the Wiki. Trace
-text may identify a retrieval gap but is neither an instruction nor a factual
-source. The MVP has no per-user or per-page Wiki authorization model: the
-cluster-private service exposes one shared corpus to allowed multiagent
+The trace bucket remains separate. The singleton steward deployment may receive
+read-only access to bounded trace prefixes and write access only to its Wiki
+system output prefix. Trace text may identify a retrieval gap but is neither an
+instruction nor a factual source. Scheduling, trace projection, regression-eval
+execution, reviewed catalog publication, and the separate workload identity
+remain deployment work until explicitly completed. The MVP has no per-user or
+per-page Wiki authorization model: the cluster-private service exposes one
+shared corpus to allowed multiagent
 workloads, while workload identity, network policy, storage encryption, and
 bucket versioning remain deployment responsibilities owned by
 `InternalServices`.
@@ -836,7 +844,7 @@ The desired production topology is:
 | Session runtime | One per execution session | Private | Model keys as needed, supervisor KMS and `prod-mcp` client authority |
 | Trace sidecar | Same lifetime as session | S3 and Logger egress | Narrow S3 write role and a trace-commitment-only Logger producer identity |
 | Wiki query service | Long-lived private service | Private health, query, and in-memory refresh endpoints | Read-only Wiki volume; no trace, GitHub, or production credential |
-| Wiki steward (post-MVP) | Singleton scheduled Job | Wiki volume and trace S3 read egress | Read-only trace identity and Wiki write identity; no GitHub credential |
+| Wiki steward (deployment pending) | Singleton scheduled Job | Wiki system-output volume and bounded trace S3 read egress | Read-only trace identity and Wiki system-prefix write identity; no GitHub credential |
 | `prod-mcp` | Long-lived central service | Private service endpoint | Grafana token and narrow cross-account execution roles |
 | Logger | Long-lived, one active writer per ledger | Private append/read endpoints | Logger signing key and producer-authentication configuration only |
 

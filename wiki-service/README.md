@@ -15,6 +15,7 @@ bin/personal-llm-wiki   local writable-vault maintenance CLI
 bin/wiki-search-local   optional local Markdown search helper
 bin/wiki-query.mjs      provider-neutral organization-service client
 bin/wiki-seed.mjs       deterministic organization catalog bootstrap
+bin/wiki-steward.mjs    deterministic trace-gap proposal and eval generator
 ```
 
 See [the engine guide](engine/README.md) and
@@ -45,6 +46,29 @@ derived and disposable.
 The deployed MVP is read-only. Query activity belongs in the surrounding
 multiagent session trace; the service does not expose feedback or source-writing
 HTTP APIs.
+
+## Organization steward intake
+
+`wiki-steward` is the provider-neutral post-MVP intake command. It scans a
+bounded local projection of exported JSONL traces for structurally valid
+`wiki-query` results. A successful indexed result creates no gap. Zero results,
+a returned fallback page, or truncated fallback scanning creates an immutable
+gap proposal and retrieval regression eval under a separate output root.
+
+```sh
+WIKI_STEWARD_TRACE_ROOT=/var/lib/wiki-traces \
+WIKI_STEWARD_OUTPUT_ROOT=/var/lib/wiki/system/steward \
+wiki-steward
+```
+
+The command never changes `index.md`, repository pages, or topics. Raw trace
+text is not copied. The bounded query/result metadata remains explicitly
+untrusted, and each occurrence is retained only as path- and digest-bound run
+evidence; factual changes still require independently verified repository evidence.
+Artifacts are create-only and a deterministic run manifest is written last as
+the commit marker, avoiding rename or database assumptions on an S3-backed
+output volume. S3 locations, credentials, scheduling, singleton enforcement,
+and the separate trace-read/Wiki-write identity remain deployment-owned.
 
 ## Existing personal Wiki
 

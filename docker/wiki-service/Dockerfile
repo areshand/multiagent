@@ -2,7 +2,7 @@ FROM node:22-bookworm-slim
 
 WORKDIR /opt/wiki-service
 COPY wiki-service/package.json ./
-COPY wiki-service/bin/wiki-query.mjs wiki-service/bin/wiki-seed.mjs ./bin/
+COPY wiki-service/bin/wiki-query.mjs wiki-service/bin/wiki-seed.mjs wiki-service/bin/wiki-steward.mjs ./bin/
 COPY wiki-service/src ./src
 
 RUN groupadd --gid 10030 wiki \

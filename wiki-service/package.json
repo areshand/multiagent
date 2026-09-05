@@ -9,7 +9,8 @@
   },
   "bin": {
     "wiki-query": "bin/wiki-query.mjs",
-    "wiki-seed": "bin/wiki-seed.mjs"
+    "wiki-seed": "bin/wiki-seed.mjs",
+    "wiki-steward": "bin/wiki-steward.mjs"
   },
   "engines": {
     "node": ">=20"

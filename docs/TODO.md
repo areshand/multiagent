@@ -76,8 +76,11 @@ must also be represented or linked from this file.
   `InternalServices` architecture and prove the result identifies
   `MoveIndustries/InternalServices`, cites its committed sources, and records a
   real Wiki query in the session trace.
-- [ ] After the MVP, implement the singleton steward, retrieval-gap processing,
-  regression evals, and its separate Wiki-write/trace-read identity.
+- [ ] Deploy the singleton Wiki steward using the deterministic retrieval-gap
+  intake, mount only bounded trace input and the Wiki system-output prefix under
+  separate trace-read/Wiki-write workload authority, execute generated
+  regression evals before any reviewed catalog publication, and preserve one
+  successful scheduled-run manifest plus IAM and S3-boundary evidence.
 
 ## Production MCP Joint Test
 
