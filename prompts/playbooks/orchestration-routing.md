@@ -21,9 +21,12 @@ own role-specific procedure; this file does not repeat them.
   when all launches were read-only and the diff is empty. Then request
   `multiagent orchestrator complete --read-only --result-file PATH --reviewer NAME`.
 - Use a worker when the required output is a bounded workspace change.
-- Query the organizational Wiki directly when routing requires repository
-  identity or shared organizational knowledge; use its citations as evidence,
-  never as authority.
+- Query the organizational Wiki directly only for routing that selects a
+  repository or role and will not be used to support the caller-facing result.
+- When Wiki citations support the caller-facing result, assign a `reader` with
+  read-only access to run `wiki-query` and preserve its cited output. Do not use
+  a `scout` for this path because the mechanical read-only completion gate
+  accepts only completed readers and reviewers.
 - Let the assigned confined role request a bounded external read or repository
   materialization directly through the supervisor when prod-mcp advertises it as
   non-mutating read/materialize with no approval roles.
