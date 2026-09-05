@@ -46,6 +46,21 @@ The deployed MVP is read-only. Query activity belongs in the surrounding
 multiagent session trace; the service does not expose feedback or source-writing
 HTTP APIs.
 
+## On-demand organization maintenance
+
+The organization deployment has no scheduled trace reader, background steward,
+or autonomous Wiki writer. If a query is missing or weak and the user requests
+maintenance, a role-confined session agent may inspect the relevant repository
+through the supervisor-mediated read-only materialization path. It should
+produce a reviewable Markdown patch that identifies the exact source commit,
+source paths and SHA-256 digests, together with a regression query demonstrating
+the intended retrieval improvement.
+
+The patch is an artifact, not publication authority. A deployment owner reviews
+it, publishes pages before `index.md`, refreshes the query service, and reruns
+the regression query. The query service and maintenance agent receive neither a
+Wiki storage credential nor access to the separate trace bucket.
+
 ## Existing personal Wiki
 
 The migrated CLI retains all former commands: `init-vault`, `submit-feedback`,
@@ -136,7 +151,8 @@ The manifest is bounded to 2 MiB and 1,000 repositories:
 Records and citations are sorted deterministically. The command atomically
 replaces each `repos/<catalogId>.md` page and publishes `index.md` last as the
 catalog commit marker. Re-running the same normalized manifest produces
-byte-identical Markdown. It does not run as part of `serve` or any steward job.
+byte-identical Markdown. It does not run as part of `serve` or any background
+organization-maintenance job.
 
 An authenticated but empty GitHub repository is represented without fabricated
 evidence by setting `sourceStatus` to `empty`, `resolvedCommitSha` to `null`, and

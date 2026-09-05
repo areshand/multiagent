@@ -73,7 +73,6 @@ Control server / supervisor / reviewers ------+
 Session agents -- bounded query client --> Wiki service
                                           |
                                           +--> dedicated Wiki S3 Files volume
-                                          +--> async steward -- read-only --> trace S3 bucket
 
 Supervisor -- bearer token + KMS-signed permit --> prod-mcp
                                                     |
@@ -101,7 +100,7 @@ storage configuration shown above.
 | Other role agents | Their assigned reasoning or implementation role, including requests for bounded non-mutating external reads or repository materialization | Supervisor credentials, direct production execution, and unrelated role capabilities |
 | `prod-mcp` | Authentication verification, signed-permit validation, operation schemas, target allowlists, execution, receipts | Multiagent workflow orchestration and model-provider behavior |
 | Logger | Authenticated structural event ingestion, authoritative ordering, canonical encoding, hash-chain construction, replay prevention, signed periodic checkpoints, ledger verification, and non-authoritative audit projections | Semantic review, workflow progression, runbook interpretation, model credentials, production credentials, permit issuance, or production execution |
-| Wiki service and steward | Bounded cited retrieval from canonical Markdown, source-backed catalog organization, and asynchronous retrieval-gap processing informed by session traces | Session or production-operation authority, concrete deployment configuration, repository cloning, trace mutation, or treating untrusted traces as factual instructions |
+| Wiki service and on-demand maintenance workflow | Bounded cited retrieval from canonical Markdown and source-backed, reviewable catalog patch proposals created only when requested | Session or production-operation authority, concrete deployment configuration, repository cloning inside the Wiki service, trace-bucket access, direct publication authority, or treating user or agent text as factual evidence |
 | `InternalServices` | Images, deployments, secrets, IAM, KMS, service accounts, endpoints, ingress, DNS, certificates, S3 trace export, Wiki storage and identities, and distribution of deployment-specific Markdown runbook artifacts | Agent reasoning, procedure logic embedded in deployment code, and environment-specific secrets inside runbooks |
 | Markdown runbooks | Human-readable operational procedure, operation version, allowed phase progression | Credentials and environment-specific secrets |
 
@@ -124,7 +123,7 @@ top-level ownership boundaries:
   producer client utilities.
 - `wiki-service/` owns the data-free LLM Wiki engine, personal-vault maintenance
   workflows, independent Markdown query adapter, agent client, deterministic
-  organization-catalog seeding contract, and future asynchronous steward.
+  organization-catalog seeding contract, and on-demand maintenance guidance.
 - `docker/` owns component image definitions and container entrypoints, but not
   deployment secrets or environment-specific configuration.
 - `gitops/` documents the application-to-deployment contract. Concrete GitOps
@@ -607,15 +606,20 @@ and is not deployed as a scheduled synchronization workload.
 
 Repository evidence is obtained by confined session agents through the direct
 supervisor-mediated `prod-mcp` read/materialize path in AD-020. The query service
-reads but never mutates the mounted corpus. A future steward treats candidate
-knowledge from agents and traces as untrusted until it is verified against
-commit- and digest-bound repository evidence. Neither the query service nor a
-future steward receives a GitHub credential or performs a repository clone.
+reads but never mutates the mounted corpus. When a user explicitly requests
+Wiki maintenance, a role-confined session agent may use a failed or weak query
+as the starting point for an ad-hoc inspection. The agent requests bounded
+read-only repository materialization through the supervisor, inspects an exact
+commit, and produces a Markdown patch proposal with source paths and digests
+plus a regression query. User and agent text may identify what to investigate,
+but it is not factual evidence. The proposal has no publication authority;
+reviewed publication remains an explicit deployment-owner operation that writes
+pages before the catalog commit marker and then reruns the regression query.
 
-The trace bucket remains separate. A future singleton steward may receive
-read-only access to bounded trace prefixes and write access to the Wiki. Trace
-text may identify a retrieval gap but is neither an instruction nor a factual
-source. The MVP has no per-user or per-page Wiki authorization model: the
+The organizational Wiki has no scheduled trace reader, background steward, or
+autonomous writer. Its service account cannot read the separate trace bucket,
+and the query service receives no GitHub credential or repository clone
+authority. The MVP has no per-user or per-page Wiki authorization model: the
 cluster-private service exposes one shared corpus to allowed multiagent
 workloads, while workload identity, network policy, storage encryption, and
 bucket versioning remain deployment responsibilities owned by
@@ -836,9 +840,12 @@ The desired production topology is:
 | Session runtime | One per execution session | Private | Model keys as needed, supervisor KMS and `prod-mcp` client authority |
 | Trace sidecar | Same lifetime as session | S3 and Logger egress | Narrow S3 write role and a trace-commitment-only Logger producer identity |
 | Wiki query service | Long-lived private service | Private health, query, and in-memory refresh endpoints | Read-only Wiki volume; no trace, GitHub, or production credential |
-| Wiki steward (post-MVP) | Singleton scheduled Job | Wiki volume and trace S3 read egress | Read-only trace identity and Wiki write identity; no GitHub credential |
 | `prod-mcp` | Long-lived central service | Private service endpoint | Grafana token and narrow cross-account execution roles |
 | Logger | Long-lived, one active writer per ledger | Private append/read endpoints | Logger signing key and producer-authentication configuration only |
+
+Organization Wiki maintenance reuses a user-requested session and produces a
+reviewable artifact; it is not a separately deployed workload and receives no
+Wiki storage credential.
 
 If session runtimes initially share a deployment with the control server, that
 is a transitional implementation rather than a change to the one-supervisor-

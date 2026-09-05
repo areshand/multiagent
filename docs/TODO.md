@@ -76,8 +76,13 @@ must also be represented or linked from this file.
   `InternalServices` architecture and prove the result identifies
   `MoveIndustries/InternalServices`, cites its committed sources, and records a
   real Wiki query in the session trace.
-- [ ] After the MVP, implement the singleton steward, retrieval-gap processing,
-  regression evals, and its separate Wiki-write/trace-read identity.
+- [ ] Add an on-demand organization Wiki maintenance workflow or skill that,
+  only when requested, turns a failed or weak query into a commit- and
+  digest-backed Markdown patch proposal plus regression query using the
+  supervisor-mediated read/materialize path. Document explicit reviewed
+  publication, preserve successful re-query evidence, and prove that neither
+  the query service nor the maintenance agent receives Wiki-write or trace-read
+  credentials.
 
 ## Production MCP Joint Test
 
