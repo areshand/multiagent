@@ -44,6 +44,10 @@ must also be represented or linked from this file.
 
 ## Slack Hangout Diagnosis And Human Review
 
+- [ ] Replace static deployment-injected Slack diagnosis target metadata with a
+  Wiki-backed resolver that maps alert evidence such as hostnames and service
+  names to repository and operational targets, cites the mapping source, and
+  fails closed when the mapping is ambiguous.
 - [ ] Provision the Slack app and Events API callback in `InternalServices`,
   inject the signing secret, immutable Hangout channel ID, internal delivery
   token, Slack diagnosis repository, durable ingress volume, and `production-e2e`

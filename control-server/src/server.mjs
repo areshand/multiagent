@@ -17,6 +17,7 @@ import { visibleLegacySessionIds } from "./session-visibility.mjs";
 import {
   bearerToken,
   normalizeSlackIngressEvent,
+  normalizeSlackDiagnosisContext,
   renderSlackDiagnosisTask,
   secureTokenEqual,
   slackEventMessageId,
@@ -76,6 +77,7 @@ const repositoryCatalog = gatewayMode ? parseRepositoryCatalog(process.env.MULTI
 const slackRepository = String(process.env.MULTIAGENT_SLACK_REPOSITORY || "").trim();
 const slackIngressTokenFile = String(process.env.MULTIAGENT_SLACK_INGRESS_TOKEN_FILE || "");
 const slackReviewOwner = String(process.env.MULTIAGENT_SLACK_REVIEW_OWNER || "").trim();
+const slackDiagnosisContext = normalizeSlackDiagnosisContext(process.env.MULTIAGENT_SLACK_DIAGNOSIS_CONTEXT || "");
 const kubernetes = gatewayMode ? new KubernetesSessionClient() : null;
 const sessionJobTemplate = gatewayMode ? JSON.parse(fs.readFileSync(sessionJobTemplateFile, "utf8")) : null;
 const threadStore = await createThreadStore({
@@ -1023,7 +1025,7 @@ const server = http.createServer(async (request, response) => {
         sourceActor: `integration:slack:${event.workspaceId}`,
         source,
         eventId: slackEventMessageId(event.eventId),
-        text: renderSlackDiagnosisTask(event),
+        text: renderSlackDiagnosisTask(event, slackDiagnosisContext),
         newSessionId: threadSessionId(threadId),
       });
       if (!routed.duplicate) await launchThreadExecution(routed.thread, routed.session);

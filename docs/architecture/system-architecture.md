@@ -198,6 +198,15 @@ implementation-worker launches, and permit construction accepts only live
 with no mutation approval role. Prompt instructions explain the boundary but do
 not enforce it.
 
+The deployment may also inject bounded, non-secret operational discovery
+metadata through `MULTIAGENT_SLACK_DIAGNOSIS_CONTEXT`. The control server passes
+that text to the session in a distinct trusted-deployment-context block outside
+the untrusted Slack message. This is routing evidence only: it may identify an
+allowlisted read-only provider target or datasource, but it grants no operation,
+repair, permit, or mutation authority. `InternalServices` owns the concrete
+values; the orchestrator and Slack adapter do not encode provider-specific
+configuration.
+
 If diagnosis identifies no repair, the session may complete with its bounded
 evidence-backed result. If repair is proposed, the supervisor-owned human-
 review completion route ends the diagnosis execution and the control server

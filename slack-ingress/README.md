@@ -36,6 +36,9 @@ The control server must receive the same internal token file and configure:
 - `MULTIAGENT_SLACK_INGRESS_TOKEN_FILE`
 - `MULTIAGENT_SLACK_REVIEW_OWNER=production-e2e` (or another enabled terminal user)
 - `MULTIAGENT_SLACK_REPOSITORY`: repository name already present in the deployment catalog
+- `MULTIAGENT_SLACK_DIAGNOSIS_CONTEXT` (optional): bounded, non-secret,
+  deployment-owned metadata for approved read-only evidence targets; this is
+  passed outside the untrusted Slack message and grants no repair authority
 
 The session Job template must expose the immutable session Secret key
 `authority-scope` as `MULTIAGENT_AUTHORITY_SCOPE` inside the session runtime.
