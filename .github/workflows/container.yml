@@ -38,3 +38,20 @@ jobs:
           platforms: linux/amd64
           provenance: mode=max
           sbom: true
+      - uses: docker/metadata-action@c1e51972afc2121e065aed6d45c65596fe445f3f # v5
+        id: slack-metadata
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/multiagent-slack-ingress
+          tags: |
+            type=raw,value=main,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+      - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6
+        with:
+          context: .
+          file: docker/slack-ingress/Dockerfile
+          push: true
+          tags: ${{ steps.slack-metadata.outputs.tags }}
+          labels: ${{ steps.slack-metadata.outputs.labels }}
+          platforms: linux/amd64
+          provenance: mode=max
+          sbom: true
