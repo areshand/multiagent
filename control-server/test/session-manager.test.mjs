@@ -88,6 +88,7 @@ test("session manager owns review decisions and launches approved continuations"
       message: "Approve changing the bounded configuration?",
       responseType: "question",
       terminalOutcome: "review_requested",
+      reviewRequest: { effects: ["source-write", "reviewed-ops"], paths: ["config/service.yaml"] },
       transcript: null,
     },
   });
@@ -102,5 +103,7 @@ test("session manager owns review decisions and launches approved continuations"
   });
   assert.equal(decided.review.status, "approved");
   assert.equal(launched.length, 2);
+  assert.equal(decided.session.authorityScope, "approved-repair");
+  assert.deepEqual(decided.session.mutationGrant.paths, ["config/service.yaml"]);
   assert.match(launched[1].task, /exact reviewed request/);
 });

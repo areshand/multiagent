@@ -125,6 +125,38 @@ test("completed session reports prefer the explicit bounded caller result", () =
   assert.equal(normalizeWorkerReport({ report: "bad", completionRoute: "human-review", terminalOutcome: "review_requested", message: "not a question" }), null);
 });
 
+test("repair reports preserve only explicit source and reviewed-operation effects", () => {
+  assert.deepEqual(normalizeWorkerReport({
+    report: "A reviewed restart is required.",
+    message: "Approve a reviewed restart?",
+    completionRoute: "request-review",
+    terminalOutcome: "review_requested",
+    reviewRequest: { effects: ["reviewed-ops"], paths: [] },
+  }), {
+    report: "A reviewed restart is required.",
+    transcript: null,
+    message: "Approve a reviewed restart?",
+    completionRoute: "request-review",
+    terminalOutcome: "review_requested",
+    responseType: "question",
+    reviewRequest: { effects: ["reviewed-ops"], paths: [] },
+  });
+  assert.equal(normalizeWorkerReport({
+    report: "bad",
+    message: "Approve?",
+    completionRoute: "request-review",
+    terminalOutcome: "review_requested",
+    reviewRequest: { effects: ["source-write"], paths: [] },
+  }), null);
+  assert.equal(normalizeWorkerReport({
+    report: "bad",
+    message: "Approve?",
+    completionRoute: "request-review",
+    terminalOutcome: "review_requested",
+    reviewRequest: { effects: ["admin"], paths: [] },
+  }), null);
+});
+
 test("production-shaped reports publish the user result instead of lifecycle metadata", () => {
   const report = normalizeWorkerReport({
     report: "# thread-latest-open-pr\n\nStatus: completed\nWorkflow: run-1\n\n## Final agent message\nLatest open PR: #421\n\n## Trace references\n- agents/ops-01/events.jsonl",

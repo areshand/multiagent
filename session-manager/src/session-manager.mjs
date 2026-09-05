@@ -230,6 +230,8 @@ export class SessionManager {
           reviewId: `review-${record.id}`,
           question: publicEvent.payload.text,
           sourceEventId: `final-${record.id}`,
+          repairPaths: report.reviewRequest?.paths,
+          effects: report.reviewRequest?.effects,
         })
         : await this.threadStore.finalizeSession({
           threadId: record.threadId,

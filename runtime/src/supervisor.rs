@@ -249,6 +249,17 @@ fn register_launch(args: &[String], renew: bool) -> Result<(), String> {
     } else {
         Vec::new()
     };
+    if access == "workspace-write" {
+        let root = fs::canonicalize(config::root()?)
+            .map_err(|error| format!("canonicalize repository for writer grant: {error}"))?;
+        let authority = crate::authority::configured_session_authority()?;
+        if !authority.permits_workspace_write(&root, &owned_paths) {
+            return Err(format!(
+                "session authority {} does not grant the writer's exact owned paths",
+                authority.scope()
+            ));
+        }
+    }
     if directory.exists() {
         if !renew {
             return Err(format!("launch authorization already exists: {name}"));
@@ -917,18 +928,16 @@ fn serve_connection(stream: &mut UnixStream) -> Result<bool, String> {
         );
         return Ok(false);
     }
-    let authority_scope = env::var("MULTIAGENT_AUTHORITY_SCOPE")
-        .ok()
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "human".into());
-    if !request.allowed_for_authority_scope(&authority_scope) {
+    let session_authority = crate::authority::configured_session_authority()?;
+    if !request.allowed_for_session_authority(&session_authority) {
         let _ = write_response(
             stream,
             &Response {
                 code: 1,
                 stdout: String::new(),
                 stderr: format!(
-                    "authority supervisor: scope {authority_scope} is not authorized for: {}\n",
+                    "authority supervisor: scope {} is not authorized for: {}\n",
+                    session_authority.scope(),
                     request.display()
                 ),
             },

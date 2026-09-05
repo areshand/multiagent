@@ -422,7 +422,8 @@ assert_file_contains "$LAUNCH_BOOTSTRAP" "export MULTIAGENT_LIFECYCLE_ENFORCEMEN
 assert_file_contains "$LAUNCH_BOOTSTRAP" 'if [[ ${BASH_SOURCE[0]} != "$0" ]]; then return 0; fi'
 assert_file_contains "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "BEGIN ORCHESTRATOR ROLE"
 assert_file_contains "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "BEGIN ORCHESTRATION ROUTING CONTRACT"
-assert_file_contains "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "--direct-response"
+assert_file_contains "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "--observe"
+assert_file_contains "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "--request-review"
 assert_file_contains "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "BEGIN MANDATORY IMPLEMENTATION LIFECYCLE"
 SOURCE_BOOTSTRAP_OUTPUT="$(bash -c 'source "$1"; printf "source-complete\\n"' bash "$LAUNCH_BOOTSTRAP")"
 if [[ "$SOURCE_BOOTSTRAP_OUTPUT" != "source-complete" ]]; then

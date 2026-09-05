@@ -1656,6 +1656,164 @@ pub fn supervisor_complete_direct(id: &str) -> Result<String, String> {
     Ok(result)
 }
 
+/// Completes an execution whose immutable session authority permits observation
+/// only. No reviewer is needed: filesystem and operation boundaries, rather
+/// than another model's prose, prevent mutation.
+pub fn supervisor_complete_observe(id: &str) -> Result<String, String> {
+    require_supervisor_completion_authority()?;
+    require_observe_authority()?;
+    let store = Store::configured()?;
+    let p = store.paths(id)?;
+    let _lock = store.lock(&p)?;
+    let mut state = observe_completion_state(&p, id)?;
+    let result_hash = shortcut_result_hash(&store)?;
+    let result = format!("observe:{result_hash}");
+    complete_shortcut(&p, &mut state, "observe", &result)?;
+    Ok(result)
+}
+
+/// Ends an observe-only execution with one exact repair proposal. A proposal
+/// may request path-bound source writes, entry into independently reviewed
+/// operations, or both.
+pub fn supervisor_request_review(
+    id: &str,
+    paths: &[String],
+    reviewed_ops: bool,
+) -> Result<String, String> {
+    require_supervisor_completion_authority()?;
+    require_observe_authority()?;
+    let store = Store::configured()?;
+    let p = store.paths(id)?;
+    let _lock = store.lock(&p)?;
+    let mut state = observe_completion_state(&p, id)?;
+    let question = fs::read_to_string(store.state_dir.join("orchestrator-result.md"))
+        .map_err(io_error("read persisted repair-review question"))?;
+    let question = question.trim();
+    validate_bounded_question(question)?;
+    let normalized_paths = normalize_repair_paths(paths, reviewed_ops)?;
+    let mut effects = Vec::new();
+    if !normalized_paths.is_empty() {
+        effects.push("source-write");
+    }
+    if reviewed_ops {
+        effects.push("reviewed-ops");
+    }
+    let request_path = p.base.join("human-review-request.md");
+    let paths_path = p.base.join("human-review-repair-paths.json");
+    let effects_path = p.base.join("human-review-effects.json");
+    atomic_write(&request_path, &format!("{question}\n"))?;
+    atomic_write(
+        &paths_path,
+        &format!(
+            "{}\n",
+            serde_json::to_string(&normalized_paths)
+                .map_err(|error| format!("encode repair-review paths: {error}"))?
+        ),
+    )?;
+    atomic_write(
+        &effects_path,
+        &format!(
+            "{}\n",
+            serde_json::to_string(&effects)
+                .map_err(|error| format!("encode repair-review effects: {error}"))?
+        ),
+    )?;
+    let digest = sha256(&request_path)?;
+    let paths_digest = sha256(&paths_path)?;
+    let effects_digest = sha256(&effects_path)?;
+    let result = format!("request-review:{digest}");
+    state.insert("phase".into(), "complete".into());
+    state.insert("candidate_diff_hash".into(), result.clone());
+    state.insert("reviewed_diff_hash".into(), result.clone());
+    state.insert("terminal_outcome".into(), "review_requested".into());
+    state.insert("human_review_status".into(), "pending".into());
+    state.insert(
+        "human_review_request".into(),
+        request_path.display().to_string(),
+    );
+    state.insert("human_review_request_sha256".into(), digest.clone());
+    state.insert(
+        "human_review_repair_paths".into(),
+        paths_path.display().to_string(),
+    );
+    state.insert(
+        "human_review_repair_paths_sha256".into(),
+        paths_digest.clone(),
+    );
+    state.insert("human_review_reviewer".into(), "session-self-review".into());
+    state.insert("human_review_reason".into(), "source-repair".into());
+    state.insert("updated_at".into(), timestamp());
+    write_env(&p.state, &state)?;
+    event(
+        &p.events,
+        "human_review_required",
+        &format!(
+            "from=pre-implementation\tto=complete\titeration={}\tauthority=supervisor\treason=repair\trequest_sha256={digest}\trepair_paths_sha256={paths_digest}\teffects_sha256={effects_digest}",
+            state_value(&state, "iteration")
+        ),
+    )?;
+    Ok(result)
+}
+
+fn require_observe_authority() -> Result<(), String> {
+    match std::env::var("MULTIAGENT_AUTHORITY_SCOPE").as_deref() {
+        Ok("observe" | "diagnosis-only") => Ok(()),
+        _ => Err("observe completion requires an observe-only execution session".into()),
+    }
+}
+
+fn observe_completion_state(paths: &Paths, id: &str) -> Result<BTreeMap<String, String>, String> {
+    let state = read_env(&paths.state, id)?;
+    if state_value(&state, "phase") != "pre-implementation" {
+        return Err("observe execution is already terminal or entered a mutation lifecycle".into());
+    }
+    validate_original_task(&state)?;
+    Ok(state)
+}
+
+fn validate_bounded_question(question: &str) -> Result<(), String> {
+    let count = question.matches(['?', '？']).count();
+    let tail = question.trim_end_matches(|character: char| {
+        character.is_whitespace() || matches!(character, '*' | '_' | '`' | '"' | '\'' | ')' | ']')
+    });
+    if question.is_empty()
+        || question.len() > 2_000
+        || !(1..=3).contains(&count)
+        || !(tail.ends_with('?') || tail.ends_with('？'))
+    {
+        return Err(
+            "repair review requires one bounded question ending with a question mark".into(),
+        );
+    }
+    Ok(())
+}
+
+fn normalize_repair_paths(paths: &[String], reviewed_ops: bool) -> Result<Vec<String>, String> {
+    if paths.len() > 32 || (paths.is_empty() && !reviewed_ops) {
+        return Err(
+            "repair review requires an exact repository path or reviewed operations".into(),
+        );
+    }
+    let mut normalized = BTreeSet::new();
+    for value in paths {
+        let path = Path::new(value);
+        if value.is_empty()
+            || value.len() > 512
+            || path.is_absolute()
+            || path
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            return Err("repair-review paths must be exact relative repository paths".into());
+        }
+        normalized.insert(path.to_string_lossy().replace('\\', "/"));
+    }
+    if normalized.len() != paths.len() {
+        return Err("repair-review paths must be unique".into());
+    }
+    Ok(normalized.into_iter().collect())
+}
+
 /// Returns the bounded question only for a mechanically recognized reviewer
 /// escalation. The evidence must already have been finalized and sealed by the
 /// supervisor for this workflow.

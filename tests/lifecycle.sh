@@ -55,10 +55,70 @@ PROMPT_BUNDLE="$TEST_TMP/orchestrator-bundle.md"
   --lifecycle "$FRAMEWORK_ROOT/prompts/playbooks/implementation-lifecycle.md" \
   --output "$PROMPT_BUNDLE" >/dev/null
 assert_contains "$PROMPT_BUNDLE" "BEGIN ORCHESTRATION ROUTING CONTRACT"
-assert_contains "$PROMPT_BUNDLE" "--direct-response"
+assert_contains "$PROMPT_BUNDLE" "--observe"
+assert_contains "$PROMPT_BUNDLE" "--request-review"
 assert_contains "$PROMPT_BUNDLE" "resultCandidate.path"
 assert_contains "$PROMPT_BUNDLE" "BEGIN MANDATORY IMPLEMENTATION LIFECYCLE"
 assert_contains "$PROMPT_BUNDLE" "post-implementation -> pre-implementation"
+
+OBSERVE_TASK="$TEST_TMP/observe-task.md"
+OBSERVE_STATE="$TEST_TMP/observe-state"
+OBSERVE_RESULT="$OBSERVE_STATE/observe-result.md"
+mkdir -p "$OBSERVE_STATE"
+printf 'Explain the current behavior without changing anything.\n' >"$OBSERVE_TASK"
+printf 'The behavior is understood; no repair is required.\n' >"$OBSERVE_RESULT"
+MULTIAGENT_STATE_DIR="$OBSERVE_STATE" MULTIAGENT_ORIGINAL_TASK_FILE="$OBSERVE_TASK" \
+  "$MULTIAGENT" workflow init WF-OBSERVE >/dev/null
+MULTIAGENT_STATE_DIR="$OBSERVE_STATE" MULTIAGENT_WORKFLOW_ID=WF-OBSERVE \
+  MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 MULTIAGENT_AUTHORITY_SCOPE=observe \
+  "$MULTIAGENT" orchestrator complete --observe --result-file "$OBSERVE_RESULT" >/dev/null
+assert_contains "$OBSERVE_STATE/workflows/WF-OBSERVE/lifecycle/lifecycle.env" \
+  "terminal_outcome=succeeded"
+assert_contains "$OBSERVE_STATE/workflows/WF-OBSERVE/lifecycle/lifecycle.env" \
+  "candidate_diff_hash=observe:"
+if [[ "$(wc -l <"$OBSERVE_STATE/workflows/WF-OBSERVE/lifecycle/reviews.tsv")" -ne 1 ]]; then
+  echo "expected observe completion to require no reviewer" >&2
+  exit 1
+fi
+
+REPAIR_TASK="$TEST_TMP/repair-task.md"
+REPAIR_STATE="$TEST_TMP/repair-state"
+REPAIR_RESULT="$REPAIR_STATE/repair-result.md"
+mkdir -p "$REPAIR_STATE"
+printf 'Diagnose the alert and propose a bounded repair if necessary.\n' >"$REPAIR_TASK"
+printf 'Approve repairing deploy/service.yaml and allowing reviewed operations?\n' >"$REPAIR_RESULT"
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" MULTIAGENT_ORIGINAL_TASK_FILE="$REPAIR_TASK" \
+  "$MULTIAGENT" workflow init WF-REPAIR >/dev/null
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" MULTIAGENT_WORKFLOW_ID=WF-REPAIR \
+  MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 MULTIAGENT_AUTHORITY_SCOPE=observe \
+  "$MULTIAGENT" orchestrator complete --request-review --result-file "$REPAIR_RESULT" \
+    --path deploy/service.yaml --reviewed-ops >/dev/null
+assert_contains "$REPAIR_STATE/workflows/WF-REPAIR/lifecycle/lifecycle.env" \
+  "terminal_outcome=review_requested"
+assert_contains "$REPAIR_STATE/workflows/WF-REPAIR/lifecycle/human-review-repair-paths.json" \
+  '["deploy/service.yaml"]'
+assert_contains "$REPAIR_STATE/workflows/WF-REPAIR/lifecycle/human-review-effects.json" '["source-write","reviewed-ops"]'
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" MULTIAGENT_ORIGINAL_TASK_FILE="$REPAIR_TASK" \
+  "$MULTIAGENT" workflow init WF-OPS-REPAIR >/dev/null
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" MULTIAGENT_WORKFLOW_ID=WF-OPS-REPAIR \
+  MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 MULTIAGENT_AUTHORITY_SCOPE=observe \
+  "$MULTIAGENT" orchestrator complete --request-review --result-file "$REPAIR_RESULT" \
+    --reviewed-ops >/dev/null
+assert_contains "$REPAIR_STATE/workflows/WF-OPS-REPAIR/lifecycle/human-review-repair-paths.json" '[]'
+assert_contains "$REPAIR_STATE/workflows/WF-OPS-REPAIR/lifecycle/human-review-effects.json" \
+  '["reviewed-ops"]'
+
+MULTIAGENT_STATE_DIR="$REPAIR_STATE" MULTIAGENT_ORIGINAL_TASK_FILE="$REPAIR_TASK" \
+  "$MULTIAGENT" workflow init WF-INVALID-REPAIR >/dev/null
+if MULTIAGENT_STATE_DIR="$REPAIR_STATE" MULTIAGENT_WORKFLOW_ID=WF-INVALID-REPAIR \
+  MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 MULTIAGENT_AUTHORITY_SCOPE=observe \
+  "$MULTIAGENT" orchestrator complete --request-review --result-file "$REPAIR_RESULT" \
+    --path ../outside >"$TEST_TMP/invalid-repair-path.out" 2>&1; then
+  echo "expected repair review to reject a path outside the repository" >&2
+  exit 1
+fi
+assert_contains "$TEST_TMP/invalid-repair-path.out" \
+  "repair-review paths must be exact relative repository paths"
 
 wf() {
   MULTIAGENT_STATE_DIR="$TEST_STATE" "$MULTIAGENT" workflow "$@"

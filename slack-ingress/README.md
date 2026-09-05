@@ -40,8 +40,10 @@ The control server must receive the same internal token file and configure:
   deployment-owned metadata for approved read-only evidence targets; this is
   passed outside the untrusted Slack message and grants no repair authority
 
-The session Job template must expose the immutable session Secret key
-`authority-scope` as `MULTIAGENT_AUTHORITY_SCOPE` inside the session runtime.
+The session Job template must expose immutable session Secret keys
+`authority-scope` and `mutation-grant.json` as
+`MULTIAGENT_AUTHORITY_SCOPE` and `MULTIAGENT_MUTATION_GRANT_JSON`, and bind the
+grant to the selected repository and fresh execution ID.
 
 ## Local tests
 
@@ -62,14 +64,15 @@ following together:
 
 1. Slack receives HTTP 200 from the signed callback.
 2. The ingress queue drains the event exactly once into the control server.
-3. A `production-e2e`-owned thread starts with `diagnosis-only` authority.
+3. A `production-e2e`-owned thread starts with `observe` authority.
 4. The real session diagnoses using deployed read-only evidence paths.
 5. A repair proposal appears automatically in the terminal review window.
 6. `no` closes the thread without a new session or production action.
-7. On a separate test event, `yes` creates a new human-authorized session with
-   the original review question and digest in its current authenticated event.
-8. Any repair still passes normal reviewer, runbook, permit, allowlist, receipt,
-   Logger, and trace gates.
+7. On a separate test event, `yes` creates a fresh path-bound
+   `approved-repair` session carrying the original review question and digest,
+   only the proposed exact source paths and/or `reviewed-ops` effect.
+8. Any production mutation still passes the normal independent reviewer,
+   runbook, permit, allowlist, receipt, Logger, and trace gates.
 
 Use `docker/slack-ingress/Dockerfile` from the repository root to build the
 non-root service image. Kubernetes resources, secrets, hostname, certificate,

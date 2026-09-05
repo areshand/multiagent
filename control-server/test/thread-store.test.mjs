@@ -111,7 +111,7 @@ test("history replay, checkpoints, and artifact manifests remain thread scoped",
   assert.equal(context.artifacts[0].artifactId, "artifact-1");
 });
 
-function storeAtPendingSlackReview() {
+function storeAtPendingSlackReview({ repairPaths = ["deploy/service.yaml"], effects = ["source-write", "reviewed-ops"] } = {}) {
   const store = new InMemoryThreadStore();
   const routed = store.createExternalThreadAndRoute({
     id: "thread-slack",
@@ -144,12 +144,14 @@ function storeAtPendingSlackReview() {
     reviewId: "review-session-diagnose",
     question: "Approve restarting service api in testnet?",
     sourceEventId: "final-session-diagnose",
+    repairPaths,
+    effects,
     now,
   });
   return store;
 }
 
-test("Slack events create idempotent diagnosis-only threads owned by the human reviewer", () => {
+test("Slack events create idempotent observe-only threads owned by the human reviewer", () => {
   const store = new InMemoryThreadStore();
   const input = {
     id: "thread-slack",
@@ -169,12 +171,12 @@ test("Slack events create idempotent diagnosis-only threads owned by the human r
   assert.equal(duplicate.duplicate, true);
   assert.equal(duplicate.thread.id, "thread-slack");
   assert.equal(first.session.actorSubject, "integration:slack:T123");
-  assert.equal(first.session.authorityScope, "diagnosis-only");
+  assert.equal(first.session.authorityScope, "observe");
   assert.equal(store.getThreadForActor("thread-slack", "production-e2e").source.eventId, "Ev123");
   assert.throws(() => store.getThreadForActor("thread-slack", "integration:slack:T123"), /thread not found/);
 });
 
-test("approving a repair review creates a fresh human-authorized execution session", () => {
+test("approving a repair review creates a fresh path-bound repair execution session", () => {
   const store = storeAtPendingSlackReview();
   const reviews = store.listReviewsForActor({ actor: "production-e2e" });
   assert.equal(reviews.length, 1);
@@ -196,12 +198,56 @@ test("approving a repair review creates a fresh human-authorized execution sessi
   assert.equal(approved.session.id, "session-repair");
   assert.equal(approved.session.ordinal, 2);
   assert.equal(approved.session.actorSubject, "production-e2e");
-  assert.equal(approved.session.authorityScope, "human");
+  assert.equal(approved.session.authorityScope, "approved-repair");
+  assert.deepEqual(approved.session.mutationGrant.paths, ["deploy/service.yaml"]);
+  assert.deepEqual(approved.session.mutationGrant.effects, ["source-write", "reviewed-ops"]);
+  assert.equal(approved.session.mutationGrant.grantedToSessionId, "session-repair");
   assert.match(approved.event.payload.text, /exact reviewed request/);
   assert.match(approved.event.payload.text, /Approve restarting service api in testnet\?/);
   assert.equal(approved.thread.state, "starting");
 });
 
+test("an operations-only approval grants reviewed ops without workspace writes", () => {
+  const store = storeAtPendingSlackReview({ repairPaths: [], effects: ["reviewed-ops"] });
+  const approved = store.decideReviewAndRoute({
+    reviewId: "review-session-diagnose",
+    actor: "production-e2e",
+    decision: "approve",
+    decisionId: "decision-ops-approve",
+    messageId: "message-ops-approve",
+    newSessionId: "session-ops-repair",
+    now,
+  });
+  assert.deepEqual(approved.session.mutationGrant.paths, []);
+  assert.deepEqual(approved.session.mutationGrant.effects, ["reviewed-ops"]);
+  assert.equal(approved.session.authorityScope, "approved-repair");
+  assert.throws(
+    () => storeAtPendingSlackReview({ repairPaths: [], effects: ["source-write"] }),
+    /repair paths/);
+});
+
+
+test("approval fails atomically when a restored review grant is invalid", () => {
+  const snapshot = storeAtPendingSlackReview().snapshot();
+  snapshot.reviews[0][1].effects = ["admin"];
+  const store = new InMemoryThreadStore(snapshot);
+  assert.throws(() => store.decideReviewAndRoute({
+    reviewId: "review-session-diagnose",
+    actor: "production-e2e",
+    decision: "approve",
+    decisionId: "decision-invalid-approve",
+    messageId: "message-invalid-approve",
+    newSessionId: "session-invalid-repair",
+    now,
+  }), /effects/);
+  assert.equal(
+    store.listReviewsForActor({ actor: "production-e2e" })[0].status,
+    "pending",
+  );
+  const thread = store.getThreadForActor("thread-slack", "production-e2e");
+  assert.equal(thread.pendingReviewId, "review-session-diagnose");
+  assert.equal(thread.activeSessionId, null);
+});
 test("rejecting a repair review closes the thread and starts no session", () => {
   const store = storeAtPendingSlackReview();
   const rejected = store.decideReviewAndRoute({

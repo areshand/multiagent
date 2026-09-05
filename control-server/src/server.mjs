@@ -292,10 +292,24 @@ function workflowLifecycleValue(id, key) {
 function workflowCompletionRoute(id) {
   const result = workflowLifecycleValue(id, "candidate_diff_hash");
   if (result.startsWith("direct-response:")) return "direct-response";
+  if (result.startsWith("observe:")) return "observe";
+  if (result.startsWith("request-review:")) return "request-review";
   if (result.startsWith("read-only:")) return "read-only";
   if (result.startsWith("external-only:")) return "external-only";
   if (result.startsWith("human-review:")) return "human-review";
   return result ? "source" : null;
+}
+
+function workflowReviewRequest(id) {
+  if (workflowCompletionRoute(id) !== "request-review") return null;
+  const workflow = activeWorkflow(id);
+  if (!workflow) return null;
+  try {
+    return {
+      effects: JSON.parse(fs.readFileSync(path.join(sessionStateDir(id), "workflows", workflow, "human-review-effects.json"), "utf8")),
+      paths: JSON.parse(fs.readFileSync(path.join(sessionStateDir(id), "workflows", workflow, "human-review-repair-paths.json"), "utf8")),
+    };
+  } catch { return null; }
 }
 
 function workflowTerminalOutcome(id) {
@@ -344,6 +358,7 @@ function writeTraceSummary(id, status) {
     completionRoute,
     terminalOutcome,
     responseType: responseTypeForMessage(finalMessage, completionRoute),
+    reviewRequest: workflowReviewRequest(id),
     traceReferences: references,
   };
   const markdown = [
@@ -407,6 +422,8 @@ function launchSession(id, repository, resume, actor, originalTask = "", metadat
     MULTIAGENT_CALLER_SUBJECT: `caller-${crypto.createHash("sha256").update(authorityActor).digest("hex").slice(0, 32)}`,
     MULTIAGENT_CALLER_APPROVED_AT: authorityApprovedAt,
     MULTIAGENT_AUTHORITY_SCOPE: metadata.authorityScope || existing?.authorityScope || "human",
+    MULTIAGENT_MUTATION_GRANT_JSON: JSON.stringify(metadata.mutationGrant || existing?.mutationGrant || null),
+    MULTIAGENT_REPOSITORY_NAME: repository,
   };
   run(invocation.command, invocation.args, { cwd: launcherRoot, env });
   if (env.MULTIAGENT_USER_MESSAGE_FILE) fs.rmSync(env.MULTIAGENT_USER_MESSAGE_FILE, { force: true });
@@ -418,6 +435,7 @@ function launchSession(id, repository, resume, actor, originalTask = "", metadat
     createdBy: existing?.createdBy || metadata.ownerSubject || actor, createdAt: existing?.createdAt || now,
     authorityActor, authorityApprovedAt,
     authorityScope: metadata.authorityScope || existing?.authorityScope || "human",
+    mutationGrant: metadata.mutationGrant || existing?.mutationGrant || null,
     automaticResumeAttempts: resume ? Number(existing?.automaticResumeAttempts || 0) : 0,
     resumedBy: resume ? actor : undefined, resumedAt: resume ? now : undefined,
     updatedAt: now, lastActivityAt: now,
@@ -443,6 +461,7 @@ async function launchGatewaySession(id, repository, resume, actor, originalTask 
     task,
     actor: callerSubject,
     authorityScope: metadata.authorityScope || "human",
+    mutationGrant: metadata.mutationGrant || null,
     repositoryName: repository,
     repositoryUrl: repositoryConfig.url,
     repositoryAuthentication: repositoryConfig.authentication,
@@ -462,6 +481,7 @@ async function launchGatewaySession(id, repository, resume, actor, originalTask 
     createdBy: metadata.ownerSubject || actor,
     authorityActor: actor,
     authorityScope: metadata.authorityScope || "human",
+    mutationGrant: metadata.mutationGrant || null,
     authorityApprovedAt: now,
     createdAt: now,
     updatedAt: now,
@@ -493,6 +513,7 @@ function readLocalWorkerReport(id) {
       message: finalReport.finalMessage,
       completionRoute: finalReport.completionRoute,
       terminalOutcome: finalReport.terminalOutcome,
+      reviewRequest: finalReport.reviewRequest,
       status: finalReport.status,
     });
   } catch { return null; }
@@ -728,6 +749,7 @@ async function launchThreadExecution(thread, session) {
       authorizingEventId: session.triggerMessageId,
       ownerSubject: thread.ownerSubject,
       authorityScope: session.authorityScope || "human",
+      mutationGrant: session.mutationGrant || null,
     });
 }
 
@@ -1314,7 +1336,15 @@ if (workerMode) {
   const threadId = String(process.env.MULTIAGENT_THREAD_ID || id);
   const leaseGeneration = Number(process.env.MULTIAGENT_LEASE_GENERATION || "1");
   const authorizingEventId = String(process.env.MULTIAGENT_AUTHORIZING_EVENT_ID || id);
-  if (!registry.sessions[id]) launchSession(id, repository, resume, actor, fs.readFileSync(taskFile, "utf8"), { threadId, leaseGeneration, authorizingEventId });
+  const authorityScope = String(process.env.MULTIAGENT_AUTHORITY_SCOPE || "human");
+  const mutationGrant = JSON.parse(process.env.MULTIAGENT_MUTATION_GRANT_JSON || "null");
+  if (!registry.sessions[id]) launchSession(id, repository, resume, actor, fs.readFileSync(taskFile, "utf8"), {
+    threadId,
+    leaseGeneration,
+    authorizingEventId,
+    authorityScope,
+    mutationGrant,
+  });
 }
 
 for (const record of gatewayMode ? [] : Object.values(registry.sessions)) {

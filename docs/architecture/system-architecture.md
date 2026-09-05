@@ -184,7 +184,7 @@ the control-server container image excludes `client/`. These filesystem and
 package boundaries prevent the independently distributed caller from importing
 trusted server internals; the public HTTP API is its only integration surface.
 
-### AD-019: Slack alerts may trigger diagnosis but never repair authority
+### AD-019: Slack alerts trigger observe sessions; humans authorize repair sessions
 
 A deployment may subscribe a dedicated Slack ingress adapter to one or more
 deployment-allowlisted on-call channel IDs. The adapter verifies Slack's timestamped
@@ -201,11 +201,12 @@ The internal event endpoint maps it to a durable thread owned by one deployment-
 configured terminal reviewer and the deployment-selected
 `MULTIAGENT_SLACK_REPOSITORY`, while attributing its initial execution to a
 distinct Slack integration actor. That first execution has the mechanical
-`diagnosis-only` authority scope: the supervisor rejects workspace-write and
-implementation-worker launches, and permit construction accepts only live
-`prod-mcp` capabilities advertised as non-mutating read or materialize operations
-with no mutation approval role. Prompt instructions explain the boundary but do
-not enforce it.
+`observe` authority scope: the supervisor rejects workspace-write,
+implementation-worker launches, operation publication, and operation execution.
+It may use only the bounded read interfaces needed to gather evidence. An
+observe execution that can answer the user completes directly without an
+independent model review because its filesystem and operation boundaries
+mechanically prevent mutation.
 
 The deployment may also inject bounded, non-secret operational discovery
 metadata through `MULTIAGENT_SLACK_DIAGNOSIS_CONTEXT`. The control server passes
@@ -216,26 +217,28 @@ repair, permit, or mutation authority. `InternalServices` owns the concrete
 values; the orchestrator and Slack adapter do not encode provider-specific
 configuration.
 
-If diagnosis identifies no repair, the session may complete with its bounded
-evidence-backed result. If repair is proposed, the supervisor-owned human-
-review completion route ends the diagnosis execution and the control server
+If observation identifies no repair, the session completes with its bounded
+evidence-backed result. If repair is proposed, the supervisor-owned
+`request-review` route ends the observe execution and the Session Manager
 atomically persists a pending review item bound to the exact source session,
-question event, question digest, thread, and owner. While that review is pending,
-ordinary follow-up cannot bypass it.
+question event, question digest, thread, owner, requested effects, and repository
+paths. While that review is pending, ordinary follow-up cannot bypass it.
 
 Only the configured owner authenticated through the terminal client may decide
 the review. Approval appends a human-attributed authorization event containing
-the exact reviewed question and digest, then creates a fresh isolated execution
-session with normal human authority and bounded prior-thread context. It never
-revives the diagnosis agents, filesystem, credentials, or permits. Rejecting the
-review creates no session and mechanically closes the thread to further
-continuation. Both decisions are idempotent and durable.
+the exact reviewed question and digest, then creates a fresh isolated
+`approved-repair` execution with bounded prior-thread context and an immutable
+grant containing only the effects requested by the proposal: `source-write`,
+`reviewed-ops`, or both. Source-write is restricted to the reviewed repository-
+relative paths. Reviewed-ops permits entry into the existing independent reviewer, runbook,
+signed-permit, target-allowlist, receipt, and `prod-mcp` flow; it is not direct
+production authority and cannot bypass those checks.
 
-Human approval of the proposal does not bypass later runbook, independent
-reviewer, signed-permit, target-allowlist, or `prod-mcp` checks. It supplies the
-missing human intent for only the exact proposed repair. Provider-specific
-workspace IDs, channel IDs, app identities, callback hostname, secrets, storage,
-and network policy remain `InternalServices` configuration.
+Approval never revives the observe agents, filesystem, credentials, or permits.
+Rejecting the review creates no session and mechanically closes the thread to
+further continuation. Both decisions are idempotent and durable. Provider-
+specific workspace IDs, channel IDs, app identities, callback hostname, secrets,
+storage, and network policy remain `InternalServices` configuration.
 
 ### AD-002: There is one supervisor per execution session
 
@@ -761,32 +764,28 @@ identity, or evidence boundary. The Claude headless adapter therefore disables
 its built-in `Agent` and legacy `Task` tools; delegated work must enter through
 the registered `multiagent subagent` lifecycle.
 
-The orchestrator may propose one of three execution routes, but the supervisor
-selects the corresponding mechanical completion gate:
+The primary session state machine is small and mechanically selected:
 
-- A direct-response route may answer a question or request one bounded
-  clarification without launching another role. It requires a clean repository,
-  no external operation, no role launch, no active workflow obligation, and no
-  source lifecycle state. Because it produces no independently mutable artifact
-  or external effect, it does not require a reviewer. When a successful headless
-  orchestrator pass exits with a bounded clarification question but omits the
-  explicit completion command, the runtime submits that exact question to the
-  same supervisor-owned direct-response gate. The adapter may not mark the
-  workflow complete itself; a failed gate leaves the workflow incomplete.
-- A read-only investigation route may launch repository readers with the
-  selected repository as their working directory. The supervisor denies source
-  writes, records the exact read-only launch manifests and sealed outputs, and
-  requires an independent read-only integrity review bound to the unchanged
-  repository diff before completion.
-- A source implementation route uses the sealed iteration, writer ownership,
-  frozen candidate diff, and mechanically derived review obligations described
-  below.
+- Every fresh user or Slack execution starts in `observe`. It may chat, query
+  the Wiki, read code, and gather bounded external evidence, but cannot launch a
+  workspace writer or publish or execute an operation. It terminates quickly as
+  either `succeeded` with a direct answer or `review_requested` with one bounded
+  proposal. Neither observe outcome requires an independent model reviewer.
+- A pending review accepts only the configured owner's idempotent `yes` or `no`.
+  `no` closes the thread. `yes` creates a fresh `approved-repair` execution
+  containing only the requested effect set in the same durable thread; it never
+  resumes or upgrades the observe process.
+- An approved-repair execution uses the normal source lifecycle and its
+  mechanically derived independent review obligations. Workspace writes are
+  limited to the exact reviewed paths. Production mutation is allowed only
+  through `reviewed-ops`, which still requires the runbook, independent
+  reviewer, signed permit, target allowlist, receipt, Logger, and trace gates.
 
-The route proposal is semantic input, not authority. A reviewer evaluates the
-supervisor-sealed access evidence and result, but reviewer prose never replaces
-UID separation, Landlock, assignment ownership, diff binding, or the completion
-gate. If any source write or production operation occurs, the direct and
-read-only gates fail and the applicable full workflow must be used.
+The older direct-response and reviewed read-only completion commands remain
+compatibility routes for existing callers, not requirements for fresh observe
+sessions. Route prose never grants authority: UID separation, Landlock,
+immutable session grants, assignment ownership, diff binding, and the
+supervisor completion gate enforce these transitions.
 
 For source implementation, adaptivity happens at iteration boundaries. The
 orchestrator submits one complete iteration plan containing the committed
@@ -846,16 +845,18 @@ authorized iteration without granting the runtime semantic decision authority.
    normalized event to its durable queue, and acknowledges Slack.
 3. The adapter retries the event against the token-authenticated internal
    gateway endpoint until the gateway durably deduplicates it.
-4. The gateway creates a reviewer-owned thread and a Slack-attributed,
-   diagnosis-only execution session in the configured Slack repository.
-5. The session gathers read-only evidence and either reports its diagnosis or
-   terminates through the bounded human-review route.
+4. The gateway creates a reviewer-owned thread and a Slack-attributed `observe`
+   execution session in the configured Slack repository.
+5. The session gathers read-only evidence and either reports its diagnosis
+   directly or terminates through the bounded `request-review` route.
 6. The gateway atomically completes that execution and exposes the pending
    review to only its configured terminal owner.
-7. A terminal `yes` appends exact human authority and launches a fresh session;
-   a terminal `no` records rejection and closes the thread without execution.
-8. Any approved repair continues through normal reviewer, runbook, signed
-   permit, allowlist, receipt, Logger, and trace controls.
+7. A terminal `yes` launches a fresh `approved-repair` session with only the
+   proposed source paths and/or `reviewed-ops` effect; a terminal `no` records
+   rejection and closes the thread without execution.
+8. Source changes remain path-bound, and any production mutation continues
+   through the normal independent reviewer, runbook, signed permit, allowlist,
+   receipt, Logger, and trace controls.
 
 ## Deployment topology
 

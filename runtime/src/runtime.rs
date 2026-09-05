@@ -787,6 +787,13 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
         orchestrator_resume_session.as_deref(),
     )?;
     if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
+        #[cfg(target_os = "linux")]
+        {
+            let authority = crate::authority::configured_session_authority()?;
+            if matches!(authority.scope(), "observe" | "diagnosis-only") {
+                set_workspace_tree_owner(&root, 0, false)?;
+            }
+        }
         supervisor::register_runtime_state(&state_dir)?;
         supervisor::prepare_state_permissions(&state_dir)?;
         if !log_dir.starts_with(&state_dir) {
@@ -982,6 +989,18 @@ fn launch_environment(
             env_nonempty("MULTIAGENT_UID_SANDBOX").unwrap_or_else(|| "0".into()),
         ),
         (
+            "MULTIAGENT_AUTHORITY_SCOPE",
+            env_nonempty("MULTIAGENT_AUTHORITY_SCOPE").unwrap_or_else(|| "human".into()),
+        ),
+        (
+            "MULTIAGENT_MUTATION_GRANT_JSON",
+            env_nonempty("MULTIAGENT_MUTATION_GRANT_JSON").unwrap_or_default(),
+        ),
+        (
+            "MULTIAGENT_REPOSITORY_NAME",
+            env_nonempty("MULTIAGENT_REPOSITORY_NAME").unwrap_or_default(),
+        ),
+        (
             "MULTIAGENT_CODEX_HOME_ROOT",
             env_nonempty("MULTIAGENT_CODEX_HOME_ROOT").unwrap_or_default(),
         ),
@@ -1146,8 +1165,18 @@ fn write_bootstrap(
             .ok_or_else(|| "missing MULTIAGENT_BIN in launch environment".to_string())?;
         text.push_str("agent_status=$?\n");
         text.push_str("if [[ $agent_status -eq 0 ]]; then\n");
+        let completion = if matches!(
+            environment
+                .get("MULTIAGENT_AUTHORITY_SCOPE")
+                .map(String::as_str),
+            Some("observe" | "diagnosis-only")
+        ) {
+            "--observe"
+        } else {
+            "--auto-clarification"
+        };
         text.push_str(&format!(
-            "  {} orchestrator complete --auto-clarification --result-file {} >/dev/null 2>&1 || true\n",
+            "  {} orchestrator complete {completion} --result-file {} >/dev/null 2>&1 || true\n",
             shell_escape(executable),
             shell_escape(&last_message.display().to_string())
         ));
@@ -1214,13 +1243,15 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
             .iter()
             .any(|arg| matches!(arg.as_str(), "-h" | "--help"))
     {
-        println!("Usage:\n  multiagent orchestrator complete\n  multiagent orchestrator complete --direct-response --result-file PATH\n  multiagent orchestrator complete --clarification --result-file PATH\n  multiagent orchestrator complete --auto-clarification --result-file PATH\n  multiagent orchestrator complete --read-only --result-file PATH --reviewer NAME\n  multiagent orchestrator complete --human-review --result-file PATH --reviewer NAME\n  multiagent orchestrator complete --external-only --result-file PATH\n\nRuns the supervisor completion gates. Shortcut and external-only completion require a self-contained caller result under MULTIAGENT_STATE_DIR.");
+        println!("Usage:\n  multiagent orchestrator complete\n  multiagent orchestrator complete --observe --result-file PATH\n  multiagent orchestrator complete --request-review --result-file PATH [--path REPO_PATH ...] [--reviewed-ops]\n  multiagent orchestrator complete --direct-response --result-file PATH\n  multiagent orchestrator complete --clarification --result-file PATH\n  multiagent orchestrator complete --auto-clarification --result-file PATH\n  multiagent orchestrator complete --read-only --result-file PATH --reviewer NAME\n  multiagent orchestrator complete --human-review --result-file PATH --reviewer NAME\n  multiagent orchestrator complete --external-only --result-file PATH\n\nObserve-only completion returns directly without a reviewer. A repair request must name at least one exact source path or explicitly request the independently reviewed operations flow.");
         return Ok(ExitCode::SUCCESS);
     }
     #[derive(Clone, Copy)]
     enum CompletionRoute<'a> {
         Source,
         Direct(&'a str),
+        Observe(&'a str),
+        RequestReview(&'a str),
         Clarification(&'a str),
         AutoClarification(&'a str),
         ReadOnly { result: &'a str, reviewer: &'a str },
@@ -1235,6 +1266,14 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
         && args[2] == "--result-file"
     {
         CompletionRoute::External(&args[3])
+    } else if args.len() == 4
+        && args[0] == "complete"
+        && args[1] == "--observe"
+        && args[2] == "--result-file"
+    {
+        CompletionRoute::Observe(&args[3])
+    } else if request_review_options(args).is_some() {
+        CompletionRoute::RequestReview(&args[3])
     } else if args.len() == 4
         && args[0] == "complete"
         && args[1] == "--direct-response"
@@ -1279,6 +1318,8 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
     let result_file = match route {
         CompletionRoute::Source => None,
         CompletionRoute::Direct(path)
+        | CompletionRoute::Observe(path)
+        | CompletionRoute::RequestReview(path)
         | CompletionRoute::Clarification(path)
         | CompletionRoute::AutoClarification(path)
         | CompletionRoute::External(path) => Some(path),
@@ -1294,6 +1335,9 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
             return Ok(ExitCode::SUCCESS);
         }
     }
+    if let CompletionRoute::RequestReview(path) = route {
+        validate_bounded_clarification(path)?;
+    }
     if let Some(path) = result_file {
         persist_orchestrator_result(path)?;
     }
@@ -1306,6 +1350,13 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
             | CompletionRoute::Clarification(_)
             | CompletionRoute::AutoClarification(_) => {
                 crate::workflow::supervisor_complete_direct(&workflow_id)?
+            }
+            CompletionRoute::Observe(_) => {
+                crate::workflow::supervisor_complete_observe(&workflow_id)?
+            }
+            CompletionRoute::RequestReview(_) => {
+                let (paths, reviewed_ops) = request_review_options(args).expect("validated route");
+                crate::workflow::supervisor_request_review(&workflow_id, &paths, reviewed_ops)?
             }
             CompletionRoute::ReadOnly { reviewer, .. } => {
                 crate::workflow::supervisor_complete_read_only(&workflow_id, reviewer)?
@@ -1328,6 +1379,38 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
             .unwrap_or_else(|| "unknown".into())
     );
     Ok(ExitCode::SUCCESS)
+}
+
+fn request_review_options(args: &[String]) -> Option<(Vec<String>, bool)> {
+    if args.len() < 5
+        || args.first().map(String::as_str) != Some("complete")
+        || args.get(1).map(String::as_str) != Some("--request-review")
+        || args.get(2).map(String::as_str) != Some("--result-file")
+        || args.get(3).is_none_or(String::is_empty)
+    {
+        return None;
+    }
+    let mut paths = Vec::new();
+    let mut reviewed_ops = false;
+    let mut index = 4;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--path" if index + 1 < args.len() && !args[index + 1].is_empty() => {
+                paths.push(args[index + 1].clone());
+                index += 2;
+            }
+            "--reviewed-ops" if !reviewed_ops => {
+                reviewed_ops = true;
+                index += 1;
+            }
+            _ => return None,
+        }
+    }
+    if paths.is_empty() && !reviewed_ops {
+        None
+    } else {
+        Some((paths, reviewed_ops))
+    }
 }
 
 fn persist_orchestrator_result(path: &str) -> Result<(), String> {
@@ -4555,6 +4638,14 @@ fn prepare_workspace_write_boundary(
     owned_paths: &[PathBuf],
 ) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
+
+    let authority = crate::authority::configured_session_authority()?;
+    if !authority.permits_workspace_write(root, owned_paths) {
+        return Err(format!(
+            "session authority {} does not grant the exact requested workspace paths",
+            authority.scope()
+        ));
+    }
 
     let ledger = state.join("launch-authorizations/active-writer-paths");
     if ledger.is_file() {
