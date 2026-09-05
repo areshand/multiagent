@@ -42,6 +42,8 @@ ORCHESTRATOR_UID = 10001
 WRITER_UID = 10002
 READER_UID = 10003
 SUPERVISOR_UID = 10004
+OPS_UID = 10005
+REVIEWER_UID = 10007
 ROLE_GID = 10001
 
 
@@ -93,7 +95,9 @@ def prepare_role_filesystem(workdir: Path, role_launcher: Path) -> None:
         ("orchestrator", ORCHESTRATOR_UID),
         ("writer", WRITER_UID),
         ("reader", READER_UID),
+        ("reviewer", REVIEWER_UID),
         ("supervisor", SUPERVISOR_UID),
+        ("ops", OPS_UID),
     ):
         home = ROLE_CODEX_HOME_ROOT / role
         home.mkdir(parents=True, exist_ok=True)
@@ -324,40 +328,13 @@ def run_prod_solver(
         raise RuntimeError(f"production multiagent launch failed: {launch_tail}")
 
     deadline = time.monotonic() + timeout
-    resume_count = 0
     final_phase: str | None = None
+    deadline_reached = False
     try:
-        while time.monotonic() < deadline:
-            while time.monotonic() < deadline and tmux_has_orchestrator(session):
-                time.sleep(5)
-
-            phase = active_workflow_phase()
-            final_phase = phase
-            if phase == "complete" or time.monotonic() >= deadline:
-                break
-            if phase is None:
-                raise RuntimeError(
-                    "production multiagent orchestrator exited without a persisted workflow lifecycle"
-                )
-
-            resume_count += 1
-            log(
-                "orchestrator exited before lifecycle completion; "
-                f"resuming session={session} phase={phase} attempt={resume_count}"
-            )
-            resume_args = [
-                str(repo_root / "launch.sh"),
-                "--session",
-                session,
-                "--root",
-                str(workdir),
-                "--resume",
-                "--no-attach",
-            ]
-            resumed = run(resume_args, env=env, timeout=120)
-            resume_tail = ((resumed.stderr or "") + "\n" + (resumed.stdout or "")).strip()[-4000:]
-            if resumed.returncode != 0:
-                raise RuntimeError(f"production multiagent resume failed: {resume_tail}")
+        while time.monotonic() < deadline and tmux_has_orchestrator(session):
+            time.sleep(5)
+        final_phase = active_workflow_phase()
+        deadline_reached = time.monotonic() >= deadline
     finally:
         if tmux_has_session(session):
             run(["tmux", "-S", str(TMUX_SOCKET), "kill-session", "-t", session], timeout=30)
@@ -365,6 +342,11 @@ def run_prod_solver(
 
     if final_phase != "complete":
         rendered_phase = final_phase or "missing"
+        if not deadline_reached:
+            raise RuntimeError(
+                "production multiagent orchestrator exited before lifecycle completion "
+                f"(phase={rendered_phase}); evaluation records the cell as failed without resume"
+            )
         raise RuntimeError(
             "production multiagent workflow did not reach supervisor-owned completion before "
             f"the solver deadline (phase={rendered_phase}); refusing workspace handoff"

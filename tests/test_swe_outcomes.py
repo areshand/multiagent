@@ -196,7 +196,7 @@ class NativeOutcomeTest(unittest.TestCase):
                 ROLE_CODEX_HOME_ROOT=role_homes,
                 RUNTIME_ROOT=runtime,
             ):
-                with mock.patch.object(swe_prod_lifecycle.os, "chown"):
+                with mock.patch.object(swe_prod_lifecycle.os, "chown") as chown:
                     with mock.patch.object(
                         swe_prod_lifecycle.os,
                         "chmod",
@@ -204,12 +204,20 @@ class NativeOutcomeTest(unittest.TestCase):
                     ) as chmod:
                         swe_prod_lifecycle.prepare_role_filesystem(workdir, launcher)
 
-            for role in ("orchestrator", "writer", "reader", "supervisor"):
+            for role, uid in (
+                ("orchestrator", swe_prod_lifecycle.ORCHESTRATOR_UID),
+                ("writer", swe_prod_lifecycle.WRITER_UID),
+                ("reader", swe_prod_lifecycle.READER_UID),
+                ("reviewer", swe_prod_lifecycle.REVIEWER_UID),
+                ("supervisor", swe_prod_lifecycle.SUPERVISOR_UID),
+                ("ops", swe_prod_lifecycle.OPS_UID),
+            ):
                 home = role_homes / role
                 self.assertEqual((home / "auth.json").read_text(encoding="utf-8"), '{"token":"test"}')
                 self.assertTrue((home / "config.toml").is_file())
                 self.assertIn("directory =", (home / ".gitconfig").read_text(encoding="utf-8"))
                 self.assertEqual(home.stat().st_mode & 0o777, 0o700)
+                chown.assert_any_call(home, uid, swe_prod_lifecycle.ROLE_GID, follow_symlinks=False)
             chmod.assert_any_call(launcher, 0o4755)
             self.assertTrue(
                 all("follow_symlinks" not in call.kwargs for call in chmod.call_args_list),
@@ -242,7 +250,7 @@ class NativeOutcomeTest(unittest.TestCase):
             with mock.patch.object(swe_prod_lifecycle, "RUNTIME_ROOT", runtime):
                 self.assertEqual(swe_prod_lifecycle.active_workflow_phase(), "implementation")
 
-    def test_incomplete_workflow_keeps_resuming_before_workspace_handoff(self):
+    def test_incomplete_workflow_exit_fails_without_resume(self):
         completed = SimpleNamespace(returncode=0, stdout="codex-cli 1.0\n", stderr="")
 
         with tempfile.TemporaryDirectory() as directory:
@@ -268,9 +276,7 @@ class NativeOutcomeTest(unittest.TestCase):
                 "restore_workspace_owner": mock.DEFAULT,
                 "tmux_has_session": mock.Mock(return_value=True),
                 "tmux_has_orchestrator": mock.Mock(return_value=False),
-                "active_workflow_phase": mock.Mock(
-                    side_effect=["implementation", "implementation", "implementation", "implementation", "complete"]
-                ),
+                "active_workflow_phase": mock.Mock(return_value="implementation"),
                 "materialize_committed_changes": mock.DEFAULT,
                 "mark_untracked_intent_to_add": mock.DEFAULT,
             }
@@ -288,8 +294,15 @@ class NativeOutcomeTest(unittest.TestCase):
                             "OPENAI_API_KEY": "test-key",
                         },
                     ):
-                        self.assertEqual(swe_prod_lifecycle.run_prod_solver(None, root, root, 60), 0)
+                        with self.assertRaisesRegex(
+                            RuntimeError,
+                            "records the cell as failed without resume",
+                        ):
+                            swe_prod_lifecycle.run_prod_solver(None, root, root, 60)
 
+                restore_owner = swe_prod_lifecycle.restore_workspace_owner
+                materialize = swe_prod_lifecycle.materialize_committed_changes
+                expose_untracked = swe_prod_lifecycle.mark_untracked_intent_to_add
                 launch_calls = [
                     call
                     for call in swe_prod_lifecycle.run.call_args_list
@@ -300,10 +313,11 @@ class NativeOutcomeTest(unittest.TestCase):
                     and str(call.args[0][0]).endswith("launch.sh")
                 ]
 
-        self.assertEqual(len(launch_calls), 5)
+        self.assertEqual(len(launch_calls), 1)
         self.assertNotIn("--resume", launch_calls[0].args[0])
-        for call in launch_calls[1:]:
-            self.assertIn("--resume", call.args[0])
+        restore_owner.assert_called_once_with(root)
+        materialize.assert_not_called()
+        expose_untracked.assert_not_called()
 
     def test_shard_problem_statement_uses_relative_sample_id(self):
         with tempfile.TemporaryDirectory() as directory:
