@@ -5,7 +5,6 @@
 - Runbook ID: `slack.workspace-access`
 - Version: `1.0.0`
 - Prod MCP operations: `slack.read`, `slack.write`
-- Operation version: `1.0.0`
 
 ## Goal
 
@@ -15,7 +14,9 @@ inside prod-mcp.
 
 ## Prod-mcp request contract
 
-- Set `operation` to `{"id":"slack.read","version":"1.0.0"}` for reads or `{"id":"slack.write","version":"1.0.0"}` for writes.
+- Set `operation.id` to `slack.read` for reads or `slack.write` for writes. Set
+  `operation.version` only from the corresponding live `multiagent ops describe`
+  result.
 - Set `target` to `{"environment":"production","cluster":"external-services","namespace":"slack","service":"configured-workspace"}`.
 - Put the Slack action and its arguments in `parameters`; the action is not the target.
 - `list-channels` parameters are `action`, `limit`, `excludeArchived`, and an optional returned `cursor`.

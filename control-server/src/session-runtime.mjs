@@ -45,6 +45,23 @@ export function shouldAutomaticallyResume(record, limit) {
     && Number(record.automaticResumeAttempts || 0) < limit;
 }
 
+const terminalOutcomes = new Set(["succeeded", "failed", "review_requested"]);
+
+export function executionTerminalOutcome({ phase, outcome, live }) {
+  if (phase === "complete") {
+    if (terminalOutcomes.has(outcome)) return outcome;
+    // Workflows created before terminal_outcome was introduced completed only
+    // through supervisor-owned success gates.
+    return outcome ? "failed" : "succeeded";
+  }
+  return live ? null : "failed";
+}
+
+export function sessionStatusForTerminalOutcome(outcome) {
+  if (!terminalOutcomes.has(outcome)) throw new Error(`invalid terminal outcome: ${outcome}`);
+  return outcome === "failed" ? "failed" : "completed";
+}
+
 export function findActiveSession(sessionIds, candidate, isAlive) {
   return sessionIds.find((id) => id !== candidate && isAlive(id)) || null;
 }
@@ -60,7 +77,7 @@ export function selectFinalMessage(result, fallback) {
 }
 
 export function responseTypeForMessage(message, completionRoute = "") {
-  if (!["direct-response", "human-review"].includes(completionRoute)) return "assistant_message";
+  if (!["direct-response", "observe", "request-review", "human-review"].includes(completionRoute)) return "assistant_message";
   const text = String(message || "").trim();
   const questions = [...text].filter((character) => character === "?" || character === "？").length;
   const tail = text.replace(/[\s*_`"')\]]+$/g, "");
@@ -87,15 +104,47 @@ export function normalizeWorkerReport(value) {
   if (Buffer.byteLength(JSON.stringify(transcript), "utf8") > 64 * 1024) return null;
   const message = typeof value.message === "string" && value.message.trim() ? value.message.trim() : null;
   if (message && Buffer.byteLength(message, "utf8") > 6000) return null;
-  const completionRoute = new Set(["direct-response", "read-only", "external-only", "human-review", "source"])
+  const completionRoute = new Set(["direct-response", "observe", "request-review", "read-only", "external-only", "human-review", "source"])
     .has(value.completionRoute) ? value.completionRoute : null;
+  if (value.terminalOutcome !== undefined && !terminalOutcomes.has(value.terminalOutcome)) return null;
+  const terminalOutcome = terminalOutcomes.has(value.terminalOutcome)
+    ? value.terminalOutcome
+    : value.status === "failed" ? "failed"
+      : new Set(["request-review", "human-review"]).has(completionRoute) ? "review_requested" : "succeeded";
+  const responseType = responseTypeForMessage(message, completionRoute);
+  if (new Set(["request-review", "human-review"]).has(completionRoute) !== (terminalOutcome === "review_requested")) return null;
+  if (terminalOutcome === "review_requested" && responseType !== "question") return null;
+  const reviewRequest = value.reviewRequest === undefined || value.reviewRequest === null
+    ? null
+    : normalizeReviewRequest(value.reviewRequest);
+  if (value.reviewRequest && !reviewRequest) return null;
+  if (completionRoute === "request-review" && !reviewRequest) return null;
   return {
     report: value.report,
     transcript,
     message,
     completionRoute,
-    responseType: responseTypeForMessage(message, completionRoute),
+    terminalOutcome,
+    responseType,
+    ...(reviewRequest ? { reviewRequest } : {}),
   };
+}
+
+function normalizeReviewRequest(value) {
+  const allowedEffects = ["source-write", "reviewed-ops"];
+  if (!value || !Array.isArray(value.effects) || value.effects.length < 1
+    || value.effects.length > allowedEffects.length || new Set(value.effects).size !== value.effects.length
+    || value.effects.some((effect) => !allowedEffects.includes(effect))
+    || !Array.isArray(value.paths) || value.paths.length > 32
+    || (value.effects.includes("source-write") ? value.paths.length < 1 : value.paths.length !== 0)) return null;
+  const paths = [...new Set(value.paths.map((path) => String(path || "")))];
+  if (paths.length !== value.paths.length || paths.some((path) => {
+    const normalized = path.replaceAll("\\", "/");
+    return !normalized || normalized.length > 512 || normalized.startsWith("/")
+      || normalized.split("/").some((part) => !part || part === "." || part === "..");
+  })) return null;
+  const effects = allowedEffects.filter((effect) => value.effects.includes(effect));
+  return { effects, paths: paths.sort() };
 }
 
 export function scopedThreadTranscript(sessionId, transcript) {

@@ -57,7 +57,7 @@ const second = await submitMessage(
 );
 assert.equal(second.createdSession, true);
 const sessionB = second.session.id;
-assert.notEqual(sessionB, sessionA, "thread follow-up reused the previous execution session");
+assert.notEqual(sessionB, sessionA, "thread follow-up reused the previous Session");
 console.log(`session B: ${sessionB}`);
 
 const secondResult = await waitForResult({

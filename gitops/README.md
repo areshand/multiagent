@@ -51,8 +51,10 @@ The application-owned Slack ingress deployment contract is:
   `MULTIAGENT_SLACK_REPOSITORY` diagnosis repository; optionally inject bounded,
   non-secret read-only target metadata through
   `MULTIAGENT_SLACK_DIAGNOSIS_CONTEXT`;
-- configure the session Job template to project immutable Secret key
-  `authority-scope` into `MULTIAGENT_AUTHORITY_SCOPE`;
+- configure the session Job template to project immutable Secret keys
+  `authority-scope` and `mutation-grant.json` into
+  `MULTIAGENT_AUTHORITY_SCOPE` and `MULTIAGENT_MUTATION_GRANT_JSON`, and inject
+  the selected repository name for grant binding;
 - do not grant the Slack ingress model, repository, GitHub, KMS, `prod-mcp`,
   Kubernetes, Grafana, client-cookie, or production credentials;
 - alert when `/readyz` fails or queue depth remains non-zero; and

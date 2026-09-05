@@ -18,23 +18,22 @@ enumerating server threads. `/list` shows only threads created by this local
 client profile; `/open THREAD_ID` opens an explicitly known thread without adding
 it to that local list. A list number may be used after `/list`. Use
 `/new REPOSITORY [TITLE]` to create a thread and `/help` to see the complete
-interactive command set. The server
-assigns both thread IDs and execution-session IDs. After a message starts an
-execution session, the client streams the orchestrator terminal without locking
-the prompt. Additional ordinary input is durably appended and delivered as a
-follow-up to that open thread's active orchestrator. Use `/wait` when you want
-to stop entering commands until the current execution replies. While a thread
+interactive command set. The server assigns both Thread and Session IDs. After a
+message starts a Session, the client streams the orchestrator terminal without
+locking the prompt. Additional ordinary input is durably appended and delivered
+as a follow-up to that open thread's active orchestrator. Use `/wait` when you
+want to stop entering commands until the current Session replies. While a thread
 is open, the client maintains an authenticated WebSocket to receive conversation
-events, thread state, heartbeats, and bounded subagent status. A separate
-session WebSocket carries live orchestrator terminal output only while an
-execution is active. The interactive TTY reserves a small bottom pane for each
+events, thread state, heartbeats, and bounded subagent status. A separate Session
+WebSocket carries live orchestrator terminal output only while a Session is
+active. The interactive TTY reserves a small bottom pane for each
 subagent's state, role, and current progress as a compact graph rooted at the
 orchestrator. Before the first delegation, the graph labels the orchestrator
 `planning` and says that no agents have been delegated yet; it does not imply
 that a separate discovery operation is running. The stable `› ` input area
 remains available while agents work;
 asynchronous output redraws it without discarding partially typed follow-up
-text. When an execution finishes, the pane keeps a concise result summary,
+text. When a Session finishes, the pane keeps a concise result summary,
 wrapped to at most three terminal lines, showing the latest public outcome, and
 labels the orchestrator `complete` instead of reducing the result to `idle`.
 Bounded clarification responses are shown as questions and wait for ordinary
@@ -43,7 +42,7 @@ reconstructs that summary when a thread is reopened.
 
 Pending Slack repair proposals are shown before the normal prompt in a clearly
 labelled review window. Enter `yes` to bind the exact review question to a fresh
-human-authorized execution session, or `no` to reject it and permanently close
+human-authorized user Session, or `no` to reject it and permanently close
 that thread to further messages. Use `/reviews` to refresh the pending queue.
 
 The first command securely prompts for the password. For a non-interactive
@@ -84,8 +83,8 @@ logout
 
 Non-interactive commands emit formatted JSON. `threads watch` emits newline-delimited
 JSON events so scripts and agents can consume the stream incrementally. A
-thread ID is never reused as an execution-session ID; the server creates and
-returns execution sessions when a message needs a fresh runtime.
+Thread ID is never reused as a Session ID; the server creates and returns a
+Session when a message needs a fresh runtime.
 
 ## Development
 

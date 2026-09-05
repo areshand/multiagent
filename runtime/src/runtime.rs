@@ -787,6 +787,13 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
         orchestrator_resume_session.as_deref(),
     )?;
     if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
+        #[cfg(target_os = "linux")]
+        {
+            let authority = crate::execution::configured()?;
+            if matches!(authority.scope(), "user" | "observe" | "diagnosis-only") {
+                set_workspace_tree_owner(&root, 0, false)?;
+            }
+        }
         supervisor::register_runtime_state(&state_dir)?;
         supervisor::prepare_state_permissions(&state_dir)?;
         if !log_dir.starts_with(&state_dir) {
@@ -982,6 +989,18 @@ fn launch_environment(
             env_nonempty("MULTIAGENT_UID_SANDBOX").unwrap_or_else(|| "0".into()),
         ),
         (
+            "MULTIAGENT_AUTHORITY_SCOPE",
+            env_nonempty("MULTIAGENT_AUTHORITY_SCOPE").unwrap_or_else(|| "human".into()),
+        ),
+        (
+            "MULTIAGENT_MUTATION_GRANT_JSON",
+            env_nonempty("MULTIAGENT_MUTATION_GRANT_JSON").unwrap_or_default(),
+        ),
+        (
+            "MULTIAGENT_REPOSITORY_NAME",
+            env_nonempty("MULTIAGENT_REPOSITORY_NAME").unwrap_or_default(),
+        ),
+        (
             "MULTIAGENT_CODEX_HOME_ROOT",
             env_nonempty("MULTIAGENT_CODEX_HOME_ROOT").unwrap_or_default(),
         ),
@@ -1147,7 +1166,7 @@ fn write_bootstrap(
         text.push_str("agent_status=$?\n");
         text.push_str("if [[ $agent_status -eq 0 ]]; then\n");
         text.push_str(&format!(
-            "  {} orchestrator complete --auto-clarification --result-file {} >/dev/null 2>&1 || true\n",
+            "  {} orchestrator complete --auto --result-file {} >/dev/null 2>&1 || true\n",
             shell_escape(executable),
             shell_escape(&last_message.display().to_string())
         ));
@@ -1164,7 +1183,7 @@ fn orchestrator_working_directory(root: &Path) -> &Path {
 
 fn resume_user_turn(original_task: Option<&str>, followup: Option<&str>) -> String {
     let mut turn = String::from(
-        "Continue this same execution session after a prior headless pass exited before lifecycle completion.\n\
+        "Continue this same Session after a prior headless pass exited before lifecycle completion.\n\
          Reconcile the persisted workflow and subagent state against every unfinished requirement in the authenticated original task.\n\
          A prior prose answer is not completion. If one bounded clarification is still required, persist that exact question and use the direct-response completion route; do not guess the missing user choice. Otherwise finish the work, satisfy the required lifecycle gates, and produce the final answer.\n",
     );
@@ -1214,13 +1233,24 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
             .iter()
             .any(|arg| matches!(arg.as_str(), "-h" | "--help"))
     {
-        println!("Usage:\n  multiagent orchestrator complete\n  multiagent orchestrator complete --direct-response --result-file PATH\n  multiagent orchestrator complete --clarification --result-file PATH\n  multiagent orchestrator complete --auto-clarification --result-file PATH\n  multiagent orchestrator complete --read-only --result-file PATH --reviewer NAME\n  multiagent orchestrator complete --human-review --result-file PATH --reviewer NAME\n  multiagent orchestrator complete --external-only --result-file PATH\n\nRuns the supervisor completion gates. Shortcut and external-only completion require a self-contained caller result under MULTIAGENT_STATE_DIR.");
+        println!("Usage:\n  multiagent orchestrator request-mutation [--path REPO_PATH ...] [--reviewed-ops]\n  multiagent orchestrator complete\n  multiagent orchestrator complete --auto --result-file PATH\n  multiagent orchestrator complete --observe --result-file PATH\n  multiagent orchestrator complete --request-review --result-file PATH [--path REPO_PATH ...] [--reviewed-ops]\n  multiagent orchestrator complete --direct-response --result-file PATH\n  multiagent orchestrator complete --clarification --result-file PATH\n  multiagent orchestrator complete --auto-clarification --result-file PATH\n  multiagent orchestrator complete --read-only --result-file PATH --reviewer NAME\n  multiagent orchestrator complete --human-review --result-file PATH --reviewer NAME\n  multiagent orchestrator complete --external-only --result-file PATH\n\nEach user session starts with a read-only Execution. The orchestrator may request exact source paths and/or reviewed-ops from the Supervisor without starting another session. External observe sessions must request human review instead.");
         return Ok(ExitCode::SUCCESS);
     }
+    if let Some((paths, reviewed_ops)) = mutation_request_options(args) {
+        let execution = crate::execution::request_mutation(&paths, reviewed_ops)?;
+        println!(
+            "execution advanced\tordinal={}\teffects=bounded\tauthority=supervisor",
+            execution.ordinal()
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
+
     #[derive(Clone, Copy)]
     enum CompletionRoute<'a> {
         Source,
         Direct(&'a str),
+        Observe(&'a str),
+        RequestReview(&'a str),
         Clarification(&'a str),
         AutoClarification(&'a str),
         ReadOnly { result: &'a str, reviewer: &'a str },
@@ -1235,6 +1265,24 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
         && args[2] == "--result-file"
     {
         CompletionRoute::External(&args[3])
+    } else if args.len() == 4
+        && args[0] == "complete"
+        && args[1] == "--auto"
+        && args[2] == "--result-file"
+    {
+        if crate::execution::configured()?.is_read_only() {
+            CompletionRoute::Observe(&args[3])
+        } else {
+            CompletionRoute::AutoClarification(&args[3])
+        }
+    } else if args.len() == 4
+        && args[0] == "complete"
+        && args[1] == "--observe"
+        && args[2] == "--result-file"
+    {
+        CompletionRoute::Observe(&args[3])
+    } else if request_review_options(args).is_some() {
+        CompletionRoute::RequestReview(&args[3])
     } else if args.len() == 4
         && args[0] == "complete"
         && args[1] == "--direct-response"
@@ -1279,6 +1327,8 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
     let result_file = match route {
         CompletionRoute::Source => None,
         CompletionRoute::Direct(path)
+        | CompletionRoute::Observe(path)
+        | CompletionRoute::RequestReview(path)
         | CompletionRoute::Clarification(path)
         | CompletionRoute::AutoClarification(path)
         | CompletionRoute::External(path) => Some(path),
@@ -1294,6 +1344,9 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
             return Ok(ExitCode::SUCCESS);
         }
     }
+    if let CompletionRoute::RequestReview(path) = route {
+        validate_bounded_clarification(path)?;
+    }
     if let Some(path) = result_file {
         persist_orchestrator_result(path)?;
     }
@@ -1306,6 +1359,13 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
             | CompletionRoute::Clarification(_)
             | CompletionRoute::AutoClarification(_) => {
                 crate::workflow::supervisor_complete_direct(&workflow_id)?
+            }
+            CompletionRoute::Observe(_) => {
+                crate::workflow::supervisor_complete_observe(&workflow_id)?
+            }
+            CompletionRoute::RequestReview(_) => {
+                let (paths, reviewed_ops) = request_review_options(args).expect("validated route");
+                crate::workflow::supervisor_request_review(&workflow_id, &paths, reviewed_ops)?
             }
             CompletionRoute::ReadOnly { reviewer, .. } => {
                 crate::workflow::supervisor_complete_read_only(&workflow_id, reviewer)?
@@ -1328,6 +1388,65 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
             .unwrap_or_else(|| "unknown".into())
     );
     Ok(ExitCode::SUCCESS)
+}
+
+fn mutation_request_options(args: &[String]) -> Option<(Vec<String>, bool)> {
+    if args.first().map(String::as_str) != Some("request-mutation") || args.len() < 2 {
+        return None;
+    }
+    let mut paths = Vec::new();
+    let mut reviewed_ops = false;
+    let mut index = 1;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--path" if index + 1 < args.len() && !args[index + 1].is_empty() => {
+                paths.push(args[index + 1].clone());
+                index += 2;
+            }
+            "--reviewed-ops" if !reviewed_ops => {
+                reviewed_ops = true;
+                index += 1;
+            }
+            _ => return None,
+        }
+    }
+    if paths.is_empty() && !reviewed_ops {
+        None
+    } else {
+        Some((paths, reviewed_ops))
+    }
+}
+
+fn request_review_options(args: &[String]) -> Option<(Vec<String>, bool)> {
+    if args.len() < 5
+        || args.first().map(String::as_str) != Some("complete")
+        || args.get(1).map(String::as_str) != Some("--request-review")
+        || args.get(2).map(String::as_str) != Some("--result-file")
+        || args.get(3).is_none_or(String::is_empty)
+    {
+        return None;
+    }
+    let mut paths = Vec::new();
+    let mut reviewed_ops = false;
+    let mut index = 4;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--path" if index + 1 < args.len() && !args[index + 1].is_empty() => {
+                paths.push(args[index + 1].clone());
+                index += 2;
+            }
+            "--reviewed-ops" if !reviewed_ops => {
+                reviewed_ops = true;
+                index += 1;
+            }
+            _ => return None,
+        }
+    }
+    if paths.is_empty() && !reviewed_ops {
+        None
+    } else {
+        Some((paths, reviewed_ops))
+    }
 }
 
 fn persist_orchestrator_result(path: &str) -> Result<(), String> {
@@ -2856,7 +2975,7 @@ fn execute_worker_graph(
                 .unwrap_or_else(|| "unknown".into());
             let message = agent_final_message(cfg, &worker.id).unwrap_or_default();
             finalize(cfg, std::slice::from_ref(&worker.id))?;
-            if !matches!(status.as_str(), "done" | "exited") || message.trim().is_empty() {
+            if status != "done" || message.trim().is_empty() {
                 return Ok(Some(format!("worker-incomplete:{}:{status}", worker.id)));
             }
             completed.insert(worker.id.clone());
@@ -3016,13 +3135,64 @@ fn reject_terminal_reviewed_ops_restore(
     dir: &Path,
     role: Option<&str>,
     name: &str,
+    force: bool,
+    follow_up: &str,
 ) -> Result<(), String> {
-    if role == Some("ops") && dir.join(REVIEWED_OPS_TERMINAL_FILE).is_file() {
+    if role != Some("ops") {
+        return Ok(());
+    }
+    let marker = dir.join(REVIEWED_OPS_TERMINAL_FILE);
+    if !marker.is_file() {
+        return Ok(());
+    }
+    let state = read_env(&marker).unwrap_or_default();
+    let failed_operation = matches!(
+        state.get("status").map(String::as_str),
+        Some("operation-failed" | "operation-blocked")
+    );
+    if failed_operation && force && !follow_up.trim().is_empty() {
+        return Ok(());
+    }
+    if failed_operation {
         return Err(format!(
-            "refusing to restore terminal reviewed ops identity {name}: report its result or blocker to the caller and wait for a new caller-authorized session"
+            "refusing to retry failed reviewed ops identity {name} automatically: an explicit orchestrator decision must use --force with a non-empty retry instruction"
         ));
     }
-    Ok(())
+    Err(format!(
+        "refusing to restore terminal reviewed ops identity {name}: report its result or blocker to the caller and wait for a new caller-authorized session"
+    ))
+}
+
+fn failed_operation_disposition(result: &serde_json::Value) -> Option<&str> {
+    if result
+        .pointer("/outcome/terminal")
+        .and_then(serde_json::Value::as_bool)
+        != Some(true)
+    {
+        return None;
+    }
+    match result
+        .pointer("/outcome/disposition")
+        .and_then(serde_json::Value::as_str)
+    {
+        Some(value @ ("failed" | "blocked")) => Some(value),
+        _ => None,
+    }
+}
+
+fn failed_operation_summary(result: &serde_json::Value, disposition: &str) -> String {
+    let detail = result
+        .get("message")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            result
+                .get("code")
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+        })
+        .unwrap_or("the reviewed operation returned no failure detail");
+    format!("reviewed operation {disposition}: {detail}")
 }
 
 fn reviewed_ops_result_instruction(
@@ -3126,7 +3296,7 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
     )?;
     let reviewer_status = read_trimmed(&cfg.state.join("subagents").join(&reviewer).join("status"))
         .unwrap_or_else(|| "unknown".into());
-    if !matches!(reviewer_status.as_str(), "done" | "exited") {
+    if reviewer_status != "done" {
         return Err(format!(
             "ops reviewer {reviewer} did not complete successfully: {reviewer_status}"
         ));
@@ -3180,6 +3350,34 @@ fn reviewed_ops_cycle(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String
     let execution_text = execution_text.trim();
     let execution_result: serde_json::Value = serde_json::from_str(execution_text)
         .map_err(|error| format!("decode reviewed ops execution result JSON: {error}"))?;
+    if let Some(disposition) = failed_operation_disposition(&execution_result) {
+        let ops_result = failed_operation_summary(&execution_result, disposition);
+        set_subagent_status(cfg, ops_name, "failed")?;
+        fs::write(
+            ops_dir.join(REVIEWED_OPS_TERMINAL_FILE),
+            format!("requestSha256={reviewed_request_sha256}\nstatus=operation-{disposition}\n"),
+        )
+        .map_err(io_error("write reviewed ops failure marker"))?;
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({
+                "apiVersion": "multiagent.moveindustries.io/v1",
+                "kind": "ReviewedOpsCycleResult",
+                "opsName": ops_name,
+                "reviewer": reviewer,
+                "opsStatus": disposition,
+                "cycleWaitedForCompletion": true,
+                "additionalWaitRequired": false,
+                "terminal": true,
+                "executionResult": execution_result,
+                "opsResult": ops_result,
+                "followUpRequest": serde_json::Value::Null,
+                "retryDecision": "orchestrator_required",
+            }))
+            .map_err(|error| format!("encode reviewed ops failure result: {error}"))?
+        );
+        return Ok(());
+    }
     let result_instruction =
         reviewed_ops_result_instruction(&request_file, &reviewer, ops_name, execution_text);
     restore(
@@ -3434,6 +3632,10 @@ fn classify_recovery(cfg: &RuntimeConfig, name: &str) -> Result<Recovery, String
         "killed" | "stopped" | "cancelled" | "canceled"
     ) {
         ("skip-finalized", format!("intentionally-stopped-{lowered}"))
+    } else if matches!(lowered.as_str(), "failed" | "exited" | "missing") {
+        ("skip-failed", format!("terminal-failure-{lowered}"))
+    } else if lowered == "blocked" || lowered == "delivery-blocked" {
+        ("skip-blocked", "requires-orchestrator-decision".into())
     } else if cfg
         .state
         .join("assignments")
@@ -3467,7 +3669,7 @@ fn classify_recovery(cfg: &RuntimeConfig, name: &str) -> Result<Recovery, String
         }
     } else {
         let combined = recovery_text(&dir);
-        if lowered == "blocked" || looks_blocked_report(&combined) {
+        if looks_blocked_report(&combined) {
             ("skip-blocked", "requires-orchestrator-decision".into())
         } else if looks_done_report(&combined) {
             ("skip-finalized", "context-looks-final".into())
@@ -3475,7 +3677,7 @@ fn classify_recovery(cfg: &RuntimeConfig, name: &str) -> Result<Recovery, String
             ("skip-unknown", "no-current-or-transcript".into())
         } else if matches!(
             lowered.as_str(),
-            "running" | "starting" | "exited" | "missing" | "restoring" | "unknown"
+            "running" | "starting" | "restoring" | "unknown"
         ) {
             ("restore", "closed-with-recoverable-context".into())
         } else {
@@ -3550,7 +3752,13 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         return Err(format!("no persisted subagent state: {name}"));
     }
     let metadata = read_env(&dir.join("meta.env")).unwrap_or_default();
-    reject_terminal_reviewed_ops_restore(&dir, metadata.get("role").map(String::as_str), name)?;
+    reject_terminal_reviewed_ops_restore(
+        &dir,
+        metadata.get("role").map(String::as_str),
+        name,
+        force,
+        &follow_up,
+    )?;
     let cli = metadata
         .get("cli")
         .filter(|value| !value.is_empty())
@@ -3735,6 +3943,9 @@ fn restore(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
     let command = subagent_shell_command(cfg, name, &cli, &executable, &cli_command, access, true);
     tmux_checked(&["new-window", "-d", "-t", &cfg.session, "-n", name, &command])?;
     pipe_log(&cfg.session, name, &cfg.logs)?;
+    if metadata.get("role").map(String::as_str) == Some("ops") {
+        let _ = fs::remove_file(dir.join(REVIEWED_OPS_TERMINAL_FILE));
+    }
     set_subagent_status(cfg, name, "running")?;
     if !cfg.headless(&cli) {
         deliver_instruction(cfg, name, &instruction)?;
@@ -3775,6 +3986,8 @@ fn finalize(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         [value] if value == "--keep-window" => true,
         [value, ..] => return Err(format!("unknown finalize argument: {value}")),
     };
+    let mut observed_status = read_trimmed(&cfg.state.join("subagents").join(name).join("status"))
+        .unwrap_or_else(|| "unknown".into());
     if window_exists(&cfg.session, name) {
         let metadata = read_env(&cfg.state.join("subagents").join(name).join("meta.env"))?;
         let final_message = cfg
@@ -3794,7 +4007,18 @@ fn finalize(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
             tmux_checked(&["kill-window", "-t", &format!("{}:{name}", cfg.session)])?;
         }
     }
-    set_subagent_status(cfg, name, "finalized")?;
+    if !matches!(
+        observed_status.as_str(),
+        "finalized" | "complete" | "completed"
+    ) {
+        observed_status = infer_status(cfg, name);
+    }
+    let succeeded = matches!(
+        observed_status.as_str(),
+        "done" | "finalized" | "complete" | "completed"
+    );
+    let terminal_status = if succeeded { "finalized" } else { "failed" };
+    set_subagent_status(cfg, name, terminal_status)?;
     if cfg
         .state
         .join("assignments")
@@ -3802,14 +4026,19 @@ fn finalize(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
         .join("assignment.env")
         .is_file()
     {
-        run_self_quiet(&["subagent", "assignment-status", name, "done"])?;
+        run_self_quiet(&[
+            "subagent",
+            "assignment-status",
+            name,
+            if succeeded { "done" } else { "failed" },
+        ])?;
     }
     atomic_write(
         &cfg.state.join("subagents").join(name).join("finalized_at"),
         &format!("{}\n", timestamp()),
         "finalized timestamp",
     )?;
-    println!("finalized {name}");
+    println!("finalized {name}\t{terminal_status}");
     Ok(())
 }
 
@@ -4445,6 +4674,14 @@ fn prepare_workspace_write_boundary(
     owned_paths: &[PathBuf],
 ) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
+
+    let authority = crate::execution::configured()?;
+    if !authority.permits_workspace_write(root, owned_paths) {
+        return Err(format!(
+            "session authority {} does not grant the exact requested workspace paths",
+            authority.scope()
+        ));
+    }
 
     let ledger = state.join("launch-authorizations/active-writer-paths");
     if ledger.is_file() {
@@ -5724,6 +5961,32 @@ mod tests {
     }
 
     #[test]
+    fn terminal_operation_failure_requires_an_orchestrator_retry_decision() {
+        let failed = serde_json::json!({
+            "outcome": {"terminal": true, "disposition": "failed", "retryable": true},
+            "code": "provider_timeout",
+            "message": "provider timed out"
+        });
+        assert_eq!(failed_operation_disposition(&failed), Some("failed"));
+        assert_eq!(
+            failed_operation_summary(&failed, "failed"),
+            "reviewed operation failed: provider timed out"
+        );
+        let blocked = serde_json::json!({
+            "outcome": {"terminal": true, "disposition": "blocked"}
+        });
+        assert_eq!(failed_operation_disposition(&blocked), Some("blocked"));
+        assert_eq!(
+            failed_operation_summary(&blocked, "blocked"),
+            "reviewed operation blocked: the reviewed operation returned no failure detail"
+        );
+        let succeeded = serde_json::json!({
+            "outcome": {"terminal": true, "disposition": "succeeded"}
+        });
+        assert_eq!(failed_operation_disposition(&succeeded), None);
+    }
+
+    #[test]
     fn reviewer_has_a_distinct_kernel_identity() {
         assert_eq!(
             role_runtime_uid("reviewer", CodexAccess::ReadOnly),
@@ -5755,9 +6018,31 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join(REVIEWED_OPS_TERMINAL_FILE), "terminal\n").unwrap();
         let error =
-            reject_terminal_reviewed_ops_restore(&dir, Some("ops"), "ops-primary").unwrap_err();
+            reject_terminal_reviewed_ops_restore(&dir, Some("ops"), "ops-primary", false, "")
+                .unwrap_err();
         assert!(error.contains("refusing to restore terminal reviewed ops identity"));
-        assert!(reject_terminal_reviewed_ops_restore(&dir, Some("worker"), "worker-01").is_ok());
+        assert!(
+            reject_terminal_reviewed_ops_restore(&dir, Some("worker"), "worker-01", false, "")
+                .is_ok()
+        );
+
+        fs::write(
+            dir.join(REVIEWED_OPS_TERMINAL_FILE),
+            "status=operation-failed\n",
+        )
+        .unwrap();
+        let error =
+            reject_terminal_reviewed_ops_restore(&dir, Some("ops"), "ops-primary", false, "")
+                .unwrap_err();
+        assert!(error.contains("orchestrator decision"));
+        assert!(reject_terminal_reviewed_ops_restore(
+            &dir,
+            Some("ops"),
+            "ops-primary",
+            true,
+            "Retry with a distinct request after reviewing the failure receipt"
+        )
+        .is_ok());
         fs::remove_dir_all(dir).unwrap();
     }
 

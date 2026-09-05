@@ -9,6 +9,10 @@ export CODEX_HOME="${CODEX_HOME:-/var/lib/multiagent/codex}"
 export CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-/var/lib/multiagent/claude}"
 export MULTIAGENT_STATE_DIR="${MULTIAGENT_STATE_DIR:-/var/lib/multiagent/state}"
 export MULTIAGENT_REPOSITORY_ROOT="${MULTIAGENT_REPOSITORY_ROOT:-/var/lib/multiagent/repositories}"
+if [[ -f /run/session-bootstrap/mutation-grant.json ]]; then
+  export MULTIAGENT_MUTATION_GRANT_JSON="$(< /run/session-bootstrap/mutation-grant.json)"
+fi
+export MULTIAGENT_REPOSITORY_NAME="${MULTIAGENT_REPOSITORY_NAME:-${MULTIAGENT_SESSION_REPOSITORY:-}}"
 if [[ "${MULTIAGENT_CONTROL_MODE:-local}" == "gateway" ]]; then
   mkdir -p "$HOME" "$MULTIAGENT_STATE_DIR" "$MULTIAGENT_REPOSITORY_ROOT"
   exec node /opt/multiagent/control-server/src/server.mjs

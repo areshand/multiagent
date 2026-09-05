@@ -5,7 +5,6 @@
 - Runbook ID: `observability.investigation`
 - Version: `1.1.0`
 - Prod MCP operation: `grafana.read`
-- Operation version: `1.0.0`
 
 ## Goal
 

@@ -47,9 +47,12 @@ Slack Hangout channel -- Events API --> Slack ingress adapter
 Terminal client and authenticated user
               |
               v
-Control server, durable thread store, and session gateway
+Control server (HTTP/auth/WebSocket gateway)
               |
-              | appends to one durable thread and creates an execution session
+              v
+Thread (durable task and session lifecycle)
+              |
+              | appends to one durable thread and creates a Session
               v
 Multiagent session runtime
   +-----------------------------------------------+
@@ -92,7 +95,8 @@ storage configuration shown above.
 | --- | --- | --- |
 | Terminal client | User login, local session-cookie storage, a separate local index of thread IDs created by that client profile, interactive durable-thread conversation, scriptable commands, result presentation | Server-wide thread discovery, runbook implementation, KMS signing, production credentials |
 | Slack ingress adapter | Slack request-signature verification, configured channel-ID filtering, fast acknowledgement, durable event deduplication and retry, bounded event normalization | Human authority, session workflow, repository selection, production procedures or credentials |
-| Control server | Treating authenticated client callers as users, bounded internally authenticated alert-event admission, durable thread ownership and public history, execution-session creation, message transport, human-review queue and decisions, event replay, trace-derived context, result streaming | Provider lifecycle logic, agent/model turn storage, Grafana procedures, operation IDs, runbook steps, production credentials |
+| Control server | HTTP authentication and admission, bounded internally authenticated alert-event admission, WebSocket and message transport, execution-platform adapters, trace-derived result transport | Durable thread state transitions, provider lifecycle logic, agent/model turn storage, Grafana procedures, operation IDs, runbook steps, production credentials |
+| Thread | Durable user-owned task state, public history, sequential session lifecycle and fencing, context projection, human-review queue and decisions, and result projection | HTTP authentication or transport, Kubernetes/tmux implementation details, model-provider lifecycle, production procedures or credentials |
 | Supervisor | One session's authority, role bootstrap, role confinement, privileged-request mediation, KMS signing | Service-specific operational procedures |
 | Orchestrator | Goal decomposition, role routing, workflow coordination | Grafana/Loki knowledge, concrete production operations, `prod-mcp` parameters, provider-specific prompts |
 | Ops agent | Reading a selected Markdown runbook, planning and requesting its steps, reporting evidence | Deployment secrets, KMS private authority, infrastructure provisioning |
@@ -102,7 +106,7 @@ storage configuration shown above.
 | Logger | Authenticated structural event ingestion, authoritative ordering, canonical encoding, hash-chain construction, replay prevention, signed periodic checkpoints, ledger verification, and non-authoritative audit projections | Semantic review, workflow progression, runbook interpretation, model credentials, production credentials, permit issuance, or production execution |
 | Wiki service and on-demand maintenance workflow | Bounded cited retrieval from canonical Markdown and source-backed, reviewable catalog patch proposals created only when requested | Session or production-operation authority, concrete deployment configuration, repository cloning inside the Wiki service, trace-bucket access, direct publication authority, or treating user or agent text as factual evidence |
 | `InternalServices` | Images, deployments, secrets, IAM, KMS, service accounts, endpoints, ingress, DNS, certificates, S3 trace export, Wiki storage and identities, and distribution of deployment-specific Markdown runbook artifacts | Agent reasoning, procedure logic embedded in deployment code, and environment-specific secrets inside runbooks |
-| Markdown runbooks | Human-readable operational procedure, operation version, allowed phase progression | Credentials and environment-specific secrets |
+| Markdown runbooks | Human-readable operational procedure, runbook version, operation IDs, allowed phase progression | Operation contract versions, credentials, and environment-specific secrets |
 
 The deployment may also place a trusted repository-preparation init container
 in front of a session runtime. That init container is not an agent and is not
@@ -114,7 +118,12 @@ Executable components and deployment integration surfaces have explicit
 top-level ownership boundaries:
 
 - `client/` owns the terminal client package.
-- `control-server/` owns the authenticated control gateway package.
+- `control-server/` owns the authenticated HTTP and WebSocket gateway package
+  and deployment-specific execution adapters.
+- `thread/` owns the transport-independent durable `Thread` model and
+  its mapping to sequential sessions. For the MVP it is hosted in
+  the control-server process and StatefulSet; this package boundary does not
+  create another network service.
 - `slack-ingress/` owns the independently deployed Slack Events adapter and durable delivery queue.
 - `runtime/` owns the Rust session runtime, supervisor, and role-confinement
   package.
@@ -174,7 +183,7 @@ the control-server container image excludes `client/`. These filesystem and
 package boundaries prevent the independently distributed caller from importing
 trusted server internals; the public HTTP API is its only integration surface.
 
-### AD-019: Slack alerts may trigger diagnosis but never repair authority
+### AD-019: Slack alerts trigger observe sessions; humans authorize bounded user sessions
 
 A deployment may subscribe a dedicated Slack ingress adapter to one or more
 deployment-allowlisted on-call channel IDs. The adapter verifies Slack's timestamped
@@ -191,11 +200,12 @@ The internal event endpoint maps it to a durable thread owned by one deployment-
 configured terminal reviewer and the deployment-selected
 `MULTIAGENT_SLACK_REPOSITORY`, while attributing its initial execution to a
 distinct Slack integration actor. That first execution has the mechanical
-`diagnosis-only` authority scope: the supervisor rejects workspace-write and
-implementation-worker launches, and permit construction accepts only live
-`prod-mcp` capabilities advertised as non-mutating read or materialize operations
-with no mutation approval role. Prompt instructions explain the boundary but do
-not enforce it.
+`observe` authority scope: the supervisor rejects workspace-write,
+implementation-worker launches, operation publication, and operation execution.
+It may use only the bounded read interfaces needed to gather evidence. An
+observe execution that can answer the user completes directly without an
+independent model review because its filesystem and operation boundaries
+mechanically prevent mutation.
 
 The deployment may also inject bounded, non-secret operational discovery
 metadata through `MULTIAGENT_SLACK_DIAGNOSIS_CONTEXT`. The control server passes
@@ -206,33 +216,44 @@ repair, permit, or mutation authority. `InternalServices` owns the concrete
 values; the orchestrator and Slack adapter do not encode provider-specific
 configuration.
 
-If diagnosis identifies no repair, the session may complete with its bounded
-evidence-backed result. If repair is proposed, the supervisor-owned human-
-review completion route ends the diagnosis execution and the control server
+If observation identifies no repair, the session completes with its bounded
+evidence-backed result. If repair is proposed, the supervisor-owned
+`request-review` route ends the observe execution and the Thread
 atomically persists a pending review item bound to the exact source session,
-question event, question digest, thread, and owner. While that review is pending,
-ordinary follow-up cannot bypass it.
+question event, question digest, thread, owner, requested effects, and repository
+paths. While that review is pending, ordinary follow-up cannot bypass it.
 
 Only the configured owner authenticated through the terminal client may decide
 the review. Approval appends a human-attributed authorization event containing
-the exact reviewed question and digest, then creates a fresh isolated execution
-session with normal human authority and bounded prior-thread context. It never
-revives the diagnosis agents, filesystem, credentials, or permits. Rejecting the
-review creates no session and mechanically closes the thread to further
-continuation. Both decisions are idempotent and durable.
+the exact reviewed question and digest, then creates a fresh isolated `user`
+Session with bounded prior-thread context. Its first Execution carries an
+immutable grant containing only the effects requested by the proposal:
+`source-write`, `reviewed-ops`, or both. Source-write is restricted to the
+reviewed repository-relative paths. Reviewed-ops permits entry into the existing
+independent reviewer, runbook, signed-permit, target-allowlist, receipt, and
+`prod-mcp` flow; it is not direct production authority and cannot bypass those
+checks. The approved Session cannot request broader effects.
 
-Human approval of the proposal does not bypass later runbook, independent
-reviewer, signed-permit, target-allowlist, or `prod-mcp` checks. It supplies the
-missing human intent for only the exact proposed repair. Provider-specific
-workspace IDs, channel IDs, app identities, callback hostname, secrets, storage,
-and network policy remain `InternalServices` configuration.
+Approval never revives the observe agents, filesystem, credentials, or permits.
+Rejecting the review creates no session and mechanically closes the thread to
+further continuation. Both decisions are idempotent and durable. Provider-
+specific workspace IDs, channel IDs, app identities, callback hostname, secrets,
+storage, and network policy remain `InternalServices` configuration.
 
-### AD-002: There is one supervisor per execution session
+### AD-002: There is one supervisor per session
 
-Every execution session has its own supervisor authority and role process tree.
-A shared supervisor across execution sessions would mix authority, failures,
+Every session has its own supervisor authority and role process tree.
+A shared supervisor across sessions would mix authority, failures,
 and audit evidence. A durable user thread may contain multiple sequential
-execution sessions, each with a fresh supervisor.
+sessions, each with a fresh supervisor.
+
+A Session contains the existing orchestrator loop. One pass through that loop is
+a runtime-owned `Execution`: a small, runtime-local authority step describing the
+effects available to that pass. An Execution is not a Thread entity,
+Pod, Job, provider session, or second supervisor. Advancing from a read-only
+Execution to a bounded mutation Execution keeps the same Session, supervisor,
+orchestrator, workspace, and trace. The runtime persists only the active bounded
+effect state needed for mechanical enforcement and recovery.
 
 The target deployment separates the long-lived control gateway from dedicated
 session runtimes. A session runtime may be implemented as a Kubernetes Pod or
@@ -242,14 +263,14 @@ The orchestrator and role processes run with the thread-selected repository as
 their working tree; session state and trace directories remain separate and
 must not replace the repository working directory.
 Headless orchestrators do not accept terminal-style live input. A follow-up
-therefore remains in the same execution session but is delivered by a native
+therefore remains in the same session but is delivered by a native
 resume, and incomplete lifecycle passes are retried by the session worker with
 a deployment-bounded automatic-resume limit. Each native resume restates the
 authenticated original task and treats the latest follow-up as additive unless
 the user explicitly replaces earlier scope, so transport recovery cannot erase
 unfinished thread requirements.
 
-A fresh headless execution also receives the bounded authenticated original
+A fresh headless Session also receives the bounded authenticated original
 task in its initial model envelope. The same task is persisted as a
 supervisor-bound artifact and digest; prompt delivery is context, not a new
 source of authorization, and grants no authority beyond the authenticated
@@ -279,30 +300,52 @@ does not replace `prod-mcp` for agent-requested GitHub reads, materialization,
 publishing, or other production operations governed by a runbook and signed
 permit.
 
-### AD-014: Threads outlive execution sessions
+### AD-014: Threads outlive sessions
 
 A thread is the durable, user-owned task and conversation shown by the client.
-An execution session is one isolated runtime instance created to make progress
-on that thread. The control server assigns both thread and execution-session IDs
-and owns thread authorization, a small append-only
-user-visible manifest, context checkpoints, S3 trace references, and the mapping
-to sequential execution sessions. Detailed model and agent histories remain in
-the session traces already exported to S3; the control server does not duplicate
-or reinterpret provider-native conversation storage.
+A Session is one isolated runtime instance created to make progress on that
+thread. A Session may run multiple sequential Executions inside its existing
+orchestrator loop. Thread assigns Thread and Session IDs and owns
+thread authorization, a small append-only user-visible manifest, context
+checkpoints, S3 trace references, review transitions, and the mapping from a
+Thread to sequential Sessions. It does not assign or persist Execution IDs. The
+control server is the authenticated HTTP and WebSocket gateway and supplies
+execution-platform adapters to Thread. Detailed model and agent
+histories remain in the session traces already exported to S3; neither component
+duplicates or reinterprets provider-native conversation storage.
 
-Only one execution session may hold the active fenced lease for a thread. A
-follow-up after a session finishes creates a new session ID, Pod or Job,
+Only one Session may hold the active fenced lease for a Thread. A follow-up after
+a Session finishes creates a new Session ID, Pod or Job,
 supervisor, orchestrator, role agents, provider sessions, writable workspace,
 reviewer decisions, and permits. No prior agent is revived. The new orchestrator
 receives bounded context derived from public messages, final reports,
 checkpoints, and verified S3 trace references, not the previous session's
 credentials, permits, unbounded raw trace, provider home, or writable filesystem.
 
+Each session reaches exactly one sealed terminal outcome:
+`succeeded`, `failed`, or `review_requested`. Route-specific safety checks still
+decide whether the supervisor may seal that outcome, but they do not create
+parallel session state machines. A completed operation receipt whose canonical
+`outcome.disposition` is `failed` or `blocked` seals the session as `failed`.
+The reviewed-ops runtime returns such a terminal operation result directly to
+the orchestrator and must not automatically restore the failed ops sub-agent.
+Only an explicit orchestrator decision may start a distinct retry attempt.
+Human review seals the current session as `review_requested`; an approval
+creates a fresh session, and a rejection closes continuation.
+
+Execution transitions are not Session terminal outcomes. Every direct
+authenticated `user` Session starts with a read-only Execution. If the request
+requires source or reviewed-operations effects, the orchestrator submits exact
+paths and/or `reviewed-ops`; the Supervisor validates the request and activates
+one bounded next Execution in the same Session. The orchestrator remains
+read-only, and only confined workers or the reviewed-ops path consume effects.
+The active Execution cannot widen its own effect set.
+
 User messages are durably and idempotently appended before acknowledgement.
-When a thread still has a live execution session, the gateway forwards each
+When a thread still has a live session, the gateway forwards each
 newly appended follow-up through the session-scoped worker channel and advances
 the inbox acknowledgement only after that worker accepts the supervisor-resume
-request. Once an execution session has finished, the next follow-up creates the
+request. Once a session has finished, the next follow-up creates the
 fresh isolated session described above.
 The public manifest is the client conversation source of truth, while S3
 session traces are the detailed audit and context-recovery source. The HTTP
@@ -341,7 +384,9 @@ may instead terminate with an honest structural blocker when at least one
 reviewed receipt is classified `blocked` and no receipt is classified `failed`.
 An executor failure without a success remains fail-closed.
 
-`multiagent` owns the thread manifest and single-writer lifecycle semantics.
+The `thread/` component owns the thread manifest and single-writer
+lifecycle semantics. It is initially linked into the single control-server
+process, so the deployment topology and one-writer assumption do not change.
 `InternalServices` provisions the gateway PVC, versioned S3 backup, IAM,
 encryption, endpoints, and retention configuration. With one gateway writer,
 atomic local manifest replacement is sufficient; a distributed database is
@@ -352,7 +397,7 @@ an independently verified integrity signature.
 
 ### AD-015: Session fences do not revoke issued permits
 
-The active thread lease controls which execution session may append
+The active thread lease controls which session may append
 authoritative thread state and issue new production permits. Losing that lease
 prevents new issuance and fenced writes, but it does not revoke a permit that
 was validly issued earlier.
@@ -360,7 +405,7 @@ was validly issued earlier.
 An issued permit remains valid until it is consumed or reaches its encoded
 expiry. `prod-mcp` verifies its signature, bearer authentication, attribution,
 operation bounds, nonce or operation identity, and expiry without consulting
-the current thread lease. A later execution session may issue its own permits,
+the current thread lease. A later session may issue its own permits,
 so short-lived permits from sequential sessions may overlap. Each remains
 attributable to its original thread, session, authorizing user event, reviewer
 decision, and operation. Replay protection prevents a one-shot permit from
@@ -434,10 +479,10 @@ digests in the permit.
 If independent reconstruction cannot establish that the next action is within
 the authorized contract, the system uses a Simplex-style fallback: it issues no
 next operation permit, persists a supervisor-verified human-review request,
-ends the execution session in `human-review-required` state, and asks the user
+ends the session in `human-review-required` state, and asks the user
 one bounded question. This is the same terminal authority pattern used when a
 decision-authority review detects a user-owned scope or risk choice. A later
-user answer starts a new execution session; model prose alone cannot clear the
+user answer starts a new session; model prose alone cannot clear the
 pending human boundary in the completed session.
 
 ### AD-007: `prod-mcp` is the production execution boundary
@@ -685,15 +730,26 @@ application health are verified together.
 
 ### AD-013: Contracts and runbooks are versioned and digest-bound
 
-Every operation and runbook has an explicit version. A semantic change to a
-request schema, allowed behavior, or runbook procedure requires a version
-change. Permits and receipts bind the exact runbook content digest and contract
-fields.
+Every operation contract and runbook has an explicit version, but each has one
+owner. The exact read-only Markdown file mounted at the framework-relative path
+inside a deployed session is the authoritative runbook for that session. The
+runtime does not compare it with a source-tree or deployment-repository copy.
+Requests, permits, and receipts bind its exact content digest and runbook
+version.
 
-A deployment-specific runbook's source of truth may live in the deployment
-repository. The service catalog must select the exact artifact, mount it
-read-only within the framework runbooks directory, and bind the same content
-digest in the corresponding `prod-mcp` target policy.
+`prod-mcp` is the authoritative source for an operation's current contract and
+version. Runbooks name operation IDs but do not duplicate operation versions.
+The requesting role obtains the version from `multiagent ops describe`; the
+supervisor rechecks it against the live capability before signing and execution.
+That version check remains necessary because it binds the immutable request to
+the exact schema and behavior authorized by `prod-mcp`; removing the duplicate
+Markdown value avoids drift without weakening the trust boundary.
+
+A deployment may select and mount a deployment-specific runbook artifact over
+the image default. Once mounted, those exact deployed bytes are the sole
+procedure source of truth. `prod-mcp` policy may allow only specified runbook
+IDs, versions, and digests, but no second runbook copy participates in runtime
+consistency checking.
 
 The Rust permit producer and TypeScript permit consumer must share conformance
 fixtures. In the longer term, a canonical machine-readable schema should be
@@ -730,32 +786,36 @@ identity, or evidence boundary. The Claude headless adapter therefore disables
 its built-in `Agent` and legacy `Task` tools; delegated work must enter through
 the registered `multiagent subagent` lifecycle.
 
-The orchestrator may propose one of three execution routes, but the supervisor
-selects the corresponding mechanical completion gate:
+The primary Session and Execution transitions are small and mechanically selected:
 
-- A direct-response route may answer a question or request one bounded
-  clarification without launching another role. It requires a clean repository,
-  no external operation, no role launch, no active workflow obligation, and no
-  source lifecycle state. Because it produces no independently mutable artifact
-  or external effect, it does not require a reviewer. When a successful headless
-  orchestrator pass exits with a bounded clarification question but omits the
-  explicit completion command, the runtime submits that exact question to the
-  same supervisor-owned direct-response gate. The adapter may not mark the
-  workflow complete itself; a failed gate leaves the workflow incomplete.
-- A read-only investigation route may launch repository readers with the
-  selected repository as their working directory. The supervisor denies source
-  writes, records the exact read-only launch manifests and sealed outputs, and
-  requires an independent read-only integrity review bound to the unchanged
-  repository diff before completion.
-- A source implementation route uses the sealed iteration, writer ownership,
-  frozen candidate diff, and mechanically derived review obligations described
-  below.
+- Every fresh authenticated `user` Session starts with a read-only Execution. It
+  may chat, query the Wiki, read code, and gather bounded external evidence. If
+  reading is sufficient, it terminates `succeeded` with a direct answer and no
+  independent model reviewer.
+- If that authenticated request needs mutation, the orchestrator may request
+  exact source paths and/or `reviewed-ops`. The Supervisor either rejects the
+  request or advances the same Session to one bounded Execution. The request
+  does not create a new Session, Pod, Job, supervisor, or durable Thread entity,
+  and an active bounded Execution cannot request a wider effect set.
+- Every Slack-triggered Session has external `observe` origin and stays
+  read-only. It terminates as `succeeded` with a direct diagnosis or
+  `review_requested` with one bounded proposal. It cannot request an in-session
+  mutation Execution, and neither outcome requires an independent model reviewer.
+- A pending review accepts only the configured owner's idempotent `yes` or `no`.
+  `no` closes the thread. `yes` creates a fresh `user` Session whose initial
+  Execution contains only the reviewed effect set; it never resumes or upgrades
+  the completed observe Session.
+- An effect-bearing Execution uses the normal source lifecycle and mechanically
+  derived independent review obligations. Workspace writes are limited to the
+  exact paths. Production mutation is allowed only through `reviewed-ops`, which
+  still requires the runbook, independent reviewer, signed permit, target
+  allowlist, receipt, Logger, and trace gates.
 
-The route proposal is semantic input, not authority. A reviewer evaluates the
-supervisor-sealed access evidence and result, but reviewer prose never replaces
-UID separation, Landlock, assignment ownership, diff binding, or the completion
-gate. If any source write or production operation occurs, the direct and
-read-only gates fail and the applicable full workflow must be used.
+The older direct-response and reviewed read-only completion commands remain
+compatibility routes for existing callers, not requirements for read-only
+sessions. Route prose never grants authority: UID separation, Landlock,
+immutable session grants, assignment ownership, diff binding, and the
+supervisor completion gate enforce these transitions.
 
 For source implementation, adaptivity happens at iteration boundaries. The
 orchestrator submits one complete iteration plan containing the committed
@@ -776,8 +836,8 @@ authorized iteration without granting the runtime semantic decision authority.
 
 1. The terminal client authenticates a user and appends a goal or follow-up to a thread.
 2. The control server records the actor, durably appends the user event, and
-   routes it to the active execution session or creates a fresh one.
-3. The execution-session supervisor bootstraps the orchestrator and confined
+   routes it to the active session or creates a fresh one.
+3. The session supervisor bootstraps the orchestrator and confined
    role agents with bounded thread context.
 4. The orchestrator delegates production work without encoding the procedure.
 5. The ops agent selects and reads the exact versioned Markdown runbook.
@@ -787,7 +847,7 @@ authorized iteration without granting the runtime semantic decision authority.
    supervisor and `prod-mcp`.
 8. The ops reviewer checks the proposal against the user goal and runbook. If
    it cannot safely accept, the supervisor persists a human-review request,
-   issues no next permit, and terminates the execution session with the bounded
+   issues no next permit, and terminates the session with the bounded
    question.
 9. The supervisor creates a short-lived permit containing all required digests,
    target information, approvals, authority-proxy data, and expiry.
@@ -815,16 +875,18 @@ authorized iteration without granting the runtime semantic decision authority.
    normalized event to its durable queue, and acknowledges Slack.
 3. The adapter retries the event against the token-authenticated internal
    gateway endpoint until the gateway durably deduplicates it.
-4. The gateway creates a reviewer-owned thread and a Slack-attributed,
-   diagnosis-only execution session in the configured Slack repository.
-5. The session gathers read-only evidence and either reports its diagnosis or
-   terminates through the bounded human-review route.
-6. The gateway atomically completes that execution and exposes the pending
+4. The gateway creates a reviewer-owned thread and a Slack-attributed `observe`
+   session in the configured Slack repository.
+5. The session gathers read-only evidence and either reports its diagnosis
+   directly or terminates through the bounded `request-review` route.
+6. The gateway atomically completes that Session and exposes the pending
    review to only its configured terminal owner.
-7. A terminal `yes` appends exact human authority and launches a fresh session;
-   a terminal `no` records rejection and closes the thread without execution.
-8. Any approved repair continues through normal reviewer, runbook, signed
-   permit, allowlist, receipt, Logger, and trace controls.
+7. A terminal `yes` launches a fresh `user` Session whose initial Execution has
+   only the proposed source paths and/or `reviewed-ops` effect; a terminal `no`
+   records rejection and closes the thread without starting another Session.
+8. Source changes remain path-bound, and any production mutation continues
+   through the normal independent reviewer, runbook, signed permit, allowlist,
+   receipt, Logger, and trace controls.
 
 ## Deployment topology
 
@@ -837,7 +899,7 @@ The desired production topology is:
 | --- | --- | --- | --- |
 | Control server | Long-lived, one writer | Reverse proxy or approved private ingress | Client/session authentication only |
 | Slack ingress adapter | Long-lived, one queue writer per volume | Public Slack Events callback; private gateway egress | Slack signing secret and narrow internal delivery token only |
-| Session runtime | One per execution session | Private | Model keys as needed, supervisor KMS and `prod-mcp` client authority |
+| Session runtime | One per session | Private | Model keys as needed, supervisor KMS and `prod-mcp` client authority |
 | Trace sidecar | Same lifetime as session | S3 and Logger egress | Narrow S3 write role and a trace-commitment-only Logger producer identity |
 | Wiki query service | Long-lived private service | Private health, query, and in-memory refresh endpoints | Read-only Wiki volume; no trace, GitHub, or production credential |
 | `prod-mcp` | Long-lived central service | Private service endpoint | Grafana token and narrow cross-account execution roles |

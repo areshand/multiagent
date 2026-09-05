@@ -41,10 +41,11 @@ This command:
 5. launches a deterministic executor under the existing ops Linux identity,
    which submits the accepted request through the digest- and reviewer-bound
    authority transaction;
-6. continues the same ops identity in a fresh provider context with the trusted
-   compact execution result; and
-7. waits for that continuation and prints one compact `ReviewedOpsCycleResult`
-   containing the ops conclusion or the next bound request.
+6. if execution succeeds, continues the same ops identity in a fresh provider
+   context with the trusted compact execution result; and
+7. either waits for that successful-operation continuation or returns a
+   terminal failed/blocked operation directly, then prints one compact
+   `ReviewedOpsCycleResult`.
 
 Do not reconstruct these mechanics manually. Prior panes, transcripts, final
 messages, and native provider resume state are intentionally excluded from the
@@ -54,13 +55,22 @@ role; its fresh model context reads the exact immutable request, digest-bound
 runbook, and authority-produced execution result to decide the next runbook
 step.
 
+A terminal operation disposition of `failed` or `blocked` must not automatically
+restore the ops identity. The cycle returns immediately with
+`retryDecision=orchestrator_required`, the complete compact execution result,
+and a null `followUpRequest`. The orchestrator must explicitly decide whether
+the evidence justifies a distinct retry. If it does, it may resume the same ops
+identity only with `restore --force` and a non-empty instruction explaining the
+new decision; `restore-all` never retries this failure. Never re-execute an
+unchanged mutating request when its result is uncertain.
+
 Never pass the supervisor-owned published artifact back as `--request-file`;
 that path is intentionally outside the ops identity directory. When the
 reviewer cannot accept, the cycle issues no operation permit, persists the
 supervisor-sealed reviewer evidence and one bounded human-review question,
 marks the workflow complete with the `human-review` route, and returns a
 terminal `human_review_required` result. A later caller answer starts a new
-execution session. Never create a second ops identity.
+Session. Never create a second ops identity.
 
 The cycle already waits. Do not call `subagent wait` afterward, and do not read,
 tail, grep, find, or list unrelated agent logs, transcripts, role homes, or
@@ -87,12 +97,14 @@ report its exact blocker and bounded question to the caller, then stop the
 session. Do not restore an agent to repeat the question or continue waiting
 without a new caller response.
 
-When `terminal` is true, the runtime records a terminal reviewed-cycle marker
-and rejects every later restore of that ops identity. Use the accumulated
-`opsResult` values and the original goal to compose one self-contained caller
-response. It must include every caller-requested field and its supporting
-evidence, not merely a completion statement. A new caller-authorized session is
-required for more work.
+When `terminal` is true, the runtime records a terminal reviewed-cycle marker.
+Successful, human-review, and ordinary terminal conclusions reject every later
+restore of that ops identity. A failed or blocked operation rejects automatic
+recovery but permits the explicit orchestrator retry decision described above.
+Otherwise, use the accumulated `opsResult` values and the original goal to
+compose one self-contained caller response. It must include every
+caller-requested field and its supporting evidence, not merely a completion
+statement.
 
 For an external-only task with successful reviewed operations, or a terminal
 reviewed structural blocker, and no source changes, write that caller response

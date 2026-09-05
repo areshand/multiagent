@@ -6,11 +6,11 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { WebSocket, WebSocketServer } from "ws";
 import { jobPhase, KubernetesSessionClient } from "./kubernetes-session.mjs";
-import { createThreadStore, generateThreadId } from "./thread-store.mjs";
+import { createThreadStore } from "../../thread/src/thread-model.mjs";
+import { Thread } from "../../thread/src/thread.mjs";
 import { deliverWorkerReport, reportDeliveryTimeoutMs } from "./worker-report-delivery.mjs";
 import { issueWorkerToken as createWorkerToken, verifyWorkerAuthorization } from "./worker-token.mjs";
 import { readSubagentSnapshot } from "./subagent-status.mjs";
-import { renderThreadTask } from "./thread-execution-context.mjs";
 import { fetchWorkerSubagents, fetchWorkerSubagentsWithReconciliation } from "./worker-subagent-client.mjs";
 import { configuredRepository, parseRepositoryCatalog } from "./repository-catalog.mjs";
 import { visibleLegacySessionIds } from "./session-visibility.mjs";
@@ -28,18 +28,18 @@ import {
   automaticResumeLimit,
   completionExitDelayMs,
   controlMode,
+  executionTerminalOutcome,
   findActiveSession,
   normalizeWorkerReport,
   ownsThreadProjection,
   responseTypeForMessage,
   selectFinalMessage,
+  sessionStatusForTerminalOutcome,
   sessionControlInvocation,
   sessionLaunchInvocation,
   shouldAutomaticallyResume,
   submitLocalFollowup,
   validResourceId,
-  workerReportInterruptedEvent,
-  workerReportPublicEvent,
 } from "./session-runtime.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -292,10 +292,28 @@ function workflowLifecycleValue(id, key) {
 function workflowCompletionRoute(id) {
   const result = workflowLifecycleValue(id, "candidate_diff_hash");
   if (result.startsWith("direct-response:")) return "direct-response";
+  if (result.startsWith("observe:")) return "observe";
+  if (result.startsWith("request-review:")) return "request-review";
   if (result.startsWith("read-only:")) return "read-only";
   if (result.startsWith("external-only:")) return "external-only";
   if (result.startsWith("human-review:")) return "human-review";
   return result ? "source" : null;
+}
+
+function workflowReviewRequest(id) {
+  if (workflowCompletionRoute(id) !== "request-review") return null;
+  const workflow = activeWorkflow(id);
+  if (!workflow) return null;
+  try {
+    return {
+      effects: JSON.parse(fs.readFileSync(path.join(sessionStateDir(id), "workflows", workflow, "human-review-effects.json"), "utf8")),
+      paths: JSON.parse(fs.readFileSync(path.join(sessionStateDir(id), "workflows", workflow, "human-review-repair-paths.json"), "utf8")),
+    };
+  } catch { return null; }
+}
+
+function workflowTerminalOutcome(id) {
+  return workflowLifecycleValue(id, "terminal_outcome");
 }
 
 function traceReferences(id) {
@@ -325,6 +343,11 @@ function writeTraceSummary(id, status) {
   try { fallback = conciseTail(fs.readFileSync(path.join(sessionStateDir(id), "orchestrator-last-message.txt"), "utf8"), 40, 6000); } catch {}
   const finalMessage = selectFinalMessage(result, fallback);
   const completionRoute = workflowCompletionRoute(id);
+  const terminalOutcome = executionTerminalOutcome({
+    phase: workflowPhase(id),
+    outcome: workflowTerminalOutcome(id),
+    live: false,
+  });
   const references = traceReferences(id);
   const report = {
     taskId: id,
@@ -333,7 +356,9 @@ function writeTraceSummary(id, status) {
     completedAt: registry.sessions[id]?.completedAt || null,
     finalMessage,
     completionRoute,
+    terminalOutcome,
     responseType: responseTypeForMessage(finalMessage, completionRoute),
+    reviewRequest: workflowReviewRequest(id),
     traceReferences: references,
   };
   const markdown = [
@@ -396,7 +421,9 @@ function launchSession(id, repository, resume, actor, originalTask = "", metadat
       : "",
     MULTIAGENT_CALLER_SUBJECT: `caller-${crypto.createHash("sha256").update(authorityActor).digest("hex").slice(0, 32)}`,
     MULTIAGENT_CALLER_APPROVED_AT: authorityApprovedAt,
-    MULTIAGENT_AUTHORITY_SCOPE: metadata.authorityScope || existing?.authorityScope || "human",
+    MULTIAGENT_AUTHORITY_SCOPE: metadata.authorityScope || existing?.authorityScope || "user",
+    MULTIAGENT_MUTATION_GRANT_JSON: JSON.stringify(metadata.mutationGrant || existing?.mutationGrant || null),
+    MULTIAGENT_REPOSITORY_NAME: repository,
   };
   run(invocation.command, invocation.args, { cwd: launcherRoot, env });
   if (env.MULTIAGENT_USER_MESSAGE_FILE) fs.rmSync(env.MULTIAGENT_USER_MESSAGE_FILE, { force: true });
@@ -407,7 +434,8 @@ function launchSession(id, repository, resume, actor, originalTask = "", metadat
     authorizingEventId: metadata.authorizingEventId || existing?.authorizingEventId || id,
     createdBy: existing?.createdBy || metadata.ownerSubject || actor, createdAt: existing?.createdAt || now,
     authorityActor, authorityApprovedAt,
-    authorityScope: metadata.authorityScope || existing?.authorityScope || "human",
+    authorityScope: metadata.authorityScope || existing?.authorityScope || "user",
+    mutationGrant: metadata.mutationGrant || existing?.mutationGrant || null,
     automaticResumeAttempts: resume ? Number(existing?.automaticResumeAttempts || 0) : 0,
     resumedBy: resume ? actor : undefined, resumedAt: resume ? now : undefined,
     updatedAt: now, lastActivityAt: now,
@@ -432,7 +460,8 @@ async function launchGatewaySession(id, repository, resume, actor, originalTask 
     gatewayToken: issueWorkerToken(id, sessionWorkerTokenTtlMs),
     task,
     actor: callerSubject,
-    authorityScope: metadata.authorityScope || "human",
+    authorityScope: metadata.authorityScope || "user",
+    mutationGrant: metadata.mutationGrant || null,
     repositoryName: repository,
     repositoryUrl: repositoryConfig.url,
     repositoryAuthentication: repositoryConfig.authentication,
@@ -451,7 +480,8 @@ async function launchGatewaySession(id, repository, resume, actor, originalTask 
     autoResume: true,
     createdBy: metadata.ownerSubject || actor,
     authorityActor: actor,
-    authorityScope: metadata.authorityScope || "human",
+    authorityScope: metadata.authorityScope || "user",
+    mutationGrant: metadata.mutationGrant || null,
     authorityApprovedAt: now,
     createdAt: now,
     updatedAt: now,
@@ -482,6 +512,9 @@ function readLocalWorkerReport(id) {
       transcript: JSON.parse(fs.readFileSync(path.join(traceRoot(id), "transcript-index.json"), "utf8")),
       message: finalReport.finalMessage,
       completionRoute: finalReport.completionRoute,
+      terminalOutcome: finalReport.terminalOutcome,
+      reviewRequest: finalReport.reviewRequest,
+      status: finalReport.status,
     });
   } catch { return null; }
 }
@@ -654,10 +687,6 @@ async function deliverThreadFollowup(thread, routed) {
   const sessionId = routed.session.id;
   const previous = threadMessageDeliveries.get(sessionId) || Promise.resolve();
   const delivery = previous.catch(() => {}).then(async () => {
-    const sessions = await threadStore.listSessionsForActor({ threadId: thread.id, actor: thread.ownerSubject });
-    const current = sessions.find((session) => session.id === sessionId);
-    if (!current) throw new Error("thread execution session disappeared");
-    if (current.inboxAckSequence >= routed.event.sequence) return { mode: "already-delivered" };
     const deadline = Date.now() + 30_000;
     let lastError = null;
     let accepted = null;
@@ -683,12 +712,6 @@ async function deliverThreadFollowup(thread, routed) {
       }
     }
     if (!accepted) throw lastError || new Error("session worker did not accept follow-up");
-    await threadStore.acknowledgeInbox({
-      threadId: thread.id,
-      sessionId,
-      generation: current.leaseGeneration,
-      throughSequence: routed.event.sequence,
-    });
     return accepted;
   });
   threadMessageDeliveries.set(sessionId, delivery);
@@ -719,111 +742,41 @@ function threadSessionId(threadId) {
 }
 
 async function launchThreadExecution(thread, session) {
-  const envelope = await threadStore.contextEnvelope({
-    threadId: thread.id,
-    actor: thread.ownerSubject,
-    sessionId: session.id,
-  });
-  const task = renderThreadTask(envelope, session.triggerMessageId);
-  try {
-    if (gatewayMode) {
-      await launchGatewaySession(session.id, thread.repository, false, session.actorSubject, task, {
-        threadId: thread.id,
-        leaseGeneration: session.leaseGeneration,
-        authorizingEventId: session.triggerMessageId,
-        ownerSubject: thread.ownerSubject,
-        authorityScope: session.authorityScope || "human",
-      });
-    } else {
-      launchSession(session.id, thread.repository, false, session.actorSubject, task, {
-        threadId: thread.id,
-        leaseGeneration: session.leaseGeneration,
-        authorizingEventId: session.triggerMessageId,
-        ownerSubject: thread.ownerSubject,
-        authorityScope: session.authorityScope || "human",
-      });
-    }
-    const running = await threadStore.markSessionRunning({
+  const launch = gatewayMode ? launchGatewaySession : launchSession;
+  return launch(session.id, thread.repository, false, session.actorSubject, session.task, {
       threadId: thread.id,
-      sessionId: session.id,
-      generation: session.leaseGeneration,
+      leaseGeneration: session.leaseGeneration,
+      authorizingEventId: session.triggerMessageId,
+      ownerSubject: thread.ownerSubject,
+      authorityScope: session.authorityScope || "user",
+      mutationGrant: session.mutationGrant || null,
     });
-    const sessions = await threadStore.listSessionsForActor({ threadId: thread.id, actor: thread.ownerSubject });
-    const current = sessions.find((candidate) => candidate.id === session.id);
-    if (current && current.inboxAckSequence < session.inboxHeadSequence) {
-      await threadStore.acknowledgeInbox({
-        threadId: thread.id,
-        sessionId: session.id,
-        generation: session.leaseGeneration,
-        throughSequence: session.inboxHeadSequence,
-      });
-    }
-    return running;
-  } catch (error) {
-    await threadStore.finalizeSession({
-      threadId: thread.id,
-      sessionId: session.id,
-      generation: session.leaseGeneration,
-      status: "interrupted",
-    });
-    throw error;
-  }
 }
 
 async function projectSessionToThread(id, status, reportReader = readGatewayReport) {
   const record = registry.sessions[id];
-  if (!record?.threadId || record.threadProjectedAt) return;
-  if (status === "completed") {
-    const report = reportReader(id);
-    if (!report?.report) return;
-    const sessions = await threadStore.listSessionsForActor({ threadId: record.threadId, actor: record.createdBy });
-    const session = sessions.find((candidate) => candidate.id === id);
-    if (!session) return;
-    if (session.inboxAckSequence !== session.inboxHeadSequence) return;
-    const publicEvent = workerReportPublicEvent(id, report);
-    await threadStore.appendFencedSessionEvent({
-      threadId: record.threadId,
-      sessionId: id,
-      generation: record.leaseGeneration,
-      eventId: `final-${id}`,
-      ...publicEvent,
-    });
-    await threadStore.markSessionFinishing({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration });
-    const reviewRequired = report.completionRoute === "human-review" && publicEvent.type === "question";
-    const finalized = reviewRequired
-      ? await threadStore.finalizeSessionWithReview({
-        threadId: record.threadId,
-        sessionId: id,
-        generation: record.leaseGeneration,
-        reviewId: `review-${id}`,
-        question: publicEvent.payload.text,
-        sourceEventId: `final-${id}`,
-      })
-      : await threadStore.finalizeSession({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration });
-    record.threadProjectedAt = new Date().toISOString();
-    await saveRegistry();
-    if (finalized.activatedSession) await launchActivatedThreadSession(record, finalized.activatedSession);
-  } else if (status === "failed" || status === "paused") {
-    const fallback = status === "paused" ? "Execution session paused" : "Execution session failed";
-    const publicEvent = workerReportInterruptedEvent(id, reportReader(id), fallback);
-    await threadStore.appendFencedSessionEvent({
-      threadId: record.threadId,
-      sessionId: id,
-      generation: record.leaseGeneration,
-      eventId: `interrupted-${id}`,
-      ...publicEvent,
-    });
-    const finalized = await threadStore.finalizeSession({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration, status: "interrupted" });
-    record.threadProjectedAt = new Date().toISOString();
-    await saveRegistry();
-    if (finalized.activatedSession) await launchActivatedThreadSession(record, finalized.activatedSession);
-  }
+  return threads.projectExecution({ record, status, report: reportReader(id) });
 }
 
-async function launchActivatedThreadSession(record, session) {
-  const thread = await threadStore.getThreadForActor(record.threadId, record.createdBy);
-  await launchThreadExecution(thread, session);
-}
+const threads = new Thread({
+  threadStore,
+  newSessionId: threadSessionId,
+  startExecution: ({ thread, session, task }) => launchThreadExecution(thread, { ...session, task }),
+  deliverFollowup: deliverThreadFollowup,
+  reconcileExecution: async (id) => { if (gatewayMode) await reconcileGatewaySession(id); },
+  reconcileThreadExecutions: async (threadId) => {
+    if (gatewayMode) {
+      await Promise.all(Object.values(registry.sessions)
+        .filter((record) => record.threadId === threadId)
+        .map((record) => reconcileGatewaySession(record.id)));
+    }
+  },
+  markExecutionProjected: async (record, terminalOutcome) => {
+    record.terminalOutcome = terminalOutcome;
+    record.threadProjectedAt = new Date().toISOString();
+    await saveRegistry();
+  },
+});
 
 async function projectGatewaySessionToThread(id, status) {
   return projectSessionToThread(id, status, readGatewayReport);
@@ -841,7 +794,7 @@ async function publicLegacySessions(username) {
     username,
     hasThread: async (threadId, actor) => {
       try {
-        await threadStore.getThreadForActor(threadId, actor);
+        await threads.getThread(threadId, actor);
         return true;
       } catch (error) {
         if (error?.statusCode !== 404) throw error;
@@ -932,7 +885,7 @@ async function checkpointAll() {
   }
 }
 
-async function retireSession(id, status, actor) {
+async function retireSession(id, status, actor, terminalOutcome = status === "failed" ? "failed" : null) {
   const record = registry.sessions[id];
   if (!record) throw new Error("unknown task");
   checkpoint(id);
@@ -942,6 +895,7 @@ async function retireSession(id, status, actor) {
   }
   const now = new Date().toISOString();
   record.status = status;
+  record.terminalOutcome = terminalOutcome;
   record.autoResume = false;
   record.updatedAt = now;
   record[`${status}At`] = now;
@@ -1007,7 +961,6 @@ const server = http.createServer(async (request, response) => {
       const event = normalizeSlackIngressEvent(await readBody(request));
       const ownerSubject = configuredReviewOwner();
       const repository = resolveSlackRepository();
-      const threadId = generateThreadId();
       const source = {
         type: "slack",
         eventId: event.eventId,
@@ -1017,8 +970,7 @@ const server = http.createServer(async (request, response) => {
         threadTs: event.threadTs,
         senderId: event.senderId,
       };
-      const routed = await threadStore.createExternalThreadAndRoute({
-        id: threadId,
+      const routed = await threads.createExternalThread({
         ownerSubject,
         repository,
         title: slackThreadTitle(event),
@@ -1026,9 +978,7 @@ const server = http.createServer(async (request, response) => {
         source,
         eventId: slackEventMessageId(event.eventId),
         text: renderSlackDiagnosisTask(event, slackDiagnosisContext),
-        newSessionId: threadSessionId(threadId),
       });
-      if (!routed.duplicate) await launchThreadExecution(routed.thread, routed.session);
       return json(response, 202, {
         accepted: true,
         duplicate: routed.duplicate,
@@ -1059,7 +1009,7 @@ const server = http.createServer(async (request, response) => {
       return json(response, 200, { ok: true }, { "set-cookie": "multiagent_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0" });
     }
     if (request.method === "GET" && url.pathname === "/api/reviews") {
-      return json(response, 200, { reviews: await threadStore.listReviewsForActor({
+      return json(response, 200, { reviews: await threads.listReviews({
         actor: username,
         status: String(url.searchParams.get("status") || "pending"),
       }) });
@@ -1073,15 +1023,13 @@ const server = http.createServer(async (request, response) => {
       const rawDecision = String(body.decision || "").toLowerCase();
       const decision = rawDecision === "yes" ? "approve" : rawDecision === "no" ? "reject" : rawDecision;
       const digest = crypto.createHash("sha256").update(`${reviewDecisionMatch[1]}:${username}:${idempotencyKey}`).digest("hex").slice(0, 32);
-      const routed = await threadStore.decideReviewAndRoute({
+      const routed = await threads.decideReview({
         reviewId: reviewDecisionMatch[1],
         actor: username,
         decision,
         decisionId: `review-decision-${digest}`,
         messageId: `review-message-${digest}`,
-        newSessionId: threadSessionId(reviewDecisionMatch[1]),
       });
-      if (routed.session) await launchThreadExecution(routed.thread, routed.session);
       return json(response, routed.session ? 202 : 200, routed);
     }
     if (request.method === "GET" && url.pathname === "/api/me") return json(response, 200, { username });
@@ -1098,11 +1046,10 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/api/threads") {
       if (workerMode) throw new Error("session workers cannot create threads");
       const body = await readBody(request);
-      if (body.id !== undefined) return json(response, 400, { error: "thread IDs are assigned by the control server" });
+      if (body.id !== undefined) return json(response, 400, { error: "thread IDs are server-assigned" });
       if (gatewayMode) configuredRepository(repositoryCatalog, String(body.repository || ""));
       else repositoryPath(String(body.repository || ""));
-      const thread = await threadStore.createThread({
-        id: generateThreadId(),
+      const thread = await threads.createThread({
         ownerSubject: username,
         repository: String(body.repository || ""),
         title: String(body.title || ""),
@@ -1111,11 +1058,11 @@ const server = http.createServer(async (request, response) => {
     }
     const threadMatch = url.pathname.match(/^\/api\/threads\/([a-z0-9-]+)$/);
     if (request.method === "GET" && threadMatch) {
-      return json(response, 200, { thread: await threadStore.getThreadForActor(threadMatch[1], username) });
+      return json(response, 200, { thread: await threads.getThread(threadMatch[1], username) });
     }
     const threadEventsMatch = url.pathname.match(/^\/api\/threads\/([a-z0-9-]+)\/events$/);
     if (request.method === "GET" && threadEventsMatch) {
-      return json(response, 200, { events: await threadStore.readEventsAfter({
+      return json(response, 200, { events: await threads.readEvents({
         threadId: threadEventsMatch[1],
         actor: username,
         afterSequence: Number(url.searchParams.get("after_sequence") || 0),
@@ -1124,37 +1071,23 @@ const server = http.createServer(async (request, response) => {
     }
     const threadSessionsMatch = url.pathname.match(/^\/api\/threads\/([a-z0-9-]+)\/sessions$/);
     if (request.method === "GET" && threadSessionsMatch) {
-      const threadId = threadSessionsMatch[1];
-      await threadStore.getThreadForActor(threadId, username);
-      if (gatewayMode) {
-        await Promise.all(Object.values(registry.sessions).filter((record) => record.threadId === threadId).map((record) => reconcileGatewaySession(record.id)));
-      }
-      return json(response, 200, { sessions: await threadStore.listSessionsForActor({ threadId, actor: username }) });
+      return json(response, 200, { sessions: await threads.listSessions({
+        threadId: threadSessionsMatch[1],
+        actor: username,
+      }) });
     }
     const threadMessagesMatch = url.pathname.match(/^\/api\/threads\/([a-z0-9-]+)\/messages$/);
     if (request.method === "POST" && threadMessagesMatch) {
       if (workerMode) throw new Error("session workers cannot append user messages");
       const messageId = String(request.headers["idempotency-key"] || "");
       const body = await readBody(request);
-      let thread = await threadStore.getThreadForActor(threadMessagesMatch[1], username);
-      if (gatewayMode && thread.activeSessionId) {
-        await reconcileGatewaySession(thread.activeSessionId);
-        thread = await threadStore.getThreadForActor(thread.id, username);
-      }
-      const routed = await threadStore.appendUserMessageAndRoute({
-        threadId: thread.id,
+      const routed = await threads.appendMessage({
+        threadId: threadMessagesMatch[1],
         actor: username,
         messageId,
         text: String(body.text || ""),
-        newSessionId: threadSessionId(thread.id),
       });
-      if (routed.createdSession && routed.session.leaseGeneration !== null) await launchThreadExecution(thread, routed.session);
-      const delivery = routed.session.leaseGeneration === null
-        ? { mode: "queued-context" }
-        : routed.createdSession
-          ? { mode: "initial-context" }
-          : await deliverThreadFollowup(thread, routed);
-      return json(response, 202, { ...routed, delivery });
+      return json(response, 202, routed);
     }
     if (request.method === "GET" && url.pathname === "/api/sessions") {
       return json(response, 200, { sessions: await publicLegacySessions(username) });
@@ -1260,7 +1193,7 @@ server.on("upgrade", async (request, socket, head) => {
   const workerAuthorized = match ? verifyWorkerToken(request, match[1]) : false;
   let authorized = false;
   if (threadMatch && username) {
-    try { await threadStore.getThreadForActor(threadMatch[1], username); authorized = true; } catch {}
+    try { await threads.getThread(threadMatch[1], username); authorized = true; } catch {}
   }
   if (match && registry.sessions[match[1]] && ((username && registry.sessions[match[1]].createdBy === username) || workerAuthorized)) authorized = true;
   if ((!match && !threadMatch) || !validOrigin(request) || !authorized) {
@@ -1286,8 +1219,8 @@ sockets.on("connection", (socket, request) => {
       if (publishing) return;
       publishing = true;
       try {
-        const thread = await threadStore.getThreadForActor(request.threadId, request.username);
-        const events = await threadStore.readEventsAfter({ threadId: request.threadId, actor: request.username, afterSequence: cursor, limit: 200 });
+        const thread = await threads.getThread(request.threadId, request.username);
+        const events = await threads.readEvents({ threadId: request.threadId, actor: request.username, afterSequence: cursor, limit: 200 });
         for (const event of events) {
           cursor = event.sequence;
           if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "event", event }));
@@ -1300,7 +1233,7 @@ sockets.on("connection", (socket, request) => {
         const activeSessionId = thread.activeSessionId || null;
         if (activeSessionId) observedSessionId = activeSessionId;
         if (!observedSessionId) {
-          const sessions = await threadStore.listSessionsForActor({ threadId: request.threadId, actor: request.username });
+          const sessions = await threads.listSessions({ threadId: request.threadId, actor: request.username });
           observedSessionId = sessions.at(-1)?.id || null;
         }
         let snapshot = observedSessionId
@@ -1403,25 +1336,33 @@ if (workerMode) {
   const threadId = String(process.env.MULTIAGENT_THREAD_ID || id);
   const leaseGeneration = Number(process.env.MULTIAGENT_LEASE_GENERATION || "1");
   const authorizingEventId = String(process.env.MULTIAGENT_AUTHORIZING_EVENT_ID || id);
-  if (!registry.sessions[id]) launchSession(id, repository, resume, actor, fs.readFileSync(taskFile, "utf8"), { threadId, leaseGeneration, authorizingEventId });
+  const authorityScope = String(process.env.MULTIAGENT_AUTHORITY_SCOPE || "user");
+  const mutationGrant = JSON.parse(process.env.MULTIAGENT_MUTATION_GRANT_JSON || "null");
+  if (!registry.sessions[id]) launchSession(id, repository, resume, actor, fs.readFileSync(taskFile, "utf8"), {
+    threadId,
+    leaseGeneration,
+    authorizingEventId,
+    authorityScope,
+    mutationGrant,
+  });
 }
 
 for (const record of gatewayMode ? [] : Object.values(registry.sessions)) {
-  if (record.status === "running" && workflowPhase(record.id) === "complete") {
-    const now = new Date().toISOString();
-    record.status = "completed";
-    record.autoResume = false;
-    record.completedAt = now;
-    record.completedBy = "workflow-supervisor";
-    record.updatedAt = now;
-    writeTraceSummary(record.id, "completed");
-    saveRegistry();
+  if (record.status !== "running") continue;
+  const outcome = executionTerminalOutcome({
+    phase: workflowPhase(record.id),
+    outcome: workflowTerminalOutcome(record.id),
+    live: tmuxAlive(record.id),
+  });
+  if (outcome) {
+    const status = sessionStatusForTerminalOutcome(outcome);
+    await retireSession(record.id, status, outcome === "failed" ? "process-exit" : "workflow-supervisor", outcome);
     if (workerMode) {
       deliverWorkerOutcomeReport(record.id)
         .catch((error) => console.error(`worker report delivery failed for ${record.id}`, error))
-        .finally(() => setTimeout(() => process.exit(0), completionGraceMs));
+        .finally(() => setTimeout(() => process.exit(outcome === "failed" ? 1 : 0), completionGraceMs));
     }
-  } else if (record.status === "running" && record.autoResume && !tmuxAlive(record.id)) {
+  } else if (record.autoResume && !tmuxAlive(record.id)) {
     try { launchSession(record.id, record.repository, true, "system"); } catch (error) { console.error(`restore failed for ${record.id}`, error); }
   }
 }
@@ -1433,17 +1374,24 @@ const retirementTimer = setInterval(() => {
   if (gatewayMode) return;
   const now = Date.now();
   for (const record of Object.values(registry.sessions)) {
-    if (record.status === "running" && workflowPhase(record.id) === "complete") {
-      retireSession(record.id, "completed", "workflow-supervisor").then(async () => {
+    if (record.status !== "running") continue;
+    const outcome = executionTerminalOutcome({
+      phase: workflowPhase(record.id),
+      outcome: workflowTerminalOutcome(record.id),
+      live: tmuxAlive(record.id),
+    });
+    if (outcome) {
+      const status = sessionStatusForTerminalOutcome(outcome);
+      retireSession(record.id, status, outcome === "failed" ? "process-exit" : "workflow-supervisor", outcome).then(async () => {
         if (workerMode) {
           try { await deliverWorkerOutcomeReport(record.id); }
           catch (error) { console.error(`worker report delivery failed for ${record.id}`, error); }
-          setTimeout(() => process.exit(0), completionGraceMs);
+          setTimeout(() => process.exit(outcome === "failed" ? 1 : 0), completionGraceMs);
         }
       }).catch((error) => console.error(`completion retirement failed for ${record.id}`, error));
       continue;
     }
-    if (record.status === "running" && !tmuxAlive(record.id)) {
+    if (!tmuxAlive(record.id)) {
       if (process.env.MULTIAGENT_AGENT_HEADLESS === "1" && shouldAutomaticallyResume(record, maxAutomaticResumes)) {
         record.automaticResumeAttempts = Number(record.automaticResumeAttempts || 0) + 1;
         record.updatedAt = new Date().toISOString();
@@ -1455,7 +1403,7 @@ const retirementTimer = setInterval(() => {
           console.error(`automatic resume failed for ${record.id}`, error);
         }
       }
-      retireSession(record.id, "failed", "process-exit").then(async () => {
+      retireSession(record.id, "failed", "process-exit", "failed").then(async () => {
         if (workerMode) {
           try { await deliverWorkerOutcomeReport(record.id); }
           catch (error) { console.error(`worker outcome report delivery failed for ${record.id}`, error); }

@@ -3,7 +3,7 @@ import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { createThreadStore } from "../src/thread-store.mjs";
+import { createThreadStore } from "../../thread/src/thread-model.mjs";
 
 test("file thread manifests survive gateway restart without duplicating messages", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "multiagent-thread-store-"));
