@@ -139,7 +139,7 @@ Important launch variables:
 | `MULTIAGENT_ROOT` | launcher directory unless `--root` is supplied |
 | `MULTIAGENT_STATE_DIR` | `$MULTIAGENT_ROOT/.multiagent` |
 | `MULTIAGENT_WRITE_POLICY` | `$MULTIAGENT_ROOT/docs/write-policy.paths` |
-| `MULTIAGENT_PROMPT` | this checkout's `orchestrator_prompt.md` |
+| `MULTIAGENT_PROMPT` | this checkout's `prompts/orchestrator.md` |
 | `MULTIAGENT_VERIFIER_MAX_ITERATIONS` | `3` |
 
 The prompt path is resolved from the launcher checkout, not the target

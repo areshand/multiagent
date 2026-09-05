@@ -508,7 +508,7 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
     }
 
     let prompt =
-        env_path("MULTIAGENT_PROMPT").unwrap_or_else(|| framework.join("orchestrator_prompt.md"));
+        env_path("MULTIAGENT_PROMPT").unwrap_or_else(|| framework.join("prompts/orchestrator.md"));
     let routing_prompt = env_path("MULTIAGENT_ROUTING_PROMPT")
         .unwrap_or_else(|| framework.join("prompts/playbooks/orchestration-routing.md"));
     let lifecycle_prompt = env_path("MULTIAGENT_LIFECYCLE_PROMPT")

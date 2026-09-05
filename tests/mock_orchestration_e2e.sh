@@ -197,7 +197,7 @@ ma orchestrator complete >/dev/null
 grep -Fq 'phase=complete' "$STATE/workflows/$MULTIAGENT_WORKFLOW_ID/lifecycle/lifecycle.env"
 grep -Fq 'after' "$REPO/source.txt"
 grep -Fq 'role may use `multiagent ops read --request-file PATH`' \
-  "$ROOT/orchestrator_prompt.md"
+  "$ROOT/prompts/orchestrator.md"
 grep -Fq 'roles use the direct supervisor-mediated path' \
   "$ROOT/prompts/playbooks/orchestration-routing.md"
 [[ "$(grep -c '^new-window ' "$MOCK_LOG")" -eq 4 ]]

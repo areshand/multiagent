@@ -20,7 +20,7 @@ def make_prompt(repo_root: Path, workdir: Path, issue: str, metadata: dict[str, 
     """Combine the production prompt with public task data only."""
 
     _ = workdir
-    base_prompt = repo_root / "orchestrator_prompt.md"
+    base_prompt = repo_root / "prompts/orchestrator.md"
     require_path(base_prompt, "production orchestrator prompt")
     public_task = issue_with_public_problem_text(issue, public_solver_metadata(metadata or {}))
     ORIGINAL_TASK_PATH.write_text(public_task, encoding="utf-8")
@@ -39,7 +39,7 @@ def make_prompt(repo_root: Path, workdir: Path, issue: str, metadata: dict[str, 
 def make_conversation_prompt(repo_root: Path, issue: str) -> Path:
     """Build a neutral conversational replay prompt without SWE implementation bias."""
 
-    base_prompt = repo_root / "orchestrator_prompt.md"
+    base_prompt = repo_root / "prompts/orchestrator.md"
     require_path(base_prompt, "production orchestrator prompt")
     ORIGINAL_TASK_PATH.write_text(issue, encoding="utf-8")
     prompt = (

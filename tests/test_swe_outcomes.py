@@ -135,7 +135,7 @@ class NativeOutcomeTest(unittest.TestCase):
         spawning = (root / "prompts/playbooks/agent-spawning.md").read_text(
             encoding="utf-8"
         )
-        orchestrator = (root / "orchestrator_prompt.md").read_text(encoding="utf-8")
+        orchestrator = (root / "prompts/orchestrator.md").read_text(encoding="utf-8")
 
         self.assertIn("Skip the scout when the public task", autonomous)
         self.assertIn("`/app/_base_commit` is immutable adapter metadata", autonomous)

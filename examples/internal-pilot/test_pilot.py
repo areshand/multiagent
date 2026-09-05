@@ -189,7 +189,8 @@ class PilotFixtureTest(unittest.TestCase):
     def test_orchestrated_driver_builds_bounded_assignment(self) -> None:
         fake_harness = self.root / "fake-harness"
         fake_harness.mkdir()
-        (fake_harness / "orchestrator_prompt.md").write_text("# Fixture orchestrator\n", encoding="utf-8")
+        (fake_harness / "prompts").mkdir()
+        (fake_harness / "prompts/orchestrator.md").write_text("# Fixture orchestrator\n", encoding="utf-8")
         fake_launch = fake_harness / "launch.sh"
         fake_launch.write_text(
             "#!/usr/bin/env bash\nset -euo pipefail\nmkdir -p \"$MULTIAGENT_STATE_DIR\"\nprintf 'orchestrated complete\\n' > \"$MULTIAGENT_STATE_DIR/orchestrator-last-message.txt\"\n",

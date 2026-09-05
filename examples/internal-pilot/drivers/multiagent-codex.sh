@@ -24,7 +24,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-cp "$PILOT_HARNESS_ROOT/orchestrator_prompt.md" "$full_prompt"
+cp "$PILOT_HARNESS_ROOT/prompts/orchestrator.md" "$full_prompt"
 cat >> "$full_prompt" <<EOF
 
 ## Internal Pilot Assignment

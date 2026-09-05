@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class WikiReadOnlyRoutingTests(unittest.TestCase):
     def test_caller_facing_wiki_evidence_uses_reader_not_scout(self) -> None:
-        orchestrator = (ROOT / "orchestrator_prompt.md").read_text(encoding="utf-8")
+        orchestrator = (ROOT / "prompts/orchestrator.md").read_text(encoding="utf-8")
         routing = (ROOT / "prompts/playbooks/orchestration-routing.md").read_text(
             encoding="utf-8"
         )

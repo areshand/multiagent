@@ -75,7 +75,7 @@ def skip_repo_bake_path(path: Path) -> bool:
         return True
     if path.parts and path.parts[0] in {"tests", "docs"}:
         return True
-    if len(path.parts) == 1 and path.suffix == ".md" and path.name != "orchestrator_prompt.md":
+    if len(path.parts) == 1 and path.suffix == ".md":
         return True
     if path.parts and path.parts[0] == "evaluation":
         if path in {Path("evaluation"), Path("evaluation/__init__.py")}:
