@@ -23,7 +23,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-install -d -m 0755 "$TEST_ROOT/bin" "$TEST_ROOT/repo/allowed" "$TEST_ROOT/repo/forbidden"
+install -d -m 0755 "$TEST_ROOT/bin" "$TEST_ROOT/repo/allowed" "$TEST_ROOT/repo/forbidden" \
+  "$TEST_ROOT/framework/runbooks"
 install -m 4755 "$SOURCE_BIN" "$TEST_ROOT/bin/multiagent"
 MULTIAGENT="$TEST_ROOT/bin/multiagent"
 REPO="$TEST_ROOT/repo"
@@ -130,7 +131,7 @@ BASE_ENV=(
   CLAUDE_BIN="$TEST_ROOT/bin/codex"
   QWEN_BIN="$TEST_ROOT/bin/codex"
   TEST_REPO="$REPO"
-  MULTIAGENT_FRAMEWORK_ROOT="$ROOT"
+  MULTIAGENT_FRAMEWORK_ROOT="$TEST_ROOT/framework"
   MULTIAGENT_THREAD_ID=thread-boundary-test
   MULTIAGENT_SESSION=session-boundary-test
   MULTIAGENT_LEASE_GENERATION=1
