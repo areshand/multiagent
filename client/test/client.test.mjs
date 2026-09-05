@@ -135,7 +135,7 @@ test("users list only locally created threads through individually authorized lo
   assert.deepEqual(JSON.parse(output.output), [{ id: "thread-1", state: "idle", repository: "multiagent" }]);
 });
 
-test("thread creation lets the server generate both the thread and execution session IDs", async () => {
+test("thread creation lets the server generate both the Thread and Session IDs", async () => {
   const sessionFile = await sessionFixture({ threadIds: [] });
   const output = writer();
   const requests = [];
@@ -792,6 +792,6 @@ test("TTY startup shows a pending repair and yes starts its fresh session", asyn
   });
   assert.match(output.output, /REPAIR REVIEW REQUIRED/);
   assert.match(output.output, /Approve restarting api in testnet\?/);
-  assert.match(output.output, /Approved review-session-diagnose\. Started fresh execution session-repair/);
+  assert.match(output.output, /Approved review-session-diagnose\. Started fresh Session session-repair/);
   assert.match(output.output, /slack> Slack alert/);
 });

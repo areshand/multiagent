@@ -33,6 +33,7 @@ test("session manager owns routing, launch context, fencing, and result projecti
   });
 
   assert.equal(routed.delivery.mode, "initial-context");
+  assert.equal(routed.session.authorityScope, "user");
   assert.equal(launched.length, 1);
   assert.match(launched[0].task, /Current authenticated user request:/);
   assert.match(launched[0].task, /Inspect the current implementation/);
@@ -103,7 +104,7 @@ test("session manager owns review decisions and launches approved continuations"
   });
   assert.equal(decided.review.status, "approved");
   assert.equal(launched.length, 2);
-  assert.equal(decided.session.authorityScope, "approved-repair");
+  assert.equal(decided.session.authorityScope, "user");
   assert.deepEqual(decided.session.mutationGrant.paths, ["config/service.yaml"]);
   assert.match(launched[1].task, /exact reviewed request/);
 });

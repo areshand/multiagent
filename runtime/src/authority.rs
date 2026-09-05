@@ -1,153 +1,5 @@
-use crate::config;
+use crate::{config, execution::Execution};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
-use std::env;
-use std::path::{Component, Path};
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct MutationGrant {
-    kind: String,
-    effects: Vec<String>,
-    repository: String,
-    paths: Vec<String>,
-    review_id: String,
-    source_session_id: String,
-    source_event_id: String,
-    question_sha256: String,
-    granted_to_session_id: String,
-    approved_by: String,
-    approved_at: String,
-}
-
-pub struct SessionAuthority {
-    scope: String,
-    granted_paths: BTreeSet<String>,
-    source_write: bool,
-    reviewed_ops: bool,
-}
-
-impl SessionAuthority {
-    pub fn scope(&self) -> &str {
-        &self.scope
-    }
-
-    pub fn permits_workspace_write(&self, root: &Path, paths: &[std::path::PathBuf]) -> bool {
-        match self.scope.as_str() {
-            "human" => true,
-            "approved-repair" if self.source_write => {
-                !paths.is_empty()
-                    && paths.iter().all(|path| {
-                        path.strip_prefix(root)
-                            .ok()
-                            .and_then(|relative| normalized_repo_path(&relative.to_string_lossy()))
-                            .is_some_and(|relative| self.granted_paths.contains(&relative))
-                    })
-            }
-            _ => false,
-        }
-    }
-
-    pub fn permits_reviewed_ops(&self) -> bool {
-        self.scope == "human" || (self.scope == "approved-repair" && self.reviewed_ops)
-    }
-}
-
-fn bounded(value: &str, max: usize) -> bool {
-    !value.trim().is_empty() && value.len() <= max
-}
-
-fn normalized_repo_path(value: &str) -> Option<String> {
-    if !bounded(value, 512) {
-        return None;
-    }
-    let path = Path::new(value);
-    if path.is_absolute()
-        || path
-            .components()
-            .any(|part| !matches!(part, Component::Normal(_)))
-    {
-        return None;
-    }
-    Some(path.to_string_lossy().replace('\\', "/"))
-}
-
-fn parse_session_authority(
-    scope: &str,
-    grant_json: &str,
-    session_id: &str,
-    repository: &str,
-) -> Result<SessionAuthority, String> {
-    if matches!(scope, "human" | "observe" | "diagnosis-only") {
-        if !grant_json.trim().is_empty() && grant_json.trim() != "null" {
-            return Err(format!(
-                "authority scope {scope} must not carry a mutation grant"
-            ));
-        }
-        return Ok(SessionAuthority {
-            scope: scope.into(),
-            granted_paths: BTreeSet::new(),
-            reviewed_ops: false,
-            source_write: false,
-        });
-    }
-    if scope != "approved-repair" {
-        return Err("MULTIAGENT_AUTHORITY_SCOPE is invalid".into());
-    }
-    let grant: MutationGrant = serde_json::from_str(grant_json)
-        .map_err(|error| format!("decode approved repair grant: {error}"))?;
-    let paths = grant
-        .paths
-        .iter()
-        .filter_map(|path| normalized_repo_path(path))
-        .collect::<BTreeSet<_>>();
-    let effects = grant.effects.iter().cloned().collect::<BTreeSet<_>>();
-    let allowed_effects = ["reviewed-ops".to_string(), "source-write".to_string()]
-        .into_iter()
-        .collect::<BTreeSet<_>>();
-    let source_write = effects.contains("source-write");
-    let digest = grant.question_sha256.strip_prefix("sha256:").unwrap_or("");
-    if grant.kind != "review-approved-repair"
-        || effects.is_empty()
-        || effects.len() != grant.effects.len()
-        || !effects.is_subset(&allowed_effects)
-        || grant.repository != repository
-        || grant.granted_to_session_id != session_id
-        || source_write != !grant.paths.is_empty()
-        || grant.paths.len() > 32
-        || paths.len() != grant.paths.len()
-        || !bounded(&grant.review_id, 128)
-        || !bounded(&grant.source_session_id, 63)
-        || !bounded(&grant.source_event_id, 128)
-        || digest.len() != 64
-        || !digest.bytes().all(|byte| byte.is_ascii_hexdigit())
-        || !bounded(&grant.approved_by, 256)
-        || !bounded(&grant.approved_at, 64)
-    {
-        return Err("approved repair grant is incomplete or bound to another session, repository, or path set".into());
-    }
-    Ok(SessionAuthority {
-        scope: scope.into(),
-        granted_paths: paths,
-        reviewed_ops: effects.contains("reviewed-ops"),
-        source_write,
-    })
-}
-
-pub fn configured_session_authority() -> Result<SessionAuthority, String> {
-    let scope = env::var("MULTIAGENT_AUTHORITY_SCOPE")
-        .ok()
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "human".into());
-    parse_session_authority(
-        &scope,
-        &env::var("MULTIAGENT_MUTATION_GRANT_JSON").unwrap_or_default(),
-        &env::var("MULTIAGENT_SESSION").unwrap_or_default(),
-        &env::var("MULTIAGENT_REPOSITORY_NAME")
-            .or_else(|_| env::var("MULTIAGENT_SESSION_REPOSITORY"))
-            .unwrap_or_default(),
-    )
-}
 
 /// The complete privileged surface accepted by the authority supervisor.
 ///
@@ -167,6 +19,7 @@ enum AuthorityOperation {
     Decision,
     Dag,
     OrchestratorComplete,
+    ExecutionMutationRequest,
     SupervisorRegisterLaunch,
     SupervisorRenewLaunch,
     SupervisorShutdown,
@@ -224,6 +77,12 @@ impl AuthorityRequest {
                 (AuthorityOperation::OpsExecute, &args[1..])
             }
             "orchestrator"
+                if args.first().map(String::as_str) == Some("request-mutation")
+                    && valid_mutation_request_args(args) =>
+            {
+                (AuthorityOperation::ExecutionMutationRequest, &args[1..])
+            }
+            "orchestrator"
                 if args.first().map(String::as_str) == Some("complete")
                     && (args.len() == 1
                         || (args.len() == 2 && args[1] == "--external-only")
@@ -232,6 +91,7 @@ impl AuthorityRequest {
                                 args[1].as_str(),
                                 "--external-only"
                                     | "--direct-response"
+                                    | "--auto"
                                     | "--clarification"
                                     | "--auto-clarification"
                                     | "--observe"
@@ -311,6 +171,7 @@ impl AuthorityRequest {
             | AuthorityOperation::Decision
             | AuthorityOperation::Dag
             | AuthorityOperation::OrchestratorComplete
+            | AuthorityOperation::ExecutionMutationRequest
             | AuthorityOperation::SupervisorRegisterLaunch
             | AuthorityOperation::SupervisorRenewLaunch
             | AuthorityOperation::SupervisorShutdown
@@ -378,6 +239,7 @@ impl AuthorityRequest {
                             | "--request-review"
                             | "--direct-response"
                             | "--clarification"
+                            | "--auto"
                             | "--auto-clarification"
                             | "--read-only"
                             | "--human-review"
@@ -392,15 +254,18 @@ impl AuthorityRequest {
         }
     }
 
-    pub fn allowed_for_session_authority(&self, authority: &SessionAuthority) -> bool {
-        match authority.scope() {
+    pub fn allowed_for_execution(&self, execution: &Execution) -> bool {
+        match execution.scope() {
             "human" | "observe" | "diagnosis-only" => {
-                self.allowed_for_authority_scope(authority.scope())
+                self.allowed_for_authority_scope(execution.scope())
             }
-            "approved-repair" => match self.operation {
+            "user" => match self.operation {
+                AuthorityOperation::ExecutionMutationRequest => {
+                    execution.permits_mutation_request()
+                }
                 AuthorityOperation::OpsPublishBound
                 | AuthorityOperation::OpsPublish
-                | AuthorityOperation::OpsExecute => authority.permits_reviewed_ops(),
+                | AuthorityOperation::OpsExecute => execution.permits_reviewed_ops(),
                 AuthorityOperation::Workflow
                 | AuthorityOperation::Decision
                 | AuthorityOperation::Dag
@@ -444,6 +309,9 @@ impl AuthorityRequest {
             AuthorityOperation::Dag => ("dag", None),
             AuthorityOperation::OrchestratorComplete => ("orchestrator", Some("complete")),
             AuthorityOperation::SupervisorRegisterLaunch => ("supervisor", Some("register-launch")),
+            AuthorityOperation::ExecutionMutationRequest => {
+                ("orchestrator", Some("request-mutation"))
+            }
             AuthorityOperation::SupervisorRenewLaunch => ("supervisor", Some("renew-launch")),
             AuthorityOperation::SupervisorShutdown => ("supervisor", Some("shutdown")),
             AuthorityOperation::AssignmentCreate => ("subagent", Some("assignment-create")),
@@ -485,7 +353,6 @@ impl AuthorityRequest {
         }
         (command.to_string(), args)
     }
-
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub fn display(&self) -> String {
         let (command, args) = self.clone().into_cli();
@@ -494,6 +361,29 @@ impl AuthorityRequest {
             None => command,
         }
     }
+}
+
+fn valid_mutation_request_args(args: &[String]) -> bool {
+    if args.first().map(String::as_str) != Some("request-mutation") || args.len() < 2 {
+        return false;
+    }
+    let mut has_path = false;
+    let mut reviewed_ops = false;
+    let mut index = 1;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--path" if index + 1 < args.len() && !args[index + 1].is_empty() => {
+                has_path = true;
+                index += 2;
+            }
+            "--reviewed-ops" if !reviewed_ops => {
+                reviewed_ops = true;
+                index += 1;
+            }
+            _ => return false,
+        }
+    }
+    has_path || reviewed_ops
 }
 
 fn valid_request_review_args(args: &[String]) -> bool {
@@ -529,7 +419,7 @@ fn has_option_value(args: &[String], option: &str, expected: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_session_authority, AuthorityRequest};
+    use super::AuthorityRequest;
     use crate::config;
 
     fn strings(values: &[&str]) -> Vec<String> {
@@ -548,6 +438,32 @@ mod tests {
         assert!(AuthorityRequest::from_cli("subagent", &strings(&["spawn"])).is_none());
         assert!(AuthorityRequest::from_cli("subagent", &strings(&["worktree-create"])).is_none());
         assert!(AuthorityRequest::from_cli("subagent", &strings(&["validation-run"])).is_none());
+    }
+
+    #[test]
+    fn mutation_request_is_a_typed_orchestrator_operation() {
+        let request = AuthorityRequest::from_cli(
+            "orchestrator",
+            &strings(&["request-mutation", "--path", "src/lib.rs", "--reviewed-ops"]),
+        )
+        .expect("bounded mutation request");
+        assert!(request.authorized_for(config::ORCHESTRATOR_UID));
+        assert!(!request.authorized_for(config::WRITER_UID));
+        assert_eq!(
+            request.into_cli(),
+            (
+                "orchestrator".to_string(),
+                strings(&["request-mutation", "--path", "src/lib.rs", "--reviewed-ops",]),
+            )
+        );
+        assert!(
+            AuthorityRequest::from_cli("orchestrator", &strings(&["request-mutation"]),).is_none()
+        );
+        assert!(AuthorityRequest::from_cli(
+            "orchestrator",
+            &strings(&["request-mutation", "--reviewed-ops", "--reviewed-ops",]),
+        )
+        .is_none());
     }
 
     #[test]
@@ -684,7 +600,7 @@ mod tests {
         )
         .expect("direct completion request");
         assert!(direct_completion.authorized_for(config::ORCHESTRATOR_UID));
-        for route in ["--clarification", "--auto-clarification"] {
+        for route in ["--clarification", "--auto-clarification", "--auto"] {
             let clarification_completion = AuthorityRequest::from_cli(
                 "orchestrator",
                 &strings(&[
@@ -780,81 +696,6 @@ mod tests {
         .expect("reader launch");
         assert!(reader_launch.allowed_for_authority_scope("diagnosis-only"));
         assert!(!reader_launch.allowed_for_authority_scope("unknown"));
-    }
-
-    #[test]
-    fn approved_repair_grant_binds_paths_and_enters_only_reviewed_ops() {
-        let grant = r#"{
-            "kind":"review-approved-repair",
-            "effects":["source-write","reviewed-ops"],
-            "repository":"multiagent",
-            "paths":["deploy/service.yaml"],
-            "reviewId":"review-1",
-            "sourceSessionId":"session-observe",
-            "sourceEventId":"event-1",
-            "questionSha256":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "grantedToSessionId":"session-repair",
-            "approvedBy":"production-e2e",
-            "approvedAt":"2026-09-05T00:00:00Z"
-        }"#;
-        let authority =
-            parse_session_authority("approved-repair", grant, "session-repair", "multiagent")
-                .expect("valid repair authority");
-        assert!(authority.permits_reviewed_ops());
-        assert!(authority.permits_workspace_write(
-            std::path::Path::new("/repo"),
-            &[std::path::PathBuf::from("/repo/deploy/service.yaml")]
-        ));
-        assert!(!authority.permits_workspace_write(
-            std::path::Path::new("/repo"),
-            &[std::path::PathBuf::from("/repo/deploy/other.yaml")]
-        ));
-
-        let execute = AuthorityRequest::from_cli(
-            "ops",
-            &strings(&[
-                "execute",
-                "--request-file",
-                "/state/request.json",
-                "--reviewer",
-                "ops-reviewer-01",
-            ]),
-        )
-        .expect("typed reviewed operation");
-        assert!(execute.allowed_for_session_authority(&authority));
-
-        let observe = parse_session_authority("observe", "null", "session-observe", "multiagent")
-            .expect("observe authority");
-        assert!(!execute.allowed_for_session_authority(&observe));
-        assert!(!observe.permits_reviewed_ops());
-
-        let ops_only = grant
-            .replace(
-                r#""effects":["source-write","reviewed-ops"]"#,
-                r#""effects":["reviewed-ops"]"#,
-            )
-            .replace(r#""paths":["deploy/service.yaml"]"#, r#""paths":[]"#);
-        let ops_authority =
-            parse_session_authority("approved-repair", &ops_only, "session-repair", "multiagent")
-                .expect("valid reviewed-ops-only authority");
-        assert!(ops_authority.permits_reviewed_ops());
-        assert!(!ops_authority.permits_workspace_write(
-            std::path::Path::new("/repo"),
-            &[std::path::PathBuf::from("/repo/deploy/service.yaml")]
-        ));
-        let invalid = grant.replace(
-            r#""effects":["source-write","reviewed-ops"]"#,
-            r#""effects":["source-write","admin"]"#,
-        );
-        assert!(parse_session_authority(
-            "approved-repair",
-            &invalid,
-            "session-repair",
-            "multiagent"
-        )
-        .err()
-        .expect("grant with an unknown effect must fail")
-        .contains("incomplete"));
     }
 
     #[test]

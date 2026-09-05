@@ -43,7 +43,7 @@ The control server must receive the same internal token file and configure:
 The session Job template must expose immutable session Secret keys
 `authority-scope` and `mutation-grant.json` as
 `MULTIAGENT_AUTHORITY_SCOPE` and `MULTIAGENT_MUTATION_GRANT_JSON`, and bind the
-grant to the selected repository and fresh execution ID.
+grant to the selected repository and fresh Session ID.
 
 ## Local tests
 
@@ -69,8 +69,8 @@ following together:
 5. A repair proposal appears automatically in the terminal review window.
 6. `no` closes the thread without a new session or production action.
 7. On a separate test event, `yes` creates a fresh path-bound
-   `approved-repair` session carrying the original review question and digest,
-   only the proposed exact source paths and/or `reviewed-ops` effect.
+   `user` Session carrying the original review question and digest. Its initial
+   Execution has only the proposed exact paths and/or `reviewed-ops` effect.
 8. Any production mutation still passes the normal independent reviewer,
    runbook, permit, allowlist, receipt, Logger, and trace gates.
 

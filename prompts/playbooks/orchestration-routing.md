@@ -5,8 +5,9 @@ own role-specific procedure; this file does not repeat them.
 
 ## Select A Role
 
-- A fresh execution is observe-only. Answer directly from conversation, Wiki,
-  repository, or non-mutating external evidence when another agent would not
+- A fresh authenticated user Session begins with a mechanically read-only
+  Execution. Answer directly from conversation, Wiki, repository, or
+  non-mutating external evidence when another agent would not
   materially improve the result. Persist the response at the
   `resultCandidate.path` returned by workflow context, then request
   `multiagent orchestrator complete --observe --result-file PATH`.
@@ -17,13 +18,19 @@ own role-specific procedure; this file does not repeat them.
   model solely to review a read-only answer.
 - Query the organizational Wiki directly for both routing and caller-facing
   cited evidence. Wiki use does not force a reader, scout, or reviewer.
-- If repair is required, inspect enough to state one bounded question and the
-  exact effects requested. For source writes, include every affected repository
-  path with `--path REPO_PATH`. For production mutation, include
-  `--reviewed-ops`. End the observe execution with
+- For an authenticated user request that requires mutation, ask the Supervisor
+  to advance the same Session with
+  `multiagent orchestrator request-mutation [--path REPO_PATH ...] [--reviewed-ops]`.
+  Request every exact source path and no broader effect than the goal needs.
+  Continue through the normal source or reviewed-ops lifecycle only after the
+  Supervisor accepts the new Execution.
+- An external `observe` Session cannot advance itself. If repair is required,
+  inspect enough to state one bounded question and the exact effects requested.
+  For source writes, include every affected repository path with `--path
+  REPO_PATH`. For production mutation, include `--reviewed-ops`. End the observe Session with
   `multiagent orchestrator complete --request-review --result-file PATH [--path REPO_PATH ...] [--reviewed-ops]`.
-- Use a worker or reviewed-ops flow only in the fresh `approved-repair`
-  execution created after the user approves those exact effects.
+- Approval creates a fresh `user` Session with those immutable effects. It
+  cannot request broader effects.
 - Let the assigned confined role request a bounded external read or repository
   materialization directly through the supervisor when prod-mcp advertises it as
   non-mutating read/materialize with no approval roles.
@@ -63,14 +70,15 @@ validation-scheduling.md and hold one validation lease per package. Give technic
 
 - A source worker needs an approved implementation context and active
   implementation permit.
-- Observe completion is available only to an immutable observe-only session.
+- Observe completion is available only while the current Execution is
+  mechanically read-only.
   Source writes and mutating production operations are denied before execution,
   so completion does not infer safety from role count, a second model, or a
   post-hoc diff check.
 - A repair review request must contain one bounded question and at least one
   explicit effect: exact repository-relative source paths, `reviewed-ops`, or
-  both. Approval starts a fresh execution with only those effects; it does not
-  upgrade the completed observe session.
+  both. Approval starts a fresh user Session whose first Execution contains
+  only those effects; it does not upgrade the completed external observe Session.
 - Ops execution needs finalized reviewer evidence bound to the exact request,
   goal, runbook metadata, and runbook bytes.
 - Post-implementation review types and diff bindings come from persisted

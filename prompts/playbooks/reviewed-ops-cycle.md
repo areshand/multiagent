@@ -70,7 +70,7 @@ reviewer cannot accept, the cycle issues no operation permit, persists the
 supervisor-sealed reviewer evidence and one bounded human-review question,
 marks the workflow complete with the `human-review` route, and returns a
 terminal `human_review_required` result. A later caller answer starts a new
-execution session. Never create a second ops identity.
+Session. Never create a second ops identity.
 
 The cycle already waits. Do not call `subagent wait` afterward, and do not read,
 tail, grep, find, or list unrelated agent logs, transcripts, role homes, or

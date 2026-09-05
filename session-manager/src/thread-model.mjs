@@ -182,7 +182,7 @@ export class InMemoryThreadStore {
         threadId,
         ordinal: [...this.sessions.values()].filter((candidate) => candidate.threadId === threadId).length + 1,
         actorSubject: actor,
-        authorityScope: "observe",
+        authorityScope: "user",
         mutationGrant: null,
         triggerMessageId: messageId,
         status: "queued",
@@ -484,7 +484,7 @@ export class InMemoryThreadStore {
     if (decision === "approve") {
       const approvalText = [
         `I approve repair review ${review.id} (${review.questionSha256}).`,
-        "Continue this durable thread in a fresh execution session, limited to the exact reviewed request:",
+        "Continue this durable thread in a fresh Session, limited to the exact reviewed request:",
         review.question,
       ].join("\n");
       session = {
@@ -492,7 +492,7 @@ export class InMemoryThreadStore {
         threadId: thread.id,
         ordinal: [...this.sessions.values()].filter((candidate) => candidate.threadId === thread.id).length + 1,
         actorSubject: actor,
-        authorityScope: "approved-repair",
+        authorityScope: "user",
         mutationGrant: {
           kind: "review-approved-repair",
           effects: approvedEffects,
@@ -608,7 +608,7 @@ export class InMemoryThreadStore {
     return clone({
       threadId,
       sessionId,
-      authorityScope: session.authorityScope || "human",
+      authorityScope: session.authorityScope || "user",
       mutationGrant: session.mutationGrant || null,
       throughSequence: thread.headSequence,
       checkpoint,

@@ -421,7 +421,7 @@ function launchSession(id, repository, resume, actor, originalTask = "", metadat
       : "",
     MULTIAGENT_CALLER_SUBJECT: `caller-${crypto.createHash("sha256").update(authorityActor).digest("hex").slice(0, 32)}`,
     MULTIAGENT_CALLER_APPROVED_AT: authorityApprovedAt,
-    MULTIAGENT_AUTHORITY_SCOPE: metadata.authorityScope || existing?.authorityScope || "human",
+    MULTIAGENT_AUTHORITY_SCOPE: metadata.authorityScope || existing?.authorityScope || "user",
     MULTIAGENT_MUTATION_GRANT_JSON: JSON.stringify(metadata.mutationGrant || existing?.mutationGrant || null),
     MULTIAGENT_REPOSITORY_NAME: repository,
   };
@@ -434,7 +434,7 @@ function launchSession(id, repository, resume, actor, originalTask = "", metadat
     authorizingEventId: metadata.authorizingEventId || existing?.authorizingEventId || id,
     createdBy: existing?.createdBy || metadata.ownerSubject || actor, createdAt: existing?.createdAt || now,
     authorityActor, authorityApprovedAt,
-    authorityScope: metadata.authorityScope || existing?.authorityScope || "human",
+    authorityScope: metadata.authorityScope || existing?.authorityScope || "user",
     mutationGrant: metadata.mutationGrant || existing?.mutationGrant || null,
     automaticResumeAttempts: resume ? Number(existing?.automaticResumeAttempts || 0) : 0,
     resumedBy: resume ? actor : undefined, resumedAt: resume ? now : undefined,
@@ -460,7 +460,7 @@ async function launchGatewaySession(id, repository, resume, actor, originalTask 
     gatewayToken: issueWorkerToken(id, sessionWorkerTokenTtlMs),
     task,
     actor: callerSubject,
-    authorityScope: metadata.authorityScope || "human",
+    authorityScope: metadata.authorityScope || "user",
     mutationGrant: metadata.mutationGrant || null,
     repositoryName: repository,
     repositoryUrl: repositoryConfig.url,
@@ -480,7 +480,7 @@ async function launchGatewaySession(id, repository, resume, actor, originalTask 
     autoResume: true,
     createdBy: metadata.ownerSubject || actor,
     authorityActor: actor,
-    authorityScope: metadata.authorityScope || "human",
+    authorityScope: metadata.authorityScope || "user",
     mutationGrant: metadata.mutationGrant || null,
     authorityApprovedAt: now,
     createdAt: now,
@@ -748,7 +748,7 @@ async function launchThreadExecution(thread, session) {
       leaseGeneration: session.leaseGeneration,
       authorizingEventId: session.triggerMessageId,
       ownerSubject: thread.ownerSubject,
-      authorityScope: session.authorityScope || "human",
+      authorityScope: session.authorityScope || "user",
       mutationGrant: session.mutationGrant || null,
     });
 }
@@ -1336,7 +1336,7 @@ if (workerMode) {
   const threadId = String(process.env.MULTIAGENT_THREAD_ID || id);
   const leaseGeneration = Number(process.env.MULTIAGENT_LEASE_GENERATION || "1");
   const authorizingEventId = String(process.env.MULTIAGENT_AUTHORIZING_EVENT_ID || id);
-  const authorityScope = String(process.env.MULTIAGENT_AUTHORITY_SCOPE || "human");
+  const authorityScope = String(process.env.MULTIAGENT_AUTHORITY_SCOPE || "user");
   const mutationGrant = JSON.parse(process.env.MULTIAGENT_MUTATION_GRANT_JSON || "null");
   if (!registry.sessions[id]) launchSession(id, repository, resume, actor, fs.readFileSync(taskFile, "utf8"), {
     threadId,

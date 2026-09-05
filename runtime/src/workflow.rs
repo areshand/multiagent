@@ -1672,7 +1672,7 @@ pub fn supervisor_complete_observe(id: &str) -> Result<String, String> {
     Ok(result)
 }
 
-/// Ends an observe-only execution with one exact repair proposal. A proposal
+/// Ends an observe-only Session with one exact repair proposal. A proposal
 /// may request path-bound source writes, entry into independently reviewed
 /// operations, or both.
 pub fn supervisor_request_review(
@@ -1756,9 +1756,10 @@ pub fn supervisor_request_review(
 }
 
 fn require_observe_authority() -> Result<(), String> {
-    match std::env::var("MULTIAGENT_AUTHORITY_SCOPE").as_deref() {
-        Ok("observe" | "diagnosis-only") => Ok(()),
-        _ => Err("observe completion requires an observe-only execution session".into()),
+    if crate::execution::configured()?.is_read_only() {
+        Ok(())
+    } else {
+        Err("observe completion requires the current Execution to remain read-only".into())
     }
 }
 

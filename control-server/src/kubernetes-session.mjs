@@ -17,7 +17,7 @@ export function renderSessionTemplate(value, replacements) {
   return rendered;
 }
 
-export function sessionSecret(id, namespace, task, actor, threadId = id, leaseGeneration = 1, authorizingEventId = id, gatewayToken = "", authorityScope = "human", mutationGrant = null) {
+export function sessionSecret(id, namespace, task, actor, threadId = id, leaseGeneration = 1, authorizingEventId = id, gatewayToken = "", authorityScope = "user", mutationGrant = null) {
   return {
     apiVersion: "v1",
     kind: "Secret",
@@ -110,7 +110,7 @@ export class KubernetesSessionClient {
     return `/api/v1/namespaces/${encodeURIComponent(this.namespace)}/${resource}${name ? `/${encodeURIComponent(name)}` : ""}${query}`;
   }
 
-  async createSession({ id, threadId = id, leaseGeneration = 1, authorizingEventId = id, gatewayToken = "", task, actor, authorityScope = "human", mutationGrant = null, repositoryName, repositoryUrl, repositoryAuthentication = "anonymous", resume, template }) {
+  async createSession({ id, threadId = id, leaseGeneration = 1, authorizingEventId = id, gatewayToken = "", task, actor, authorityScope = "user", mutationGrant = null, repositoryName, repositoryUrl, repositoryAuthentication = "anonymous", resume, template }) {
     const secret = sessionSecret(id, this.namespace, task, actor, threadId, leaseGeneration, authorizingEventId, gatewayToken, authorityScope, mutationGrant);
     const job = renderSessionTemplate(template, {
       SESSION_ID: id,

@@ -789,8 +789,8 @@ pub fn launch(args: &[String]) -> Result<ExitCode, String> {
     if env::var("MULTIAGENT_UID_SANDBOX").as_deref() == Ok("1") {
         #[cfg(target_os = "linux")]
         {
-            let authority = crate::authority::configured_session_authority()?;
-            if matches!(authority.scope(), "observe" | "diagnosis-only") {
+            let authority = crate::execution::configured()?;
+            if matches!(authority.scope(), "user" | "observe" | "diagnosis-only") {
                 set_workspace_tree_owner(&root, 0, false)?;
             }
         }
@@ -1165,18 +1165,8 @@ fn write_bootstrap(
             .ok_or_else(|| "missing MULTIAGENT_BIN in launch environment".to_string())?;
         text.push_str("agent_status=$?\n");
         text.push_str("if [[ $agent_status -eq 0 ]]; then\n");
-        let completion = if matches!(
-            environment
-                .get("MULTIAGENT_AUTHORITY_SCOPE")
-                .map(String::as_str),
-            Some("observe" | "diagnosis-only")
-        ) {
-            "--observe"
-        } else {
-            "--auto-clarification"
-        };
         text.push_str(&format!(
-            "  {} orchestrator complete {completion} --result-file {} >/dev/null 2>&1 || true\n",
+            "  {} orchestrator complete --auto --result-file {} >/dev/null 2>&1 || true\n",
             shell_escape(executable),
             shell_escape(&last_message.display().to_string())
         ));
@@ -1193,7 +1183,7 @@ fn orchestrator_working_directory(root: &Path) -> &Path {
 
 fn resume_user_turn(original_task: Option<&str>, followup: Option<&str>) -> String {
     let mut turn = String::from(
-        "Continue this same execution session after a prior headless pass exited before lifecycle completion.\n\
+        "Continue this same Session after a prior headless pass exited before lifecycle completion.\n\
          Reconcile the persisted workflow and subagent state against every unfinished requirement in the authenticated original task.\n\
          A prior prose answer is not completion. If one bounded clarification is still required, persist that exact question and use the direct-response completion route; do not guess the missing user choice. Otherwise finish the work, satisfy the required lifecycle gates, and produce the final answer.\n",
     );
@@ -1243,9 +1233,18 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
             .iter()
             .any(|arg| matches!(arg.as_str(), "-h" | "--help"))
     {
-        println!("Usage:\n  multiagent orchestrator complete\n  multiagent orchestrator complete --observe --result-file PATH\n  multiagent orchestrator complete --request-review --result-file PATH [--path REPO_PATH ...] [--reviewed-ops]\n  multiagent orchestrator complete --direct-response --result-file PATH\n  multiagent orchestrator complete --clarification --result-file PATH\n  multiagent orchestrator complete --auto-clarification --result-file PATH\n  multiagent orchestrator complete --read-only --result-file PATH --reviewer NAME\n  multiagent orchestrator complete --human-review --result-file PATH --reviewer NAME\n  multiagent orchestrator complete --external-only --result-file PATH\n\nObserve-only completion returns directly without a reviewer. A repair request must name at least one exact source path or explicitly request the independently reviewed operations flow.");
+        println!("Usage:\n  multiagent orchestrator request-mutation [--path REPO_PATH ...] [--reviewed-ops]\n  multiagent orchestrator complete\n  multiagent orchestrator complete --auto --result-file PATH\n  multiagent orchestrator complete --observe --result-file PATH\n  multiagent orchestrator complete --request-review --result-file PATH [--path REPO_PATH ...] [--reviewed-ops]\n  multiagent orchestrator complete --direct-response --result-file PATH\n  multiagent orchestrator complete --clarification --result-file PATH\n  multiagent orchestrator complete --auto-clarification --result-file PATH\n  multiagent orchestrator complete --read-only --result-file PATH --reviewer NAME\n  multiagent orchestrator complete --human-review --result-file PATH --reviewer NAME\n  multiagent orchestrator complete --external-only --result-file PATH\n\nEach user session starts with a read-only Execution. The orchestrator may request exact source paths and/or reviewed-ops from the Supervisor without starting another session. External observe sessions must request human review instead.");
         return Ok(ExitCode::SUCCESS);
     }
+    if let Some((paths, reviewed_ops)) = mutation_request_options(args) {
+        let execution = crate::execution::request_mutation(&paths, reviewed_ops)?;
+        println!(
+            "execution advanced\tordinal={}\teffects=bounded\tauthority=supervisor",
+            execution.ordinal()
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
+
     #[derive(Clone, Copy)]
     enum CompletionRoute<'a> {
         Source,
@@ -1266,6 +1265,16 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
         && args[2] == "--result-file"
     {
         CompletionRoute::External(&args[3])
+    } else if args.len() == 4
+        && args[0] == "complete"
+        && args[1] == "--auto"
+        && args[2] == "--result-file"
+    {
+        if crate::execution::configured()?.is_read_only() {
+            CompletionRoute::Observe(&args[3])
+        } else {
+            CompletionRoute::AutoClarification(&args[3])
+        }
     } else if args.len() == 4
         && args[0] == "complete"
         && args[1] == "--observe"
@@ -1379,6 +1388,33 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
             .unwrap_or_else(|| "unknown".into())
     );
     Ok(ExitCode::SUCCESS)
+}
+
+fn mutation_request_options(args: &[String]) -> Option<(Vec<String>, bool)> {
+    if args.first().map(String::as_str) != Some("request-mutation") || args.len() < 2 {
+        return None;
+    }
+    let mut paths = Vec::new();
+    let mut reviewed_ops = false;
+    let mut index = 1;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--path" if index + 1 < args.len() && !args[index + 1].is_empty() => {
+                paths.push(args[index + 1].clone());
+                index += 2;
+            }
+            "--reviewed-ops" if !reviewed_ops => {
+                reviewed_ops = true;
+                index += 1;
+            }
+            _ => return None,
+        }
+    }
+    if paths.is_empty() && !reviewed_ops {
+        None
+    } else {
+        Some((paths, reviewed_ops))
+    }
 }
 
 fn request_review_options(args: &[String]) -> Option<(Vec<String>, bool)> {
@@ -4639,7 +4675,7 @@ fn prepare_workspace_write_boundary(
 ) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
-    let authority = crate::authority::configured_session_authority()?;
+    let authority = crate::execution::configured()?;
     if !authority.permits_workspace_write(root, owned_paths) {
         return Err(format!(
             "session authority {} does not grant the exact requested workspace paths",

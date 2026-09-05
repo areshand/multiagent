@@ -25,12 +25,13 @@ test("thread ownership scopes list, history, and direct lookup", () => {
   assert.throws(() => store.readEventsAfter({ threadId: "thread-1", actor: "user-b" }), (error) => error.statusCode === 404);
 });
 
-test("messages are idempotent and route across fresh execution sessions", () => {
+test("messages are idempotent and route across fresh Sessions", () => {
   const store = storeWithThread();
   const first = store.appendUserMessageAndRoute({
     threadId: "thread-1", actor: "user-a", messageId: "message-1", text: "Start", newSessionId: "session-a", now,
   });
   assert.equal(first.createdSession, true);
+  assert.equal(first.session.authorityScope, "user");
   assert.equal(first.session.leaseGeneration, 1);
   assert.deepEqual(store.appendUserMessageAndRoute({
     threadId: "thread-1", actor: "user-a", messageId: "message-1", text: "Start", newSessionId: "unused", now,
@@ -176,7 +177,7 @@ test("Slack events create idempotent observe-only threads owned by the human rev
   assert.throws(() => store.getThreadForActor("thread-slack", "integration:slack:T123"), /thread not found/);
 });
 
-test("approving a repair review creates a fresh path-bound repair execution session", () => {
+test("approving a repair review creates a fresh path-bound repair Session", () => {
   const store = storeAtPendingSlackReview();
   const reviews = store.listReviewsForActor({ actor: "production-e2e" });
   assert.equal(reviews.length, 1);
@@ -198,7 +199,7 @@ test("approving a repair review creates a fresh path-bound repair execution sess
   assert.equal(approved.session.id, "session-repair");
   assert.equal(approved.session.ordinal, 2);
   assert.equal(approved.session.actorSubject, "production-e2e");
-  assert.equal(approved.session.authorityScope, "approved-repair");
+  assert.equal(approved.session.authorityScope, "user");
   assert.deepEqual(approved.session.mutationGrant.paths, ["deploy/service.yaml"]);
   assert.deepEqual(approved.session.mutationGrant.effects, ["source-write", "reviewed-ops"]);
   assert.equal(approved.session.mutationGrant.grantedToSessionId, "session-repair");
@@ -220,7 +221,7 @@ test("an operations-only approval grants reviewed ops without workspace writes",
   });
   assert.deepEqual(approved.session.mutationGrant.paths, []);
   assert.deepEqual(approved.session.mutationGrant.effects, ["reviewed-ops"]);
-  assert.equal(approved.session.authorityScope, "approved-repair");
+  assert.equal(approved.session.authorityScope, "user");
   assert.throws(
     () => storeAtPendingSlackReview({ repairPaths: [], effects: ["source-write"] }),
     /repair paths/);

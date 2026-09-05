@@ -252,7 +252,7 @@ fn register_launch(args: &[String], renew: bool) -> Result<(), String> {
     if access == "workspace-write" {
         let root = fs::canonicalize(config::root()?)
             .map_err(|error| format!("canonicalize repository for writer grant: {error}"))?;
-        let authority = crate::authority::configured_session_authority()?;
+        let authority = crate::execution::configured()?;
         if !authority.permits_workspace_write(&root, &owned_paths) {
             return Err(format!(
                 "session authority {} does not grant the writer's exact owned paths",
@@ -928,8 +928,8 @@ fn serve_connection(stream: &mut UnixStream) -> Result<bool, String> {
         );
         return Ok(false);
     }
-    let session_authority = crate::authority::configured_session_authority()?;
-    if !request.allowed_for_session_authority(&session_authority) {
+    let execution = crate::execution::configured()?;
+    if !request.allowed_for_execution(&execution) {
         let _ = write_response(
             stream,
             &Response {
@@ -937,7 +937,7 @@ fn serve_connection(stream: &mut UnixStream) -> Result<bool, String> {
                 stdout: String::new(),
                 stderr: format!(
                     "authority supervisor: scope {} is not authorized for: {}\n",
-                    session_authority.scope(),
+                    execution.scope(),
                     request.display()
                 ),
             },

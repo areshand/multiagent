@@ -446,7 +446,7 @@ MOCK_TMUX_HAS_SESSION=0 \
   "$ROOT/launch.sh" --session launch-headless --root "$LAUNCH_TARGET" --no-attach \
   >"$TMPDIR/launch-headless.out"
 HEADLESS_LAUNCH_BOOTSTRAP="$HEADLESS_LAUNCH_STATE/orchestrator-bootstrap.sh"
-assert_file_contains "$HEADLESS_LAUNCH_BOOTSTRAP" "orchestrator complete --auto-clarification --result-file"
+assert_file_contains "$HEADLESS_LAUNCH_BOOTSTRAP" "orchestrator complete --auto --result-file"
 assert_file_contains "$HEADLESS_LAUNCH_BOOTSTRAP" 'exit "$agent_status"'
 assert_file_contains "$HEADLESS_LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "Authenticated Original Task Envelope"
 assert_file_contains "$HEADLESS_LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "Check testnet validator logs for errors."

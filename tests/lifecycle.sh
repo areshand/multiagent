@@ -57,6 +57,7 @@ PROMPT_BUNDLE="$TEST_TMP/orchestrator-bundle.md"
 assert_contains "$PROMPT_BUNDLE" "BEGIN ORCHESTRATION ROUTING CONTRACT"
 assert_contains "$PROMPT_BUNDLE" "--observe"
 assert_contains "$PROMPT_BUNDLE" "--request-review"
+assert_contains "$PROMPT_BUNDLE" "orchestrator request-mutation"
 assert_contains "$PROMPT_BUNDLE" "resultCandidate.path"
 assert_contains "$PROMPT_BUNDLE" "BEGIN MANDATORY IMPLEMENTATION LIFECYCLE"
 assert_contains "$PROMPT_BUNDLE" "post-implementation -> pre-implementation"
@@ -80,6 +81,71 @@ if [[ "$(wc -l <"$OBSERVE_STATE/workflows/WF-OBSERVE/lifecycle/reviews.tsv")" -n
   echo "expected observe completion to require no reviewer" >&2
   exit 1
 fi
+
+USER_READ_STATE="$TEST_TMP/user-read-state"
+USER_READ_RESULT="$USER_READ_STATE/result.md"
+mkdir -p "$USER_READ_STATE"
+printf 'A direct user can finish read-only work without a reviewer.\n' >"$USER_READ_RESULT"
+MULTIAGENT_STATE_DIR="$USER_READ_STATE" MULTIAGENT_ORIGINAL_TASK_FILE="$OBSERVE_TASK" \
+  "$MULTIAGENT" workflow init WF-USER-READ >/dev/null
+MULTIAGENT_STATE_DIR="$USER_READ_STATE" MULTIAGENT_WORKFLOW_ID=WF-USER-READ \
+  MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 MULTIAGENT_AUTHORITY_SCOPE=user \
+  "$MULTIAGENT" orchestrator complete --auto --result-file "$USER_READ_RESULT" >/dev/null
+assert_contains "$USER_READ_STATE/workflows/WF-USER-READ/lifecycle/lifecycle.env" \
+  "terminal_outcome=succeeded"
+if [[ "$(wc -l <"$USER_READ_STATE/workflows/WF-USER-READ/lifecycle/reviews.tsv")" -ne 1 ]]; then
+  echo "expected a read-only user Execution to require no reviewer" >&2
+  exit 1
+fi
+
+USER_MUTATION_STATE="$TEST_TMP/user-mutation-state"
+USER_MUTATION_RESULT="$USER_MUTATION_STATE/result.md"
+mkdir -p "$USER_MUTATION_STATE"
+printf 'Mutation is now required.\n' >"$USER_MUTATION_RESULT"
+MULTIAGENT_STATE_DIR="$USER_MUTATION_STATE" MULTIAGENT_ORIGINAL_TASK_FILE="$OBSERVE_TASK" \
+  "$MULTIAGENT" workflow init WF-USER-MUTATION >/dev/null
+MULTIAGENT_STATE_DIR="$USER_MUTATION_STATE" MULTIAGENT_WORKFLOW_ID=WF-USER-MUTATION \
+  MULTIAGENT_AUTHORITY_SCOPE=user MULTIAGENT_SESSION=session-user \
+  MULTIAGENT_REPOSITORY_NAME=multiagent MULTIAGENT_AUTHORIZING_EVENT_ID=message-1 \
+  "$MULTIAGENT" orchestrator request-mutation --path src/lib.rs --reviewed-ops \
+  >"$TEST_TMP/user-mutation.out"
+assert_contains "$TEST_TMP/user-mutation.out" "execution advanced"
+assert_contains "$USER_MUTATION_STATE/runtime_state/active-execution.json" \
+  '"ordinal": 2'
+assert_contains "$USER_MUTATION_STATE/runtime_state/active-execution.json" \
+  '"paths": ['
+assert_contains "$USER_MUTATION_STATE/runtime_state/active-execution.json" \
+  '"src/lib.rs"'
+if MULTIAGENT_STATE_DIR="$USER_MUTATION_STATE" MULTIAGENT_WORKFLOW_ID=WF-USER-MUTATION \
+  MULTIAGENT_AUTHORITY_SCOPE=user MULTIAGENT_SESSION=session-user \
+  MULTIAGENT_REPOSITORY_NAME=multiagent MULTIAGENT_AUTHORIZING_EVENT_ID=message-1 \
+  "$MULTIAGENT" orchestrator request-mutation --path src/other.rs \
+  >"$TEST_TMP/user-mutation-widen.out" 2>&1; then
+  echo "expected an active bounded Execution to reject effect widening" >&2
+  exit 1
+fi
+assert_contains "$TEST_TMP/user-mutation-widen.out" \
+  "only an initial read-only user execution may request mutation"
+if MULTIAGENT_STATE_DIR="$USER_MUTATION_STATE" MULTIAGENT_WORKFLOW_ID=WF-USER-MUTATION \
+  MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 MULTIAGENT_AUTHORITY_SCOPE=user \
+  MULTIAGENT_SESSION=session-user MULTIAGENT_REPOSITORY_NAME=multiagent \
+  MULTIAGENT_AUTHORIZING_EVENT_ID=message-1 \
+  "$MULTIAGENT" orchestrator complete --observe --result-file "$USER_MUTATION_RESULT" \
+  >"$TEST_TMP/user-mutation-observe.out" 2>&1; then
+  echo "expected observe completion to reject an effect-bearing Execution" >&2
+  exit 1
+fi
+assert_contains "$TEST_TMP/user-mutation-observe.out" \
+  "observe completion requires the current Execution to remain read-only"
+if MULTIAGENT_STATE_DIR="$TEST_TMP/external-mutation-state" \
+  MULTIAGENT_AUTHORITY_SCOPE=observe \
+  "$MULTIAGENT" orchestrator request-mutation --path src/lib.rs \
+  >"$TEST_TMP/external-mutation.out" 2>&1; then
+  echo "expected an external observe Session to reject mutation activation" >&2
+  exit 1
+fi
+assert_contains "$TEST_TMP/external-mutation.out" \
+  "only an initial read-only user execution may request mutation"
 
 REPAIR_TASK="$TEST_TMP/repair-task.md"
 REPAIR_STATE="$TEST_TMP/repair-state"

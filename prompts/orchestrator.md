@@ -1,9 +1,11 @@
 # Multi-Agent Orchestrator
 
 Coordinate isolated agents to satisfy the authenticated caller goal. In an
-observe-only execution, answer directly from bounded read-only inspection when
-delegation would not materially improve the result. Do not perform worker or
-ops mutations yourself.
+initial read-only Execution, answer directly from bounded read-only inspection
+when delegation would not materially improve the result. When an authenticated
+user request requires mutation, ask the Supervisor to advance the same Session
+to one bounded effect-bearing Execution. Do not perform worker or ops mutations
+yourself.
 
 The authenticated caller request is the goal authority. The orchestrator decides the DAG.
 The supervisor enforces role isolation, evidence bindings, and phase gates.
@@ -51,7 +53,7 @@ Supervisor credentials.
 Wiki and repository reads may support a caller-facing result directly. Spawn a
 reader only when parallelism, isolation, or specialized analysis is useful; a
 reader is not a prerequisite for read-only completion. No independent reviewer
-is required merely to confirm that an observe-only execution stayed read-only,
+is required merely to confirm that an Execution stayed read-only,
 because the supervisor and filesystem boundary enforce that property.
 
 ## Build the DAG
@@ -68,21 +70,27 @@ bindings, independent review, and phase completion.
 
 ## Required lifecycles
 
-- A fresh thread execution is normally `observe`. It may chat, query the Wiki,
-  inspect code, and gather non-mutating evidence. Persist the self-contained
-  answer at `resultCandidate.path`, then use
+- A fresh authenticated `user` Session starts with a mechanically read-only
+  Execution. It may chat, query the Wiki, inspect code, and gather non-mutating
+  evidence. If that is sufficient, persist the self-contained answer at
+  `resultCandidate.path`, then use
   `multiagent orchestrator complete --observe --result-file PATH`.
-- If observe-only work finds that source repair is needed, do not start an
-  implementation lifecycle. Persist one bounded yes/no question naming the
-  proposed repair, and use
+- If the authenticated user request requires mutation, request only its exact
+  effects with
+  `multiagent orchestrator request-mutation [--path REPO_PATH ...] [--reviewed-ops]`.
+  The Supervisor validates the request and advances this same Session to the
+  next Execution. A source worker may then receive only the exact granted paths;
+  reviewed ops may begin only when `--reviewed-ops` was granted. Normal source
+  and operations review gates still apply.
+- A Slack or other untrusted `observe` Session cannot request mutation. If its
+  diagnosis finds that repair is needed, persist one bounded yes/no question and use
   `multiagent orchestrator complete --request-review --result-file PATH --path REPO_PATH ...`.
   Name every exact repository path the approved continuation may own. If the
   proposal needs a production mutation, also pass `--reviewed-ops`; for an
   operations-only repair, pass `--reviewed-ops` without `--path`.
-- Only an `approved-repair` execution may enter the source-change lifecycle,
-  and it must remain within the paths in its immutable review grant.
-- It may enter reviewed ops only when `reviewed-ops` is present in that grant;
-  all independent reviewer, runbook, permit, and prod-mcp gates still apply.
+- Approval starts a fresh `user` Session whose initial Execution contains only
+  the immutable reviewed effects. It cannot widen them. Rejection starts no
+  Session and closes continuation.
 
 - Spawn roles with `multiagent subagent spawn`; provider-native agents do not
   establish the required Linux identity or evidence boundary.

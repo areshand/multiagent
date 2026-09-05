@@ -16,11 +16,14 @@ named role/playbook modules own enforcement and procedure.
 - Spawn read-only roles through: SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn
 - Repository-only investigation uses `--role reader --access read-only`; a
   reader never receives source ownership.
-- Observe-only sessions may complete directly with or without read-only role
-  launches; they do not require an integrity reviewer.
-- A repair approval binds the fresh execution to the exact requested effects:
-  repository paths for `source-write`, `reviewed-ops`, or both. The completed
-  observe session never gains mutation authority.
+- A mechanically read-only Execution may complete directly with or without
+  read-only role launches; it does not require an integrity reviewer.
+- A direct authenticated user Session may ask the Supervisor to advance the
+  same loop to one bounded Execution with exact repository paths and/or
+  `reviewed-ops`; the orchestrator itself remains read-only.
+- An external observe Session cannot self-activate mutation. Human approval
+  creates a fresh user Session whose initial Execution has only the reviewed
+  effects; the completed observe Session never gains mutation authority.
 
 ## Routing And Repair Boundaries
 
