@@ -6,6 +6,7 @@ import {
   automaticResumeLimit,
   completionExitDelayMs,
   controlMode,
+  executionTerminalOutcome,
   findActiveSession,
   normalizeWorkerReport,
   ownsThreadProjection,
@@ -14,6 +15,7 @@ import {
   selectFinalMessage,
   sessionControlInvocation,
   sessionLaunchInvocation,
+  sessionStatusForTerminalOutcome,
   shouldAutomaticallyResume,
   submitLocalFollowup,
   validResourceId,
@@ -38,6 +40,20 @@ test("headless sessions restart for follow-ups and recover incomplete lifecycle 
   assert.equal(shouldAutomaticallyResume({ status: "running", autoResume: true, automaticResumeAttempts: 2 }, 3), true);
   assert.equal(shouldAutomaticallyResume({ status: "running", autoResume: true, automaticResumeAttempts: 3 }, 3), false);
   assert.equal(shouldAutomaticallyResume({ status: "completed", autoResume: true, automaticResumeAttempts: 0 }, 3), false);
+});
+
+test("every stopped execution maps immediately to one terminal outcome", () => {
+  assert.equal(executionTerminalOutcome({ phase: "complete", outcome: "succeeded", live: false }), "succeeded");
+  assert.equal(executionTerminalOutcome({ phase: "complete", outcome: "failed", live: true }), "failed");
+  assert.equal(executionTerminalOutcome({ phase: "complete", outcome: "review_requested", live: false }), "review_requested");
+  assert.equal(executionTerminalOutcome({ phase: "complete", outcome: "", live: false }), "succeeded");
+  assert.equal(executionTerminalOutcome({ phase: "complete", outcome: "corrupt", live: false }), "failed");
+  assert.equal(executionTerminalOutcome({ phase: "implementation", outcome: "", live: false }), "failed");
+  assert.equal(executionTerminalOutcome({ phase: "implementation", outcome: "", live: true }), null);
+  assert.equal(sessionStatusForTerminalOutcome("succeeded"), "completed");
+  assert.equal(sessionStatusForTerminalOutcome("review_requested"), "completed");
+  assert.equal(sessionStatusForTerminalOutcome("failed"), "failed");
+  assert.throws(() => sessionStatusForTerminalOutcome("retrying"), /invalid terminal outcome/);
 });
 
 test("control server session IDs match the shared Rust contract", async () => {
@@ -85,6 +101,7 @@ test("completed session reports prefer the explicit bounded caller result", () =
     transcript: { taskId: "task-1" },
     message: null,
     completionRoute: null,
+    terminalOutcome: "succeeded",
     responseType: "assistant_message",
   });
   assert.deepEqual(normalizeWorkerReport({
@@ -92,15 +109,52 @@ test("completed session reports prefer the explicit bounded caller result", () =
     transcript: null,
     message: "Which repository should I check?",
     completionRoute: "direct-response",
+    terminalOutcome: "succeeded",
   }), {
     report: "completed report",
     transcript: null,
     message: "Which repository should I check?",
     completionRoute: "direct-response",
+    terminalOutcome: "succeeded",
     responseType: "question",
   });
   assert.equal(normalizeWorkerReport({ report: "" }), null);
   assert.equal(normalizeWorkerReport({ report: "x".repeat(64 * 1024 + 1) }), null);
+  assert.equal(normalizeWorkerReport({ report: "bad", terminalOutcome: "retrying" }), null);
+  assert.equal(normalizeWorkerReport({ report: "bad", completionRoute: "human-review", terminalOutcome: "succeeded" }), null);
+  assert.equal(normalizeWorkerReport({ report: "bad", completionRoute: "human-review", terminalOutcome: "review_requested", message: "not a question" }), null);
+});
+
+test("repair reports preserve only explicit source and reviewed-operation effects", () => {
+  assert.deepEqual(normalizeWorkerReport({
+    report: "A reviewed restart is required.",
+    message: "Approve a reviewed restart?",
+    completionRoute: "request-review",
+    terminalOutcome: "review_requested",
+    reviewRequest: { effects: ["reviewed-ops"], paths: [] },
+  }), {
+    report: "A reviewed restart is required.",
+    transcript: null,
+    message: "Approve a reviewed restart?",
+    completionRoute: "request-review",
+    terminalOutcome: "review_requested",
+    responseType: "question",
+    reviewRequest: { effects: ["reviewed-ops"], paths: [] },
+  });
+  assert.equal(normalizeWorkerReport({
+    report: "bad",
+    message: "Approve?",
+    completionRoute: "request-review",
+    terminalOutcome: "review_requested",
+    reviewRequest: { effects: ["source-write"], paths: [] },
+  }), null);
+  assert.equal(normalizeWorkerReport({
+    report: "bad",
+    message: "Approve?",
+    completionRoute: "request-review",
+    terminalOutcome: "review_requested",
+    reviewRequest: { effects: ["admin"], paths: [] },
+  }), null);
 });
 
 test("production-shaped reports publish the user result instead of lifecycle metadata", () => {
@@ -108,6 +162,7 @@ test("production-shaped reports publish the user result instead of lifecycle met
     report: "# thread-latest-open-pr\n\nStatus: completed\nWorkflow: run-1\n\n## Final agent message\nLatest open PR: #421\n\n## Trace references\n- agents/ops-01/events.jsonl",
     message: "Latest open PR: #421 — fix: remove global waypoint signature-verification bypass",
     completionRoute: "external-only",
+    terminalOutcome: "succeeded",
     transcript: { traceReferences: ["agents/ops-01/events.jsonl"] },
   });
   assert.deepEqual(workerReportPublicEvent("session-1", report), {
@@ -124,6 +179,7 @@ test("failed sessions publish their bounded blocker instead of a generic interru
     report: "# session-1\n\nStatus: failed\n\n## Final agent message\nThe Grafana read is blocked by an operation version mismatch.",
     message: "The Grafana read is blocked: the runbook requests 1.0.0 but prod-mcp certifies 1.1.0.",
     completionRoute: "external-only",
+    terminalOutcome: "failed",
     transcript: { traceReferences: ["agents/ops-01/events.jsonl"] },
   });
   assert.deepEqual(workerReportInterruptedEvent("session-1", report, "Execution session failed"), {

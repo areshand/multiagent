@@ -128,7 +128,7 @@ fn template(args: &[String]) -> Result<ExitCode, String> {
             "goal": "replace with the bounded operation goal",
             "operation": {
                 "id": "replace.with.operation-id",
-                "version": "1.0.0"
+                "version": "replace-with-version-from-ops-describe"
             },
             "parameters": {},
             "runbook": {
@@ -792,13 +792,20 @@ fn enforce_authority_scope(template: &Value) -> Result<(), String> {
         .unwrap_or("human")
     {
         "human" => Ok(()),
-        "diagnosis-only" => {
+        "observe" | "diagnosis-only" => {
             let operation_id = template
                 .pointer("/operation/id")
                 .and_then(Value::as_str)
                 .ok_or("ops request has no operation ID")?;
             let capabilities = call_prod_mcp_tool("operations_capabilities", json!({}))?;
             validate_diagnosis_capability(operation_capability(&capabilities, operation_id)?)
+        }
+        "user" => {
+            if crate::execution::configured()?.permits_reviewed_ops() {
+                Ok(())
+            } else {
+                Err("the active Execution does not authorize reviewed operations".into())
+            }
         }
         _ => Err("MULTIAGENT_AUTHORITY_SCOPE is invalid".into()),
     }

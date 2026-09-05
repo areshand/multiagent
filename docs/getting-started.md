@@ -388,6 +388,8 @@ Possible actions include:
 - `restore`: closed agent with enough durable context;
 - `skip-open`: its tmux window already exists;
 - `skip-finalized`: it completed or was intentionally stopped;
+- `skip-failed`: it failed or exited without a successful terminal report and
+  requires an explicit orchestrator retry decision;
 - `skip-blocked`: it needs an external decision;
 - `skip-unknown`: state is insufficient and needs manual inspection.
 
@@ -399,7 +401,9 @@ multiagent subagent restore-all
 ```
 
 Restore creates a fresh process attempt and preserves prior transcripts and
-traces. It does not overwrite the evidence used for recovery.
+traces. It does not overwrite the evidence used for recovery. `restore-all`
+never retries `skip-failed`; a deliberate retry uses `restore NAME --force`
+with a non-empty instruction stating the orchestrator's new decision.
 
 ## Write Policy
 

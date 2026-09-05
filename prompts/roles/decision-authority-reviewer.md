@@ -18,7 +18,7 @@ Do not write generic verdicts such as `ACCEPTED`, `REJECTED`, `PASS`, `FAIL`, or
 the verdict.
 
 When the verdict is `user-choice-required`, the supervisor mechanically seals
-the `user-question`, terminates the execution session without issuing further
+the `user-question`, terminates the Session without issuing further
 authority, and returns that question to the human. Ask exactly one bounded
 question ending in a question mark.
 

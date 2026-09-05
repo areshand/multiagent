@@ -48,6 +48,7 @@ const ENV_ORDER: &[&str] = &[
     "iteration_worker_count",
     "candidate_diff_hash",
     "reviewed_diff_hash",
+    "terminal_outcome",
     "human_review_status",
     "human_review_request",
     "human_review_request_sha256",
@@ -539,6 +540,7 @@ fn initialize_id(id: &str, resume: bool) -> Result<(), String> {
         ("iteration_worker_count", ""),
         ("candidate_diff_hash", ""),
         ("reviewed_diff_hash", ""),
+        ("terminal_outcome", ""),
         ("human_review_status", ""),
         ("human_review_request", ""),
         ("human_review_request_sha256", ""),
@@ -1503,6 +1505,7 @@ pub fn supervisor_complete(id: &str) -> Result<String, String> {
     let diff = state_value(&state, "candidate_diff_hash").to_string();
     state.insert("phase".into(), "complete".into());
     state.insert("reviewed_diff_hash".into(), diff.clone());
+    state.insert("terminal_outcome".into(), "succeeded".into());
     state.insert("updated_at".into(), timestamp());
     write_env(&p.state, &state)?;
     event(
@@ -1591,41 +1594,44 @@ pub fn supervisor_complete_external(id: &str) -> Result<String, String> {
                     receipt_path.display()
                 ));
             }
-            match (
-                structured.get("state").and_then(serde_json::Value::as_str),
-                structured
-                    .pointer("/outcome/disposition")
-                    .and_then(serde_json::Value::as_str),
-            ) {
-                (Some("succeeded"), Some("succeeded")) => successful_operations += 1,
-                (Some("failed"), Some("failed")) => failed_operations += 1,
-                (Some("blocked"), Some("blocked")) => blocked_operations += 1,
-                _ => {
-                    return Err(format!(
-                        "external-only completion requires consistently classified terminal receipts; {} has mismatched state and disposition",
-                        receipt_path.display()
-                    ));
-                }
+            match structured
+                .pointer("/outcome/disposition")
+                .and_then(serde_json::Value::as_str)
+            {
+                Some("succeeded") => successful_operations += 1,
+                Some("failed") => failed_operations += 1,
+                Some("blocked") => blocked_operations += 1,
+                _ => return Err(format!(
+                    "external-only completion requires outcome.disposition=succeeded, failed, or blocked; {} has no recognized terminal disposition",
+                    receipt_path.display()
+                )),
             }
         }
     }
-    if successful_operations == 0 && (blocked_operations == 0 || failed_operations > 0) {
+    if successful_operations + failed_operations + blocked_operations == 0 {
         return Err(
-            "external-only completion requires a successful reviewed operation receipt or a terminal reviewed blocker without executor failures".into(),
+            "external-only completion requires at least one terminal reviewed operation receipt"
+                .into(),
         );
     }
     crate::subagent::external_completion_gate_check()?;
     let result = format!("external-only:{successful_operations}");
+    let terminal_outcome = if failed_operations + blocked_operations > 0 {
+        "failed"
+    } else {
+        "succeeded"
+    };
     state.insert("phase".into(), "complete".into());
     state.insert("candidate_diff_hash".into(), result.clone());
     state.insert("reviewed_diff_hash".into(), result.clone());
+    state.insert("terminal_outcome".into(), terminal_outcome.into());
     state.insert("updated_at".into(), timestamp());
     write_env(&p.state, &state)?;
     event(
         &p.events,
         "phase_transitioned",
         &format!(
-            "from=pre-implementation\tto=complete\titeration={}\tauthority=supervisor\troute=external-only\toperations={successful_operations}\tfailed_operations={failed_operations}\tblocked_operations={blocked_operations}",
+            "from=pre-implementation\tto=complete\titeration={}\tauthority=supervisor\troute=external-only\tterminal_outcome={terminal_outcome}\toperations={successful_operations}\tfailed_operations={failed_operations}\tblocked_operations={blocked_operations}",
             state_value(&state, "iteration")
         ),
     )?;
@@ -1648,6 +1654,165 @@ pub fn supervisor_complete_direct(id: &str) -> Result<String, String> {
     let result = format!("direct-response:{result_hash}");
     complete_shortcut(&p, &mut state, "direct-response", &result)?;
     Ok(result)
+}
+
+/// Completes an execution whose immutable session authority permits observation
+/// only. No reviewer is needed: filesystem and operation boundaries, rather
+/// than another model's prose, prevent mutation.
+pub fn supervisor_complete_observe(id: &str) -> Result<String, String> {
+    require_supervisor_completion_authority()?;
+    require_observe_authority()?;
+    let store = Store::configured()?;
+    let p = store.paths(id)?;
+    let _lock = store.lock(&p)?;
+    let mut state = observe_completion_state(&p, id)?;
+    let result_hash = shortcut_result_hash(&store)?;
+    let result = format!("observe:{result_hash}");
+    complete_shortcut(&p, &mut state, "observe", &result)?;
+    Ok(result)
+}
+
+/// Ends an observe-only Session with one exact repair proposal. A proposal
+/// may request path-bound source writes, entry into independently reviewed
+/// operations, or both.
+pub fn supervisor_request_review(
+    id: &str,
+    paths: &[String],
+    reviewed_ops: bool,
+) -> Result<String, String> {
+    require_supervisor_completion_authority()?;
+    require_observe_authority()?;
+    let store = Store::configured()?;
+    let p = store.paths(id)?;
+    let _lock = store.lock(&p)?;
+    let mut state = observe_completion_state(&p, id)?;
+    let question = fs::read_to_string(store.state_dir.join("orchestrator-result.md"))
+        .map_err(io_error("read persisted repair-review question"))?;
+    let question = question.trim();
+    validate_bounded_question(question)?;
+    let normalized_paths = normalize_repair_paths(paths, reviewed_ops)?;
+    let mut effects = Vec::new();
+    if !normalized_paths.is_empty() {
+        effects.push("source-write");
+    }
+    if reviewed_ops {
+        effects.push("reviewed-ops");
+    }
+    let request_path = p.base.join("human-review-request.md");
+    let paths_path = p.base.join("human-review-repair-paths.json");
+    let effects_path = p.base.join("human-review-effects.json");
+    atomic_write(&request_path, &format!("{question}\n"))?;
+    atomic_write(
+        &paths_path,
+        &format!(
+            "{}\n",
+            serde_json::to_string(&normalized_paths)
+                .map_err(|error| format!("encode repair-review paths: {error}"))?
+        ),
+    )?;
+    atomic_write(
+        &effects_path,
+        &format!(
+            "{}\n",
+            serde_json::to_string(&effects)
+                .map_err(|error| format!("encode repair-review effects: {error}"))?
+        ),
+    )?;
+    let digest = sha256(&request_path)?;
+    let paths_digest = sha256(&paths_path)?;
+    let effects_digest = sha256(&effects_path)?;
+    let result = format!("request-review:{digest}");
+    state.insert("phase".into(), "complete".into());
+    state.insert("candidate_diff_hash".into(), result.clone());
+    state.insert("reviewed_diff_hash".into(), result.clone());
+    state.insert("terminal_outcome".into(), "review_requested".into());
+    state.insert("human_review_status".into(), "pending".into());
+    state.insert(
+        "human_review_request".into(),
+        request_path.display().to_string(),
+    );
+    state.insert("human_review_request_sha256".into(), digest.clone());
+    state.insert(
+        "human_review_repair_paths".into(),
+        paths_path.display().to_string(),
+    );
+    state.insert(
+        "human_review_repair_paths_sha256".into(),
+        paths_digest.clone(),
+    );
+    state.insert("human_review_reviewer".into(), "session-self-review".into());
+    state.insert("human_review_reason".into(), "source-repair".into());
+    state.insert("updated_at".into(), timestamp());
+    write_env(&p.state, &state)?;
+    event(
+        &p.events,
+        "human_review_required",
+        &format!(
+            "from=pre-implementation\tto=complete\titeration={}\tauthority=supervisor\treason=repair\trequest_sha256={digest}\trepair_paths_sha256={paths_digest}\teffects_sha256={effects_digest}",
+            state_value(&state, "iteration")
+        ),
+    )?;
+    Ok(result)
+}
+
+fn require_observe_authority() -> Result<(), String> {
+    if crate::execution::configured()?.is_read_only() {
+        Ok(())
+    } else {
+        Err("observe completion requires the current Execution to remain read-only".into())
+    }
+}
+
+fn observe_completion_state(paths: &Paths, id: &str) -> Result<BTreeMap<String, String>, String> {
+    let state = read_env(&paths.state, id)?;
+    if state_value(&state, "phase") != "pre-implementation" {
+        return Err("observe execution is already terminal or entered a mutation lifecycle".into());
+    }
+    validate_original_task(&state)?;
+    Ok(state)
+}
+
+fn validate_bounded_question(question: &str) -> Result<(), String> {
+    let count = question.matches(['?', '？']).count();
+    let tail = question.trim_end_matches(|character: char| {
+        character.is_whitespace() || matches!(character, '*' | '_' | '`' | '"' | '\'' | ')' | ']')
+    });
+    if question.is_empty()
+        || question.len() > 2_000
+        || !(1..=3).contains(&count)
+        || !(tail.ends_with('?') || tail.ends_with('？'))
+    {
+        return Err(
+            "repair review requires one bounded question ending with a question mark".into(),
+        );
+    }
+    Ok(())
+}
+
+fn normalize_repair_paths(paths: &[String], reviewed_ops: bool) -> Result<Vec<String>, String> {
+    if paths.len() > 32 || (paths.is_empty() && !reviewed_ops) {
+        return Err(
+            "repair review requires an exact repository path or reviewed operations".into(),
+        );
+    }
+    let mut normalized = BTreeSet::new();
+    for value in paths {
+        let path = Path::new(value);
+        if value.is_empty()
+            || value.len() > 512
+            || path.is_absolute()
+            || path
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            return Err("repair-review paths must be exact relative repository paths".into());
+        }
+        normalized.insert(path.to_string_lossy().replace('\\', "/"));
+    }
+    if normalized.len() != paths.len() {
+        return Err("repair-review paths must be unique".into());
+    }
+    Ok(normalized.into_iter().collect())
 }
 
 /// Returns the bounded question only for a mechanically recognized reviewer
@@ -1709,6 +1874,7 @@ pub fn supervisor_complete_human_review(id: &str, reviewer: &str) -> Result<Stri
     state.insert("phase".into(), "complete".into());
     state.insert("candidate_diff_hash".into(), result.clone());
     state.insert("reviewed_diff_hash".into(), result.clone());
+    state.insert("terminal_outcome".into(), "review_requested".into());
     state.insert("human_review_status".into(), "pending".into());
     state.insert(
         "human_review_request".into(),
@@ -2004,6 +2170,7 @@ fn complete_shortcut(
     state.insert("phase".into(), "complete".into());
     state.insert("candidate_diff_hash".into(), result.into());
     state.insert("reviewed_diff_hash".into(), result.into());
+    state.insert("terminal_outcome".into(), "succeeded".into());
     state.insert("updated_at".into(), timestamp());
     write_env(&paths.state, state)?;
     event(

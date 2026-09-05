@@ -1,4 +1,4 @@
-use crate::config;
+use crate::{config, execution::Execution};
 use serde::{Deserialize, Serialize};
 
 /// The complete privileged surface accepted by the authority supervisor.
@@ -19,6 +19,7 @@ enum AuthorityOperation {
     Decision,
     Dag,
     OrchestratorComplete,
+    ExecutionMutationRequest,
     SupervisorRegisterLaunch,
     SupervisorRenewLaunch,
     SupervisorShutdown,
@@ -76,6 +77,12 @@ impl AuthorityRequest {
                 (AuthorityOperation::OpsExecute, &args[1..])
             }
             "orchestrator"
+                if args.first().map(String::as_str) == Some("request-mutation")
+                    && valid_mutation_request_args(args) =>
+            {
+                (AuthorityOperation::ExecutionMutationRequest, &args[1..])
+            }
+            "orchestrator"
                 if args.first().map(String::as_str) == Some("complete")
                     && (args.len() == 1
                         || (args.len() == 2 && args[1] == "--external-only")
@@ -84,10 +91,13 @@ impl AuthorityRequest {
                                 args[1].as_str(),
                                 "--external-only"
                                     | "--direct-response"
+                                    | "--auto"
                                     | "--clarification"
                                     | "--auto-clarification"
+                                    | "--observe"
                             )
                             && args[2] == "--result-file")
+                        || valid_request_review_args(args)
                         || (args.len() == 6
                             && matches!(args[1].as_str(), "--read-only" | "--human-review")
                             && args[2] == "--result-file"
@@ -161,6 +171,7 @@ impl AuthorityRequest {
             | AuthorityOperation::Decision
             | AuthorityOperation::Dag
             | AuthorityOperation::OrchestratorComplete
+            | AuthorityOperation::ExecutionMutationRequest
             | AuthorityOperation::SupervisorRegisterLaunch
             | AuthorityOperation::SupervisorRenewLaunch
             | AuthorityOperation::SupervisorShutdown
@@ -213,7 +224,7 @@ impl AuthorityRequest {
     pub fn allowed_for_authority_scope(&self, scope: &str) -> bool {
         match scope {
             "human" => true,
-            "diagnosis-only" => match self.operation {
+            "observe" | "diagnosis-only" => match self.operation {
                 AuthorityOperation::ResolutionCreate => false,
                 AuthorityOperation::AssignmentCreate => {
                     !has_option_value(&self.args, "--role", "exploitation")
@@ -221,7 +232,71 @@ impl AuthorityRequest {
                 AuthorityOperation::SupervisorRegisterLaunch => {
                     !has_option_value(&self.args, "--access", "workspace-write")
                 }
+                AuthorityOperation::OrchestratorComplete => matches!(
+                    self.args.first().map(String::as_str),
+                    Some(
+                        "--observe"
+                            | "--request-review"
+                            | "--direct-response"
+                            | "--clarification"
+                            | "--auto"
+                            | "--auto-clarification"
+                            | "--read-only"
+                            | "--human-review"
+                    )
+                ),
+                AuthorityOperation::OpsPublishBound
+                | AuthorityOperation::OpsPublish
+                | AuthorityOperation::OpsExecute => false,
                 _ => true,
+            },
+            _ => false,
+        }
+    }
+
+    pub fn allowed_for_execution(&self, execution: &Execution) -> bool {
+        match execution.scope() {
+            "human" | "observe" | "diagnosis-only" => {
+                self.allowed_for_authority_scope(execution.scope())
+            }
+            "user" => match self.operation {
+                AuthorityOperation::ExecutionMutationRequest => {
+                    execution.permits_mutation_request()
+                }
+                AuthorityOperation::OpsPublishBound
+                | AuthorityOperation::OpsPublish
+                | AuthorityOperation::OpsExecute => execution.permits_reviewed_ops(),
+                AuthorityOperation::Workflow
+                | AuthorityOperation::Decision
+                | AuthorityOperation::Dag
+                | AuthorityOperation::OrchestratorComplete
+                | AuthorityOperation::SupervisorRegisterLaunch
+                | AuthorityOperation::SupervisorRenewLaunch
+                | AuthorityOperation::SupervisorShutdown
+                | AuthorityOperation::AssignmentCreate
+                | AuthorityOperation::AssignmentShow
+                | AuthorityOperation::AssignmentStatus
+                | AuthorityOperation::AssignmentCheck
+                | AuthorityOperation::CheckpointUpdate
+                | AuthorityOperation::CheckpointShow
+                | AuthorityOperation::FindingCreate
+                | AuthorityOperation::FindingShow
+                | AuthorityOperation::FindingList
+                | AuthorityOperation::FindingDismiss
+                | AuthorityOperation::TodoCreate
+                | AuthorityOperation::TodoShow
+                | AuthorityOperation::TodoList
+                | AuthorityOperation::TodoAssign
+                | AuthorityOperation::TodoStatus
+                | AuthorityOperation::ResolutionCreate
+                | AuthorityOperation::TodoClose
+                | AuthorityOperation::ValidationLeaseAcquire
+                | AuthorityOperation::ValidationLeaseStatus
+                | AuthorityOperation::ValidationLeaseShow
+                | AuthorityOperation::ValidationLeaseList
+                | AuthorityOperation::GateCheck
+                | AuthorityOperation::OpsDescribe
+                | AuthorityOperation::OpsRead => true,
             },
             _ => false,
         }
@@ -234,6 +309,9 @@ impl AuthorityRequest {
             AuthorityOperation::Dag => ("dag", None),
             AuthorityOperation::OrchestratorComplete => ("orchestrator", Some("complete")),
             AuthorityOperation::SupervisorRegisterLaunch => ("supervisor", Some("register-launch")),
+            AuthorityOperation::ExecutionMutationRequest => {
+                ("orchestrator", Some("request-mutation"))
+            }
             AuthorityOperation::SupervisorRenewLaunch => ("supervisor", Some("renew-launch")),
             AuthorityOperation::SupervisorShutdown => ("supervisor", Some("shutdown")),
             AuthorityOperation::AssignmentCreate => ("subagent", Some("assignment-create")),
@@ -275,7 +353,6 @@ impl AuthorityRequest {
         }
         (command.to_string(), args)
     }
-
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub fn display(&self) -> String {
         let (command, args) = self.clone().into_cli();
@@ -284,6 +361,56 @@ impl AuthorityRequest {
             None => command,
         }
     }
+}
+
+fn valid_mutation_request_args(args: &[String]) -> bool {
+    if args.first().map(String::as_str) != Some("request-mutation") || args.len() < 2 {
+        return false;
+    }
+    let mut has_path = false;
+    let mut reviewed_ops = false;
+    let mut index = 1;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--path" if index + 1 < args.len() && !args[index + 1].is_empty() => {
+                has_path = true;
+                index += 2;
+            }
+            "--reviewed-ops" if !reviewed_ops => {
+                reviewed_ops = true;
+                index += 1;
+            }
+            _ => return false,
+        }
+    }
+    has_path || reviewed_ops
+}
+
+fn valid_request_review_args(args: &[String]) -> bool {
+    if args.len() < 5
+        || args.get(1).map(String::as_str) != Some("--request-review")
+        || args.get(2).map(String::as_str) != Some("--result-file")
+        || args.get(3).is_none_or(String::is_empty)
+    {
+        return false;
+    }
+    let mut has_path = false;
+    let mut reviewed_ops = false;
+    let mut index = 4;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--path" if index + 1 < args.len() && !args[index + 1].is_empty() => {
+                has_path = true;
+                index += 2;
+            }
+            "--reviewed-ops" if !reviewed_ops => {
+                reviewed_ops = true;
+                index += 1;
+            }
+            _ => return false,
+        }
+    }
+    has_path || reviewed_ops
 }
 fn has_option_value(args: &[String], option: &str, expected: &str) -> bool {
     args.windows(2)
@@ -311,6 +438,32 @@ mod tests {
         assert!(AuthorityRequest::from_cli("subagent", &strings(&["spawn"])).is_none());
         assert!(AuthorityRequest::from_cli("subagent", &strings(&["worktree-create"])).is_none());
         assert!(AuthorityRequest::from_cli("subagent", &strings(&["validation-run"])).is_none());
+    }
+
+    #[test]
+    fn mutation_request_is_a_typed_orchestrator_operation() {
+        let request = AuthorityRequest::from_cli(
+            "orchestrator",
+            &strings(&["request-mutation", "--path", "src/lib.rs", "--reviewed-ops"]),
+        )
+        .expect("bounded mutation request");
+        assert!(request.authorized_for(config::ORCHESTRATOR_UID));
+        assert!(!request.authorized_for(config::WRITER_UID));
+        assert_eq!(
+            request.into_cli(),
+            (
+                "orchestrator".to_string(),
+                strings(&["request-mutation", "--path", "src/lib.rs", "--reviewed-ops",]),
+            )
+        );
+        assert!(
+            AuthorityRequest::from_cli("orchestrator", &strings(&["request-mutation"]),).is_none()
+        );
+        assert!(AuthorityRequest::from_cli(
+            "orchestrator",
+            &strings(&["request-mutation", "--reviewed-ops", "--reviewed-ops",]),
+        )
+        .is_none());
     }
 
     #[test]
@@ -447,7 +600,7 @@ mod tests {
         )
         .expect("direct completion request");
         assert!(direct_completion.authorized_for(config::ORCHESTRATOR_UID));
-        for route in ["--clarification", "--auto-clarification"] {
+        for route in ["--clarification", "--auto-clarification", "--auto"] {
             let clarification_completion = AuthorityRequest::from_cli(
                 "orchestrator",
                 &strings(&[

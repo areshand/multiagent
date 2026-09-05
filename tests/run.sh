@@ -422,7 +422,8 @@ assert_file_contains "$LAUNCH_BOOTSTRAP" "export MULTIAGENT_LIFECYCLE_ENFORCEMEN
 assert_file_contains "$LAUNCH_BOOTSTRAP" 'if [[ ${BASH_SOURCE[0]} != "$0" ]]; then return 0; fi'
 assert_file_contains "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "BEGIN ORCHESTRATOR ROLE"
 assert_file_contains "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "BEGIN ORCHESTRATION ROUTING CONTRACT"
-assert_file_contains "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "--direct-response"
+assert_file_contains "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "--observe"
+assert_file_contains "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "--request-review"
 assert_file_contains "$LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "BEGIN MANDATORY IMPLEMENTATION LIFECYCLE"
 SOURCE_BOOTSTRAP_OUTPUT="$(bash -c 'source "$1"; printf "source-complete\\n"' bash "$LAUNCH_BOOTSTRAP")"
 if [[ "$SOURCE_BOOTSTRAP_OUTPUT" != "source-complete" ]]; then
@@ -445,7 +446,7 @@ MOCK_TMUX_HAS_SESSION=0 \
   "$ROOT/launch.sh" --session launch-headless --root "$LAUNCH_TARGET" --no-attach \
   >"$TMPDIR/launch-headless.out"
 HEADLESS_LAUNCH_BOOTSTRAP="$HEADLESS_LAUNCH_STATE/orchestrator-bootstrap.sh"
-assert_file_contains "$HEADLESS_LAUNCH_BOOTSTRAP" "orchestrator complete --auto-clarification --result-file"
+assert_file_contains "$HEADLESS_LAUNCH_BOOTSTRAP" "orchestrator complete --auto --result-file"
 assert_file_contains "$HEADLESS_LAUNCH_BOOTSTRAP" 'exit "$agent_status"'
 assert_file_contains "$HEADLESS_LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "Authenticated Original Task Envelope"
 assert_file_contains "$HEADLESS_LAUNCH_STATE/runtime_state/orchestrator-prompt-bundle.md" "Check testnet validator logs for errors."
@@ -1044,6 +1045,9 @@ assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "If ever
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "do not find, list, or read role prompt files"
 assert_file_contains "$ROOT/prompts/orchestrator.md" "When selecting ops, load only prompts/playbooks/reviewed-ops-cycle.md"
 assert_file_contains "$ROOT/prompts/playbooks/reviewed-ops-cycle.md" "multiagent subagent spawn OPS_NAME --role ops"
+assert_file_contains "$ROOT/prompts/playbooks/reviewed-ops-cycle.md" "retryDecision=orchestrator_required"
+assert_file_contains "$ROOT/prompts/playbooks/recovery.md" '`skip-failed`'
+assert_file_contains "$ROOT/docs/getting-started.md" '`skip-failed`'
 assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "Do not use this lifecycle for an external-only task"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "required-path-outside-owned:"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "ownership blocker"
@@ -1079,11 +1083,12 @@ assert_file_contains "$ROOT/docs/architecture.md" "Evaluation Boundary"
 assert_file_contains "$ROOT/docs/getting-started.md" "Configure Agent Backends"
 assert_file_contains "$ROOT/docs/getting-started.md" "Normal Workflow"
 assert_file_contains "$ROOT/docs/getting-started.md" "Recovery"
-assert_file_contains "$ROOT/runbooks/OWNERSHIP" "not the source of truth for a deployed"
-assert_file_contains "$ROOT/runbooks/OWNERSHIP" "InternalServices/artifacts/multiagent/runbooks"
+assert_file_contains "$ROOT/runbooks/OWNERSHIP" "authoritative procedure for that session"
+assert_file_contains "$ROOT/runbooks/OWNERSHIP" "do not duplicate operation versions"
 assert_file_contains "$ROOT/runbooks/github-repository-work.md" 'Version: `1.1.0`'
 assert_file_contains "$ROOT/runbooks/github-repository-work.md" '`get-pull-request-review-context`'
-assert_file_contains "$ROOT/runbooks/github-repository-work.md" '`github.create-pr-review@1.0.0`'
+assert_file_contains "$ROOT/runbooks/github-repository-work.md" '`github.create-pr-review` at the version returned'
+assert_file_not_contains "$ROOT/runbooks/github-repository-work.md" "Operation versions:"
 assert_file_contains "$ROOT/runbooks/github-repository-work.md" "explicitly authorizes publishing review comments"
 assert_file_contains "$ROOT/evaluation/README.md" "large-update-300"
 assert_file_contains "$ROOT/evaluation/README.md" "Low-signal orchestration cases"
@@ -1909,7 +1914,7 @@ fi
 
 printf 'Final status: completed\n' >"$MOCK_TMUX_CAPTURES/subagent-watch.txt"
 finalize_output="$("$MULTIAGENT" subagent finalize subagent-watch)"
-[[ "$finalize_output" == "finalized subagent-watch" ]]
+[[ "$finalize_output" == $'finalized subagent-watch\tfinalized' ]]
 assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-watch/status" "finalized"
 if grep -Fqx -- "subagent-watch" "$MOCK_TMUX_WINDOWS"; then
   echo "expected finalize to close the subagent window" >&2
@@ -1918,6 +1923,14 @@ fi
 
 inspect_output="$("$MULTIAGENT" subagent inspect subagent-watch --lines 5)"
 [[ "$inspect_output" == *"Final status: completed"* ]]
+
+mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-failed-finalize"
+printf 'failed\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-failed-finalize/status"
+printf 'final status: codex exec exited rc=1\n' \
+  >"$MULTIAGENT_STATE_DIR/subagents/subagent-failed-finalize/current.txt"
+failed_finalize_output="$("$MULTIAGENT" subagent finalize subagent-failed-finalize)"
+[[ "$failed_finalize_output" == $'finalized subagent-failed-finalize\tfailed' ]]
+assert_file_contains "$MULTIAGENT_STATE_DIR/subagents/subagent-failed-finalize/status" "failed"
 
 mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-restore"
 printf 'running\n' >"$MULTIAGENT_STATE_DIR/subagents/subagent-restore/status"
@@ -1997,9 +2010,10 @@ mkdir -p "$MULTIAGENT_STATE_DIR/subagents/subagent-unknown"
 
 recover_plan="$("$MULTIAGENT" subagent recover-plan)"
 [[ "$recover_plan" == *$'subagent-watch\tskip-finalized\tstatus-finalized\tfinalized\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-watch"* ]]
+[[ "$recover_plan" == *$'subagent-failed-finalize\tskip-failed\tterminal-failure-failed\tfailed\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-failed-finalize"* ]]
 [[ "$recover_plan" == *$'subagent-restore\trestore\tclosed-with-recoverable-context\trunning\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-restore"* ]]
 [[ "$recover_plan" == *$'subagent-blocked\tskip-blocked\trequires-orchestrator-decision\trunning\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-blocked"* ]]
-[[ "$recover_plan" == *$'subagent-prompt-only\trestore\tclosed-with-recoverable-context\tmissing\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-prompt-only"* ]]
+[[ "$recover_plan" == *$'subagent-prompt-only\tskip-failed\tterminal-failure-missing\tmissing\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-prompt-only"* ]]
 [[ "$recover_plan" == *$'subagent-open\tskip-open\ttmux-window-already-open\trunning\topen\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-open"* ]]
 [[ "$recover_plan" == *$'subagent-unknown\tskip-unknown\tno-current-or-transcript\tunknown\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-unknown"* ]]
 [[ "$recover_plan" == *$'subagent-structured\trestore\tcheckpoint-resumable\trunning\tclosed\t'"$MULTIAGENT_STATE_DIR/subagents/subagent-structured"* ]]
@@ -2048,8 +2062,9 @@ restore_all_output="$("$MULTIAGENT" subagent restore-all)"
 [[ "$restore_all_output" == *$'skipped subagent-blocked\tskip-blocked'* ]]
 [[ "$restore_all_output" == *$'skipped subagent-open\tskip-open'* ]]
 [[ "$restore_all_output" == *$'skipped subagent-watch\tskip-finalized'* ]]
-[[ "$restore_all_output" == *"restored subagent-prompt-only"* ]]
-[[ "$restore_all_output" == *"restore-all complete: restored=1"* ]]
+[[ "$restore_all_output" == *$'skipped subagent-failed-finalize\tskip-failed'* ]]
+[[ "$restore_all_output" == *$'skipped subagent-prompt-only\tskip-failed'* ]]
+[[ "$restore_all_output" == *"restore-all complete: restored=0"* ]]
 
 # Test organizational learning functionality
 

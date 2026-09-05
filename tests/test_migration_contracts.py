@@ -730,6 +730,7 @@ class MigrationCliContractTest(unittest.TestCase):
                 "iteration_worker_count",
                 "candidate_diff_hash",
                 "reviewed_diff_hash",
+                "terminal_outcome",
                 "human_review_status",
                 "human_review_request",
                 "human_review_request_sha256",

@@ -38,7 +38,7 @@ const interactiveHelp = `Commands:
   /list                    List threads created by this local client
   /open THREAD_ID          Open a thread
   /new REPO [TITLE]        Create and open a server-assigned thread
-  /sessions                List execution sessions for the open thread
+  /sessions                List Sessions for the open thread
   /refresh                 Replay new events
   /wait                    Wait for the current execution to reply
   /help                    Show this help
@@ -410,7 +410,7 @@ export async function runInteractive({
         if (line === "/sessions") {
           if (!current) { stdout.write("Open a thread first.\n"); continue; }
           const sessions = (await client.request(`/api/threads/${encodeURIComponent(current.id)}/sessions`)).value.sessions || [];
-          if (!sessions.length) stdout.write("No execution sessions yet.\n");
+          if (!sessions.length) stdout.write("No Sessions yet.\n");
           else sessions.forEach((session) => stdout.write(`  ${session.ordinal}. ${session.id}  [${session.status}]\n`));
           continue;
         }
@@ -457,7 +457,7 @@ export async function runInteractive({
             threads = [...threads.filter((thread) => thread.id !== current.id), current];
             agentPane.setOutcome("", "");
             agentPane.setThread(current, routed.session?.status || "starting");
-            stdout.write(`\nApproved ${review.id}. Started fresh execution ${routed.session.id} for ${current.id}.\n`);
+            stdout.write(`\nApproved ${review.id}. Started fresh Session ${routed.session.id} for ${current.id}.\n`);
             await replay({ all: true });
             startThreadConnection(current.id);
             await startMonitor(routed.session.id);

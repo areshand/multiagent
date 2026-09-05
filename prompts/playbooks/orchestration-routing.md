@@ -5,31 +5,32 @@ own role-specific procedure; this file does not repeat them.
 
 ## Select A Role
 
-- Answer directly, or ask one bounded clarification, when the authenticated
-  request can be handled from the current conversation without reading the
-  repository, calling an external service, or producing an artifact. Persist
-  the exact response at the `resultCandidate.path` returned by workflow context,
-  then request
-  `multiagent orchestrator complete --direct-response --result-file PATH`.
-- Use a `reader` when answering requires repository inspection but no source
-  mutation. Readers run in the repository working directory with mechanically
-  read-only access. Spawn a reader without `--own` or implementation decision
-  metadata; readers are investigation roles and never receive source ownership
-  or an implementation permit. After readers finish, spawn one independent
-  reviewer named
-  `read-only-integrity-reviewer-NN`; require it to inspect the live repository
-  diff, the supervisor launch manifests, and the sealed reader outputs, and to
-  emit exactly
-  `review-record: type=read-only-integrity verdict=pass diff=DIFF_SHA256` only
-  when all launches were read-only and the diff is empty. Then request
-  `multiagent orchestrator complete --read-only --result-file PATH --reviewer NAME`.
-- Use a worker when the required output is a bounded workspace change.
-- Query the organizational Wiki directly only for routing that selects a
-  repository or role and will not be used to support the caller-facing result.
-- When Wiki citations support the caller-facing result, assign a `reader` with
-  read-only access to run `wiki-query` and preserve its cited output. Do not use
-  a `scout` for this path because the mechanical read-only completion gate
-  accepts only completed readers and reviewers.
+- A fresh authenticated user Session begins with a mechanically read-only
+  Execution. Answer directly from conversation, Wiki, repository, or
+  non-mutating external evidence when another agent would not
+  materially improve the result. Persist the response at the
+  `resultCandidate.path` returned by workflow context, then request
+  `multiagent orchestrator complete --observe --result-file PATH`.
+- A reader is optional for a larger or parallel repository investigation. It
+  runs with mechanically read-only access, without `--own` or implementation
+  decision metadata, and never receives source ownership or an implementation
+  permit. Its own final response should be self-checked; do not spawn another
+  model solely to review a read-only answer.
+- Query the organizational Wiki directly for both routing and caller-facing
+  cited evidence. Wiki use does not force a reader, scout, or reviewer.
+- For an authenticated user request that requires mutation, ask the Supervisor
+  to advance the same Session with
+  `multiagent orchestrator request-mutation [--path REPO_PATH ...] [--reviewed-ops]`.
+  Request every exact source path and no broader effect than the goal needs.
+  Continue through the normal source or reviewed-ops lifecycle only after the
+  Supervisor accepts the new Execution.
+- An external `observe` Session cannot advance itself. If repair is required,
+  inspect enough to state one bounded question and the exact effects requested.
+  For source writes, include every affected repository path with `--path
+  REPO_PATH`. For production mutation, include `--reviewed-ops`. End the observe Session with
+  `multiagent orchestrator complete --request-review --result-file PATH [--path REPO_PATH ...] [--reviewed-ops]`.
+- Approval creates a fresh `user` Session with those immutable effects. It
+  cannot request broader effects.
 - Let the assigned confined role request a bounded external read or repository
   materialization directly through the supervisor when prod-mcp advertises it as
   non-mutating read/materialize with no approval roles.
@@ -69,12 +70,15 @@ validation-scheduling.md and hold one validation lease per package. Give technic
 
 - A source worker needs an approved implementation context and active
   implementation permit.
-- Direct-response completion is rejected if any role was launched, any source
-  diff exists, any external receipt exists, or any workflow TODO remains.
-- Read-only completion is rejected unless every launch is a completed reader or
-  reviewer with supervisor-recorded read-only access, the repository diff is
-  empty, and the named independent reviewer has sealed passing integrity
-  evidence bound to that diff.
+- Observe completion is available only while the current Execution is
+  mechanically read-only.
+  Source writes and mutating production operations are denied before execution,
+  so completion does not infer safety from role count, a second model, or a
+  post-hoc diff check.
+- A repair review request must contain one bounded question and at least one
+  explicit effect: exact repository-relative source paths, `reviewed-ops`, or
+  both. Approval starts a fresh user Session whose first Execution contains
+  only those effects; it does not upgrade the completed external observe Session.
 - Ops execution needs finalized reviewer evidence bound to the exact request,
   goal, runbook metadata, and runbook bytes.
 - Post-implementation review types and diff bindings come from persisted

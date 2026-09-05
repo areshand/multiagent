@@ -5,7 +5,6 @@
 - Runbook ID: `k8s.service-recovery`
 - Version: `1.0.0`
 - Prod MCP operations: `k8s.read-logs`, `k8s.restart-deployment`
-- Operation version: `1.0.0`
 
 ## Goal
 

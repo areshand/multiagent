@@ -39,6 +39,32 @@ function boundedPayload(payload) {
   return value;
 }
 
+function boundedRepairPaths(values, required) {
+  if (!Array.isArray(values) || values.length > 32
+    || (required ? values.length < 1 : values.length !== 0)) {
+    throw new Error("repair paths must exactly match the requested source-write effect");
+  }
+  return [...new Set(values.map((value) => {
+    const raw = requiredString(value, "repair path", 512).replaceAll("\\", "/");
+    const normalized = path.posix.normalize(raw);
+    if (path.posix.isAbsolute(normalized) || normalized === "." || normalized === ".." || normalized.startsWith("../")) {
+      throw new Error("repair paths must stay inside the selected repository");
+    }
+    return normalized;
+  }))].sort();
+}
+const approvedRepairEffects = Object.freeze(["source-write", "reviewed-ops"]);
+
+function boundedRepairEffects(values) {
+  if (!Array.isArray(values) || values.length < 1 || values.length > approvedRepairEffects.length
+    || new Set(values).size !== values.length
+    || values.some((effect) => !approvedRepairEffects.includes(effect))) {
+    throw new Error("repair review effects must be source-write and/or reviewed-ops");
+  }
+  return approvedRepairEffects.filter((effect) => values.includes(effect));
+}
+
+
 function notFound() {
   const error = new Error("thread not found");
   error.statusCode = 404;
@@ -57,7 +83,7 @@ export class InMemoryThreadStore {
   }
 
   restoreSnapshot(snapshot = null) {
-    if (snapshot && !new Set([1, 2]).has(snapshot.schemaVersion)) throw new Error("unsupported thread manifest schema");
+    if (snapshot && !new Set([1, 2, 3]).has(snapshot.schemaVersion)) throw new Error("unsupported thread manifest schema");
     const entries = (name) => {
       const value = snapshot?.[name] || [];
       if (!Array.isArray(value)) throw new Error(`thread manifest ${name} must be an array`);
@@ -74,7 +100,7 @@ export class InMemoryThreadStore {
 
   snapshot() {
     return clone({
-      schemaVersion: 2,
+      schemaVersion: 3,
       threads: [...this.threads.entries()],
       sessions: [...this.sessions.entries()],
       events: [...this.events.entries()],
@@ -156,7 +182,8 @@ export class InMemoryThreadStore {
         threadId,
         ordinal: [...this.sessions.values()].filter((candidate) => candidate.threadId === threadId).length + 1,
         actorSubject: actor,
-        authorityScope: "human",
+        authorityScope: "user",
+        mutationGrant: null,
         triggerMessageId: messageId,
         status: "queued",
         leaseGeneration: generation,
@@ -224,7 +251,8 @@ export class InMemoryThreadStore {
       threadId: thread.id,
       ordinal: 1,
       actorSubject: sourceActor,
-      authorityScope: "diagnosis-only",
+      authorityScope: "observe",
+      mutationGrant: null,
       triggerMessageId: eventId,
       status: "queued",
       leaseGeneration: 1,
@@ -353,10 +381,14 @@ export class InMemoryThreadStore {
     reviewId,
     question,
     sourceEventId,
+    repairPaths,
+    effects,
     now = new Date().toISOString(),
   }) {
     requiredString(reviewId, "review id", 128);
     const boundedQuestion = requiredString(question, "review question", 2_000);
+    const boundedEffects = boundedRepairEffects(effects);
+    const boundedPaths = boundedRepairPaths(repairPaths, boundedEffects.includes("source-write"));
     requiredString(sourceEventId, "review source event id", 128);
     if (this.reviews.has(reviewId)) throw conflict("review already exists");
     const finalized = this.finalizeSession({ threadId, sessionId, generation, now });
@@ -370,6 +402,8 @@ export class InMemoryThreadStore {
       sourceEventId,
       question: boundedQuestion,
       questionSha256: `sha256:${crypto.createHash("sha256").update(boundedQuestion).digest("hex")}`,
+      repairPaths: boundedPaths,
+      effects: boundedEffects,
       status: "pending",
       requestedAt: now,
       decidedAt: null,
@@ -417,6 +451,18 @@ export class InMemoryThreadStore {
     const thread = this.#authorizedThread(review.threadId, actor);
     if (thread.pendingReviewId !== review.id || thread.activeSessionId) throw conflict("review is not the active thread boundary");
 
+    let approvedEffects = null;
+    let approvedPaths = null;
+    if (decision === "approve") {
+      requiredString(messageId, "message id", 128);
+      requiredString(newSessionId, "new session id", 63);
+      if (this.sessions.has(newSessionId)) throw conflict("session already exists");
+      approvedEffects = boundedRepairEffects(review.effects);
+      approvedPaths = boundedRepairPaths(
+        review.repairPaths,
+        approvedEffects.includes("source-write"),
+      );
+    }
     review.status = decision === "approve" ? "approved" : "rejected";
     review.decision = decision;
     review.decidedAt = now;
@@ -436,12 +482,9 @@ export class InMemoryThreadStore {
     let event = null;
     let session = null;
     if (decision === "approve") {
-      requiredString(messageId, "message id", 128);
-      requiredString(newSessionId, "new session id", 63);
-      if (this.sessions.has(newSessionId)) throw conflict("session already exists");
       const approvalText = [
         `I approve repair review ${review.id} (${review.questionSha256}).`,
-        "Continue this durable thread in a fresh execution session, limited to the exact reviewed request:",
+        "Continue this durable thread in a fresh Session, limited to the exact reviewed request:",
         review.question,
       ].join("\n");
       session = {
@@ -449,7 +492,20 @@ export class InMemoryThreadStore {
         threadId: thread.id,
         ordinal: [...this.sessions.values()].filter((candidate) => candidate.threadId === thread.id).length + 1,
         actorSubject: actor,
-        authorityScope: "human",
+        authorityScope: "user",
+        mutationGrant: {
+          kind: "review-approved-repair",
+          effects: approvedEffects,
+          repository: thread.repository,
+          paths: approvedPaths,
+          reviewId: review.id,
+          sourceSessionId: review.sourceSessionId,
+          sourceEventId: review.sourceEventId,
+          questionSha256: review.questionSha256,
+          grantedToSessionId: newSessionId,
+          approvedBy: actor,
+          approvedAt: now,
+        },
         triggerMessageId: messageId,
         status: "queued",
         leaseGeneration: thread.leaseGeneration + 1,
@@ -552,6 +608,8 @@ export class InMemoryThreadStore {
     return clone({
       threadId,
       sessionId,
+      authorityScope: session.authorityScope || "user",
+      mutationGrant: session.mutationGrant || null,
       throughSequence: thread.headSequence,
       checkpoint,
       recentEvents,
