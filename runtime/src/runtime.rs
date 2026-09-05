@@ -4067,6 +4067,7 @@ fn assignment_role_for_spawn<'a>(name: &str, role: &'a str) -> &'a str {
     match role_prompt_name(name, role) {
         Some("prompts/roles/acceptance-scout.md" | "prompts/roles/contract-scout.md") => "scout",
         _ => match role {
+            "reader" => "exploration",
             "verifier" | "reviewer" => "verifier",
             "scout" => "scout",
             "ops" => "ops",
@@ -5931,6 +5932,10 @@ review-record: type=decision-authority verdict=pass diff=-\n";
         assert_eq!(
             codex_access_for_spawn(&cfg, "reader-01", "reader"),
             CodexAccess::ReadOnly
+        );
+        assert_eq!(
+            assignment_role_for_spawn("reader-01", "reader"),
+            "exploration"
         );
         assert_eq!(
             codex_access_for_spawn(&cfg, "verifier-01-docs", ""),
