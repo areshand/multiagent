@@ -3,6 +3,24 @@
 Use this playbook whenever the orchestrator is about to create, monitor,
 replace, verify, or finalize worker windows or named subagents.
 
+## Read-Only Reader Spawn
+
+Readers are investigation roles, not implementation assignments. Spawn them
+without `--own`, `--assignment-id`, `--decision-id`, `--plan-id`, or
+`--decision-revision`:
+
+```bash
+SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn reader-01-question \
+  --role reader \
+  --access read-only \
+  --instruction "BOUNDED_READ_ONLY_QUESTION"
+multiagent subagent wait reader-01-question --timeout 900
+```
+
+The supervisor records the reader's role, read-only access, workflow ID, and
+sealed output in its launch manifest. Those records, rather than source
+ownership or an implementation permit, feed the read-only completion gate.
+
 ## Worker First Instruction
 
 The launcher automatically injects the canonical worker role prompt and the

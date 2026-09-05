@@ -13,7 +13,10 @@ own role-specific procedure; this file does not repeat them.
   `multiagent orchestrator complete --direct-response --result-file PATH`.
 - Use a `reader` when answering requires repository inspection but no source
   mutation. Readers run in the repository working directory with mechanically
-  read-only access. After readers finish, spawn one independent reviewer named
+  read-only access. Spawn a reader without `--own` or implementation decision
+  metadata; readers are investigation roles and never receive source ownership
+  or an implementation permit. After readers finish, spawn one independent
+  reviewer named
   `read-only-integrity-reviewer-NN`; require it to inspect the live repository
   diff, the supervisor launch manifests, and the sealed reader outputs, and to
   emit exactly
