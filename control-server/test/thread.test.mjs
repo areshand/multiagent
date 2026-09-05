@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Thread } from "../../thread/src/thread.mjs";
-import { InMemoryThreadStore } from "../../thread/src/thread-model.mjs";
+import { Thread } from "../src/thread/thread.mjs";
+import { InMemoryThreadStore } from "../src/thread/thread-model.mjs";
 
 function fixture() {
   const store = new InMemoryThreadStore();

@@ -1,8 +1,8 @@
 # Thread
 
-This component owns the durable `Thread` model and the mapping from one thread
-to its sequential Sessions. It is transport-independent: the HTTP gateway
-supplies authentication and platform adapters, while Thread
+This internal Control Server module owns the durable `Thread` model and the
+mapping from one thread to its sequential Sessions. It is transport-independent:
+the HTTP gateway supplies authentication and platform adapters, while Thread
 performs Thread transitions, routing, fencing, review decisions, immutable
 Session grants, and result projection.
 
@@ -14,5 +14,5 @@ Session has `observe` origin and cannot self-activate mutation. Approval creates
 a fresh `user` Session with only the reviewed effects; rejection closes the
 Thread.
 
-The MVP is hosted in the same process and StatefulSet as `control-server`; this
-package boundary does not create another network service.
+This placement keeps Thread in the existing Control Server process and
+StatefulSet; the module boundary does not create another network service.
