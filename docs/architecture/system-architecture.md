@@ -122,9 +122,9 @@ top-level ownership boundaries:
 - `logger/` owns the independent single-writer Logger executable,
   canonical event contract, append-only JSONL ledger, integrity checks, and
   producer client utilities.
-- `wiki-service/` owns the independent Markdown query service, agent client,
-  deterministic catalog seeding contract, and future asynchronous steward
-  implementation.
+- `wiki-service/` owns the data-free LLM Wiki engine, personal-vault maintenance
+  workflows, independent Markdown query adapter, agent client, deterministic
+  organization-catalog seeding contract, and future asynchronous steward.
 - `docker/` owns component image definitions and container entrypoints, but not
   deployment secrets or environment-specific configuration.
 - `gitops/` documents the application-to-deployment contract. Concrete GitOps
@@ -561,22 +561,40 @@ After a successful export, the sidecar submits a bounded
 reference, size, and media type. The Logger commits the reference and
 digest but does not fetch, interpret, or proxy the trace body.
 
-### AD-019: Organizational knowledge is served by an independent Markdown Wiki
+### AD-019: One Markdown Wiki engine supports isolated local and organization deployments
 
-The organizational Wiki is a separate private service whose source and
-application deployment contract live under `wiki-service/`. Session agents
-query it through the provider-neutral `wiki-query` client. They do not mount the
-Wiki volume and receive no Wiki S3 credential. Wiki responses provide bounded
-excerpts and Markdown citations and cannot grant filesystem, network,
-repository, session, or production-operation authority.
+`wiki-service/` is the canonical source of the reusable, data-free LLM Wiki
+engine. It includes the personal-vault CLI, prompts, schemas, templates, Codex
+skills, privacy checks, read-only HTTP query adapter, agent client, and
+organization catalog seeder. The former standalone personal engine is
+deprecated after compatibility-preserving migration into this directory. Real
+personal notes, raw sources, feedback, steward state, and generated knowledge
+remain in their private vault and must never be committed to the engine.
 
-Canonical knowledge remains directly auditable Markdown in a dedicated,
-versioned Wiki bucket. A rebuildable in-memory lexical index provides
-index-first retrieval with a bounded fallback; SQLite and embeddings are not
-required for the MVP. The deterministic one-shot `wiki-seed` administrative
-command accepts a prepared, bounded manifest and writes repository pages before
-publishing `index.md` as the catalog commit marker. It performs no network or
-GitHub access and is not deployed as a scheduled synchronization workload.
+Local and organization deployments share the Markdown storage format and
+operating contracts but not authority. A local Codex process may maintain an
+explicitly selected writable personal vault using the engine skills and CLI. The
+organizational Wiki is a separate private Kubernetes service: session agents
+query it through the provider-neutral `wiki-query` client, do not mount its
+volume, and receive no Wiki S3 credential. Its bounded excerpts and Markdown
+citations cannot grant filesystem, network, repository, session, or
+production-operation authority. Source consolidation must never be interpreted
+as data consolidation or credential sharing.
+
+Canonical knowledge remains directly auditable Markdown. Personal vaults use
+the existing `LLM Wiki/index.md`, synthesized-page, Obsidian-link, graph, raw
+source, and private `LLM Wiki/system/` conventions. Organization knowledge is
+stored in a dedicated, versioned Wiki bucket. The read-only adapter accepts
+either a corpus root containing `index.md` or a vault root containing
+`LLM Wiki/index.md`; a rebuildable in-memory lexical index provides index-first
+retrieval with a bounded fallback. SQLite and embeddings are not required for
+the MVP. The deployment profile defaults to `organization` and continues to
+require the catalog schema and generation digest; personal-vault indexes are
+accepted only under an explicitly selected local `personal` profile. The
+deterministic one-shot `wiki-seed` administrative command accepts
+a prepared, bounded manifest and writes repository pages before publishing
+`index.md` as the catalog commit marker. It performs no network or GitHub access
+and is not deployed as a scheduled synchronization workload.
 
 Repository evidence is obtained by confined session agents through the direct
 supervisor-mediated `prod-mcp` read/materialize path in AD-020. The query service

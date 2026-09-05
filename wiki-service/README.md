@@ -1,13 +1,34 @@
 # Multiagent Wiki Service
 
-This directory contains the minimal organization-knowledge service. Its durable
-state is ordinary UTF-8 Markdown under `WIKI_ROOT`; the service has no database,
+This directory is the canonical home of the LLM Wiki engine and its deployment
+adapters. It consolidates the former `personal-llm-wiki-engine` while
+preserving local personal-vault workflows and adding the bounded organization
+query service needed by Multiagent.
+
+Its durable state is ordinary UTF-8 Markdown. The engine has no database,
 embedding model, GitHub credential, or repository synchronization process.
+
+```text
+engine/                 reusable local maintenance engine and Codex skills
+src/                    read-only HTTP query adapter and catalog seeder
+bin/personal-llm-wiki   local writable-vault maintenance CLI
+bin/wiki-search-local   optional local Markdown search helper
+bin/wiki-query.mjs      provider-neutral organization-service client
+bin/wiki-seed.mjs       deterministic organization catalog bootstrap
+```
+
+See [the engine guide](engine/README.md) and
+[migration contract](engine/MIGRATION.md). A personal deployment keeps its
+private vault where it already lives; it is not uploaded or moved as part of
+this source consolidation.
 
 ## Corpus contract
 
-`index.md` is the catalog entry point. It links to reviewed repository and topic
-pages. A small corpus can use this layout:
+The adapter accepts either an organization corpus whose root contains
+`index.md`, or an existing personal vault whose root contains
+`LLM Wiki/index.md`. It follows both Markdown links and Obsidian `[[links]]`.
+For an organization corpus, `index.md` is the catalog entry point and catalog
+generation marker. A small corpus can use this layout:
 
 ```text
 index.md
@@ -24,6 +45,31 @@ derived and disposable.
 The deployed MVP is read-only. Query activity belongs in the surrounding
 multiagent session trace; the service does not expose feedback or source-writing
 HTTP APIs.
+
+## Existing personal Wiki
+
+The migrated CLI retains all former commands: `init-vault`, `submit-feedback`,
+`validate-feedback`, `run-steward`, and `lint-wiki`. For example:
+
+```sh
+wiki-service/bin/personal-llm-wiki lint-wiki --vault /path/to/private-vault
+wiki-service/bin/wiki-search-local --root /path/to/private-vault/'LLM Wiki' \
+  --question "what is connected to the memory platform?"
+```
+
+To exercise the same read-only adapter locally against that vault:
+
+```sh
+WIKI_PROFILE=personal WIKI_ROOT=/path/to/private-vault PORT=8080 npm start
+```
+
+The local Codex skills remain index-first: they use synthesized pages and the
+knowledge graph before consulting raw sources. Only the local skill process—not
+the deployed query service—may perform that raw-source fallback.
+
+`WIKI_PROFILE` defaults to `organization`, which requires the strict catalog
+schema and generation digest. A personal vault is accepted only when the local
+operator explicitly sets `WIKI_PROFILE=personal`.
 
 ## Run and query
 

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LLM Wiki Eval",
+  "type": "object",
+  "required": ["feedback_id", "test_query", "expected_behavior", "failure_mode", "pass_criteria"],
+  "properties": {
+    "feedback_id": {"type": "string"},
+    "test_query": {"type": "string"},
+    "required_pages": {"type": "array", "items": {"type": "string"}},
+    "expected_behavior": {"type": "string"},
+    "failure_mode": {"type": "string"},
+    "pass_criteria": {"type": "string"}
+  }
+}

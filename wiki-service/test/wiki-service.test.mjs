@@ -7,9 +7,19 @@ import test from "node:test";
 
 import { createWikiApp } from "../src/app.mjs";
 import { WikiClient } from "../src/client.mjs";
+import { loadConfig } from "../src/config.mjs";
 import { parseQueryArguments, runWikiQuery } from "../src/query-cli.mjs";
 
 const TEST_CATALOG_DIGEST = `sha256:${"b".repeat(64)}`;
+
+test("deployment profile defaults to strict organization mode", () => {
+  assert.equal(loadConfig({ WIKI_ROOT: "/tmp/wiki" }).profile, "organization");
+  assert.equal(loadConfig({ WIKI_ROOT: "/tmp/wiki", WIKI_PROFILE: "personal" }).profile, "personal");
+  assert.throws(
+    () => loadConfig({ WIKI_ROOT: "/tmp/wiki", WIKI_PROFILE: "automatic" }),
+    /must be organization or personal/,
+  );
+});
 
 async function fixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "wiki-service-test-"));
@@ -59,9 +69,20 @@ async function fixture() {
   return root;
 }
 
+async function personalFixture() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "wiki-personal-test-"));
+  await fs.cp(
+    new URL("../engine/tests/fixtures/demo-vault/", import.meta.url),
+    root,
+    { recursive: true },
+  );
+  return root;
+}
+
 function config(root, overrides = {}) {
   return {
     root,
+    profile: "organization",
     maxRequestBytes: 32 * 1024,
     maxCorpusFiles: 100,
     maxCorpusBytes: 1024 * 1024,
@@ -104,6 +125,38 @@ test("index-first query locates InternalServices architecture with citation", as
     assert.equal(body.retrieval.mode, "index");
     assert.equal(body.retrieval.fallbackFilesScanned, 0);
   });
+});
+
+test("existing personal vault root and Obsidian index links use the same query adapter", async () => {
+  await withServer(await personalFixture(), async (baseUrl, app) => {
+    assert.equal(app.snapshot().catalogDigest, null);
+    const response = await post(baseUrl, "/v1/query", {
+      query: "synthetic memory platform concept",
+      limit: 1,
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.results[0].path, "concepts/example-memory-platform.md");
+    assert.equal(body.results[0].source, "index");
+    assert.match(body.results[0].excerpt, /Synthetic concept used by tests/);
+  }, { profile: "personal" });
+});
+
+test("organization profile rejects a personal index without an explicit local profile", async () => {
+  const root = await personalFixture();
+  await assert.rejects(createWikiApp(config(root)), /organization Wiki requires schema/);
+  await fs.rm(root, { recursive: true, force: true });
+});
+
+test("organization catalog schema still requires its generation digest", async () => {
+  const root = await fixture();
+  const indexPath = path.join(root, "index.md");
+  const index = (await fs.readFile(indexPath, "utf8"))
+    .replace(`catalog_digest: "${TEST_CATALOG_DIGEST}"\n`, "")
+    .replace("---\n", "---\nschema: wiki-repository-catalog/v1\n");
+  await fs.writeFile(indexPath, index);
+  await assert.rejects(createWikiApp(config(root)), /no valid catalog_digest/);
+  await fs.rm(root, { recursive: true, force: true });
 });
 
 test("bounded fallback finds an unindexed Markdown page", async () => {

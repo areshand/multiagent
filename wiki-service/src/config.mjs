@@ -6,9 +6,18 @@ function boundedInteger(value, fallback, minimum, maximum) {
   return Math.min(Math.max(parsed, minimum), maximum);
 }
 
+function deploymentProfile(value) {
+  const profile = String(value || "organization").trim().toLowerCase();
+  if (!new Set(["organization", "personal"]).has(profile)) {
+    throw new Error("WIKI_PROFILE must be organization or personal");
+  }
+  return profile;
+}
+
 export function loadConfig(environment = process.env) {
   return Object.freeze({
     root: path.resolve(environment.WIKI_ROOT || "/var/lib/wiki"),
+    profile: deploymentProfile(environment.WIKI_PROFILE),
     host: environment.HOST || "0.0.0.0",
     port: boundedInteger(environment.PORT, 8080, 1, 65535),
     maxRequestBytes: boundedInteger(environment.WIKI_MAX_REQUEST_BYTES, 256 * 1024, 1024, 1024 * 1024),

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Check My Wiki"
+  short_description: "Answer questions from your Obsidian wiki"
+  default_prompt: "Use $check-my-wiki to answer a question from my Obsidian LLM wiki."

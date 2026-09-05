@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LLM Wiki Frontmatter",
+  "type": "object",
+  "required": ["id", "title", "type", "status", "confidence", "created", "updated", "owner", "source_count", "source_ids", "source_paths", "tags"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^wiki:"},
+    "title": {"type": "string"},
+    "type": {"enum": ["concept", "entity", "project", "source-summary", "synthesis", "workflow", "index", "log", "schema"]},
+    "status": {"enum": ["seed", "active", "needs-review", "stale", "archived"]},
+    "confidence": {"enum": ["low", "medium", "high"]},
+    "created": {"type": "string"},
+    "updated": {"type": "string"},
+    "owner": {"type": "string"},
+    "source_count": {"type": "integer"},
+    "source_ids": {"type": "array"},
+    "source_paths": {"type": "array"},
+    "tags": {"type": "array"}
+  }
+}

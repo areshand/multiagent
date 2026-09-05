@@ -83,6 +83,13 @@ function catalogDigestOf(markdown) {
   return /^catalog_digest:\s*["']?(sha256:[a-f0-9]{64})["']?\s*$/m.exec(frontmatter)?.[1] || null;
 }
 
+function frontmatterField(markdown, field) {
+  const frontmatter = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(markdown)?.[1];
+  if (!frontmatter) return null;
+  const match = new RegExp(`^${field}:\\s*["']?([^"'\\n]+)["']?\\s*$`, "m").exec(frontmatter);
+  return match?.[1]?.trim() || null;
+}
+
 function repositoryCountOf(markdown) {
   const frontmatter = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(markdown)?.[1];
   const value = frontmatter && /^repository_count:\s*(\d+)\s*$/m.exec(frontmatter)?.[1];
@@ -92,10 +99,18 @@ function repositoryCountOf(markdown) {
 function indexLinks(markdown, root) {
   const links = [];
   const seen = new Set();
-  const pattern = /\[[^\]]*\]\(([^)]+\.md(?:#[^)]*)?)\)/gi;
-  for (const match of markdown.matchAll(pattern)) {
+  const targets = [];
+  for (const match of markdown.matchAll(/\[[^\]]*\]\(([^)]+\.md(?:#[^)]*)?)\)/gi)) {
+    targets.push(match[1]);
+  }
+  for (const match of markdown.matchAll(/\[\[([^\]]+)\]\]/g)) {
+    let target = match[1].split("|", 1)[0].split("#", 1)[0].trim();
+    if (target && !target.toLowerCase().endsWith(".md")) target = `${target}.md`;
+    targets.push(target);
+  }
+  for (const rawTarget of targets) {
     let target;
-    try { target = decodeURIComponent(match[1].trim()); } catch { continue; }
+    try { target = decodeURIComponent(rawTarget.trim()); } catch { continue; }
     const absolute = containedPath(root, target);
     if (!absolute) continue;
     const relative = path.relative(root, absolute).split(path.sep).join("/");
@@ -119,7 +134,20 @@ async function loadDocument(file) {
 
 export async function loadCorpus(root, limits) {
   await fs.mkdir(root, { recursive: true });
-  const canonicalRoot = await fs.realpath(root);
+  let selectedRoot = root;
+  try {
+    const directIndex = path.join(root, "index.md");
+    await fs.access(directIndex);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    try {
+      await fs.access(path.join(root, "LLM Wiki", "index.md"));
+      selectedRoot = path.join(root, "LLM Wiki");
+    } catch (nestedError) {
+      if (nestedError.code !== "ENOENT") throw nestedError;
+    }
+  }
+  const canonicalRoot = await fs.realpath(selectedRoot);
   const documents = [];
   let totalBytes = 0;
   const include = async (descriptor) => {
@@ -136,10 +164,16 @@ export async function loadCorpus(root, limits) {
   const index = await include(await markdownDescriptor(canonicalRoot, "index.md"));
   const linkedPaths = index ? indexLinks(index.text, canonicalRoot) : [];
   const generationDigest = index ? catalogDigestOf(index.text) : null;
-  if (index && !generationDigest) throw new Error("Wiki index has no valid catalog_digest");
+  const indexSchema = index ? frontmatterField(index.text, "schema") : null;
+  if (index && limits.profile === "organization" && indexSchema !== "wiki-repository-catalog/v1") {
+    throw new Error("organization Wiki requires schema wiki-repository-catalog/v1");
+  }
+  if (index && (limits.profile === "organization" || indexSchema === "wiki-repository-catalog/v1") && !generationDigest) {
+    throw new Error("organization Wiki index has no valid catalog_digest");
+  }
   const expectedCount = index ? repositoryCountOf(index.text) : null;
   const repositoryLinks = linkedPaths.filter((linkedPath) => linkedPath.startsWith("repos/"));
-  if (index && expectedCount !== repositoryLinks.length) {
+  if (expectedCount !== null && expectedCount !== repositoryLinks.length) {
     throw new Error("Wiki index repository_count does not match its unique repository links");
   }
   const indexed = [];
@@ -147,7 +181,7 @@ export async function loadCorpus(root, limits) {
     const descriptor = await markdownDescriptor(canonicalRoot, linkedPath);
     if (!descriptor) throw new Error(`indexed Markdown page is missing or unsafe: ${linkedPath}`);
     const document = await include(descriptor);
-    if (catalogDigestOf(document.text) !== generationDigest) {
+    if (generationDigest && catalogDigestOf(document.text) !== generationDigest) {
       throw new Error(`indexed Markdown page has a different catalog_digest: ${linkedPath}`);
     }
     indexed.push(document);

@@ -58,6 +58,7 @@ export async function createWikiApp(config) {
       refreshPromise = loadCorpus(config.root, {
         maxFiles: config.maxCorpusFiles,
         maxBytes: config.maxCorpusBytes,
+        profile: config.profile || "organization",
       }).then((loaded) => {
         corpus = loaded;
         lastError = null;
