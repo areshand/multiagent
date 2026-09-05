@@ -452,7 +452,7 @@ assert_file_contains "$HEADLESS_LAUNCH_STATE/runtime_state/orchestrator-prompt-b
 
 LAUNCH_WORKFLOW_ID="$(tr -d '\r\n' <"$LAUNCH_STATE/runtime_state/active-workflow-id")"
 assert_file_contains "$LAUNCH_STATE/workflows/$LAUNCH_WORKFLOW_ID/lifecycle/lifecycle.env" "phase=pre-implementation"
-if grep -Fq "$LAUNCH_TARGET/orchestrator_prompt.md" "$MOCK_TMUX_LOG" "$TMPDIR/launch.out" "$LAUNCH_BOOTSTRAP"; then
+if grep -Fq "$LAUNCH_TARGET/prompts/orchestrator.md" "$MOCK_TMUX_LOG" "$TMPDIR/launch.out" "$LAUNCH_BOOTSTRAP"; then
   echo "expected launch to use script-dir orchestrator prompt, not target-root prompt" >&2
   cat "$MOCK_TMUX_LOG" >&2
   cat "$TMPDIR/launch.out" >&2
@@ -909,26 +909,26 @@ if MULTIAGENT_STATE_DIR="$REPAIR_STATE" "$MULTIAGENT" subagent validation-run va
 fi
 assert_file_contains "$TMPDIR/validation-run-conflict.out" "validation lease conflict"
 
-assert_file_contains "$ROOT/orchestrator_prompt.md" "Do not inspect recovery state"
-assert_file_contains "$ROOT/orchestrator_prompt.md" 'authenticated caller request'
-assert_file_contains "$ROOT/orchestrator_prompt.md" 'When MULTIAGENT_RESUME=1'
-assert_file_contains "$ROOT/orchestrator_prompt.md" 'only in'
-assert_file_contains "$ROOT/orchestrator_prompt.md" 'MULTIAGENT_VERIFIER_MAX_ITERATIONS'
+assert_file_contains "$ROOT/prompts/orchestrator.md" "Do not inspect recovery state"
+assert_file_contains "$ROOT/prompts/orchestrator.md" 'authenticated caller request'
+assert_file_contains "$ROOT/prompts/orchestrator.md" 'When MULTIAGENT_RESUME=1'
+assert_file_contains "$ROOT/prompts/orchestrator.md" 'only in'
+assert_file_contains "$ROOT/prompts/orchestrator.md" 'MULTIAGENT_VERIFIER_MAX_ITERATIONS'
 assert_file_contains "$ROOT/docs/architecture.md" "preventing detached or late"
 assert_file_contains "$ROOT/prompts/contracts/orchestration-invariants.md" 'SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn'
 assert_file_contains "$ROOT/prompts/contracts/orchestration-invariants.md" "Core Disciplines"
 assert_file_contains "$ROOT/prompts/contracts/orchestration-invariants.md" "intent-contract.md"
 assert_file_contains "$ROOT/prompts/contracts/orchestration-invariants.md" "parallel-execution.md"
 assert_file_contains "$ROOT/prompts/contracts/orchestration-invariants.md" "validation-scheduling.md"
-assert_file_contains "$ROOT/orchestrator_prompt.md" "Role Catalog"
-assert_file_contains "$ROOT/orchestrator_prompt.md" "The orchestrator decides the DAG"
-assert_file_contains "$ROOT/orchestrator_prompt.md" "The supervisor enforces role isolation"
+assert_file_contains "$ROOT/prompts/orchestrator.md" "Role Catalog"
+assert_file_contains "$ROOT/prompts/orchestrator.md" "The orchestrator decides the DAG"
+assert_file_contains "$ROOT/prompts/orchestrator.md" "The supervisor enforces role isolation"
 assert_file_contains "$ROOT/prompts/contracts/orchestration-invariants.md" "contract-scout.md"
 assert_file_contains "$ROOT/prompts/contracts/orchestration-invariants.md" "scope-guard.md"
 assert_file_contains "$ROOT/prompts/contracts/orchestration-invariants.md" "validation-coordinator.md"
 assert_file_contains "$ROOT/prompts/contracts/orchestration-invariants.md" "failed relevant validation"
 assert_file_contains "$ROOT/prompts/contracts/orchestration-invariants.md" "proxy/scaffold"
-assert_file_contains "$ROOT/orchestrator_prompt.md" "agent-spawning.md"
+assert_file_contains "$ROOT/prompts/orchestrator.md" "agent-spawning.md"
 assert_file_contains "$ROOT/prompts/worker.md" "Worker Role Prompt"
 assert_file_contains "$ROOT/prompts/worker.md" "Ponytail Implementation Discipline"
 assert_file_contains "$ROOT/prompts/worker.md" "one expensive validation command"
@@ -1042,7 +1042,7 @@ assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "gate-check"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "An external-only task with no repository mutation bypasses the source"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "If every required capability is advertised as"
 assert_file_contains "$ROOT/prompts/playbooks/orchestration-routing.md" "do not find, list, or read role prompt files"
-assert_file_contains "$ROOT/orchestrator_prompt.md" "When selecting ops, load only prompts/playbooks/reviewed-ops-cycle.md"
+assert_file_contains "$ROOT/prompts/orchestrator.md" "When selecting ops, load only prompts/playbooks/reviewed-ops-cycle.md"
 assert_file_contains "$ROOT/prompts/playbooks/reviewed-ops-cycle.md" "multiagent subagent spawn OPS_NAME --role ops"
 assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "Do not use this lifecycle for an external-only task"
 assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" "required-path-outside-owned:"
@@ -1087,7 +1087,7 @@ assert_file_contains "$ROOT/runbooks/github-repository-work.md" '`github.create-
 assert_file_contains "$ROOT/runbooks/github-repository-work.md" "explicitly authorizes publishing review comments"
 assert_file_contains "$ROOT/evaluation/README.md" "large-update-300"
 assert_file_contains "$ROOT/evaluation/README.md" "Low-signal orchestration cases"
-assert_file_contains "$ROOT/orchestrator_prompt.md" "MULTIAGENT_PROMPT_MODULE_ROOT"
+assert_file_contains "$ROOT/prompts/orchestrator.md" "MULTIAGENT_PROMPT_MODULE_ROOT"
 assert_file_contains "$ROOT/runtime/src/runtime.rs" "MULTIAGENT_PROMPT_MODULE_ROOT"
 assert_file_not_contains "$ROOT/launch.sh" "python"
 assert_file_contains "$ROOT/prompts/verifier.md" "state-space partition audit"
@@ -2230,12 +2230,12 @@ for documentation_file in "$ROOT/README.md" "$ROOT/docs/getting-started.md"; do
     exit 1
   fi
 done
-if grep -Fq "bin/multiagent plan" "$ROOT/orchestrator_prompt.md"; then
-  echo "orchestrator_prompt.md should not reference unsupported bin/multiagent plan" >&2
+if grep -Fq "bin/multiagent plan" "$ROOT/prompts/orchestrator.md"; then
+  echo "prompts/orchestrator.md should not reference unsupported bin/multiagent plan" >&2
   exit 1
 fi
-if grep -Fq "multiagent decision resolve" "$ROOT/orchestrator_prompt.md"; then
-  echo "orchestrator_prompt.md should not reference unsupported multiagent decision resolve command" >&2
+if grep -Fq "multiagent decision resolve" "$ROOT/prompts/orchestrator.md"; then
+  echo "prompts/orchestrator.md should not reference unsupported multiagent decision resolve command" >&2
   exit 1
 fi
 
@@ -2476,49 +2476,49 @@ status_dag_output="$(cd "$ROOT" && MULTIAGENT_ROOT="$DAG_ASSIGN_REPO" MULTIAGENT
 [[ "$status_dag_output" == *$'subagent\tsubagent-dag-test\trunning\tclosed\tTesting DAG metadata in subagents\t'"$DAG_ASSIGN_STATE/subagents/subagent-dag-test"$'\tverifier\t-\t-\tWF-002\tNODE-X'* ]]
 
 # Test documentation consistency - ensure docs do not reference unsupported DAG commands
-if grep -Fq "multiagent dag update-status" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+if grep -Fq "multiagent dag update-status" "$ROOT/README.md" "$ROOT/prompts/orchestrator.md" 2>/dev/null; then
   echo "docs should not reference unsupported multiagent dag update-status command" >&2
   exit 1
 fi
-if grep -Fq "multiagent dag.*--description" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+if grep -Fq "multiagent dag.*--description" "$ROOT/README.md" "$ROOT/prompts/orchestrator.md" 2>/dev/null; then
   echo "docs should not reference unsupported multiagent dag --description flag" >&2
   exit 1
 fi
-if grep -Fq "multiagent dag show --node" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+if grep -Fq "multiagent dag show --node" "$ROOT/README.md" "$ROOT/prompts/orchestrator.md" 2>/dev/null; then
   echo "docs should not reference unsupported multiagent dag show --node flag" >&2
   exit 1
 fi
-if grep -Fq "multiagent dag show --verbose" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+if grep -Fq "multiagent dag show --verbose" "$ROOT/README.md" "$ROOT/prompts/orchestrator.md" 2>/dev/null; then
   echo "docs should not reference unsupported multiagent dag show --verbose flag" >&2
   exit 1
 fi
-if grep -Fq "multiagent dag ready --watch" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+if grep -Fq "multiagent dag ready --watch" "$ROOT/README.md" "$ROOT/prompts/orchestrator.md" 2>/dev/null; then
   echo "docs should not reference unsupported multiagent dag ready --watch flag" >&2
   exit 1
 fi
-if grep -Fq "multiagent dag export" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+if grep -Fq "multiagent dag export" "$ROOT/README.md" "$ROOT/prompts/orchestrator.md" 2>/dev/null; then
   echo "docs should not reference unsupported multiagent dag export command" >&2
   exit 1
 fi
-if grep -Fq "multiagent dag status --workflow" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+if grep -Fq "multiagent dag status --workflow" "$ROOT/README.md" "$ROOT/prompts/orchestrator.md" 2>/dev/null; then
   echo "docs should not reference unsupported multiagent dag status --workflow flag" >&2
   exit 1
 fi
-if grep -Fq "role decision" "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+if grep -Fq "role decision" "$ROOT/README.md" "$ROOT/prompts/orchestrator.md" 2>/dev/null; then
   echo "docs should not reference unsupported role decision" >&2
   exit 1
 fi
 
 # Test documentation consistency - ensure docs don't contain fragile parsing examples
-if grep -Fq 'grep.*assignment-id' "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+if grep -Fq 'grep.*assignment-id' "$ROOT/README.md" "$ROOT/prompts/orchestrator.md" 2>/dev/null; then
   echo "docs should not contain fragile grep parsing examples with assignment-id" >&2
   exit 1
 fi
-if grep -Fq 'cut -d:' "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+if grep -Fq 'cut -d:' "$ROOT/README.md" "$ROOT/prompts/orchestrator.md" 2>/dev/null; then
   echo "docs should not contain fragile cut -d: parsing examples" >&2
   exit 1
 fi
-if grep -Fq 'grep.*\$node.*assignment-id' "$ROOT/README.md" "$ROOT/orchestrator_prompt.md" 2>/dev/null; then
+if grep -Fq 'grep.*\$node.*assignment-id' "$ROOT/README.md" "$ROOT/prompts/orchestrator.md" 2>/dev/null; then
   echo "docs should not contain fragile node assignment-id parsing examples" >&2
   exit 1
 fi

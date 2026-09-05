@@ -50,7 +50,7 @@ printf '%s\n' \
 
 PROMPT_BUNDLE="$TEST_TMP/orchestrator-bundle.md"
 "$MULTIAGENT" prompt-bundle \
-  --orchestrator "$FRAMEWORK_ROOT/orchestrator_prompt.md" \
+  --orchestrator "$FRAMEWORK_ROOT/prompts/orchestrator.md" \
   --routing "$FRAMEWORK_ROOT/prompts/playbooks/orchestration-routing.md" \
   --lifecycle "$FRAMEWORK_ROOT/prompts/playbooks/implementation-lifecycle.md" \
   --output "$PROMPT_BUNDLE" >/dev/null

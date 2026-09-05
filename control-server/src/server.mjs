@@ -389,7 +389,7 @@ function launchSession(id, repository, resume, actor, originalTask = "", metadat
     MULTIAGENT_ROOT: root,
     MULTIAGENT_STATE_DIR: persistent,
     MULTIAGENT_WRITE_POLICY: path.join(persistent, "write-policy.paths"),
-    MULTIAGENT_PROMPT: path.join(launcherRoot, "orchestrator_prompt.md"),
+    MULTIAGENT_PROMPT: path.join(launcherRoot, "prompts/orchestrator.md"),
     MULTIAGENT_ORIGINAL_TASK_FILE: originalTaskFile,
     MULTIAGENT_USER_MESSAGE_FILE: fs.existsSync(path.join(controlState, "pending-user-message.md"))
       ? path.join(controlState, "pending-user-message.md")

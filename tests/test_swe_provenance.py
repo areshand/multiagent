@@ -28,7 +28,7 @@ class SweProvenanceTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
-        self.solver = self._git_repo("solver", {"launch.sh": "#!/bin/sh\n", "orchestrator_prompt.md": "solve\n"})
+        self.solver = self._git_repo("solver", {"launch.sh": "#!/bin/sh\n", "prompts/orchestrator.md": "solve\n"})
         self.evalscope = self._git_repo("evalscope", {"evalscope/version.py": '__version__ = "1.8.1"\n'})
         self.swe = self._git_repo(
             "swe",

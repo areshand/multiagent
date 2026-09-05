@@ -35,7 +35,7 @@ OPS_TRACE_ARMS = {
 
 
 def _orchestrator_system() -> str:
-    prompt_path = ROOT / "orchestrator_prompt.md"
+    prompt_path = ROOT / "prompts/orchestrator.md"
     try:
         return prompt_path.read_text(encoding="utf-8")
     except Exception:

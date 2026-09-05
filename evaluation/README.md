@@ -13,7 +13,7 @@ the runner.
 - **Task**: a single assignment with a prompt, seed files, and a scorer.
 - **Arm**: an instruction profile to compare, such as `baseline` or
   `ponytail-full`. Adapters may load the worker rules or the full orchestrator
-  prompt from `orchestrator_prompt.md`, so prompt changes are reflected in
+  prompt from `prompts/orchestrator.md`, so prompt changes are reflected in
   evaluation. For `orchestration`, `baseline` is a plain Codex planning-mode
   style prompt and `orchestrator` is the current multiagent orchestrator prompt.
 - **Run directory**: preserved workspace outputs plus `results.json` and
