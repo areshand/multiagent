@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { generateThreadId, InMemoryThreadStore } from "../src/thread-store.mjs";
+import { generateThreadId, InMemoryThreadStore } from "../../session-manager/src/thread-model.mjs";
 
 const now = "2026-08-27T00:00:00.000Z";
 

@@ -6,11 +6,11 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { WebSocket, WebSocketServer } from "ws";
 import { jobPhase, KubernetesSessionClient } from "./kubernetes-session.mjs";
-import { createThreadStore, generateThreadId } from "./thread-store.mjs";
+import { createThreadStore } from "../../session-manager/src/thread-model.mjs";
+import { SessionManager } from "../../session-manager/src/session-manager.mjs";
 import { deliverWorkerReport, reportDeliveryTimeoutMs } from "./worker-report-delivery.mjs";
 import { issueWorkerToken as createWorkerToken, verifyWorkerAuthorization } from "./worker-token.mjs";
 import { readSubagentSnapshot } from "./subagent-status.mjs";
-import { renderThreadTask } from "./thread-execution-context.mjs";
 import { fetchWorkerSubagents, fetchWorkerSubagentsWithReconciliation } from "./worker-subagent-client.mjs";
 import { configuredRepository, parseRepositoryCatalog } from "./repository-catalog.mjs";
 import { visibleLegacySessionIds } from "./session-visibility.mjs";
@@ -40,8 +40,6 @@ import {
   shouldAutomaticallyResume,
   submitLocalFollowup,
   validResourceId,
-  workerReportInterruptedEvent,
-  workerReportPublicEvent,
 } from "./session-runtime.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -668,10 +666,6 @@ async function deliverThreadFollowup(thread, routed) {
   const sessionId = routed.session.id;
   const previous = threadMessageDeliveries.get(sessionId) || Promise.resolve();
   const delivery = previous.catch(() => {}).then(async () => {
-    const sessions = await threadStore.listSessionsForActor({ threadId: thread.id, actor: thread.ownerSubject });
-    const current = sessions.find((session) => session.id === sessionId);
-    if (!current) throw new Error("thread execution session disappeared");
-    if (current.inboxAckSequence >= routed.event.sequence) return { mode: "already-delivered" };
     const deadline = Date.now() + 30_000;
     let lastError = null;
     let accepted = null;
@@ -697,12 +691,6 @@ async function deliverThreadFollowup(thread, routed) {
       }
     }
     if (!accepted) throw lastError || new Error("session worker did not accept follow-up");
-    await threadStore.acknowledgeInbox({
-      threadId: thread.id,
-      sessionId,
-      generation: current.leaseGeneration,
-      throughSequence: routed.event.sequence,
-    });
     return accepted;
   });
   threadMessageDeliveries.set(sessionId, delivery);
@@ -733,115 +721,40 @@ function threadSessionId(threadId) {
 }
 
 async function launchThreadExecution(thread, session) {
-  const envelope = await threadStore.contextEnvelope({
-    threadId: thread.id,
-    actor: thread.ownerSubject,
-    sessionId: session.id,
-  });
-  const task = renderThreadTask(envelope, session.triggerMessageId);
-  try {
-    if (gatewayMode) {
-      await launchGatewaySession(session.id, thread.repository, false, session.actorSubject, task, {
-        threadId: thread.id,
-        leaseGeneration: session.leaseGeneration,
-        authorizingEventId: session.triggerMessageId,
-        ownerSubject: thread.ownerSubject,
-        authorityScope: session.authorityScope || "human",
-      });
-    } else {
-      launchSession(session.id, thread.repository, false, session.actorSubject, task, {
-        threadId: thread.id,
-        leaseGeneration: session.leaseGeneration,
-        authorizingEventId: session.triggerMessageId,
-        ownerSubject: thread.ownerSubject,
-        authorityScope: session.authorityScope || "human",
-      });
-    }
-    const running = await threadStore.markSessionRunning({
+  const launch = gatewayMode ? launchGatewaySession : launchSession;
+  return launch(session.id, thread.repository, false, session.actorSubject, session.task, {
       threadId: thread.id,
-      sessionId: session.id,
-      generation: session.leaseGeneration,
+      leaseGeneration: session.leaseGeneration,
+      authorizingEventId: session.triggerMessageId,
+      ownerSubject: thread.ownerSubject,
+      authorityScope: session.authorityScope || "human",
     });
-    const sessions = await threadStore.listSessionsForActor({ threadId: thread.id, actor: thread.ownerSubject });
-    const current = sessions.find((candidate) => candidate.id === session.id);
-    if (current && current.inboxAckSequence < session.inboxHeadSequence) {
-      await threadStore.acknowledgeInbox({
-        threadId: thread.id,
-        sessionId: session.id,
-        generation: session.leaseGeneration,
-        throughSequence: session.inboxHeadSequence,
-      });
-    }
-    return running;
-  } catch (error) {
-    await threadStore.finalizeSession({
-      threadId: thread.id,
-      sessionId: session.id,
-      generation: session.leaseGeneration,
-      status: "interrupted",
-    });
-    throw error;
-  }
 }
 
 async function projectSessionToThread(id, status, reportReader = readGatewayReport) {
   const record = registry.sessions[id];
-  if (!record?.threadId || record.threadProjectedAt) return;
-  const report = reportReader(id);
-  const terminalOutcome = report?.terminalOutcome
-    || (status === "failed" || status === "paused" ? "failed" : null);
-  if (!terminalOutcome) return;
-  record.terminalOutcome = terminalOutcome;
-  if (terminalOutcome === "succeeded" || terminalOutcome === "review_requested") {
-    if (!report?.report) return;
-    const sessions = await threadStore.listSessionsForActor({ threadId: record.threadId, actor: record.createdBy });
-    const session = sessions.find((candidate) => candidate.id === id);
-    if (!session) return;
-    if (session.inboxAckSequence !== session.inboxHeadSequence) return;
-    const publicEvent = workerReportPublicEvent(id, report);
-    await threadStore.appendFencedSessionEvent({
-      threadId: record.threadId,
-      sessionId: id,
-      generation: record.leaseGeneration,
-      eventId: `final-${id}`,
-      ...publicEvent,
-    });
-    await threadStore.markSessionFinishing({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration });
-    const reviewRequired = terminalOutcome === "review_requested" && publicEvent.type === "question";
-    const finalized = reviewRequired
-      ? await threadStore.finalizeSessionWithReview({
-        threadId: record.threadId,
-        sessionId: id,
-        generation: record.leaseGeneration,
-        reviewId: `review-${id}`,
-        question: publicEvent.payload.text,
-        sourceEventId: `final-${id}`,
-      })
-      : await threadStore.finalizeSession({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration });
-    record.threadProjectedAt = new Date().toISOString();
-    await saveRegistry();
-    if (finalized.activatedSession) await launchActivatedThreadSession(record, finalized.activatedSession);
-  } else {
-    const fallback = status === "paused" ? "Execution session paused" : "Execution session failed";
-    const publicEvent = workerReportInterruptedEvent(id, report, fallback);
-    await threadStore.appendFencedSessionEvent({
-      threadId: record.threadId,
-      sessionId: id,
-      generation: record.leaseGeneration,
-      eventId: `interrupted-${id}`,
-      ...publicEvent,
-    });
-    const finalized = await threadStore.finalizeSession({ threadId: record.threadId, sessionId: id, generation: record.leaseGeneration, status: "interrupted" });
-    record.threadProjectedAt = new Date().toISOString();
-    await saveRegistry();
-    if (finalized.activatedSession) await launchActivatedThreadSession(record, finalized.activatedSession);
-  }
+  return sessionManager.projectExecution({ record, status, report: reportReader(id) });
 }
 
-async function launchActivatedThreadSession(record, session) {
-  const thread = await threadStore.getThreadForActor(record.threadId, record.createdBy);
-  await launchThreadExecution(thread, session);
-}
+const sessionManager = new SessionManager({
+  threadStore,
+  newSessionId: threadSessionId,
+  startExecution: ({ thread, session, task }) => launchThreadExecution(thread, { ...session, task }),
+  deliverFollowup: deliverThreadFollowup,
+  reconcileExecution: async (id) => { if (gatewayMode) await reconcileGatewaySession(id); },
+  reconcileThreadExecutions: async (threadId) => {
+    if (gatewayMode) {
+      await Promise.all(Object.values(registry.sessions)
+        .filter((record) => record.threadId === threadId)
+        .map((record) => reconcileGatewaySession(record.id)));
+    }
+  },
+  markExecutionProjected: async (record, terminalOutcome) => {
+    record.terminalOutcome = terminalOutcome;
+    record.threadProjectedAt = new Date().toISOString();
+    await saveRegistry();
+  },
+});
 
 async function projectGatewaySessionToThread(id, status) {
   return projectSessionToThread(id, status, readGatewayReport);
@@ -859,7 +772,7 @@ async function publicLegacySessions(username) {
     username,
     hasThread: async (threadId, actor) => {
       try {
-        await threadStore.getThreadForActor(threadId, actor);
+        await sessionManager.getThread(threadId, actor);
         return true;
       } catch (error) {
         if (error?.statusCode !== 404) throw error;
@@ -1026,7 +939,6 @@ const server = http.createServer(async (request, response) => {
       const event = normalizeSlackIngressEvent(await readBody(request));
       const ownerSubject = configuredReviewOwner();
       const repository = resolveSlackRepository();
-      const threadId = generateThreadId();
       const source = {
         type: "slack",
         eventId: event.eventId,
@@ -1036,8 +948,7 @@ const server = http.createServer(async (request, response) => {
         threadTs: event.threadTs,
         senderId: event.senderId,
       };
-      const routed = await threadStore.createExternalThreadAndRoute({
-        id: threadId,
+      const routed = await sessionManager.createExternalThread({
         ownerSubject,
         repository,
         title: slackThreadTitle(event),
@@ -1045,9 +956,7 @@ const server = http.createServer(async (request, response) => {
         source,
         eventId: slackEventMessageId(event.eventId),
         text: renderSlackDiagnosisTask(event, slackDiagnosisContext),
-        newSessionId: threadSessionId(threadId),
       });
-      if (!routed.duplicate) await launchThreadExecution(routed.thread, routed.session);
       return json(response, 202, {
         accepted: true,
         duplicate: routed.duplicate,
@@ -1078,7 +987,7 @@ const server = http.createServer(async (request, response) => {
       return json(response, 200, { ok: true }, { "set-cookie": "multiagent_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0" });
     }
     if (request.method === "GET" && url.pathname === "/api/reviews") {
-      return json(response, 200, { reviews: await threadStore.listReviewsForActor({
+      return json(response, 200, { reviews: await sessionManager.listReviews({
         actor: username,
         status: String(url.searchParams.get("status") || "pending"),
       }) });
@@ -1092,15 +1001,13 @@ const server = http.createServer(async (request, response) => {
       const rawDecision = String(body.decision || "").toLowerCase();
       const decision = rawDecision === "yes" ? "approve" : rawDecision === "no" ? "reject" : rawDecision;
       const digest = crypto.createHash("sha256").update(`${reviewDecisionMatch[1]}:${username}:${idempotencyKey}`).digest("hex").slice(0, 32);
-      const routed = await threadStore.decideReviewAndRoute({
+      const routed = await sessionManager.decideReview({
         reviewId: reviewDecisionMatch[1],
         actor: username,
         decision,
         decisionId: `review-decision-${digest}`,
         messageId: `review-message-${digest}`,
-        newSessionId: threadSessionId(reviewDecisionMatch[1]),
       });
-      if (routed.session) await launchThreadExecution(routed.thread, routed.session);
       return json(response, routed.session ? 202 : 200, routed);
     }
     if (request.method === "GET" && url.pathname === "/api/me") return json(response, 200, { username });
@@ -1117,11 +1024,10 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/api/threads") {
       if (workerMode) throw new Error("session workers cannot create threads");
       const body = await readBody(request);
-      if (body.id !== undefined) return json(response, 400, { error: "thread IDs are assigned by the control server" });
+      if (body.id !== undefined) return json(response, 400, { error: "thread IDs are assigned by the session manager" });
       if (gatewayMode) configuredRepository(repositoryCatalog, String(body.repository || ""));
       else repositoryPath(String(body.repository || ""));
-      const thread = await threadStore.createThread({
-        id: generateThreadId(),
+      const thread = await sessionManager.createThread({
         ownerSubject: username,
         repository: String(body.repository || ""),
         title: String(body.title || ""),
@@ -1130,11 +1036,11 @@ const server = http.createServer(async (request, response) => {
     }
     const threadMatch = url.pathname.match(/^\/api\/threads\/([a-z0-9-]+)$/);
     if (request.method === "GET" && threadMatch) {
-      return json(response, 200, { thread: await threadStore.getThreadForActor(threadMatch[1], username) });
+      return json(response, 200, { thread: await sessionManager.getThread(threadMatch[1], username) });
     }
     const threadEventsMatch = url.pathname.match(/^\/api\/threads\/([a-z0-9-]+)\/events$/);
     if (request.method === "GET" && threadEventsMatch) {
-      return json(response, 200, { events: await threadStore.readEventsAfter({
+      return json(response, 200, { events: await sessionManager.readEvents({
         threadId: threadEventsMatch[1],
         actor: username,
         afterSequence: Number(url.searchParams.get("after_sequence") || 0),
@@ -1143,37 +1049,23 @@ const server = http.createServer(async (request, response) => {
     }
     const threadSessionsMatch = url.pathname.match(/^\/api\/threads\/([a-z0-9-]+)\/sessions$/);
     if (request.method === "GET" && threadSessionsMatch) {
-      const threadId = threadSessionsMatch[1];
-      await threadStore.getThreadForActor(threadId, username);
-      if (gatewayMode) {
-        await Promise.all(Object.values(registry.sessions).filter((record) => record.threadId === threadId).map((record) => reconcileGatewaySession(record.id)));
-      }
-      return json(response, 200, { sessions: await threadStore.listSessionsForActor({ threadId, actor: username }) });
+      return json(response, 200, { sessions: await sessionManager.listSessions({
+        threadId: threadSessionsMatch[1],
+        actor: username,
+      }) });
     }
     const threadMessagesMatch = url.pathname.match(/^\/api\/threads\/([a-z0-9-]+)\/messages$/);
     if (request.method === "POST" && threadMessagesMatch) {
       if (workerMode) throw new Error("session workers cannot append user messages");
       const messageId = String(request.headers["idempotency-key"] || "");
       const body = await readBody(request);
-      let thread = await threadStore.getThreadForActor(threadMessagesMatch[1], username);
-      if (gatewayMode && thread.activeSessionId) {
-        await reconcileGatewaySession(thread.activeSessionId);
-        thread = await threadStore.getThreadForActor(thread.id, username);
-      }
-      const routed = await threadStore.appendUserMessageAndRoute({
-        threadId: thread.id,
+      const routed = await sessionManager.appendMessage({
+        threadId: threadMessagesMatch[1],
         actor: username,
         messageId,
         text: String(body.text || ""),
-        newSessionId: threadSessionId(thread.id),
       });
-      if (routed.createdSession && routed.session.leaseGeneration !== null) await launchThreadExecution(thread, routed.session);
-      const delivery = routed.session.leaseGeneration === null
-        ? { mode: "queued-context" }
-        : routed.createdSession
-          ? { mode: "initial-context" }
-          : await deliverThreadFollowup(thread, routed);
-      return json(response, 202, { ...routed, delivery });
+      return json(response, 202, routed);
     }
     if (request.method === "GET" && url.pathname === "/api/sessions") {
       return json(response, 200, { sessions: await publicLegacySessions(username) });
@@ -1279,7 +1171,7 @@ server.on("upgrade", async (request, socket, head) => {
   const workerAuthorized = match ? verifyWorkerToken(request, match[1]) : false;
   let authorized = false;
   if (threadMatch && username) {
-    try { await threadStore.getThreadForActor(threadMatch[1], username); authorized = true; } catch {}
+    try { await sessionManager.getThread(threadMatch[1], username); authorized = true; } catch {}
   }
   if (match && registry.sessions[match[1]] && ((username && registry.sessions[match[1]].createdBy === username) || workerAuthorized)) authorized = true;
   if ((!match && !threadMatch) || !validOrigin(request) || !authorized) {
@@ -1305,8 +1197,8 @@ sockets.on("connection", (socket, request) => {
       if (publishing) return;
       publishing = true;
       try {
-        const thread = await threadStore.getThreadForActor(request.threadId, request.username);
-        const events = await threadStore.readEventsAfter({ threadId: request.threadId, actor: request.username, afterSequence: cursor, limit: 200 });
+        const thread = await sessionManager.getThread(request.threadId, request.username);
+        const events = await sessionManager.readEvents({ threadId: request.threadId, actor: request.username, afterSequence: cursor, limit: 200 });
         for (const event of events) {
           cursor = event.sequence;
           if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "event", event }));
@@ -1319,7 +1211,7 @@ sockets.on("connection", (socket, request) => {
         const activeSessionId = thread.activeSessionId || null;
         if (activeSessionId) observedSessionId = activeSessionId;
         if (!observedSessionId) {
-          const sessions = await threadStore.listSessionsForActor({ threadId: request.threadId, actor: request.username });
+          const sessions = await sessionManager.listSessions({ threadId: request.threadId, actor: request.username });
           observedSessionId = sessions.at(-1)?.id || null;
         }
         let snapshot = observedSessionId

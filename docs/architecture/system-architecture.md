@@ -47,7 +47,10 @@ Slack Hangout channel -- Events API --> Slack ingress adapter
 Terminal client and authenticated user
               |
               v
-Control server, durable thread store, and session gateway
+Control server (HTTP/auth/WebSocket gateway)
+              |
+              v
+Session manager (durable threads and execution lifecycle)
               |
               | appends to one durable thread and creates an execution session
               v
@@ -93,7 +96,8 @@ storage configuration shown above.
 | --- | --- | --- |
 | Terminal client | User login, local session-cookie storage, a separate local index of thread IDs created by that client profile, interactive durable-thread conversation, scriptable commands, result presentation | Server-wide thread discovery, runbook implementation, KMS signing, production credentials |
 | Slack ingress adapter | Slack request-signature verification, configured channel-ID filtering, fast acknowledgement, durable event deduplication and retry, bounded event normalization | Human authority, session workflow, repository selection, production procedures or credentials |
-| Control server | Treating authenticated client callers as users, bounded internally authenticated alert-event admission, durable thread ownership and public history, execution-session creation, message transport, human-review queue and decisions, event replay, trace-derived context, result streaming | Provider lifecycle logic, agent/model turn storage, Grafana procedures, operation IDs, runbook steps, production credentials |
+| Control server | HTTP authentication and admission, bounded internally authenticated alert-event admission, WebSocket and message transport, execution-platform adapters, trace-derived result transport | Durable thread state transitions, provider lifecycle logic, agent/model turn storage, Grafana procedures, operation IDs, runbook steps, production credentials |
+| Session manager | Durable user-owned threads, public history, sequential execution-session lifecycle and fencing, context projection, human-review queue and decisions, and result projection | HTTP authentication or transport, Kubernetes/tmux implementation details, model-provider lifecycle, production procedures or credentials |
 | Supervisor | One session's authority, role bootstrap, role confinement, privileged-request mediation, KMS signing | Service-specific operational procedures |
 | Orchestrator | Goal decomposition, role routing, workflow coordination | Grafana/Loki knowledge, concrete production operations, `prod-mcp` parameters, provider-specific prompts |
 | Ops agent | Reading a selected Markdown runbook, planning and requesting its steps, reporting evidence | Deployment secrets, KMS private authority, infrastructure provisioning |
@@ -115,7 +119,12 @@ Executable components and deployment integration surfaces have explicit
 top-level ownership boundaries:
 
 - `client/` owns the terminal client package.
-- `control-server/` owns the authenticated control gateway package.
+- `control-server/` owns the authenticated HTTP and WebSocket gateway package
+  and deployment-specific execution adapters.
+- `session-manager/` owns the transport-independent durable `Thread` model and
+  its mapping to sequential execution sessions. For the MVP it is hosted in
+  the control-server process and StatefulSet; this package boundary does not
+  create another network service.
 - `slack-ingress/` owns the independently deployed Slack Events adapter and durable delivery queue.
 - `runtime/` owns the Rust session runtime, supervisor, and role-confinement
   package.
@@ -284,12 +293,14 @@ permit.
 
 A thread is the durable, user-owned task and conversation shown by the client.
 An execution session is one isolated runtime instance created to make progress
-on that thread. The control server assigns both thread and execution-session IDs
-and owns thread authorization, a small append-only
-user-visible manifest, context checkpoints, S3 trace references, and the mapping
-to sequential execution sessions. Detailed model and agent histories remain in
-the session traces already exported to S3; the control server does not duplicate
-or reinterpret provider-native conversation storage.
+on that thread. The session manager assigns both thread and execution-session
+IDs and owns thread authorization, a small append-only user-visible manifest,
+context checkpoints, S3 trace references, review transitions, and the mapping
+to sequential execution sessions. The control server is the authenticated HTTP
+and WebSocket gateway and supplies execution-platform adapters to the session
+manager. Detailed model and agent histories remain in the session traces already
+exported to S3; neither component duplicates or reinterprets provider-native
+conversation storage.
 
 Only one execution session may hold the active fenced lease for a thread. A
 follow-up after a session finishes creates a new session ID, Pod or Job,
@@ -353,7 +364,9 @@ may instead terminate with an honest structural blocker when at least one
 reviewed receipt is classified `blocked` and no receipt is classified `failed`.
 An executor failure without a success remains fail-closed.
 
-`multiagent` owns the thread manifest and single-writer lifecycle semantics.
+The `session-manager/` component owns the thread manifest and single-writer
+lifecycle semantics. It is initially linked into the single control-server
+process, so the deployment topology and one-writer assumption do not change.
 `InternalServices` provisions the gateway PVC, versioned S3 backup, IAM,
 encryption, endpoints, and retention configuration. With one gateway writer,
 atomic local manifest replacement is sufficient; a distributed database is

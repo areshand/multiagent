@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { renderThreadTask } from "../src/thread-execution-context.mjs";
+import { renderThreadTask } from "../../session-manager/src/thread-context.mjs";
 
 test("thread execution context separates historical context from the current authenticated request", () => {
   const task = renderThreadTask({
