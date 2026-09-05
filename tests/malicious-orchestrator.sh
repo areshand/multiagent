@@ -23,7 +23,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-install -d -m 0755 "$TEST_ROOT/bin" "$TEST_ROOT/repo/allowed" "$TEST_ROOT/repo/forbidden"
+install -d -m 0755 "$TEST_ROOT/bin" "$TEST_ROOT/repo/allowed" "$TEST_ROOT/repo/forbidden" \
+  "$TEST_ROOT/framework/runbooks"
 install -m 4755 "$SOURCE_BIN" "$TEST_ROOT/bin/multiagent"
 MULTIAGENT="$TEST_ROOT/bin/multiagent"
 REPO="$TEST_ROOT/repo"
@@ -68,7 +69,19 @@ while [[ $# -gt 0 ]]; do
   fi
 done
 prompt="$(cat || true)"
-if [[ "$output" == *worker-post-review* ]]; then
+if [[ "$output" == *repository-reader-shared-request* ]]; then
+  request="$MULTIAGENT_ROLE_SHARED_WRITE_DIR/direct-read-request.json"
+  result="$MULTIAGENT_ROLE_SHARED_WRITE_DIR/direct-read-result.txt"
+  printf '%s\n' '{"operation":{"id":"grafana.query_loki_logs","version":"1.0.0"},"parameters":{},"runbook":{"id":"reader-shared-request-test","version":"1.0.0","phase":"diagnosis"},"runbookDocument":"runbooks/intentionally-missing-reader-shared-request.md"}' >"$request"
+  chmod 0640 "$request"
+  if multiagent ops read --request-file "$request" >"$result" 2>&1; then
+    printf 'direct read unexpectedly succeeded\n' >>"$result"
+    exit 1
+  fi
+  printf 'reader shared request test complete\n' >"$output"
+  printf '{"type":"result","result":"completed"}\n'
+  exit 0
+elif [[ "$output" == *worker-post-review* ]]; then
   printf 'malicious post-review source\n' >"$TEST_REPO/allowed/post-review.rs" 2>/dev/null || true
 else
   printf 'worker-write\n' >"$TEST_REPO/allowed/result.txt" 2>/dev/null || true
@@ -94,6 +107,10 @@ chmod 0755 "$TEST_ROOT/bin/tmux"
 
 mkdir -p "$STATE/subagents" "$STATE/runtime_state" "$STATE/tmp" "$STATE/logs"
 
+ORIGINAL_TASK="$TEST_ROOT/original-task.md"
+printf 'Diagnose the integration-test incident without mutating production.\n' >"$ORIGINAL_TASK"
+chmod 0644 "$ORIGINAL_TASK"
+
 BASE_ENV=(
   MULTIAGENT_TEST_MODE=1
   MULTIAGENT_UID_SANDBOX=1
@@ -102,6 +119,7 @@ BASE_ENV=(
   MULTIAGENT_STATE_DIR="$STATE"
   MULTIAGENT_LOG_DIR="$STATE/logs"
   MULTIAGENT_WORKFLOW_ID=WF-ATTACK
+  MULTIAGENT_ORIGINAL_TASK_FILE="$ORIGINAL_TASK"
   MULTIAGENT_CODEX_EXEC=1
   MULTIAGENT_REQUIRE_HASH_BOUND_VERIFIER=1
   MULTIAGENT_CODEX_HOME_ROOT="$HOMES"
@@ -113,6 +131,11 @@ BASE_ENV=(
   CLAUDE_BIN="$TEST_ROOT/bin/codex"
   QWEN_BIN="$TEST_ROOT/bin/codex"
   TEST_REPO="$REPO"
+  MULTIAGENT_FRAMEWORK_ROOT="$TEST_ROOT/framework"
+  MULTIAGENT_THREAD_ID=thread-boundary-test
+  MULTIAGENT_SESSION=session-boundary-test
+  MULTIAGENT_LEASE_GENERATION=1
+  MULTIAGENT_AUTHORIZING_EVENT_ID=event-boundary-test
   HOME="$HOMES/orchestrator"
   TMPDIR="$STATE/tmp"
   PATH="$TEST_ROOT/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -137,6 +160,33 @@ as_ops() {
 }
 
 as_orchestrator "$MULTIAGENT" workflow init WF-ATTACK >/dev/null
+
+# Exercise the real reader UID and Landlock boundary. Reaching the intentionally
+# missing runbook error proves the supervisor read and decoded the reader-owned
+# request without allowing the request file to be group-writable.
+READER_SHARED="repository-reader-shared-request"
+as_orchestrator mkdir -p "$STATE/subagents/$READER_SHARED"
+as_orchestrator sh -c 'printf "%s\n" "exercise the reader shared request boundary" >"$1"' sh \
+  "$STATE/subagents/$READER_SHARED/instruction.txt"
+as_orchestrator "$MULTIAGENT" supervisor register-launch "$READER_SHARED" \
+  --role reader --cli codex --cli-bin "$TEST_ROOT/bin/codex" \
+  --instruction-file "$STATE/subagents/$READER_SHARED/instruction.txt" >/dev/null
+as_orchestrator "$MULTIAGENT" role-agent-exec "$READER_SHARED"
+READER_REQUEST="$STATE/logs/agents/$READER_SHARED/direct-read-request.json"
+READER_RESULT="$STATE/logs/agents/$READER_SHARED/direct-read-result.txt"
+[[ "$(stat -c %u "$READER_REQUEST")" == 10003 ]]
+[[ "$(stat -c %a "$READER_REQUEST")" == 640 ]]
+if ! grep -Fq "resolve runbook document" "$READER_RESULT"; then
+  echo "reader request did not reach the expected post-read validation stage" >&2
+  cat "$READER_RESULT" >&2
+  exit 1
+fi
+if grep -Eq "resolve direct read request|must be inside MULTIAGENT_LOG_DIR/agents|must be caller-owned" \
+  "$READER_RESULT"; then
+  echo "supervisor could not read the reader-owned shared request" >&2
+  cat "$READER_RESULT" >&2
+  exit 1
+fi
 
 if as_orchestrator "$MULTIAGENT" workflow transition WF-ATTACK complete \
   >"$TEST_ROOT/direct-complete.out" 2>&1; then

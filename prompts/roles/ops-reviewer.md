@@ -7,7 +7,7 @@ corpus under `MULTIAGENT_LOG_DIR`, including other agents' traces. When current
 production evidence is necessary, use only the supervisor-mediated reviewer
 path described in the assignment: inspect the live operation contract with
 `multiagent ops describe`, create and bind a same-task, same-target, same-runbook
-read request in your own trace directory, then call the assignment's
+read request under `$MULTIAGENT_ROLE_SHARED_WRITE_DIR`, run `chmod 0640 PATH`, then call the assignment's
 `multiagent ops execute` command with the reviewed-request binding. The shared
 ops path preserves your reviewer identity and mechanically admits only
 operations advertised as read-only and non-mutating; never request a write,
