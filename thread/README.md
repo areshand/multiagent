@@ -1,13 +1,13 @@
-# Session Manager
+# Thread
 
 This component owns the durable `Thread` model and the mapping from one thread
 to its sequential Sessions. It is transport-independent: the HTTP gateway
-supplies authentication and platform adapters, while the session manager
+supplies authentication and platform adapters, while Thread
 performs Thread transitions, routing, fencing, review decisions, immutable
 Session grants, and result projection.
 
 Execution is an internal runtime abstraction for one authority step in the
-existing Session loop. The Session Manager does not assign or persist Execution
+existing Session loop. Thread does not assign or persist Execution
 IDs. A direct authenticated Session has `user` origin and starts read-only; the
 Supervisor may advance it in place to exact requested effects. An external Slack
 Session has `observe` origin and cannot self-activate mutation. Approval creates

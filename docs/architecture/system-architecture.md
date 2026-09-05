@@ -50,7 +50,7 @@ Terminal client and authenticated user
 Control server (HTTP/auth/WebSocket gateway)
               |
               v
-Session manager (durable threads and session lifecycle)
+Thread (durable task and session lifecycle)
               |
               | appends to one durable thread and creates a Session
               v
@@ -97,7 +97,7 @@ storage configuration shown above.
 | Terminal client | User login, local session-cookie storage, a separate local index of thread IDs created by that client profile, interactive durable-thread conversation, scriptable commands, result presentation | Server-wide thread discovery, runbook implementation, KMS signing, production credentials |
 | Slack ingress adapter | Slack request-signature verification, configured channel-ID filtering, fast acknowledgement, durable event deduplication and retry, bounded event normalization | Human authority, session workflow, repository selection, production procedures or credentials |
 | Control server | HTTP authentication and admission, bounded internally authenticated alert-event admission, WebSocket and message transport, execution-platform adapters, trace-derived result transport | Durable thread state transitions, provider lifecycle logic, agent/model turn storage, Grafana procedures, operation IDs, runbook steps, production credentials |
-| Session manager | Durable user-owned threads, public history, sequential session lifecycle and fencing, context projection, human-review queue and decisions, and result projection | HTTP authentication or transport, Kubernetes/tmux implementation details, model-provider lifecycle, production procedures or credentials |
+| Thread | Durable user-owned task state, public history, sequential session lifecycle and fencing, context projection, human-review queue and decisions, and result projection | HTTP authentication or transport, Kubernetes/tmux implementation details, model-provider lifecycle, production procedures or credentials |
 | Supervisor | One session's authority, role bootstrap, role confinement, privileged-request mediation, KMS signing | Service-specific operational procedures |
 | Orchestrator | Goal decomposition, role routing, workflow coordination | Grafana/Loki knowledge, concrete production operations, `prod-mcp` parameters, provider-specific prompts |
 | Ops agent | Reading a selected Markdown runbook, planning and requesting its steps, reporting evidence | Deployment secrets, KMS private authority, infrastructure provisioning |
@@ -121,7 +121,7 @@ top-level ownership boundaries:
 - `client/` owns the terminal client package.
 - `control-server/` owns the authenticated HTTP and WebSocket gateway package
   and deployment-specific execution adapters.
-- `session-manager/` owns the transport-independent durable `Thread` model and
+- `thread/` owns the transport-independent durable `Thread` model and
   its mapping to sequential sessions. For the MVP it is hosted in
   the control-server process and StatefulSet; this package boundary does not
   create another network service.
@@ -219,7 +219,7 @@ configuration.
 
 If observation identifies no repair, the session completes with its bounded
 evidence-backed result. If repair is proposed, the supervisor-owned
-`request-review` route ends the observe execution and the Session Manager
+`request-review` route ends the observe execution and the Thread
 atomically persists a pending review item bound to the exact source session,
 question event, question digest, thread, owner, requested effects, and repository
 paths. While that review is pending, ordinary follow-up cannot bypass it.
@@ -250,7 +250,7 @@ sessions, each with a fresh supervisor.
 
 A Session contains the existing orchestrator loop. One pass through that loop is
 a runtime-owned `Execution`: a small, runtime-local authority step describing the
-effects available to that pass. An Execution is not a Session Manager entity,
+effects available to that pass. An Execution is not a Thread entity,
 Pod, Job, provider session, or second supervisor. Advancing from a read-only
 Execution to a bounded mutation Execution keeps the same Session, supervisor,
 orchestrator, workspace, and trace. The runtime persists only the active bounded
@@ -306,12 +306,12 @@ permit.
 A thread is the durable, user-owned task and conversation shown by the client.
 A Session is one isolated runtime instance created to make progress on that
 thread. A Session may run multiple sequential Executions inside its existing
-orchestrator loop. The session manager assigns Thread and Session IDs and owns
+orchestrator loop. Thread assigns Thread and Session IDs and owns
 thread authorization, a small append-only user-visible manifest, context
 checkpoints, S3 trace references, review transitions, and the mapping from a
 Thread to sequential Sessions. It does not assign or persist Execution IDs. The
 control server is the authenticated HTTP and WebSocket gateway and supplies
-execution-platform adapters to the session manager. Detailed model and agent
+execution-platform adapters to Thread. Detailed model and agent
 histories remain in the session traces already exported to S3; neither component
 duplicates or reinterprets provider-native conversation storage.
 
@@ -385,7 +385,7 @@ may instead terminate with an honest structural blocker when at least one
 reviewed receipt is classified `blocked` and no receipt is classified `failed`.
 An executor failure without a success remains fail-closed.
 
-The `session-manager/` component owns the thread manifest and single-writer
+The `thread/` component owns the thread manifest and single-writer
 lifecycle semantics. It is initially linked into the single control-server
 process, so the deployment topology and one-writer assumption do not change.
 `InternalServices` provisions the gateway PVC, versioned S3 backup, IAM,

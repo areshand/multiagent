@@ -6,8 +6,8 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { WebSocket, WebSocketServer } from "ws";
 import { jobPhase, KubernetesSessionClient } from "./kubernetes-session.mjs";
-import { createThreadStore } from "../../session-manager/src/thread-model.mjs";
-import { SessionManager } from "../../session-manager/src/session-manager.mjs";
+import { createThreadStore } from "../../thread/src/thread-model.mjs";
+import { Thread } from "../../thread/src/thread.mjs";
 import { deliverWorkerReport, reportDeliveryTimeoutMs } from "./worker-report-delivery.mjs";
 import { issueWorkerToken as createWorkerToken, verifyWorkerAuthorization } from "./worker-token.mjs";
 import { readSubagentSnapshot } from "./subagent-status.mjs";
@@ -755,10 +755,10 @@ async function launchThreadExecution(thread, session) {
 
 async function projectSessionToThread(id, status, reportReader = readGatewayReport) {
   const record = registry.sessions[id];
-  return sessionManager.projectExecution({ record, status, report: reportReader(id) });
+  return threads.projectExecution({ record, status, report: reportReader(id) });
 }
 
-const sessionManager = new SessionManager({
+const threads = new Thread({
   threadStore,
   newSessionId: threadSessionId,
   startExecution: ({ thread, session, task }) => launchThreadExecution(thread, { ...session, task }),
@@ -794,7 +794,7 @@ async function publicLegacySessions(username) {
     username,
     hasThread: async (threadId, actor) => {
       try {
-        await sessionManager.getThread(threadId, actor);
+        await threads.getThread(threadId, actor);
         return true;
       } catch (error) {
         if (error?.statusCode !== 404) throw error;
@@ -970,7 +970,7 @@ const server = http.createServer(async (request, response) => {
         threadTs: event.threadTs,
         senderId: event.senderId,
       };
-      const routed = await sessionManager.createExternalThread({
+      const routed = await threads.createExternalThread({
         ownerSubject,
         repository,
         title: slackThreadTitle(event),
@@ -1009,7 +1009,7 @@ const server = http.createServer(async (request, response) => {
       return json(response, 200, { ok: true }, { "set-cookie": "multiagent_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0" });
     }
     if (request.method === "GET" && url.pathname === "/api/reviews") {
-      return json(response, 200, { reviews: await sessionManager.listReviews({
+      return json(response, 200, { reviews: await threads.listReviews({
         actor: username,
         status: String(url.searchParams.get("status") || "pending"),
       }) });
@@ -1023,7 +1023,7 @@ const server = http.createServer(async (request, response) => {
       const rawDecision = String(body.decision || "").toLowerCase();
       const decision = rawDecision === "yes" ? "approve" : rawDecision === "no" ? "reject" : rawDecision;
       const digest = crypto.createHash("sha256").update(`${reviewDecisionMatch[1]}:${username}:${idempotencyKey}`).digest("hex").slice(0, 32);
-      const routed = await sessionManager.decideReview({
+      const routed = await threads.decideReview({
         reviewId: reviewDecisionMatch[1],
         actor: username,
         decision,
@@ -1046,10 +1046,10 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/api/threads") {
       if (workerMode) throw new Error("session workers cannot create threads");
       const body = await readBody(request);
-      if (body.id !== undefined) return json(response, 400, { error: "thread IDs are assigned by the session manager" });
+      if (body.id !== undefined) return json(response, 400, { error: "thread IDs are server-assigned" });
       if (gatewayMode) configuredRepository(repositoryCatalog, String(body.repository || ""));
       else repositoryPath(String(body.repository || ""));
-      const thread = await sessionManager.createThread({
+      const thread = await threads.createThread({
         ownerSubject: username,
         repository: String(body.repository || ""),
         title: String(body.title || ""),
@@ -1058,11 +1058,11 @@ const server = http.createServer(async (request, response) => {
     }
     const threadMatch = url.pathname.match(/^\/api\/threads\/([a-z0-9-]+)$/);
     if (request.method === "GET" && threadMatch) {
-      return json(response, 200, { thread: await sessionManager.getThread(threadMatch[1], username) });
+      return json(response, 200, { thread: await threads.getThread(threadMatch[1], username) });
     }
     const threadEventsMatch = url.pathname.match(/^\/api\/threads\/([a-z0-9-]+)\/events$/);
     if (request.method === "GET" && threadEventsMatch) {
-      return json(response, 200, { events: await sessionManager.readEvents({
+      return json(response, 200, { events: await threads.readEvents({
         threadId: threadEventsMatch[1],
         actor: username,
         afterSequence: Number(url.searchParams.get("after_sequence") || 0),
@@ -1071,7 +1071,7 @@ const server = http.createServer(async (request, response) => {
     }
     const threadSessionsMatch = url.pathname.match(/^\/api\/threads\/([a-z0-9-]+)\/sessions$/);
     if (request.method === "GET" && threadSessionsMatch) {
-      return json(response, 200, { sessions: await sessionManager.listSessions({
+      return json(response, 200, { sessions: await threads.listSessions({
         threadId: threadSessionsMatch[1],
         actor: username,
       }) });
@@ -1081,7 +1081,7 @@ const server = http.createServer(async (request, response) => {
       if (workerMode) throw new Error("session workers cannot append user messages");
       const messageId = String(request.headers["idempotency-key"] || "");
       const body = await readBody(request);
-      const routed = await sessionManager.appendMessage({
+      const routed = await threads.appendMessage({
         threadId: threadMessagesMatch[1],
         actor: username,
         messageId,
@@ -1193,7 +1193,7 @@ server.on("upgrade", async (request, socket, head) => {
   const workerAuthorized = match ? verifyWorkerToken(request, match[1]) : false;
   let authorized = false;
   if (threadMatch && username) {
-    try { await sessionManager.getThread(threadMatch[1], username); authorized = true; } catch {}
+    try { await threads.getThread(threadMatch[1], username); authorized = true; } catch {}
   }
   if (match && registry.sessions[match[1]] && ((username && registry.sessions[match[1]].createdBy === username) || workerAuthorized)) authorized = true;
   if ((!match && !threadMatch) || !validOrigin(request) || !authorized) {
@@ -1219,8 +1219,8 @@ sockets.on("connection", (socket, request) => {
       if (publishing) return;
       publishing = true;
       try {
-        const thread = await sessionManager.getThread(request.threadId, request.username);
-        const events = await sessionManager.readEvents({ threadId: request.threadId, actor: request.username, afterSequence: cursor, limit: 200 });
+        const thread = await threads.getThread(request.threadId, request.username);
+        const events = await threads.readEvents({ threadId: request.threadId, actor: request.username, afterSequence: cursor, limit: 200 });
         for (const event of events) {
           cursor = event.sequence;
           if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "event", event }));
@@ -1233,7 +1233,7 @@ sockets.on("connection", (socket, request) => {
         const activeSessionId = thread.activeSessionId || null;
         if (activeSessionId) observedSessionId = activeSessionId;
         if (!observedSessionId) {
-          const sessions = await sessionManager.listSessions({ threadId: request.threadId, actor: request.username });
+          const sessions = await threads.listSessions({ threadId: request.threadId, actor: request.username });
           observedSessionId = sessions.at(-1)?.id || null;
         }
         let snapshot = observedSessionId

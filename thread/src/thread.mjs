@@ -34,7 +34,7 @@ function interruptedResultEvent(sessionId, report, fallback) {
   };
 }
 
-export class SessionManager {
+export class Thread {
   constructor({
     threadStore,
     newThreadId = () => generateThreadId(),
@@ -45,10 +45,10 @@ export class SessionManager {
     reconcileThreadExecutions = async () => {},
     markExecutionProjected = async () => {},
   }) {
-    if (!threadStore) throw new Error("SessionManager requires a thread store");
-    if (typeof newSessionId !== "function") throw new Error("SessionManager requires a session ID factory");
-    if (typeof startExecution !== "function") throw new Error("SessionManager requires an execution launcher");
-    if (typeof deliverFollowup !== "function") throw new Error("SessionManager requires a follow-up delivery adapter");
+    if (!threadStore) throw new Error("Thread requires a thread store");
+    if (typeof newSessionId !== "function") throw new Error("Thread requires a session ID factory");
+    if (typeof startExecution !== "function") throw new Error("Thread requires an execution launcher");
+    if (typeof deliverFollowup !== "function") throw new Error("Thread requires a follow-up delivery adapter");
     this.threadStore = threadStore;
     this.newThreadId = newThreadId;
     this.newSessionId = newSessionId;

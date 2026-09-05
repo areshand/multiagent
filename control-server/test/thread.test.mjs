@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { SessionManager } from "../../session-manager/src/session-manager.mjs";
-import { InMemoryThreadStore } from "../../session-manager/src/thread-model.mjs";
+import { Thread } from "../../thread/src/thread.mjs";
+import { InMemoryThreadStore } from "../../thread/src/thread-model.mjs";
 
 function fixture() {
   const store = new InMemoryThreadStore();
   const launched = [];
   const projected = [];
   let nextSession = 0;
-  const manager = new SessionManager({
+  const threads = new Thread({
     threadStore: store,
     newThreadId: () => "thread-managed",
     newSessionId: () => `session-${++nextSession}`,
@@ -19,13 +19,13 @@ function fixture() {
       projected.push(outcome);
     },
   });
-  return { manager, launched, projected };
+  return { threads, launched, projected };
 }
 
-test("session manager owns routing, launch context, fencing, and result projection", async () => {
-  const { manager, launched, projected } = fixture();
-  const thread = manager.createThread({ ownerSubject: "user-a", repository: "multiagent", title: "Managed" });
-  const routed = await manager.appendMessage({
+test("Thread owns routing, launch context, fencing, and result projection", async () => {
+  const { threads, launched, projected } = fixture();
+  const thread = threads.createThread({ ownerSubject: "user-a", repository: "multiagent", title: "Managed" });
+  const routed = await threads.appendMessage({
     threadId: thread.id,
     actor: "user-a",
     messageId: "message-1",
@@ -37,7 +37,7 @@ test("session manager owns routing, launch context, fencing, and result projecti
   assert.equal(launched.length, 1);
   assert.match(launched[0].task, /Current authenticated user request:/);
   assert.match(launched[0].task, /Inspect the current implementation/);
-  assert.equal((await manager.listSessions({ threadId: thread.id, actor: "user-a" }))[0].status, "running");
+  assert.equal((await threads.listSessions({ threadId: thread.id, actor: "user-a" }))[0].status, "running");
 
   const record = {
     id: routed.session.id,
@@ -45,7 +45,7 @@ test("session manager owns routing, launch context, fencing, and result projecti
     createdBy: "user-a",
     leaseGeneration: routed.session.leaseGeneration,
   };
-  const result = await manager.projectExecution({
+  const result = await threads.projectExecution({
     record,
     status: "completed",
     report: {
@@ -59,24 +59,24 @@ test("session manager owns routing, launch context, fencing, and result projecti
 
   assert.deepEqual(result, { projected: true, terminalOutcome: "succeeded" });
   assert.deepEqual(projected, ["succeeded"]);
-  assert.equal((await manager.getThread(thread.id, "user-a")).state, "idle");
-  const events = await manager.readEvents({ threadId: thread.id, actor: "user-a" });
+  assert.equal((await threads.getThread(thread.id, "user-a")).state, "idle");
+  const events = await threads.readEvents({ threadId: thread.id, actor: "user-a" });
   assert.equal(events.at(-1).payload.text, "The implementation is read-only.");
   assert.deepEqual(events.at(-1).payload.transcript.traceReferences, [
     `trace://session/${routed.session.id}/logs/agents/reader/attempt-1/events.jsonl`,
   ]);
 });
 
-test("session manager owns review decisions and launches approved continuations", async () => {
-  const { manager, launched } = fixture();
-  const thread = manager.createThread({ ownerSubject: "user-a", repository: "multiagent" });
-  const routed = await manager.appendMessage({
+test("Thread owns review decisions and launches approved continuations", async () => {
+  const { threads, launched } = fixture();
+  const thread = threads.createThread({ ownerSubject: "user-a", repository: "multiagent" });
+  const routed = await threads.appendMessage({
     threadId: thread.id,
     actor: "user-a",
     messageId: "message-1",
     text: "Diagnose and propose any required repair",
   });
-  await manager.projectExecution({
+  await threads.projectExecution({
     record: {
       id: routed.session.id,
       threadId: thread.id,
@@ -94,8 +94,8 @@ test("session manager owns review decisions and launches approved continuations"
     },
   });
 
-  const [review] = await manager.listReviews({ actor: "user-a" });
-  const decided = await manager.decideReview({
+  const [review] = await threads.listReviews({ actor: "user-a" });
+  const decided = await threads.decideReview({
     reviewId: review.id,
     actor: "user-a",
     decision: "approve",
