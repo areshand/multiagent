@@ -27,6 +27,10 @@ jobs:
         run: cargo build --locked
       - name: Run framework and native-solver boundary tests
         run: python -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Run consolidated personal Wiki engine contracts
+        run: python -m unittest discover -s wiki-service/engine/tests -p 'test_*.py' -v
+      - name: Enforce Wiki engine data-privacy boundary
+        run: python wiki-service/engine/scripts/privacy_check.py wiki-service/engine
 
   control-plane:
     runs-on: ${{ matrix.os }}
@@ -51,6 +55,8 @@ jobs:
         run: cargo test --locked
       - name: Run control-server session contracts
         run: npm test --prefix control-server
+      - name: Run Wiki service contracts
+        run: npm test --prefix wiki-service
       - name: Run independent logger contracts
         run: cargo test --locked -p multiagent-logger
       - name: Install terminal-client dependencies

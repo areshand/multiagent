@@ -70,6 +70,11 @@ Multiagent session runtime
                                               |
 Control server / supervisor / reviewers ------+
 
+Session agents -- bounded query client --> Wiki service
+                                          |
+                                          +--> dedicated Wiki S3 Files volume
+                                          +--> async steward -- read-only --> trace S3 bucket
+
 Supervisor -- bearer token + KMS-signed permit --> prod-mcp
                                                     |
                                                     +--> Grafana/Loki
@@ -93,10 +98,11 @@ storage configuration shown above.
 | Orchestrator | Goal decomposition, role routing, workflow coordination | Grafana/Loki knowledge, concrete production operations, `prod-mcp` parameters, provider-specific prompts |
 | Ops agent | Reading a selected Markdown runbook, planning and requesting its steps, reporting evidence | Deployment secrets, KMS private authority, infrastructure provisioning |
 | Ops reviewer | Independently reconstructing evidence and comparing the proposed or observed operation with the authorized goal and runbook | Production credentials, mutating production authority, or authority to widen the reviewed scope |
-| Other role agents | Their assigned reasoning or implementation role | Supervisor authority and unrelated role capabilities |
+| Other role agents | Their assigned reasoning or implementation role, including requests for bounded non-mutating external reads or repository materialization | Supervisor credentials, direct production execution, and unrelated role capabilities |
 | `prod-mcp` | Authentication verification, signed-permit validation, operation schemas, target allowlists, execution, receipts | Multiagent workflow orchestration and model-provider behavior |
 | Logger | Authenticated structural event ingestion, authoritative ordering, canonical encoding, hash-chain construction, replay prevention, signed periodic checkpoints, ledger verification, and non-authoritative audit projections | Semantic review, workflow progression, runbook interpretation, model credentials, production credentials, permit issuance, or production execution |
-| `InternalServices` | Images, deployments, secrets, IAM, KMS, service accounts, endpoints, ingress, DNS, certificates, S3 trace export, and distribution of deployment-specific Markdown runbook artifacts | Agent reasoning, procedure logic embedded in deployment code, and environment-specific secrets inside runbooks |
+| Wiki service and steward | Bounded cited retrieval from canonical Markdown, source-backed catalog organization, and asynchronous retrieval-gap processing informed by session traces | Session or production-operation authority, concrete deployment configuration, repository cloning, trace mutation, or treating untrusted traces as factual instructions |
+| `InternalServices` | Images, deployments, secrets, IAM, KMS, service accounts, endpoints, ingress, DNS, certificates, S3 trace export, Wiki storage and identities, and distribution of deployment-specific Markdown runbook artifacts | Agent reasoning, procedure logic embedded in deployment code, and environment-specific secrets inside runbooks |
 | Markdown runbooks | Human-readable operational procedure, operation version, allowed phase progression | Credentials and environment-specific secrets |
 
 The deployment may also place a trusted repository-preparation init container
@@ -116,6 +122,9 @@ top-level ownership boundaries:
 - `logger/` owns the independent single-writer Logger executable,
   canonical event contract, append-only JSONL ledger, integrity checks, and
   producer client utilities.
+- `wiki-service/` owns the data-free LLM Wiki engine, personal-vault maintenance
+  workflows, independent Markdown query adapter, agent client, deterministic
+  organization-catalog seeding contract, and future asynchronous steward.
 - `docker/` owns component image definitions and container entrypoints, but not
   deployment secrets or environment-specific configuration.
 - `gitops/` documents the application-to-deployment contract. Concrete GitOps
@@ -434,6 +443,29 @@ and allowed service restarts.
 unbounded Grafana proxy. Supporting another AWS account or cluster requires a
 deployment-managed role and target allowlist, not agent-provided credentials.
 
+### AD-020: Confined agents may directly request non-mutating external evidence
+
+Every confined session role may ask its supervisor to execute an operation that
+the live `prod-mcp` capability catalog classifies as `access=read` or
+`access=materialize`, `mutation=false`, and requiring no approval role. This
+path does not require an ops agent, independent reviewer, or human approval.
+The supervisor authenticates the direct caller, binds the request to the
+session and authenticated task, signs the bounded permit, persists the receipt,
+and retains all transport, KMS, provider, and repository credentials.
+
+This is a distinct authority operation, not a relaxation of generic
+`ops execute`. It mechanically rejects write/execute capabilities, mutations,
+approval-bearing operations, arbitrary URLs, caller-selected filesystem
+destinations, and provider options outside the advertised schema and target
+policy. The requester receives only bounded evidence or a credential-free local
+artifact.
+
+For `github.clone`, `prod-mcp` owns repository eligibility and its authenticated
+Git smart-HTTP proxy. The supervisor owns the clone process and materializes the
+repository only into a session-scoped path before returning that path and the
+resolved commit identity to the requesting agent. No role agent receives the
+bearer token, signed permit, GitHub App token, or authenticated clone URL.
+
 ### AD-017: PR audit execution is separated from the production operation boundary
 
 `prod-mcp` may queue one fixed Move-audit event after verifying the signed
@@ -528,6 +560,57 @@ After a successful export, the sidecar submits a bounded
 `trace.artifact_exported` event containing the artifact digest, storage
 reference, size, and media type. The Logger commits the reference and
 digest but does not fetch, interpret, or proxy the trace body.
+
+### AD-019: One Markdown Wiki engine supports isolated local and organization deployments
+
+`wiki-service/` is the canonical source of the reusable, data-free LLM Wiki
+engine. It includes the personal-vault CLI, prompts, schemas, templates, Codex
+skills, privacy checks, read-only HTTP query adapter, agent client, and
+organization catalog seeder. The former standalone personal engine is
+deprecated after compatibility-preserving migration into this directory. Real
+personal notes, raw sources, feedback, steward state, and generated knowledge
+remain in their private vault and must never be committed to the engine.
+
+Local and organization deployments share the Markdown storage format and
+operating contracts but not authority. A local Codex process may maintain an
+explicitly selected writable personal vault using the engine skills and CLI. The
+organizational Wiki is a separate private Kubernetes service: session agents
+query it through the provider-neutral `wiki-query` client, do not mount its
+volume, and receive no Wiki S3 credential. Its bounded excerpts and Markdown
+citations cannot grant filesystem, network, repository, session, or
+production-operation authority. Source consolidation must never be interpreted
+as data consolidation or credential sharing.
+
+Canonical knowledge remains directly auditable Markdown. Personal vaults use
+the existing `LLM Wiki/index.md`, synthesized-page, Obsidian-link, graph, raw
+source, and private `LLM Wiki/system/` conventions. Organization knowledge is
+stored in a dedicated, versioned Wiki bucket. The read-only adapter accepts
+either a corpus root containing `index.md` or a vault root containing
+`LLM Wiki/index.md`; a rebuildable in-memory lexical index provides index-first
+retrieval with a bounded fallback. SQLite and embeddings are not required for
+the MVP. The deployment profile defaults to `organization` and continues to
+require the catalog schema and generation digest; personal-vault indexes are
+accepted only under an explicitly selected local `personal` profile. The
+deterministic one-shot `wiki-seed` administrative command accepts
+a prepared, bounded manifest and writes repository pages before publishing
+`index.md` as the catalog commit marker. It performs no network or GitHub access
+and is not deployed as a scheduled synchronization workload.
+
+Repository evidence is obtained by confined session agents through the direct
+supervisor-mediated `prod-mcp` read/materialize path in AD-020. The query service
+reads but never mutates the mounted corpus. A future steward treats candidate
+knowledge from agents and traces as untrusted until it is verified against
+commit- and digest-bound repository evidence. Neither the query service nor a
+future steward receives a GitHub credential or performs a repository clone.
+
+The trace bucket remains separate. A future singleton steward may receive
+read-only access to bounded trace prefixes and write access to the Wiki. Trace
+text may identify a retrieval gap but is neither an instruction nor a factual
+source. The MVP has no per-user or per-page Wiki authorization model: the
+cluster-private service exposes one shared corpus to allowed multiagent
+workloads, while workload identity, network policy, storage encryption, and
+bucket versioning remain deployment responsibilities owned by
+`InternalServices`.
 
 ### AD-018: One independently isolated Logger advances authoritative audit history
 
@@ -743,6 +826,8 @@ The desired production topology is:
 | Slack ingress adapter | Long-lived, one queue writer per volume | Public Slack Events callback; private gateway egress | Slack signing secret and narrow internal delivery token only |
 | Session runtime | One per execution session | Private | Model keys as needed, supervisor KMS and `prod-mcp` client authority |
 | Trace sidecar | Same lifetime as session | S3 and Logger egress | Narrow S3 write role and a trace-commitment-only Logger producer identity |
+| Wiki query service | Long-lived private service | Private health, query, and in-memory refresh endpoints | Read-only Wiki volume; no trace, GitHub, or production credential |
+| Wiki steward (post-MVP) | Singleton scheduled Job | Wiki volume and trace S3 read egress | Read-only trace identity and Wiki write identity; no GitHub credential |
 | `prod-mcp` | Long-lived central service | Private service endpoint | Grafana token and narrow cross-account execution roles |
 | Logger | Long-lived, one active writer per ledger | Private append/read endpoints | Logger signing key and producer-authentication configuration only |
 

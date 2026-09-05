@@ -60,3 +60,24 @@ The application-owned Slack ingress deployment contract is:
 Concrete Slack app IDs, workspace/channel IDs, callback hostnames, secret
 names, PVC class, replica policy, NetworkPolicy, certificates, and public
 ingress remain `InternalServices` configuration.
+
+The application-owned organizational Wiki MVP deployment contract is:
+
+- build `docker/wiki-service/Dockerfile` as an independent image;
+- deploy one private query service with `WIKI_ROOT=/var/lib/wiki`;
+- mount a dedicated versioned Wiki bucket read-only through a deployment-owned
+  S3 Files/Mountpoint PV and PVC;
+- expose only bounded health, readiness, query, and in-memory refresh HTTP
+  endpoints to allowed multiagent workloads; the mounted corpus stays read-only;
+- inject `MULTIAGENT_WIKI_URL` into session runtimes and bake only the
+  provider-neutral `wiki-query` command into their image;
+- give the query workload no trace, GitHub, KMS, prod-mcp, or repository
+  credential;
+- run `wiki-seed` only as an explicit administrative bootstrap against a
+  prepared manifest; it is not a deployed or scheduled synchronization process;
+- keep the trace and Wiki buckets separate; and
+- inject bucket names, endpoints, workload identities, storage, encryption,
+  retention, and NetworkPolicies from `InternalServices`.
+
+A later singleton steward workload uses a distinct identity with Wiki write and
+bounded trace-read permissions. It never receives a GitHub credential.

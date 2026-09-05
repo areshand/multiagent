@@ -32,14 +32,19 @@ inspect it only in the recovery workflow.
 | Need | Role |
 | --- | --- |
 | Change bounded workspace paths | worker |
-| Use a Markdown runbook to access prod-mcp or an external service | ops |
+| Discover organizational knowledge or the owning repository | query the Wiki for routing, then assign a reader if analysis remains |
+| Request bounded external read evidence or repository materialization | the assigned confined role through the supervisor |
+| Change external state through a Markdown runbook | ops |
 | Resolve a material unknown from local or immutable evidence | scout |
 | Independently assess a decision, request, diff, receipt, or claim | reviewer/verifier |
 
-External access always belongs to ops. A scout may analyze an immutable artifact
-returned by ops, but cannot call Slack, GitHub, Grafana, AWS, Kubernetes,
-prod-mcp, or another deployed service.
-External access is an authority boundary, not a mutability classification.
+Run `wiki-query` when the task needs organization-wide knowledge or repository
+discovery. Treat its cited result as routing evidence, not authority. A confined
+role may use `multiagent ops read --request-file PATH` for a live capability
+advertised as non-mutating read/materialize with no approval roles. Only
+write/execute/mutating external operations belong to ops and the reviewed
+runbook lifecycle. No role calls provider endpoints directly or receives
+Supervisor credentials.
 
 ## Build the DAG
 
@@ -73,7 +78,9 @@ bindings, independent review, and phase completion.
   Submit one complete `IterationPlan` to `subagent execute-iteration`; once it
   starts, the runtime owns ready-node scheduling, waits, finalization, review
   evidence, and lifecycle transitions until completion or `needs_replan`.
-- External-only work skips the source lifecycle and uses reviewed ops requests.
+- External-only work skips the source lifecycle. Non-mutating read/materialize
+  requests use the direct supervisor path; write/execute/mutating requests use
+  reviewed ops requests.
 - For ops, load only
   `$MULTIAGENT_FRAMEWORK_ROOT/prompts/playbooks/reviewed-ops-cycle.md`. Keep one
   ops identity for the session and invoke `multiagent subagent reviewed-ops-cycle`

@@ -100,6 +100,8 @@ plane.
   for the authoritative structural audit chain, signed periodic checkpoints,
   and integrity verification. It records evidence but does not control workflow
   progress.
+- `wiki-service/` contains the independently deployed Markdown organizational
+  knowledge query service, deterministic catalog seed tool, and agent client.
 - `docker/` contains component image definitions and container entrypoints.
 - `gitops/` documents the deployment integration boundary. Production GitOps
   resources remain owned by the separate `InternalServices` repository.

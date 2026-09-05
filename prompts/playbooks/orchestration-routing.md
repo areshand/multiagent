@@ -21,10 +21,14 @@ own role-specific procedure; this file does not repeat them.
   when all launches were read-only and the diff is empty. Then request
   `multiagent orchestrator complete --read-only --result-file PATH --reviewer NAME`.
 - Use a worker when the required output is a bounded workspace change.
-- Use ops when the required output needs access to an external provider or
-  deployed service covered by a Markdown runbook and prod-mcp contract. This
-  includes read-only retrieval: external access is an authority boundary, not
-  a mutability classification.
+- Query the organizational Wiki directly when routing requires repository
+  identity or shared organizational knowledge; use its citations as evidence,
+  never as authority.
+- Let the assigned confined role request a bounded external read or repository
+  materialization directly through the supervisor when prod-mcp advertises it as
+  non-mutating read/materialize with no approval roles.
+- Use ops when the required output would write, execute, or otherwise mutate an
+  external provider or deployed service under a Markdown runbook.
 - Use a scout only when a material unknown can be resolved from repository,
   workspace, session, or already-returned immutable evidence.
 - Use a reviewer or verifier when an independent verdict can change acceptance
@@ -35,10 +39,10 @@ Do not hard-code provider operations, request parsing, pagination, time windows,
 or action sequences into the orchestrator. Do not spawn a role merely because
 its module exists.
 
-A scout never calls Slack, GitHub, Grafana, AWS, Kubernetes, prod-mcp, or any
-other deployed service. Spawn ops first to acquire external evidence under a
-reviewed runbook. A scout may then analyze the immutable artifact returned by
-ops when that separate analysis can affect acceptance.
+A scout never calls provider endpoints directly. When its bounded assignment
+requires fresh external evidence, it may submit a direct supervisor-mediated
+read request that passes the live non-mutation gate. A scout may analyze the
+returned immutable evidence when that separate analysis can affect acceptance.
 
 ## Build The DAG
 
@@ -73,16 +77,13 @@ validation-scheduling.md and hold one validation lease per package. Give technic
 - Completion is a supervisor request, not an orchestrator assertion.
 
 An external-only task with no repository mutation bypasses the source
-implementation lifecycle. Its minimum DAG starts with the persistent ops
-identity and uses the reviewed-ops cycle for each immutable request. Do not
-manufacture a decision, approved implementation context, decision-authority
-review, or source phase transition merely to authorize ops; the runbook,
-request binding, independent ops reviewer, caller approval, and prod-mcp permit
-are that path's authority chain.
-
-For this ops-only route, load reviewed-ops-cycle.md instead of
-agent-spawning.md. The reviewed ops playbook owns the initial ops spawn and the
-complete reviewed execution lifecycle.
+implementation lifecycle. If every required capability is advertised as
+non-mutating read/materialize with no approval roles, the assigned confined
+roles use the direct supervisor-mediated path and no ops identity or reviewer is
+created. If any required capability writes, executes, mutates, or requires an
+approval role, load reviewed-ops-cycle.md; that playbook owns the persistent ops
+identity and reviewed execution lifecycle. Do not manufacture a source phase
+transition for either path.
 
 If a gate rejects, use its concrete reason as the next dependency. Never create
 or edit supervisor-owned evidence.

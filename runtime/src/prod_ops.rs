@@ -10,11 +10,15 @@ use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration as StdDuration, Instant, SystemTime, UNIX_EPOCH};
 
 const MAX_OPERATION_REQUEST_BYTES: u64 = 65_536;
 const MAX_RUNBOOK_BYTES: u64 = 1_048_576;
-const OPS_USAGE: &str = "usage:\n  multiagent ops describe OPERATION_ID\n  multiagent ops template\n  multiagent ops bind-runbook --request-file PATH --runbook-document PATH\n  multiagent ops publish --draft-file PATH --runbook-document PATH\n  multiagent ops review-bind --request-file PATH\n  multiagent ops execute --request-file PATH --reviewer NAME [--reviewed-request PATH]";
+const MATERIALIZATION_TIMEOUT: StdDuration = StdDuration::from_secs(120);
+const MAX_MATERIALIZATION_FILES: u64 = 200_000;
+const MAX_MATERIALIZATION_BYTES: u64 = 1024 * 1024 * 1024;
+const OPS_USAGE: &str = "usage:\n  multiagent ops describe OPERATION_ID\n  multiagent ops read --request-file PATH\n  multiagent ops template\n  multiagent ops bind-runbook --request-file PATH --runbook-document PATH\n  multiagent ops publish --draft-file PATH --runbook-document PATH\n  multiagent ops review-bind --request-file PATH\n  multiagent ops execute --request-file PATH --reviewer NAME [--reviewed-request PATH]";
 
 pub(crate) struct PublishedRequest {
     artifact_path: PathBuf,
@@ -45,6 +49,7 @@ struct TrustedApproval {
 pub fn run(args: &[String]) -> Result<ExitCode, String> {
     match args.first().map(String::as_str) {
         Some("describe") => describe(&args[1..]),
+        Some("read") => execute_direct_read(&args[1..]),
         Some("template") => template(&args[1..]),
         Some("bind-runbook") => bind_runbook(&args[1..]),
         Some("publish-bound") => publish_bound(&args[1..]),
@@ -71,6 +76,7 @@ fn describe(args: &[String]) -> Result<ExitCode, String> {
         "version",
         "description",
         "access",
+        "mutation",
         "allowedRunbooks",
         "parameterSchema",
         "parameterExamples",
@@ -139,7 +145,7 @@ fn template(args: &[String]) -> Result<ExitCode, String> {
 fn print_ops_help() {
     println!("{OPS_USAGE}");
     println!(
-        "\nCall `multiagent ops describe OPERATION_ID` before constructing parameters; it returns prod-mcp's live description, JSON schema, examples, and authorization requirements.\n\nDraft schema:\n  taskId: non-empty stable string\n  goal: bounded goal copied from the authenticated task\n  operation: object with id and semantic version\n  parameters: exact provider operation parameters from `ops describe`\n  runbook: object with id, phase, and semantic version\n\nGenerate a valid starting envelope with `multiagent ops template`, then bind it with a normalized framework-relative runbook path such as `runbooks/name.md`. After binding, run `chmod 0640 DRAFT_FILE` so the ops-owned request is supervisor-readable and not group-writable. The reviewed-ops-cycle publishes the immutable request. Do not supply target, approvals, runbookDocument, or runbookContentSha256 yourself."
+        "\nCall `multiagent ops describe OPERATION_ID` before constructing parameters; it returns prod-mcp's live description, JSON schema, examples, and authorization requirements.\n\nDraft schema:\n  taskId: non-empty stable string\n  goal: bounded goal copied from the authenticated task\n  operation: object with id and semantic version\n  parameters: exact provider operation parameters from `ops describe`\n  runbook: object with id, phase, and semantic version\n\nGenerate a valid starting envelope with `multiagent ops template`, then bind it with a normalized framework-relative runbook path such as `runbooks/name.md`. After binding, run `chmod 0640 DRAFT_FILE` so the ops-owned request is supervisor-readable and not group-writable. The reviewed-ops-cycle publishes the immutable request. For `ops read`, create a request containing exactly operation, parameters, runbook, and runbookDocument; the supervisor replaces task/goal and derives target plus runbookContentSha256 from that framework-relative runbook. For reviewed mutating operations, do not supply target, approvals, runbookDocument, or runbookContentSha256 yourself."
     );
 }
 
@@ -796,6 +802,901 @@ fn enforce_authority_scope(template: &Value) -> Result<(), String> {
         }
         _ => Err("MULTIAGENT_AUTHORITY_SCOPE is invalid".into()),
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DirectAccess {
+    Read,
+    Materialize,
+}
+
+fn execute_direct_read(args: &[String]) -> Result<ExitCode, String> {
+    let options = options(args)?;
+    if options.len() != 1 {
+        return Err("usage: multiagent ops read --request-file PATH".into());
+    }
+    let caller_uid = env::var("MULTIAGENT_AUTHORITY_CALLER_UID")
+        .map_err(|_| "ops read must be mediated by the authority supervisor")?
+        .parse::<u32>()
+        .map_err(|_| "authority caller UID is invalid")?;
+    let caller_role = direct_requester_role(caller_uid)?;
+    let request_file = PathBuf::from(required(&options, "--request-file")?);
+    let bytes = read_direct_request(&request_file, caller_uid)?;
+    let execution_context = execution_context_from_environment()?;
+    let template = bind_direct_request(&bytes, &execution_context)?;
+
+    let operation_id = template
+        .pointer("/operation/id")
+        .and_then(Value::as_str)
+        .ok_or("direct read request has no operation ID")?
+        .to_string();
+    let capabilities = call_prod_mcp_tool("operations_capabilities", json!({}))?;
+    let capability = operation_capability(&capabilities, &operation_id)?;
+    let access = validate_direct_capability(capability, &template)?;
+    let parameters = template
+        .get("parameters")
+        .ok_or("direct read request requires parameters")?;
+    reject_arbitrary_urls(parameters)?;
+    match (access, operation_id.as_str()) {
+        (DirectAccess::Materialize, "github.clone") => {
+            let object = parameters
+                .as_object()
+                .ok_or("github.clone parameters must be an object")?;
+            if object.len() != 1 {
+                return Err("github.clone parameters may contain only repository".into());
+            }
+            validate_repository(
+                object
+                    .get("repository")
+                    .and_then(Value::as_str)
+                    .ok_or("github.clone parameters require repository")?,
+            )?;
+        }
+        (DirectAccess::Materialize, _) => {
+            return Err("direct materialization has no credential-safe runtime handler".into());
+        }
+        (DirectAccess::Read, "github.clone") => {
+            return Err("github.clone must be advertised as a materialize operation".into());
+        }
+        (DirectAccess::Read, _) => {}
+    }
+
+    let bound_template = template;
+    let delegated_role = match access {
+        DirectAccess::Read => "runbook-observer",
+        // The deployed github.clone@1.0.0 contract admits the operator role for
+        // materialization. This role labels the signed permit; no ops agent is
+        // created and the authenticated requester remains locally audited.
+        DirectAccess::Materialize => "runbook-operator",
+    };
+    let now = Utc::now();
+    let request = build_request(
+        &bound_template,
+        &[],
+        delegated_role,
+        "multiagent-supervisor",
+        &execution_context,
+        now,
+    )?;
+    let action_id = request["actionId"]
+        .as_str()
+        .ok_or("generated direct read request has no action ID")?
+        .to_string();
+    let payload = canonical(&json!({
+        "apiVersion":"prod.moveindustries.io/v1",
+        "kind":"ActionPermit",
+        "request": request
+    }))?;
+    let permit = sign_permit(&payload)?;
+    let result = call_prod_mcp(&permit)?;
+    let state = fs::canonicalize(required_env("MULTIAGENT_STATE_DIR")?)
+        .map_err(|error| format!("resolve multiagent state: {error}"))?;
+    persist_direct_receipt(
+        &state,
+        &action_id,
+        caller_uid,
+        caller_role,
+        &bound_template,
+        &result,
+    )?;
+    let structured = successful_operation_receipt(&result)?;
+
+    if operation_id == "github.clone" {
+        let repository = bound_template
+            .pointer("/parameters/repository")
+            .and_then(Value::as_str)
+            .ok_or("github.clone parameters require repository")?;
+        validate_repository(repository)?;
+        let summary = clone_summary(structured, repository, &required_env("PROD_MCP_URL")?)?;
+        let token = required_env("PROD_MCP_BEARER_TOKEN")?;
+        let (path, commit) =
+            materialize_repository(&state, repository, &summary.clone_url, &token, &permit)?;
+        println!(
+            "{}",
+            serde_json::to_string(&json!({
+                "apiVersion": "multiagent.moveindustries.io/v1",
+                "kind": "RepositoryMaterializationResult",
+                "actionId": action_id,
+                "operationId": structured.get("operationId").cloned().unwrap_or(Value::Null),
+                "repository": repository,
+                "path": path,
+                "commit": commit,
+                "requesterRole": caller_role,
+                "receiptRecorded": true,
+            }))
+            .map_err(|error| format!("encode repository materialization result: {error}"))?
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let evidence = structured
+        .get("summary")
+        .and_then(Value::as_str)
+        .map(|summary| {
+            serde_json::from_str(summary).unwrap_or_else(|_| Value::String(summary.into()))
+        })
+        .unwrap_or(Value::Null);
+    println!(
+        "{}",
+        serde_json::to_string(&json!({
+            "apiVersion": "multiagent.moveindustries.io/v1",
+            "kind": "DirectReadResult",
+            "actionId": action_id,
+            "operationId": structured.get("operationId").cloned().unwrap_or(Value::Null),
+            "requestedOperation": structured.get("requestedOperation").cloned().unwrap_or(Value::Null),
+            "state": structured.get("state").cloned().unwrap_or(Value::Null),
+            "outcome": structured.get("outcome").cloned().unwrap_or(Value::Null),
+            "code": structured.get("code").cloned().unwrap_or(Value::Null),
+            "message": structured.get("message").cloned().unwrap_or(Value::Null),
+            "evidence": evidence,
+            "requesterRole": caller_role,
+            "receiptRecorded": true,
+        }))
+        .map_err(|error| format!("encode direct read result: {error}"))?
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+fn direct_requester_role(uid: u32) -> Result<&'static str, String> {
+    match uid {
+        0 => Ok("supervisor"),
+        crate::config::ORCHESTRATOR_UID => Ok("orchestrator"),
+        crate::config::WRITER_UID => Ok("writer"),
+        crate::config::READER_UID => Ok("reader"),
+        crate::config::OPS_UID => Ok("ops"),
+        crate::config::REVIEWER_UID => Ok("reviewer"),
+        _ => Err("direct reads require a confined session role identity".into()),
+    }
+}
+
+fn read_direct_request(path: &Path, _caller_uid: u32) -> Result<Vec<u8>, String> {
+    let logs = fs::canonicalize(required_env("MULTIAGENT_LOG_DIR")?)
+        .map_err(|error| format!("resolve multiagent log directory: {error}"))?;
+    let agents = fs::canonicalize(logs.join("agents"))
+        .map_err(|error| format!("resolve agent trace directory: {error}"))?;
+    let canonical =
+        fs::canonicalize(path).map_err(|error| format!("resolve direct read request: {error}"))?;
+    if !canonical.starts_with(&agents) {
+        return Err("direct read request must be inside MULTIAGENT_LOG_DIR/agents".into());
+    }
+    let (bytes, _metadata) = read_bounded_file(&canonical, MAX_OPERATION_REQUEST_BYTES, true)?;
+    if bytes.is_empty() {
+        return Err("direct read request must contain between 1 and 65536 bytes".into());
+    }
+    #[cfg(target_os = "linux")]
+    if _metadata.uid() != _caller_uid || _metadata.mode() & 0o022 != 0 {
+        return Err(
+            "direct read request must be caller-owned and not group- or world-writable".into(),
+        );
+    }
+    Ok(bytes)
+}
+
+fn direct_request_runbook(unbound: &Value) -> Result<&str, String> {
+    let object = unbound
+        .as_object()
+        .ok_or("direct read request must be an object")?;
+    let allowed = ["operation", "parameters", "runbook", "runbookDocument"];
+    if object.len() != allowed.len() || object.keys().any(|key| !allowed.contains(&key.as_str())) {
+        return Err("direct read request may contain only operation, parameters, runbook, and runbookDocument".into());
+    }
+    object
+        .get("runbookDocument")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "direct read request requires runbookDocument".into())
+}
+
+fn bind_direct_request(bytes: &[u8], execution_context: &Value) -> Result<Value, String> {
+    let unbound: Value = serde_json::from_slice(bytes)
+        .map_err(|error| format!("decode direct read request: {error}"))?;
+    let runbook_document = direct_request_runbook(&unbound)?.to_string();
+    let task_bound = bind_authenticated_task(unbound, execution_context)?;
+    let encoded = serde_json::to_vec(&task_bound)
+        .map_err(|error| format!("encode task-bound direct read request: {error}"))?;
+    let (template, _) = bind_request_template(&encoded, &runbook_document, false)?;
+    verified_runbook_content(&template)?;
+    Ok(template)
+}
+
+fn bind_authenticated_task(
+    mut template: Value,
+    execution_context: &Value,
+) -> Result<Value, String> {
+    let workflow_id = required_env("MULTIAGENT_WORKFLOW_ID")?;
+    let envelope = crate::workflow::semantic_envelope(&workflow_id)?;
+    let task = envelope.original_task.trim();
+    if task.is_empty() || task.len() > 32_768 {
+        return Err("supervisor-sealed original task must contain 1 to 32768 bytes".into());
+    }
+    let thread_id = execution_context
+        .get("threadId")
+        .and_then(Value::as_str)
+        .ok_or("execution context has no thread ID")?;
+    let object = template
+        .as_object_mut()
+        .ok_or("direct read request template must be an object")?;
+    object.insert("taskId".into(), Value::String(thread_id.into()));
+    object.insert("goal".into(), Value::String(task.into()));
+    object.remove("history");
+    Ok(template)
+}
+
+fn validate_direct_capability(
+    capability: &Value,
+    template: &Value,
+) -> Result<DirectAccess, String> {
+    let access = match capability.get("access").and_then(Value::as_str) {
+        Some("read") => DirectAccess::Read,
+        Some("materialize") => DirectAccess::Materialize,
+        _ => {
+            return Err(
+                "direct operation must be advertised with read or materialize access".into(),
+            )
+        }
+    };
+    if capability.get("mutation").and_then(Value::as_bool) != Some(false) {
+        return Err("direct operation must be advertised as non-mutating".into());
+    }
+    if capability
+        .get("requiredApprovalRoles")
+        .and_then(Value::as_array)
+        .is_none_or(|roles| !roles.is_empty())
+    {
+        return Err("direct operation must not require approval roles".into());
+    }
+    if capability.get("version") != template.pointer("/operation/version") {
+        return Err("direct operation version does not match prod-mcp capability".into());
+    }
+    let runbook = format!(
+        "{}@{}",
+        template
+            .pointer("/runbook/id")
+            .and_then(Value::as_str)
+            .unwrap_or(""),
+        template
+            .pointer("/runbook/version")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+    );
+    let allowed = capability
+        .get("allowedRunbooks")
+        .and_then(Value::as_array)
+        .is_some_and(|values| values.iter().any(|value| value.as_str() == Some(&runbook)));
+    if !allowed {
+        return Err("direct operation is not allowed by the bound runbook".into());
+    }
+    Ok(access)
+}
+
+fn reject_arbitrary_urls(value: &Value) -> Result<(), String> {
+    match value {
+        Value::String(value) => {
+            let normalized = value.to_ascii_lowercase();
+            if normalized.contains("://")
+                || normalized.starts_with("git@")
+                || normalized.starts_with("file:")
+            {
+                Err("direct operation parameters must not contain an arbitrary URL".into())
+            } else {
+                Ok(())
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                reject_arbitrary_urls(value)?;
+            }
+            Ok(())
+        }
+        Value::Object(values) => {
+            for (key, value) in values {
+                if matches!(
+                    key.to_ascii_lowercase().as_str(),
+                    "url" | "uri" | "endpoint" | "hostname" | "host"
+                ) {
+                    return Err(
+                        "direct operation parameters must not select a network destination".into(),
+                    );
+                }
+                reject_arbitrary_urls(value)?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn successful_operation_receipt(result: &Value) -> Result<&serde_json::Map<String, Value>, String> {
+    let outer = result
+        .get("result")
+        .and_then(Value::as_object)
+        .ok_or("prod-mcp execution response has no result object")?;
+    if outer.get("isError").and_then(Value::as_bool) == Some(true) {
+        return Err("prod-mcp rejected the direct operation".into());
+    }
+    let structured = outer
+        .get("structuredContent")
+        .and_then(Value::as_object)
+        .ok_or("prod-mcp execution response has no structured receipt")?;
+    if structured.get("state").and_then(Value::as_str) != Some("succeeded") {
+        return Err("prod-mcp direct operation did not succeed".into());
+    }
+    Ok(structured)
+}
+
+fn persist_direct_receipt(
+    state: &Path,
+    action_id: &str,
+    caller_uid: u32,
+    caller_role: &str,
+    template: &Value,
+    result: &Value,
+) -> Result<(), String> {
+    let operation = state.join("operations").join(action_id);
+    fs::create_dir(&operation)
+        .map_err(|error| format!("create direct operation receipt directory: {error}"))?;
+    secure_publication_path(&operation, true)?;
+    let request_path = operation.join("direct-request.json");
+    let receipt_path = operation.join("receipt.redacted.json");
+    write_private_file(
+        &request_path,
+        &serde_json::to_vec_pretty(&json!({
+            "requesterUid": caller_uid,
+            "requesterRole": caller_role,
+            "template": template,
+        }))
+        .map_err(|error| format!("encode direct read request record: {error}"))?,
+    )?;
+    let redacted = redacted_direct_receipt(template, result)?;
+    write_private_file(
+        &receipt_path,
+        &serde_json::to_vec_pretty(&json!({
+            "rawReceiptSha256": digest(&canonical(result)?),
+            "receipt": redacted,
+        }))
+        .map_err(|error| format!("encode redacted direct read receipt: {error}"))?,
+    )?;
+    secure_publication_path(&request_path, false)?;
+    secure_publication_path(&receipt_path, false)
+}
+
+fn redacted_direct_receipt(template: &Value, result: &Value) -> Result<Value, String> {
+    if template.pointer("/operation/id").and_then(Value::as_str) != Some("github.clone") {
+        return Ok(result.clone());
+    }
+    let outer = result
+        .get("result")
+        .and_then(Value::as_object)
+        .ok_or("prod-mcp execution response has no result object")?;
+    let structured = outer.get("structuredContent").and_then(Value::as_object);
+    let succeeded = outer.get("isError").and_then(Value::as_bool) != Some(true)
+        && structured
+            .and_then(|value| value.get("state"))
+            .and_then(Value::as_str)
+            == Some("succeeded");
+    let summary = serde_json::to_string(&json!({
+        "operation": "github.clone",
+        "repository": template.pointer("/parameters/repository").cloned().unwrap_or(Value::Null),
+        "disposition": if succeeded { "succeeded" } else { "failed" },
+        "cloneUrl": "[REDACTED]",
+        "authentication": "[REDACTED]",
+    }))
+    .map_err(|error| format!("redact github.clone receipt: {error}"))?;
+    // Do not copy unknown response fields: prod-mcp duplicates tool text in
+    // `content`, and future representations could repeat the protected URL or
+    // transport headers. Persist only this audited allowlist.
+    Ok(json!({
+        "jsonrpc": result.get("jsonrpc").cloned().unwrap_or_else(|| Value::String("2.0".into())),
+        "id": result.get("id").cloned().unwrap_or(Value::Null),
+        "result": {
+            "isError": !succeeded,
+            "content": [{
+                "type": "text",
+                "text": if succeeded {
+                    "github.clone succeeded; protected transport fields redacted"
+                } else {
+                    "github.clone failed; protected transport fields redacted"
+                }
+            }],
+            "structuredContent": {
+                "operationId": structured.and_then(|value| value.get("operationId")).cloned().unwrap_or(Value::Null),
+                "requestedOperation": structured.and_then(|value| value.get("requestedOperation")).cloned().unwrap_or(Value::Null),
+                "state": if succeeded { "succeeded" } else { "failed" },
+                "summary": summary
+            }
+        }
+    }))
+}
+
+struct CloneSummary {
+    clone_url: String,
+}
+
+fn clone_summary(
+    receipt: &serde_json::Map<String, Value>,
+    expected_repository: &str,
+    prod_mcp_url: &str,
+) -> Result<CloneSummary, String> {
+    let summary = receipt
+        .get("summary")
+        .and_then(Value::as_str)
+        .ok_or("github.clone receipt has no summary")?;
+    let summary: Value = serde_json::from_str(summary)
+        .map_err(|error| format!("decode github.clone summary: {error}"))?;
+    let object = summary
+        .as_object()
+        .ok_or("github.clone summary must be an object")?;
+    if object.len() != 4
+        || object.get("operation").and_then(Value::as_str) != Some("github.clone")
+        || object.get("repository").and_then(Value::as_str) != Some(expected_repository)
+    {
+        return Err("github.clone summary does not match the requested repository".into());
+    }
+    let authentication = object
+        .get("authentication")
+        .and_then(Value::as_object)
+        .ok_or("github.clone summary has no authentication contract")?;
+    if authentication.len() != 2
+        || authentication.get("bearerHeader").and_then(Value::as_str) != Some("Authorization")
+        || authentication.get("permitHeader").and_then(Value::as_str) != Some("X-Prod-MCP-Permit")
+    {
+        return Err("github.clone authentication contract is unsupported".into());
+    }
+    let clone_url = object
+        .get("cloneUrl")
+        .and_then(Value::as_str)
+        .ok_or("github.clone summary has no cloneUrl")?;
+    validate_clone_url(clone_url, prod_mcp_url, expected_repository)?;
+    Ok(CloneSummary {
+        clone_url: clone_url.into(),
+    })
+}
+
+fn validate_clone_url(clone_url: &str, prod_mcp_url: &str, repository: &str) -> Result<(), String> {
+    let (clone_origin, clone_path) = http_origin_and_path(clone_url)?;
+    let (mcp_origin, _) = http_origin_and_path(prod_mcp_url)?;
+    if !clone_origin.eq_ignore_ascii_case(&mcp_origin) {
+        return Err("github.clone URL origin differs from PROD_MCP_URL".into());
+    }
+    if clone_path != format!("/git/{repository}.git") {
+        return Err("github.clone URL path differs from the signed repository".into());
+    }
+    Ok(())
+}
+
+fn http_origin_and_path(value: &str) -> Result<(String, &str), String> {
+    if value.contains(['\\', '\n', '\r', '\t', '#', '?']) {
+        return Err("prod-mcp URL contains unsupported characters".into());
+    }
+    let (scheme, remainder) = value
+        .split_once("://")
+        .ok_or("prod-mcp URL must use HTTP or HTTPS")?;
+    if !matches!(scheme, "http" | "https") {
+        return Err("prod-mcp URL must use HTTP or HTTPS".into());
+    }
+    let slash = remainder.find('/').unwrap_or(remainder.len());
+    let authority = &remainder[..slash];
+    if authority.is_empty() || authority.contains('@') {
+        return Err("prod-mcp URL authority is invalid".into());
+    }
+    let path = if slash == remainder.len() {
+        "/"
+    } else {
+        &remainder[slash..]
+    };
+    Ok((format!("{}://{}", scheme, authority), path))
+}
+
+fn validate_repository(repository: &str) -> Result<(), String> {
+    let mut parts = repository.split('/');
+    let owner = parts.next().unwrap_or("");
+    let name = parts.next().unwrap_or("");
+    if parts.next().is_some()
+        || owner.is_empty()
+        || name.is_empty()
+        || ![owner, name].iter().all(|part| {
+            part.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '_' | '.' | '-')
+            })
+        })
+    {
+        return Err("GitHub repository must be owner/name".into());
+    }
+    Ok(())
+}
+
+fn materialize_repository(
+    state: &Path,
+    repository: &str,
+    clone_url: &str,
+    token: &str,
+    permit: &str,
+) -> Result<(PathBuf, String), String> {
+    validate_repository(repository)?;
+    if token.contains(['\n', '\r']) || permit.contains(['\n', '\r']) {
+        return Err("repository authentication values contain an invalid newline".into());
+    }
+    let root = state.join("materialized-repositories");
+    ensure_materialization_root(&root)?;
+    materialization_usage(&root, MAX_MATERIALIZATION_FILES, MAX_MATERIALIZATION_BYTES)?;
+    let name = repository
+        .split_once('/')
+        .map(|(owner, name)| format!("{owner}-{name}-{}", &digest(repository.as_bytes())[7..23]))
+        .ok_or("GitHub repository must be owner/name")?;
+    let destination = root.join(&name);
+    let manifest = root.join(format!(".{name}.json"));
+    if destination.exists() {
+        return existing_materialization(&destination, &manifest, repository);
+    }
+
+    let temporary = root.join(format!(".{name}.tmp-{}", std::process::id()));
+    if temporary.exists() {
+        return Err("repository materialization temporary path already exists".into());
+    }
+    let config = state.join("tmp").join(format!(
+        "git-auth-{}-{}.config",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos()
+    ));
+    let config_contents = git_auth_config(clone_url, token, permit)?;
+    write_private_file(&config, config_contents.as_bytes())?;
+    let clone_result = run_bounded_materialization(
+        git_clone_command(&temporary, &config),
+        &root,
+        MATERIALIZATION_TIMEOUT,
+        MAX_MATERIALIZATION_FILES,
+        MAX_MATERIALIZATION_BYTES,
+    );
+    let _ = fs::remove_file(&config);
+    let status = match clone_result {
+        Ok(status) => status,
+        Err(error) => {
+            if temporary.starts_with(&root) {
+                let _ = fs::remove_dir_all(&temporary);
+            }
+            return Err(error);
+        }
+    };
+    if !status.success() {
+        if temporary.starts_with(&root) {
+            let _ = fs::remove_dir_all(&temporary);
+        }
+        return Err("repository clone through prod-mcp failed".into());
+    }
+
+    let public_url = format!("https://github.com/{repository}.git");
+    let sanitized =
+        sanitized_git_command(&temporary, &["remote", "set-url", "origin", &public_url])
+            .output()
+            .map_err(|error| format!("sanitize materialized repository remote: {error}"))?;
+    if !sanitized.status.success() {
+        let _ = fs::remove_dir_all(&temporary);
+        return Err("could not remove authenticated URL from materialized repository".into());
+    }
+    let commit_output = sanitized_git_command(&temporary, &["rev-parse", "--verify", "HEAD"])
+        .output()
+        .map_err(|error| format!("resolve materialized repository commit: {error}"))?;
+    if !commit_output.status.success() {
+        let _ = fs::remove_dir_all(&temporary);
+        return Err("materialized repository has no resolved HEAD".into());
+    }
+    let commit = String::from_utf8(commit_output.stdout)
+        .map_err(|_| "materialized repository HEAD is not UTF-8".to_string())?
+        .trim()
+        .to_string();
+    if commit.len() != 40
+        || !commit
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+    {
+        let _ = fs::remove_dir_all(&temporary);
+        return Err("materialized repository HEAD is invalid".into());
+    }
+    fs::rename(&temporary, &destination)
+        .map_err(|error| format!("publish materialized repository: {error}"))?;
+    make_repository_read_only(&destination)?;
+    write_materialization_manifest(&manifest, repository, &destination, &commit)?;
+    Ok((destination, commit))
+}
+
+fn ensure_materialization_root(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        fs::create_dir(path)
+            .map_err(|error| format!("create repository materialization root: {error}"))?;
+    }
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("inspect repository materialization root: {error}"))?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err("repository materialization root must be a real directory".into());
+    }
+    #[cfg(target_os = "linux")]
+    if metadata.uid() != crate::config::SUPERVISOR_UID {
+        return Err("repository materialization root must be supervisor-owned".into());
+    }
+    #[cfg(unix)]
+    fs::set_permissions(path, fs::Permissions::from_mode(0o750))
+        .map_err(|error| format!("protect repository materialization root: {error}"))?;
+    Ok(())
+}
+
+fn materialization_usage(
+    root: &Path,
+    max_files: u64,
+    max_bytes: u64,
+) -> Result<(u64, u64), String> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut files = 0_u64;
+    let mut bytes = 0_u64;
+    while let Some(path) = pending.pop() {
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && path != root => continue,
+            Err(error) => {
+                return Err(format!("inspect repository materialization quota: {error}"));
+            }
+        };
+        if path != root {
+            files = files.saturating_add(1);
+            bytes = bytes.saturating_add(metadata.len());
+            if files > max_files || bytes > max_bytes {
+                return Err(format!(
+                    "repository materialization exceeds supervisor quota ({max_files} files, {max_bytes} bytes)"
+                ));
+            }
+        }
+        if metadata.is_dir() && !metadata.file_type().is_symlink() {
+            let entries = match fs::read_dir(&path) {
+                Ok(entries) => entries,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound && path != root => {
+                    continue
+                }
+                Err(error) => {
+                    return Err(format!("scan repository materialization quota: {error}"));
+                }
+            };
+            for entry in entries {
+                match entry {
+                    Ok(entry) => pending.push(entry.path()),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(error) => {
+                        return Err(format!("scan repository materialization entry: {error}"));
+                    }
+                }
+            }
+        }
+    }
+    Ok((files, bytes))
+}
+
+fn run_bounded_materialization(
+    mut command: Command,
+    root: &Path,
+    timeout: StdDuration,
+    max_files: u64,
+    max_bytes: u64,
+) -> Result<std::process::ExitStatus, String> {
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("execute repository clone: {error}"))?;
+    let started = Instant::now();
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("wait for repository clone: {error}"))?
+        {
+            materialization_usage(root, max_files, max_bytes)?;
+            return Ok(status);
+        }
+        if let Err(error) = materialization_usage(root, max_files, max_bytes) {
+            terminate_materialization_process(&mut child);
+            let _ = child.wait();
+            return Err(error);
+        }
+        if started.elapsed() >= timeout {
+            terminate_materialization_process(&mut child);
+            let _ = child.wait();
+            return Err(format!(
+                "repository clone exceeded the {}-second supervisor deadline",
+                timeout.as_secs()
+            ));
+        }
+        thread::sleep(StdDuration::from_millis(100));
+    }
+}
+
+#[cfg(unix)]
+fn terminate_materialization_process(child: &mut std::process::Child) {
+    let pid = child.id() as i32;
+    unsafe {
+        libc::kill(-pid, libc::SIGKILL);
+        libc::kill(pid, libc::SIGKILL);
+    }
+}
+
+#[cfg(not(unix))]
+fn terminate_materialization_process(child: &mut std::process::Child) {
+    let _ = child.kill();
+}
+
+fn existing_materialization(
+    destination: &Path,
+    manifest: &Path,
+    repository: &str,
+) -> Result<(PathBuf, String), String> {
+    let destination_metadata = fs::symlink_metadata(destination)
+        .map_err(|error| format!("inspect existing materialization: {error}"))?;
+    if !destination_metadata.is_dir() || destination_metadata.file_type().is_symlink() {
+        return Err("existing repository materialization is not a real directory".into());
+    }
+    let (bytes, _) = read_bounded_file(manifest, 4096, true)?;
+    let value: Value = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("decode repository materialization manifest: {error}"))?;
+    if value.get("repository").and_then(Value::as_str) != Some(repository)
+        || value.get("path").and_then(Value::as_str) != destination.to_str()
+    {
+        return Err("existing repository materialization manifest does not match".into());
+    }
+    let commit = value
+        .get("commit")
+        .and_then(Value::as_str)
+        .filter(|value| {
+            value.len() == 40 && value.chars().all(|character| character.is_ascii_hexdigit())
+        })
+        .ok_or("existing repository materialization manifest has an invalid commit")?;
+    Ok((destination.to_path_buf(), commit.into()))
+}
+
+fn write_materialization_manifest(
+    path: &Path,
+    repository: &str,
+    destination: &Path,
+    commit: &str,
+) -> Result<(), String> {
+    fs::write(
+        path,
+        serde_json::to_vec_pretty(&json!({
+            "repository": repository,
+            "path": destination,
+            "commit": commit,
+        }))
+        .map_err(|error| format!("encode repository materialization manifest: {error}"))?,
+    )
+    .map_err(|error| format!("write repository materialization manifest: {error}"))?;
+    #[cfg(unix)]
+    fs::set_permissions(path, fs::Permissions::from_mode(0o440))
+        .map_err(|error| format!("protect repository materialization manifest: {error}"))?;
+    Ok(())
+}
+
+fn git_auth_config(clone_url: &str, token: &str, permit: &str) -> Result<String, String> {
+    for value in [clone_url, token, permit] {
+        if value.contains(['\n', '\r', '\0']) {
+            return Err("git authentication value contains an invalid character".into());
+        }
+    }
+    Ok(format!(
+        "[url {}]\n\tinsteadOf = prod-mcp-materialize:\n[http {}]\n\textraHeader = {}\n\textraHeader = {}\n\tfollowRedirects = false\n[credential]\n\thelper =\n[protocol \"file\"]\n\tallow = never\n[protocol \"ext\"]\n\tallow = never\n[filter \"lfs\"]\n\trequired = false\n\tsmudge =\n\tclean =\n[core]\n\thooksPath = /dev/null\n",
+        git_config_quote(clone_url),
+        git_config_quote(clone_url),
+        git_config_quote(&format!("Authorization: Bearer {token}")),
+        git_config_quote(&format!("X-Prod-MCP-Permit: {permit}")),
+    ))
+}
+
+fn git_config_quote(value: &str) -> String {
+    format!(
+        "\"{}\"",
+        value
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\t', "\\t")
+    )
+}
+
+fn git_clone_command(destination: &Path, config: &Path) -> Command {
+    let mut command = Command::new("git");
+    command
+        .env_clear()
+        .env("PATH", "/usr/local/bin:/usr/bin:/bin")
+        .env("LANG", "C")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", config)
+        .env("GIT_LFS_SKIP_SMUDGE", "1")
+        .args([
+            "-c",
+            "http.lowSpeedLimit=1",
+            "-c",
+            "http.lowSpeedTime=30",
+            "clone",
+            "--depth",
+            "1",
+            "--no-tags",
+            "--no-recurse-submodules",
+            "--",
+        ])
+        .arg("prod-mcp-materialize:")
+        .arg(destination)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    command
+}
+
+fn sanitized_git_command(repository: &Path, args: &[&str]) -> Command {
+    let mut command = Command::new("git");
+    command
+        .env_clear()
+        .env("PATH", "/usr/local/bin:/usr/bin:/bin")
+        .env("LANG", "C")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .arg("-C")
+        .arg(repository)
+        .args(args)
+        .stderr(Stdio::null());
+    command
+}
+
+fn make_repository_read_only(path: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("inspect materialized repository path: {error}"))?;
+    if metadata.file_type().is_symlink() {
+        return Ok(());
+    }
+    if metadata.is_dir() {
+        for entry in fs::read_dir(path)
+            .map_err(|error| format!("read materialized repository directory: {error}"))?
+        {
+            make_repository_read_only(
+                &entry
+                    .map_err(|error| format!("read materialized repository entry: {error}"))?
+                    .path(),
+            )?;
+        }
+        #[cfg(unix)]
+        fs::set_permissions(path, fs::Permissions::from_mode(0o550))
+            .map_err(|error| format!("protect materialized repository directory: {error}"))?;
+    } else if metadata.is_file() {
+        #[cfg(unix)]
+        {
+            let executable = metadata.permissions().mode() & 0o111 != 0;
+            fs::set_permissions(
+                path,
+                fs::Permissions::from_mode(if executable { 0o550 } else { 0o440 }),
+            )
+            .map_err(|error| format!("protect materialized repository file: {error}"))?;
+        }
+    }
+    Ok(())
 }
 
 fn execute(args: &[String]) -> Result<ExitCode, String> {
@@ -1877,12 +2778,14 @@ fn base64_decode(value: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        base64_decode, base64url_encode, build_request, canonical, curl_command, ecdsa_der_to_raw,
-        execute_mode, operation_capability, parse_mcp_body, private_temp_path,
-        review_binding_marker, review_binding_matches, review_binding_value,
-        review_evidence_is_bound, reviewer_accepted, runbook_content_digest,
-        validate_diagnosis_capability, validate_evidence_scope, validate_read_capability,
-        validate_request_template, write_mcp_headers, ExecuteMode, TrustedApproval,
+        base64_decode, base64url_encode, build_request, canonical, clone_summary, curl_command,
+        direct_request_runbook, ecdsa_der_to_raw, execute_mode, git_auth_config, git_clone_command,
+        materialization_usage, operation_capability, parse_mcp_body, persist_direct_receipt,
+        private_temp_path, redacted_direct_receipt, reject_arbitrary_urls, review_binding_marker,
+        review_binding_matches, review_binding_value, review_evidence_is_bound, reviewer_accepted,
+        runbook_content_digest, validate_diagnosis_capability, validate_direct_capability,
+        validate_evidence_scope, validate_read_capability, validate_request_template,
+        write_mcp_headers, DirectAccess, ExecuteMode, TrustedApproval,
     };
     use chrono::{TimeZone, Utc};
     use serde_json::json;
@@ -2149,6 +3052,319 @@ mod tests {
             operation_capability(&response, "github.write").unwrap_err(),
             "prod-mcp does not advertise operation github.write"
         );
+    }
+
+    #[test]
+    fn direct_request_shape_excludes_caller_supplied_authority_fields() {
+        let request = json!({
+            "operation": {"id":"github.clone","version":"1.0.0"},
+            "parameters": {"repository":"MoveIndustries/InternalServices"},
+            "runbook": {"id":"github.repository-work","version":"1.1.0","phase":"materialize"},
+            "runbookDocument": "runbooks/github-repository-work.md"
+        });
+        assert_eq!(
+            direct_request_runbook(&request).unwrap(),
+            "runbooks/github-repository-work.md"
+        );
+        let mut injected = request;
+        injected["goal"] = "caller-selected goal".into();
+        assert!(direct_request_runbook(&injected).is_err());
+    }
+
+    #[test]
+    fn direct_capability_gate_accepts_only_non_mutating_reads_and_materialization() {
+        let template = json!({
+            "operation":{"id":"github.clone","version":"1.0.0"},
+            "runbook":{"id":"github.repository-work","version":"1.1.0","phase":"materialize"}
+        });
+        let materialize = json!({
+            "id":"github.clone",
+            "version":"1.0.0",
+            "access":"materialize",
+            "mutation":false,
+            "allowedRunbooks":["github.repository-work@1.1.0"],
+            "requiredApprovalRoles":[]
+        });
+        assert_eq!(
+            validate_direct_capability(&materialize, &template).unwrap(),
+            DirectAccess::Materialize
+        );
+        let mut read = materialize.clone();
+        read["access"] = "read".into();
+        assert_eq!(
+            validate_direct_capability(&read, &template).unwrap(),
+            DirectAccess::Read
+        );
+        let mut write = materialize.clone();
+        write["access"] = "write".into();
+        assert!(validate_direct_capability(&write, &template).is_err());
+        let mut mutating = materialize.clone();
+        mutating["mutation"] = true.into();
+        assert!(validate_direct_capability(&mutating, &template).is_err());
+        let mut approval_bearing = materialize.clone();
+        approval_bearing["requiredApprovalRoles"] = json!(["operations-reviewer"]);
+        assert!(validate_direct_capability(&approval_bearing, &template).is_err());
+        let mut wrong_version = materialize.clone();
+        wrong_version["version"] = "2.0.0".into();
+        assert!(validate_direct_capability(&wrong_version, &template).is_err());
+    }
+
+    #[test]
+    fn direct_parameters_reject_caller_selected_network_destinations() {
+        assert!(reject_arbitrary_urls(&json!({"repository":"MoveIndustries/prod-mcp"})).is_ok());
+        assert!(reject_arbitrary_urls(&json!({"url":"prod-mcp.internal"})).is_err());
+        assert!(reject_arbitrary_urls(&json!({"query":"https://attacker.invalid"})).is_err());
+        assert!(reject_arbitrary_urls(&json!({"query":"HTTPS://attacker.invalid"})).is_err());
+        assert!(reject_arbitrary_urls(&json!({"source":"GiT@attacker.invalid:repo"})).is_err());
+        assert!(reject_arbitrary_urls(&json!({"source":"FiLe:/tmp/repo"})).is_err());
+    }
+
+    #[test]
+    fn clone_summary_requires_the_exact_repository_origin_path_and_headers() {
+        let receipt = json!({
+            "summary": serde_json::to_string(&json!({
+                "operation":"github.clone",
+                "repository":"MoveIndustries/prod-mcp",
+                "cloneUrl":"http://prod-mcp.test:3000/git/MoveIndustries/prod-mcp.git",
+                "authentication":{
+                    "bearerHeader":"Authorization",
+                    "permitHeader":"X-Prod-MCP-Permit"
+                }
+            })).unwrap()
+        });
+        assert_eq!(
+            clone_summary(
+                receipt.as_object().unwrap(),
+                "MoveIndustries/prod-mcp",
+                "http://prod-mcp.test:3000/mcp"
+            )
+            .unwrap()
+            .clone_url,
+            "http://prod-mcp.test:3000/git/MoveIndustries/prod-mcp.git"
+        );
+        assert!(clone_summary(
+            receipt.as_object().unwrap(),
+            "MoveIndustries/other",
+            "http://prod-mcp.test:3000/mcp"
+        )
+        .is_err());
+        assert!(clone_summary(
+            receipt.as_object().unwrap(),
+            "MoveIndustries/prod-mcp",
+            "https://prod-mcp.test:3000/mcp"
+        )
+        .is_err());
+        let mut wrong_header = receipt.clone();
+        let mut summary: serde_json::Value =
+            serde_json::from_str(wrong_header["summary"].as_str().unwrap()).unwrap();
+        summary["authentication"]["permitHeader"] = "Authorization".into();
+        wrong_header["summary"] = serde_json::to_string(&summary).unwrap().into();
+        assert!(clone_summary(
+            wrong_header.as_object().unwrap(),
+            "MoveIndustries/prod-mcp",
+            "http://prod-mcp.test:3000/mcp"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn persisted_clone_receipt_redacts_the_protected_transport_contract() {
+        let template = json!({
+            "operation":{"id":"github.clone"},
+            "parameters":{"repository":"MoveIndustries/prod-mcp"}
+        });
+        let protected = serde_json::to_string(&json!({
+            "operation":"github.clone",
+            "repository":"MoveIndustries/prod-mcp",
+            "cloneUrl":"http://prod-mcp.test/git/MoveIndustries/prod-mcp.git",
+            "authentication":{"bearerHeader":"Authorization","permitHeader":"X-Prod-MCP-Permit"}
+        }))
+        .unwrap();
+        let result = json!({
+            "jsonrpc":"2.0",
+            "id":2,
+            "result":{
+                "isError":false,
+                "content":[{"type":"text","text":protected}],
+                "structuredContent":{
+                    "operationId":"github.clone",
+                    "requestedOperation":"github.clone",
+                    "state":"succeeded",
+                    "summary":protected
+                }
+            }
+        });
+        let redacted = redacted_direct_receipt(&template, &result).unwrap();
+        let serialized = serde_json::to_string(&redacted).unwrap();
+        assert!(!serialized.contains("http://prod-mcp.test/git"));
+        assert!(!serialized.contains("X-Prod-MCP-Permit"));
+        assert!(serialized.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn rejected_clone_receipt_is_allowlisted_and_persistence_is_owner_gated() {
+        let state = private_temp_path(
+            &std::env::temp_dir(),
+            "multiagent-rejected-clone-receipt",
+            "dir",
+        )
+        .unwrap();
+        fs::create_dir_all(state.join("operations")).unwrap();
+        let template = json!({
+            "operation":{"id":"github.clone"},
+            "parameters":{"repository":"MoveIndustries/private"}
+        });
+        let result = json!({
+            "jsonrpc":"2.0",
+            "id":2,
+            "result":{
+                "isError":true,
+                "content":[{"type":"text","text":"failed http://prod-mcp.test/git/private X-Prod-MCP-Permit"}],
+                "structuredContent":{"state":"failed","message":"protected failure detail"}
+            }
+        });
+        let persistence = persist_direct_receipt(
+            &state,
+            "action-rejected",
+            10005,
+            "reader",
+            &template,
+            &result,
+        );
+        #[cfg(target_os = "linux")]
+        if unsafe { libc::geteuid() } != 0
+            && unsafe { libc::geteuid() } != crate::config::SUPERVISOR_UID
+        {
+            assert_eq!(
+                persistence.unwrap_err(),
+                "operation request store must be supervisor-owned"
+            );
+            let redacted = redacted_direct_receipt(&template, &result).unwrap();
+            let receipt = serde_json::to_string(&redacted).unwrap();
+            assert!(!receipt.contains("http://prod-mcp.test/git"));
+            assert!(!receipt.contains("X-Prod-MCP-Permit"));
+            assert!(!receipt.contains("protected failure detail"));
+            assert!(receipt.contains("github.clone failed"));
+            assert!(!receipt.contains("github.clone succeeded"));
+            fs::remove_dir_all(state).unwrap();
+            return;
+        }
+        persistence.unwrap();
+        let receipt =
+            fs::read_to_string(state.join("operations/action-rejected/receipt.redacted.json"))
+                .unwrap();
+        assert!(!receipt.contains("http://prod-mcp.test/git"));
+        assert!(!receipt.contains("X-Prod-MCP-Permit"));
+        assert!(!receipt.contains("protected failure detail"));
+        assert!(receipt.contains("github.clone failed"));
+        assert!(!receipt.contains("github.clone succeeded"));
+        fs::remove_dir_all(state).unwrap();
+    }
+
+    #[test]
+    fn git_clone_process_does_not_expose_authentication_or_protected_url() {
+        let protected_url = "http://prod-mcp.test:3000/git/MoveIndustries/prod-mcp.git";
+        let token = "bearer-secret-marker";
+        let permit = "permit-secret-marker";
+        let config = git_auth_config(protected_url, token, permit).unwrap();
+        assert!(config.contains(protected_url));
+        assert!(config.contains(token));
+        assert!(config.contains(permit));
+
+        let command = git_clone_command(
+            std::path::Path::new("/session/materialized/repository"),
+            std::path::Path::new("/session/private/git.config"),
+        );
+        let arguments = command
+            .get_args()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let environment = command
+            .get_envs()
+            .filter_map(|(key, value)| {
+                value.map(|value| format!("{}={}", key.to_string_lossy(), value.to_string_lossy()))
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let process = format!("{arguments} {environment}");
+        assert!(!process.contains(protected_url));
+        assert!(!process.contains(token));
+        assert!(!process.contains(permit));
+        assert!(process.contains("prod-mcp-materialize:"));
+    }
+
+    #[test]
+    fn materialization_quota_counts_the_whole_supervisor_owned_root() {
+        let root = private_temp_path(
+            &std::env::temp_dir(),
+            "multiagent-materialization-quota",
+            "dir",
+        )
+        .unwrap();
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("one"), b"1").unwrap();
+        fs::write(root.join("two"), b"2").unwrap();
+        assert!(materialization_usage(&root, 1, 1024).is_err());
+        assert!(materialization_usage(&root, 2, 1).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn materialization_quota_tolerates_concurrent_git_style_renames() {
+        let root = private_temp_path(
+            &std::env::temp_dir(),
+            "multiagent-materialization-churn",
+            "dir",
+        )
+        .unwrap();
+        fs::create_dir(&root).unwrap();
+        let churn_root = root.clone();
+        let churn = std::thread::spawn(move || {
+            for index in 0..500 {
+                let temporary = churn_root.join(format!("tmp-pack-{index}"));
+                let published = churn_root.join(format!("pack-{index}"));
+                let _ = fs::write(&temporary, b"pack");
+                let _ = fs::rename(&temporary, &published);
+                let _ = fs::remove_file(&published);
+            }
+        });
+        for _ in 0..500 {
+            materialization_usage(&root, 10_000, 1024 * 1024).unwrap();
+        }
+        churn.join().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn stalled_materialization_process_group_is_killed_at_deadline() {
+        use super::run_bounded_materialization;
+        use std::os::unix::process::CommandExt;
+        use std::process::{Command, Stdio};
+        use std::time::{Duration, Instant};
+
+        let root = private_temp_path(
+            &std::env::temp_dir(),
+            "multiagent-materialization-timeout",
+            "dir",
+        )
+        .unwrap();
+        fs::create_dir(&root).unwrap();
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", "sleep 30"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0);
+        let started = Instant::now();
+        let error =
+            run_bounded_materialization(command, &root, Duration::from_millis(50), 100, 1024)
+                .unwrap_err();
+        assert!(error.contains("supervisor deadline"));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

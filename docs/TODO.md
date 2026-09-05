@@ -58,6 +58,23 @@ must also be represented or linked from this file.
   event quarantine, retention, and recovery exercises before running more than
   one Slack ingress replica or relying on it as a paging system.
 
+## Organizational Wiki MVP
+
+- [ ] Seed exactly the 111 repositories in the deployed multiagent catalog with
+  a summary and detailed description; non-empty repositories also require an
+  exact resolved commit and source digests, while verified-empty repositories
+  must be marked explicitly and contain no fabricated evidence.
+- [ ] Build and deploy the private Wiki query image with a separate versioned
+  bucket and read-only Mountpoint S3 volume owned by `InternalServices`.
+- [ ] Deploy a multiagent runtime image containing `wiki-query` and the direct
+  non-mutating read/materialize supervisor path.
+- [ ] From a thread initially targeting `multiagent`, ask for the
+  `InternalServices` architecture and prove the result identifies
+  `MoveIndustries/InternalServices`, cites its committed sources, and records a
+  real Wiki query in the session trace.
+- [ ] After the MVP, implement the singleton steward, retrieval-gap processing,
+  regression evals, and its separate Wiki-write/trace-read identity.
+
 ## Production MCP Joint Test
 
 - [x] Activate the existing Linux UID and Landlock boundary in the production container.

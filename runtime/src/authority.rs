@@ -45,6 +45,7 @@ enum AuthorityOperation {
     ValidationLeaseList,
     GateCheck,
     OpsDescribe,
+    OpsRead,
     OpsPublishBound,
     OpsPublish,
     OpsExecute,
@@ -61,6 +62,9 @@ impl AuthorityRequest {
             "dag" => (AuthorityOperation::Dag, args),
             "ops" if args.first().map(String::as_str) == Some("describe") => {
                 (AuthorityOperation::OpsDescribe, &args[1..])
+            }
+            "ops" if args.first().map(String::as_str) == Some("read") => {
+                (AuthorityOperation::OpsRead, &args[1..])
             }
             "ops" if args.first().map(String::as_str) == Some("publish-bound") => {
                 (AuthorityOperation::OpsPublishBound, &args[1..])
@@ -168,9 +172,14 @@ impl AuthorityRequest {
             | AuthorityOperation::TodoAssign
             | AuthorityOperation::TodoStatus
             | AuthorityOperation::GateCheck => uid == config::ORCHESTRATOR_UID,
-            AuthorityOperation::OpsDescribe => {
-                matches!(uid, config::OPS_UID | config::REVIEWER_UID)
-            }
+            AuthorityOperation::OpsDescribe | AuthorityOperation::OpsRead => matches!(
+                uid,
+                config::ORCHESTRATOR_UID
+                    | config::WRITER_UID
+                    | config::READER_UID
+                    | config::OPS_UID
+                    | config::REVIEWER_UID
+            ),
             AuthorityOperation::OpsPublish => uid == config::OPS_UID,
             AuthorityOperation::OpsExecute => {
                 matches!(uid, config::OPS_UID | config::REVIEWER_UID)
@@ -254,6 +263,7 @@ impl AuthorityRequest {
             AuthorityOperation::ValidationLeaseList => ("subagent", Some("validation-lease-list")),
             AuthorityOperation::GateCheck => ("subagent", Some("gate-check")),
             AuthorityOperation::OpsDescribe => ("ops", Some("describe")),
+            AuthorityOperation::OpsRead => ("ops", Some("read")),
             AuthorityOperation::OpsPublishBound => ("ops", Some("publish-bound")),
             AuthorityOperation::OpsPublish => ("ops", Some("publish")),
 
@@ -326,12 +336,45 @@ mod tests {
         assert!(!ops.authorized_for(config::ORCHESTRATOR_UID));
         let describe = AuthorityRequest::from_cli("ops", &strings(&["describe", "github.read"]))
             .expect("ops describe request");
-        assert!(describe.authorized_for(config::OPS_UID));
-        assert!(describe.authorized_for(config::REVIEWER_UID));
-        assert!(!describe.authorized_for(config::ORCHESTRATOR_UID));
+        for uid in [
+            config::ORCHESTRATOR_UID,
+            config::WRITER_UID,
+            config::READER_UID,
+            config::OPS_UID,
+            config::REVIEWER_UID,
+        ] {
+            assert!(
+                describe.authorized_for(uid),
+                "uid {uid} should be allowed to inspect live read capabilities"
+            );
+        }
         assert_eq!(
             describe.into_cli(),
             ("ops".to_string(), strings(&["describe", "github.read"]))
+        );
+        let direct_read = AuthorityRequest::from_cli(
+            "ops",
+            &strings(&["read", "--request-file", "/logs/agents/reader/request.json"]),
+        )
+        .expect("direct read request");
+        for uid in [
+            config::ORCHESTRATOR_UID,
+            config::WRITER_UID,
+            config::READER_UID,
+            config::OPS_UID,
+            config::REVIEWER_UID,
+        ] {
+            assert!(
+                direct_read.authorized_for(uid),
+                "uid {uid} should be allowed to request a direct read"
+            );
+        }
+        assert_eq!(
+            direct_read.into_cli(),
+            (
+                "ops".to_string(),
+                strings(&["read", "--request-file", "/logs/agents/reader/request.json"]),
+            )
         );
         let publish_bound = AuthorityRequest::from_cli(
             "ops",

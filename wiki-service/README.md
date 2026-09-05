@@ -1,0 +1,170 @@
+# Multiagent Wiki Service
+
+This directory is the canonical home of the LLM Wiki engine and its deployment
+adapters. It consolidates the former `personal-llm-wiki-engine` while
+preserving local personal-vault workflows and adding the bounded organization
+query service needed by Multiagent.
+
+Its durable state is ordinary UTF-8 Markdown. The engine has no database,
+embedding model, GitHub credential, or repository synchronization process.
+
+```text
+engine/                 reusable local maintenance engine and Codex skills
+src/                    read-only HTTP query adapter and catalog seeder
+bin/personal-llm-wiki   local writable-vault maintenance CLI
+bin/wiki-search-local   optional local Markdown search helper
+bin/wiki-query.mjs      provider-neutral organization-service client
+bin/wiki-seed.mjs       deterministic organization catalog bootstrap
+```
+
+See [the engine guide](engine/README.md) and
+[migration contract](engine/MIGRATION.md). A personal deployment keeps its
+private vault where it already lives; it is not uploaded or moved as part of
+this source consolidation.
+
+## Corpus contract
+
+The adapter accepts either an organization corpus whose root contains
+`index.md`, or an existing personal vault whose root contains
+`LLM Wiki/index.md`. It follows both Markdown links and Obsidian `[[links]]`.
+For an organization corpus, `index.md` is the catalog entry point and catalog
+generation marker. A small corpus can use this layout:
+
+```text
+index.md
+repos/
+  internal-services.md
+topics/
+```
+
+Each reviewed page should state the repository and resolved source commit and
+cite source paths plus SHA-256 digests. The catalog and pages remain directly
+auditable in S3, Git, or any filesystem snapshot. The in-memory lexical index is
+derived and disposable.
+
+The deployed MVP is read-only. Query activity belongs in the surrounding
+multiagent session trace; the service does not expose feedback or source-writing
+HTTP APIs.
+
+## Existing personal Wiki
+
+The migrated CLI retains all former commands: `init-vault`, `submit-feedback`,
+`validate-feedback`, `run-steward`, and `lint-wiki`. For example:
+
+```sh
+wiki-service/bin/personal-llm-wiki lint-wiki --vault /path/to/private-vault
+wiki-service/bin/wiki-search-local --root /path/to/private-vault/'LLM Wiki' \
+  --question "what is connected to the memory platform?"
+```
+
+To exercise the same read-only adapter locally against that vault:
+
+```sh
+WIKI_PROFILE=personal WIKI_ROOT=/path/to/private-vault PORT=8080 npm start
+```
+
+The local Codex skills remain index-first: they use synthesized pages and the
+knowledge graph before consulting raw sources. Only the local skill process—not
+the deployed query service—may perform that raw-source fallback.
+
+`WIKI_PROFILE` defaults to `organization`, which requires the strict catalog
+schema and generation digest. A personal vault is accepted only when the local
+operator explicitly sets `WIKI_PROFILE=personal`.
+
+## Run and query
+
+Node.js 20 or newer is required.
+
+```sh
+WIKI_ROOT=/var/lib/wiki PORT=8080 npm start
+MULTIAGENT_WIKI_URL=http://wiki-service:8080 wiki-query \
+  --query "InternalServices architecture" --max-results 3
+```
+
+The stable agent-facing command is `wiki-query`. To install it into an image,
+run `npm install --global /path/to/wiki-service`; because the package has no
+dependencies, an image build may instead create an executable symlink from
+`/usr/local/bin/wiki-query` to this directory's `bin/wiki-query.mjs`. The latter
+requires this whole directory to remain present at the same path so its module
+imports resolve. The CLI is independent of any model provider or agent runtime.
+
+## One-shot catalog bootstrap
+
+`wiki-seed` is an explicit administrative bootstrap command. It is not a
+repository sync process, is not scheduled, and is never invoked by the query
+service. It only reads a prepared local JSON manifest; it makes no GitHub or
+other network calls and has no credential integration.
+
+```sh
+WIKI_STAGING_ROOT=/tmp/wiki-seed
+WIKI_ROOT="${WIKI_STAGING_ROOT}" wiki-seed --manifest /work/repository-catalog.json
+```
+
+Seed only a local staging directory. The deployed query mount is read-only, and
+S3-style object mounts do not provide the rename semantics used for atomic local
+writes. Upload `repos/*.md` with the deployment owner's object-storage tooling,
+then upload `index.md` last as the catalog commit marker. The concrete AWS
+commands and bucket are owned by the InternalServices deployment runbook.
+
+The manifest is bounded to 2 MiB and 1,000 repositories:
+
+```json
+{
+  "schema": "wiki-catalog-seed/v1",
+  "repositories": [
+    {
+      "catalogId": "internal-services",
+      "repository": "MoveIndustries/InternalServices",
+      "url": "https://github.com/MoveIndustries/InternalServices.git",
+      "visibility": "private",
+      "defaultBranch": "main",
+      "sourceStatus": "verified",
+      "resolvedCommitSha": "0123456789012345678901234567890123456789",
+      "summary": "Owns shared infrastructure and deployment configuration.",
+      "description": "A detailed, source-grounded description.",
+      "sources": [
+        {
+          "path": "docs/architecture.md",
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Records and citations are sorted deterministically. The command atomically
+replaces each `repos/<catalogId>.md` page and publishes `index.md` last as the
+catalog commit marker. Re-running the same normalized manifest produces
+byte-identical Markdown. It does not run as part of `serve` or any steward job.
+
+An authenticated but empty GitHub repository is represented without fabricated
+evidence by setting `sourceStatus` to `empty`, `resolvedCommitSha` to `null`, and
+`sources` to `[]`. Generated Markdown explicitly records `source_status: empty`,
+the null commit, and that no repository source exists; validation does not
+depend on English-language keywords in the human-authored text. A `verified` record
+requires an exact 40-character commit SHA and at least one path/SHA-256 citation.
+
+## HTTP API
+
+- `POST /v1/query`: `{ "query": string, "limit"?: 1..10, "maxExcerptChars"?: 100..4000 }`
+- `POST /v1/refresh`: atomically rebuild the in-memory index from Markdown
+- `GET /healthz`
+- `GET /readyz`
+
+Retrieval searches pages explicitly linked by `index.md` first. If there are not
+enough matching results, it scans a deterministic, configured bound of remaining
+Markdown pages. Results include path, content SHA-256, bounded excerpt, score,
+and whether the page came through the catalog or fallback.
+
+Important bounds can be configured with `WIKI_MAX_REQUEST_BYTES`,
+`WIKI_MAX_CORPUS_FILES`, `WIKI_MAX_CORPUS_BYTES`,
+`WIKI_MAX_FALLBACK_FILES`, and `WIKI_MAX_FALLBACK_BYTES`. Agent requests
+have a five-second deadline by default; set `WIKI_QUERY_TIMEOUT_MS` to an integer
+from 100 through 60000 to tune it.
+
+## Test
+
+```sh
+npm test
+```

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Feedback Event",
+  "type": "object",
+  "required": ["id", "created_at", "source", "status", "feedback_type", "raw_feedback", "expected_behavior"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^fwf_"},
+    "created_at": {"type": "string"},
+    "source": {"type": "string"},
+    "status": {"enum": ["inbox", "triaged", "patch_proposed", "eval_created", "merged", "duplicate", "needs_human_review", "rejected"]},
+    "feedback_type": {"enum": ["missing_context", "wrong_fact", "stale_fact", "bad_link", "duplicate_note", "weak_synthesis", "retrieval_failure", "metadata_gap", "privacy_boundary", "other"]},
+    "severity": {"type": "string"},
+    "raw_feedback": {"type": "string"},
+    "expected_behavior": {"type": "string"},
+    "user_query": {"type": "string"},
+    "suggested_target_notes": {"type": "array", "items": {"type": "string"}},
+    "tags": {"type": "array", "items": {"type": "string"}},
+    "privacy": {"type": "string"}
+  },
+  "additionalProperties": true
+}

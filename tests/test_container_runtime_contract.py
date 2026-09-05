@@ -18,6 +18,25 @@ class ContainerRuntimeContractTests(unittest.TestCase):
         self.assertIn("0o2750", state_entry)
         self.assertNotIn("SUPERVISOR_CREDENTIAL_GID", state_entry)
 
+    def test_runtime_exposes_only_the_wiki_query_command(self):
+        dockerfile = (ROOT / "docker/runtime/Dockerfile").read_text()
+        self.assertIn("wiki-service/bin/wiki-query.mjs /usr/local/bin/wiki-query", dockerfile)
+        self.assertNotIn("npm install --global /opt/multiagent/wiki-service", dockerfile)
+        self.assertNotIn("WIKI_ROOT=/var/lib/wiki", dockerfile)
+
+    def test_wiki_image_is_independent_and_unprivileged(self):
+        dockerfile = (ROOT / "docker/wiki-service/Dockerfile").read_text()
+        self.assertIn("COPY wiki-service/src ./src", dockerfile)
+        self.assertIn("USER 10030:10030", dockerfile)
+        self.assertIn("WIKI_ROOT=/var/lib/wiki", dockerfile)
+        self.assertNotIn("runtime/", dockerfile)
+        self.assertNotIn("control-server/", dockerfile)
+
+    def test_role_environment_propagates_only_the_non_secret_wiki_url(self):
+        runtime = (ROOT / "runtime/src/runtime.rs").read_text()
+        self.assertIn('"MULTIAGENT_WIKI_URL"', runtime)
+        self.assertNotIn('"WIKI_ROOT"', runtime)
+
 
 if __name__ == "__main__":
     unittest.main()

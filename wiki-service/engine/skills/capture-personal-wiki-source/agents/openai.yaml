@@ -1,0 +1,4 @@
+interface:
+  display_name: "Capture Personal Wiki Source"
+  short_description: "Save raw vault material and update the LLM Wiki."
+  default_prompt: "Use $capture-personal-wiki-source to save this source in the vault and update the LLM Wiki with citations."

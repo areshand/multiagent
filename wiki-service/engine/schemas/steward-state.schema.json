@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Feedback Steward State",
+  "type": "object",
+  "required": ["last_run_id", "processed_feedback_ids", "unresolved_blockers", "next_run_scope"],
+  "properties": {
+    "last_run_id": {"type": ["string", "null"]},
+    "processed_feedback_ids": {"type": "array", "items": {"type": "string"}},
+    "unresolved_blockers": {"type": "array", "items": {"type": "string"}},
+    "next_run_scope": {"type": ["string", "null"]}
+  }
+}

@@ -1,0 +1,8 @@
+vault_root: /path/to/private-vault
+wiki_root: /path/to/private-vault/LLM Wiki
+raw_source_roots:
+  - Notion Export
+  - Evernote Export
+  - Slack Export
+  - Raw Materials
+private_system_root: LLM Wiki/system

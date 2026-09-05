@@ -3,6 +3,8 @@ target/
 .DS_Store
 __pycache__/
 *.pyc
+wiki-service/engine/config.yml
+wiki-service/engine/*.local.yml
 evaluation/runs/
 evaluation/reports/*
 !evaluation/reports/.gitkeep

@@ -24,3 +24,14 @@ The Logger image contains only the Rust `logger` package. It runs as UID
 10020, uses a dedicated volume at `/var/lib/logger`, and expects its
 Ed25519 signing key and producer-client authorization file to be mounted by the
 deployment. It contains neither the session runtime nor the control server.
+
+Build the independent Wiki query-service image with:
+
+```bash
+docker build -f docker/wiki-service/Dockerfile -t multiagent-wiki:local .
+```
+
+The runtime image installs only the provider-neutral `wiki-query` command.
+Session roles receive
+`MULTIAGENT_WIKI_URL`; they do not receive Wiki storage credentials or mount its
+volume.

@@ -1,0 +1,17 @@
+{
+  "name": "multiagent-wiki-service",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "bin": {
+    "wiki-query": "bin/wiki-query.mjs",
+    "wiki-seed": "bin/wiki-seed.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

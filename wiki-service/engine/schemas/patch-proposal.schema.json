@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Patch Proposal",
+  "type": "object",
+  "required": ["feedback_id", "target_notes", "summary", "risk_level", "human_review_required"],
+  "properties": {
+    "feedback_id": {"type": "string"},
+    "target_notes": {"type": "array", "items": {"type": "string"}},
+    "summary": {"type": "string"},
+    "risk_level": {"enum": ["low", "medium", "high"]},
+    "human_review_required": {"type": "boolean"}
+  }
+}
