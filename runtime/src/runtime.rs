@@ -322,6 +322,11 @@ pub fn role_agent_exec(args: &[String]) -> Result<ExitCode, String> {
     }
     let public_output = dir.join("last-message.txt");
     let trace_dir = cfg.logs.join("agents").join(name);
+    // Direct read requests must be caller-owned and live under the role trace
+    // directory so the authority supervisor can resolve them without granting
+    // the role write access to the wider session state. Expose the exact shared
+    // path instead of asking an agent to infer it from metadata.
+    env::set_var("MULTIAGENT_ROLE_SHARED_WRITE_DIR", &trace_dir);
     let resume_session = (restored
         && env::var("MULTIAGENT_FORCE_FRESH_CONTEXT").as_deref() != Ok("1"))
     .then(|| native_resume_session(&trace_dir))
@@ -5919,6 +5924,10 @@ review-record: type=decision-authority verdict=pass diff=-\n";
             role_prompt_name("reader-01", "reader"),
             Some("prompts/roles/repository-reader.md")
         );
+        let reader_prompt = include_str!("../../prompts/roles/repository-reader.md");
+        assert!(reader_prompt.contains("$MULTIAGENT_ROLE_SHARED_WRITE_DIR"));
+        assert!(reader_prompt.contains("chmod 0640 PATH"));
+        assert!(reader_prompt.contains("Do not place a direct-read request under"));
         assert_eq!(
             codex_access_for_spawn(&cfg, "reader-01", "reader"),
             CodexAccess::ReadOnly
