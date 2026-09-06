@@ -16,7 +16,6 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable
-from urllib.parse import quote
 
 
 def utc_now() -> str:
@@ -161,7 +160,7 @@ class TraceCommitter:
                     "digest": digest,
                     "mediaType": mimetypes.guess_type(relative.as_posix())[0] or "application/octet-stream",
                     "size": size,
-                    "storageReference": f"s3://{self.bucket}/{self.prefix}/{quote(relative.as_posix(), safe='/')}",
+                    "storageReference": f"s3://{self.bucket}/{self.prefix}/{relative.as_posix()}",
                 }
             )
         manifest = {
