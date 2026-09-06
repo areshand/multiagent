@@ -45,36 +45,12 @@ struct IterationPlan {
     kind: String,
     workflow_id: String,
     iteration: u64,
-    decision: IterationDecision,
     implementation_context: String,
     workers: Vec<IterationWorker>,
     #[serde(default)]
     resolves_todos: Vec<String>,
     #[serde(default)]
     additional_reviews: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct IterationDecision {
-    id: String,
-    title: String,
-    selected_plan: String,
-    reason: String,
-    #[serde(default)]
-    rollback_policy: String,
-    alternatives: Vec<IterationAlternative>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct IterationAlternative {
-    id: String,
-    summary: String,
-    #[serde(default)]
-    expected_outcome: String,
-    #[serde(default)]
-    risk: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1846,7 +1822,7 @@ pub fn subagent(args: &[String]) -> Result<ExitCode, String> {
 
 fn print_subagent_usage() {
     println!(
-        "Usage:\n  multiagent subagent spawn NAME [--own PATH[,PATH...] ...] [--assignment-id ID] [--workflow-id ID --decision-id ID --plan-id ID --decision-revision REV] [--branch BRANCH] [--start-commit COMMIT] [--role ROLE] [--access read-only|workspace-write] [--instruction TEXT | --instruction-file PATH | -- TEXT]\n  multiagent subagent restore NAME [--force] [--instruction TEXT | --instruction-file PATH]\n  multiagent subagent reviewed-ops-cycle OPS_NAME --request-file PATH --reviewer NAME [--timeout SECONDS]\n  multiagent subagent execute-iteration --plan-file PATH [--timeout SECONDS]\n  multiagent subagent list|recover-plan|restore-all|gate-check\n  multiagent subagent poll|inspect|finalize|kill NAME [OPTIONS]\n  multiagent subagent wait NAME [--timeout SECONDS] [--poll-interval SECONDS]\n\nAll durable state and tmux subprocess orchestration are implemented by the Rust CLI."
+        "Usage:\n  multiagent subagent spawn NAME [--own PATH[,PATH...] ...] [--assignment-id ID] [--workflow-id ID] [--decision-id ID --plan-id ID] [--plan-sha256 SHA256] [--branch BRANCH] [--start-commit COMMIT] [--role ROLE] [--access read-only|workspace-write] [--instruction TEXT | --instruction-file PATH | -- TEXT]\n  multiagent subagent restore NAME [--force] [--instruction TEXT | --instruction-file PATH]\n  multiagent subagent reviewed-ops-cycle OPS_NAME --request-file PATH --reviewer NAME [--timeout SECONDS]\n  multiagent subagent execute-iteration --plan-file PATH [--timeout SECONDS]\n  multiagent subagent list|recover-plan|restore-all|gate-check\n  multiagent subagent poll|inspect|finalize|kill NAME [OPTIONS]\n  multiagent subagent wait NAME [--timeout SECONDS] [--poll-interval SECONDS]\n\nAll durable state and tmux subprocess orchestration are implemented by the Rust CLI."
     );
 }
 
@@ -1890,13 +1866,8 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
                 )?)?);
                 index += 2;
             }
-            "--assignment-id"
-            | "--workflow-id"
-            | "--decision-id"
-            | "--plan-id"
-            | "--decision-revision"
-            | "--branch"
-            | "--start-commit" => {
+            "--assignment-id" | "--workflow-id" | "--decision-id" | "--plan-id"
+            | "--plan-sha256" | "--branch" | "--start-commit" => {
                 assignment_values.insert(
                     args[index].clone(),
                     required_value(args, index, "spawn assignment metadata")?.to_string(),
@@ -1976,6 +1947,23 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
     if role == "reader" && access != CodexAccess::ReadOnly {
         return Err("reader roles require read-only access".into());
     }
+    let plan_alignment = authority_role == "reviewer"
+        && role_prompt_name(name, &role) == Some("prompts/roles/plan-alignment-reviewer.md");
+    let alignment_plan_sha256 = assignment_values
+        .get("--plan-sha256")
+        .map(String::as_str)
+        .unwrap_or("");
+    let alignment_task_sha256 = if plan_alignment {
+        workflow::semantic_envelope(
+            assignment_values
+                .get("--workflow-id")
+                .map(String::as_str)
+                .unwrap_or(""),
+        )?
+        .original_task_sha256
+    } else {
+        String::new()
+    };
 
     require_command("tmux")?;
     let cli = &cfg.subagent_cli;
@@ -1989,32 +1977,28 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
     }
     reject_parallel_generic_worker_spawn(cfg, name)?;
     reject_additional_ops_identity(&cfg.state, name, authority_role)?;
-    let decision_authority = authority_role == "reviewer"
-        && role_prompt_name(name, &role) == Some("prompts/roles/decision-authority-reviewer.md");
     if owned.is_empty() {
-        let required = [
-            "--workflow-id",
-            "--decision-id",
-            "--plan-id",
-            "--decision-revision",
-        ];
-        let exact_decision_metadata = decision_authority
+        let required = ["--workflow-id", "--plan-sha256"];
+        let exact_alignment_metadata = plan_alignment
             && assignment_values.len() == required.len()
             && required
                 .iter()
                 .all(|flag| assignment_values.contains_key(*flag));
-        if decision_authority && !exact_decision_metadata {
-            return Err("decision-authority reviewer requires --workflow-id, --decision-id, --plan-id, and --decision-revision".into());
+        if plan_alignment && !exact_alignment_metadata {
+            return Err("plan-alignment reviewer requires --workflow-id and --plan-sha256".into());
         }
-        if !decision_authority && !assignment_values.is_empty() {
-            return Err("spawn assignment metadata requires --own PATH; only exact decision capsule metadata is allowed for the decision-authority reviewer".into());
+        if !plan_alignment && !assignment_values.is_empty() {
+            return Err("spawn assignment metadata requires --own PATH; only exact sealed-plan metadata is allowed for the plan-alignment reviewer".into());
         }
-        if decision_authority {
+        if plan_alignment {
             let active_workflow = env_nonempty("MULTIAGENT_WORKFLOW_ID").unwrap_or_default();
             if assignment_values.get("--workflow-id").map(String::as_str)
                 != Some(active_workflow.as_str())
             {
-                return Err("decision-authority reviewer workflow metadata does not match the active workflow".into());
+                return Err(
+                    "plan-alignment reviewer workflow metadata does not match the active workflow"
+                        .into(),
+                );
             }
         }
     }
@@ -2102,7 +2086,7 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
     fs::create_dir_all(&cfg.logs).map_err(io_error("create subagent log directory"))?;
     let executable = env::current_exe().map_err(io_error("resolve multiagent executable"))?;
     let metadata = format!(
-        "name={name}\nsession={}\nroot={}\nrole={}\naccess={}\ncodex_access={}\nworkflow_id={}\nwrite_policy={}\nlog_file={}\ntrace_dir={}\ncli={cli}\ncli_bin={binary}\nhelper={}\ncreated_at={}\n",
+        "name={name}\nsession={}\nroot={}\nrole={}\naccess={}\ncodex_access={}\nworkflow_id={}\niteration_plan_sha256={alignment_plan_sha256}\noriginal_task_sha256={alignment_task_sha256}\nwrite_policy={}\nlog_file={}\ntrace_dir={}\ncli={cli}\ncli_bin={binary}\nhelper={}\ncreated_at={}\n",
         cfg.session,
         cfg.root.display(),
         authority_role,
@@ -2154,16 +2138,14 @@ fn spawn(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String> {
             "--instruction-file".to_string(),
             instruction_path,
         ];
-        if decision_authority {
-            for flag in ["--decision-id", "--plan-id", "--decision-revision"] {
-                command.push(flag.to_string());
-                command.push(
-                    assignment_values
-                        .get(flag)
-                        .cloned()
-                        .ok_or_else(|| format!("decision-authority spawn requires {flag}"))?,
-                );
-            }
+        if plan_alignment {
+            command.push("--plan-sha256".into());
+            command.push(
+                assignment_values
+                    .get("--plan-sha256")
+                    .cloned()
+                    .ok_or("plan-alignment spawn requires --plan-sha256")?,
+            );
         }
         let command = command.iter().map(String::as_str).collect::<Vec<_>>();
         run_self_quiet(&command)?;
@@ -2370,7 +2352,7 @@ fn execute_iteration(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String>
             plan.iteration
         ));
     }
-    let active_todos = validate_iteration_todos(&plan)?;
+    validate_iteration_todos(&plan)?;
 
     let plan_sha256 = format!("{:x}", Sha256::digest(&plan_bytes));
     let execution_dir = cfg
@@ -2395,105 +2377,76 @@ fn execute_iteration(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String>
         "--worker-count".into(),
         plan.workers.len().to_string(),
     ])?;
-    materialize_iteration_decision(&plan)?;
-
-    let authority_name = format!("decision-authority-reviewer-{:02}", plan.iteration);
-    let selected = plan
-        .decision
-        .alternatives
-        .iter()
-        .find(|alternative| alternative.id == plan.decision.selected_plan)
-        .expect("validated selected iteration plan");
-    let authority_instruction = format!(
-        "Review sealed iteration plan sha256={plan_sha256}. Selected outcome: {}. Implementation context: {}. Worker graph: {}. Exact owned paths: {}. Direct TODOs this plan claims to resolve after passing review: {}. Confirm that this bounded plan follows the authenticated task, addresses those TODOs, preserves authority boundaries, and contains no unauthorized operation or scope expansion.",
-        selected.expected_outcome,
-        plan.implementation_context,
-        plan.workers
-            .iter()
-            .map(|worker| format!("{}<-{}", worker.id, if worker.depends_on.is_empty() { "ready".into() } else { worker.depends_on.join(",") }))
-            .collect::<Vec<_>>()
-            .join("; "),
-        owned_paths.join(","),
-        if active_todos.is_empty() { "none".into() } else { active_todos.iter().map(|todo| format!("{}: {}", todo.id, todo.summary)).collect::<Vec<_>>().join("; ") },
+    let alignment_name = format!("plan-alignment-reviewer-{:02}", plan.iteration);
+    let sealed_plan = std::str::from_utf8(&plan_bytes)
+        .map_err(|_| "iteration plan must be UTF-8 JSON".to_string())?;
+    let alignment_instruction = format!(
+        "Compare the authenticated original task with this complete sealed iteration plan. Check the main requested outcome, every material constraint, the implementation context, all worker instructions and owned paths, TODO claims, dependencies, and additional reviews. Return only aligned or misaligned using the role protocol.\n\nsealed-iteration-plan-sha256={plan_sha256}\n\n```json\n{sealed_plan}\n```"
     );
-    let authority_review_id = format!("iteration-{}-authority", plan.iteration);
+    let alignment_review_id = format!("iteration-{}-alignment", plan.iteration);
     if !workflow::passing_review_recorded(
         &plan.workflow_id,
-        &authority_review_id,
-        "decision-authority",
+        &alignment_review_id,
+        "plan-alignment",
     )? {
         spawn(
             cfg,
             &[
-                authority_name.clone(),
+                alignment_name.clone(),
                 "--role".into(),
                 "reviewer".into(),
                 "--workflow-id".into(),
                 plan.workflow_id.clone(),
-                "--decision-id".into(),
-                plan.decision.id.clone(),
-                "--plan-id".into(),
-                plan.decision.selected_plan.clone(),
-                "--decision-revision".into(),
-                plan.iteration.to_string(),
+                "--plan-sha256".into(),
+                plan_sha256.clone(),
                 "--instruction".into(),
-                authority_instruction,
+                alignment_instruction,
             ],
         )?;
         wait(
             cfg,
-            &[authority_name.clone(), "--timeout".into(), timeout.clone()],
+            &[alignment_name.clone(), "--timeout".into(), timeout.clone()],
         )?;
-        let authority_message = agent_final_message(cfg, &authority_name)?;
-        finalize(cfg, std::slice::from_ref(&authority_name))?;
-        let authority_verdict =
-            review_output_verdict(&authority_message, "decision-authority", "-").ok_or_else(
+        let alignment_message = agent_final_message(cfg, &alignment_name)?;
+        finalize(cfg, std::slice::from_ref(&alignment_name))?;
+        let alignment_verdict =
+            review_output_verdict(&alignment_message, "plan-alignment", "-").ok_or_else(
                 || {
                     format!(
-                        "authority reviewer output is missing the required structured marker: {authority_name}"
+                        "plan-alignment reviewer output is missing the required structured marker: {alignment_name}"
                     )
                 },
             )?;
         record_iteration_review(
             &plan.workflow_id,
-            &authority_review_id,
-            "decision-authority",
-            authority_verdict,
+            &alignment_review_id,
+            "plan-alignment",
+            alignment_verdict,
             "-",
-            &authority_name,
+            &alignment_name,
         )?;
-        if authority_verdict == "findings" {
+        if alignment_verdict == "findings" {
             if let Some((question, _)) =
-                workflow::reviewer_human_review_question(&plan.workflow_id, &authority_name)?
+                workflow::reviewer_human_review_question(&plan.workflow_id, &alignment_name)?
             {
-                complete_reviewer_human_fallback(cfg, &authority_name, &question)?;
+                complete_reviewer_human_fallback(cfg, &alignment_name, &question)?;
                 emit_iteration_result(
                     "human_review_required",
                     &plan,
                     &plan_sha256,
-                    "decision-authority-user-choice",
+                    "plan-misaligned-user-input-required",
                     None,
                 )?;
                 return Ok(());
             }
-            emit_iteration_result(
-                "needs_replan",
-                &plan,
-                &plan_sha256,
-                "decision-authority-findings",
-                None,
-            )?;
+            emit_iteration_result("needs_replan", &plan, &plan_sha256, "plan-misaligned", None)?;
             return Ok(());
         }
     }
 
     let implementation_context = format!(
-        "# Sealed Implementation Context\n\niteration-plan-sha256={plan_sha256}\nworkflow={}\niteration={}\ndecision={}\nselected-plan={}\n\n{}\n",
-        plan.workflow_id,
-        plan.iteration,
-        plan.decision.id,
-        plan.decision.selected_plan,
-        plan.implementation_context,
+        "# Sealed Implementation Context\n\niteration-plan-sha256={plan_sha256}\nworkflow={}\niteration={}\n\n{}\n",
+        plan.workflow_id, plan.iteration, plan.implementation_context,
     );
     let context_file = execution_dir.join("implementation-context.md");
     atomic_write(
@@ -2505,16 +2458,12 @@ fn execute_iteration(cfg: &RuntimeConfig, args: &[String]) -> Result<(), String>
         "workflow".into(),
         "prepare-implementation".into(),
         plan.workflow_id.clone(),
-        "--decision-id".into(),
-        plan.decision.id.clone(),
-        "--plan-id".into(),
-        plan.decision.selected_plan.clone(),
-        "--decision-revision".into(),
-        plan.iteration.to_string(),
+        "--plan-sha256".into(),
+        plan_sha256.clone(),
         "--implementation-context".into(),
         context_file.display().to_string(),
-        "--authority-review".into(),
-        authority_review_id,
+        "--alignment-review".into(),
+        alignment_review_id,
     ])?;
     run_self_owned(&[
         "workflow".into(),
@@ -2681,52 +2630,6 @@ fn validate_iteration_plan(
     {
         return Err("iteration plan implementationContext must contain 1..65536 bytes".into());
     }
-    for (label, value) in [
-        ("decision.id", plan.decision.id.as_str()),
-        ("decision.title", plan.decision.title.as_str()),
-        (
-            "decision.selectedPlan",
-            plan.decision.selected_plan.as_str(),
-        ),
-        ("decision.reason", plan.decision.reason.as_str()),
-        (
-            "decision.rollbackPolicy",
-            plan.decision.rollback_policy.as_str(),
-        ),
-    ] {
-        if value.is_empty() || value.contains(['\n', '\r', '\t']) {
-            return Err(format!(
-                "iteration plan {label} must be a non-empty single-line value"
-            ));
-        }
-    }
-    if plan.decision.alternatives.is_empty() || plan.decision.alternatives.len() > 8 {
-        return Err("iteration plan requires 1..8 decision alternatives".into());
-    }
-    let mut alternatives = BTreeSet::new();
-    for alternative in &plan.decision.alternatives {
-        if alternative.id.is_empty()
-            || alternative.summary.is_empty()
-            || alternative.id.contains(['\n', '\r', '\t'])
-            || alternative.summary.contains(['\n', '\r', '\t'])
-            || alternative.expected_outcome.contains(['\n', '\r', '\t'])
-            || alternative.risk.contains(['\n', '\r', '\t'])
-        {
-            return Err(
-                "iteration decision alternatives must use non-empty single-line IDs and summaries"
-                    .into(),
-            );
-        }
-        if !alternatives.insert(alternative.id.as_str()) {
-            return Err(format!(
-                "duplicate iteration alternative: {}",
-                alternative.id
-            ));
-        }
-    }
-    if !alternatives.contains(plan.decision.selected_plan.as_str()) {
-        return Err("iteration selectedPlan does not name an alternative".into());
-    }
     if plan.workers.is_empty() || plan.workers.len() > 32 {
         return Err("iteration plan requires 1..32 workers".into());
     }
@@ -2795,15 +2698,13 @@ fn validate_iteration_plan(
         }
         completed.extend(ready);
     }
-    let allowed_reviews = ["decision-drift", "scope", "reflection"];
+    let allowed_reviews = ["scope", "reflection"];
     if plan
         .additional_reviews
         .iter()
         .any(|kind| !allowed_reviews.contains(&kind.as_str()))
     {
-        return Err(
-            "additionalReviews may contain only decision-drift, scope, or reflection".into(),
-        );
+        return Err("additionalReviews may contain only scope or reflection".into());
     }
     for todo in &plan.resolves_todos {
         if todo.is_empty()
@@ -2850,49 +2751,6 @@ fn validate_iteration_todos(plan: &IterationPlan) -> Result<Vec<workflow::Active
         ));
     }
     Ok(active)
-}
-
-fn materialize_iteration_decision(plan: &IterationPlan) -> Result<(), String> {
-    if workflow::committed_decision_matches(&plan.decision.id, &plan.decision.selected_plan)? {
-        return Ok(());
-    }
-    run_self_owned(&[
-        "decision".into(),
-        "init".into(),
-        plan.decision.id.clone(),
-        "--title".into(),
-        plan.decision.title.clone(),
-        "--owner".into(),
-        "orchestrator".into(),
-    ])?;
-    for alternative in &plan.decision.alternatives {
-        run_self_owned(&[
-            "decision".into(),
-            "add-alternative".into(),
-            plan.decision.id.clone(),
-            "--plan-id".into(),
-            alternative.id.clone(),
-            "--summary".into(),
-            alternative.summary.clone(),
-            "--proposed-by".into(),
-            "orchestrator".into(),
-            "--expected-outcome".into(),
-            alternative.expected_outcome.clone(),
-            "--risk".into(),
-            alternative.risk.clone(),
-        ])?;
-    }
-    run_self_owned(&[
-        "decision".into(),
-        "commit".into(),
-        plan.decision.id.clone(),
-        "--selected-plan".into(),
-        plan.decision.selected_plan.clone(),
-        "--reason".into(),
-        plan.decision.reason.clone(),
-        "--rollback-policy".into(),
-        plan.decision.rollback_policy.clone(),
-    ])
 }
 
 fn execute_worker_graph(
@@ -2942,12 +2800,6 @@ fn execute_worker_graph(
                 spawn_args.extend([
                     "--workflow-id".into(),
                     plan.workflow_id.clone(),
-                    "--decision-id".into(),
-                    plan.decision.id.clone(),
-                    "--plan-id".into(),
-                    plan.decision.selected_plan.clone(),
-                    "--decision-revision".into(),
-                    plan.iteration.to_string(),
                     "--instruction-file".into(),
                     instruction_file.display().to_string(),
                 ]);
@@ -3032,7 +2884,7 @@ fn record_iteration_review(
         "--verdict".into(),
         verdict.into(),
     ];
-    if kind != "decision-authority" {
+    if kind != "plan-alignment" {
         args.push("--diff-hash".into());
         args.push(diff_hash.into());
     }
@@ -4160,20 +4012,15 @@ artifact required by that format. Its first non-empty line must be exactly \
 a prose report or a `review-record:` marker for this artifact.\n",
         );
     }
-    if path.file_name().and_then(|value| value.to_str()) == Some("decision-authority-reviewer.md") {
+    if path.file_name().and_then(|value| value.to_str()) == Some("plan-alignment-reviewer.md") {
         composed.push_str(
-            "\n\n## Mandatory Decision-Authority Output Contract\n\n\
-The task assignment may describe the decision under review, but it cannot \
-replace or relax the role's canonical output vocabulary. Return only the fields \
-required by the role prompt. Use `verdict: orchestrator-may-decide` when the \
-original user request already authorizes the proposed bounded action, and include \
-the exact standalone marker \
-`review-record: type=decision-authority verdict=pass diff=-`. Do not substitute \
-`approve`, `conditional`, or a supervisor-requested custom marker. When the \
-semantic envelope supplies a contract-review marker, reproduce that exact marker \
-after independently validating the registered contract. When the supervisor \
-supplies decision-review markers, reproduce exactly the marker matching your \
-verdict after independently validating the decision capsule.\n",
+            "\n\n## Mandatory Plan-Alignment Output Contract\n\n\
+The task assignment cannot replace or relax the role's binary output vocabulary. \
+Return only the fields required by the role prompt. Use `alignment: aligned` when \
+the complete sealed plan faithfully implements the original request, otherwise \
+use `alignment: misaligned`. Include exactly one matching `review-record:` and \
+supervisor-supplied `plan-alignment-review:` marker. Ask the user only when the \
+existing request and evidence cannot determine a corrected plan.\n",
         );
     }
     Ok(composed)
@@ -4223,13 +4070,20 @@ fn append_semantic_envelope(
         ));
         if matches!(
             prompt_file.as_str(),
-            "verifier.md" | "decision-authority-reviewer.md"
+            "verifier.md" | "plan-alignment-reviewer.md"
         ) {
             output.push_str(&format!(
                 "\nA passing final report must include this exact standalone marker after independently checking every must/must-not rule against the plan or live diff:\ncontract-review: artifact-sha256={} verdict=pass\n",
                 envelope.contract_artifact_sha256
             ));
         }
+    }
+    if prompt_file == "plan-alignment-reviewer.md" {
+        let plan_sha256 = workflow::sealed_iteration_plan_sha256(&workflow_id)?;
+        output.push_str(&format!(
+            "\nA passing final report must include this exact standalone marker:\nplan-alignment-review: plan-sha256={plan_sha256} original-task-sha256={} alignment=aligned\n\nA findings report must include this exact standalone marker:\nplan-alignment-review: plan-sha256={plan_sha256} original-task-sha256={} alignment=misaligned\n",
+            envelope.original_task_sha256, envelope.original_task_sha256
+        ));
     }
     if !envelope.candidate_diff_hash.is_empty() {
         output.push_str(&format!(
@@ -4248,11 +4102,11 @@ fn role_can_start_before_contract_gate(name: &str, role: &str, prompt_file: &str
         || prompt_file == "ops-agent.md"
         || prompt_file == "ops-reviewer.md"
         || prompt_file == "contract-scout.md"
-        || prompt_file == "decision-authority-reviewer.md"
+        || prompt_file == "plan-alignment-reviewer.md"
         || lower.contains("ops-reviewer")
         || lower.contains("read-only-integrity-reviewer")
         || lower.contains("contract-scout")
-        || lower.contains("decision-authority-reviewer")
+        || lower.contains("plan-alignment-reviewer")
 }
 
 fn role_prompt_path(cfg: &RuntimeConfig, name: &str, role: &str) -> Option<PathBuf> {
@@ -4261,8 +4115,8 @@ fn role_prompt_path(cfg: &RuntimeConfig, name: &str, role: &str) -> Option<PathB
 
 fn role_prompt_name(name: &str, role: &str) -> Option<&'static str> {
     let lower = name.to_ascii_lowercase();
-    let relative = if lower.contains("decision-authority-reviewer") {
-        "prompts/roles/decision-authority-reviewer.md"
+    let relative = if lower.contains("plan-alignment-reviewer") {
+        "prompts/roles/plan-alignment-reviewer.md"
     } else if lower.contains("read-only-integrity-reviewer") {
         "prompts/roles/read-only-integrity-reviewer.md"
     } else if lower.contains("ops-reviewer") {
@@ -4325,7 +4179,7 @@ fn codex_access_for_spawn(cfg: &RuntimeConfig, name: &str, role: &str) -> CodexA
         || role == "scout"
         || lower.starts_with("verifier-")
         || lower.contains("reviewer")
-        || lower.contains("decision-authority-reviewer")
+        || lower.contains("plan-alignment-reviewer")
         || matches!(
             prompt.as_deref(),
             Some(
@@ -4334,7 +4188,7 @@ fn codex_access_for_spawn(cfg: &RuntimeConfig, name: &str, role: &str) -> CodexA
                     | "read-only-integrity-reviewer.md"
                     | "acceptance-scout.md"
                     | "contract-scout.md"
-                    | "decision-authority-reviewer.md"
+                    | "plan-alignment-reviewer.md"
                     | "scope-guard.md"
                     | "validation-coordinator.md"
             )
@@ -4426,42 +4280,32 @@ fn implementation_context(cfg: &RuntimeConfig, name: &str) -> Result<Option<Path
         "workflow_id",
         "lifecycle enforcement requires --workflow-id for exploitation assignments",
     )?;
-    let decision_id = required_env_field(
+    let plan_sha256 = required_env_field(
         &meta,
-        "decision_id",
-        "lifecycle enforcement requires --decision-id for exploitation assignments",
-    )?;
-    let plan_id = required_env_field(
-        &meta,
-        "plan_id",
-        "lifecycle enforcement requires --plan-id for exploitation assignments",
+        "iteration_plan_sha256",
+        "lifecycle enforcement requires a sealed plan digest for exploitation assignments",
     )?;
     run_self_quiet(&[
         "workflow",
         "gate",
         workflow_id,
         "implementation",
-        "--decision-id",
-        decision_id,
-        "--plan-id",
-        plan_id,
+        "--plan-sha256",
+        plan_sha256,
     ])
     .map_err(|_| {
         format!("workflow implementation gate rejected assignment for workflow {workflow_id}")
     })?;
-    let current = run_self_output(&["workflow", "value", workflow_id, "decision_revision"])?;
-    let revision = String::from_utf8_lossy(&current.stdout).trim().to_string();
-    let assigned_revision = meta
-        .get("decision_revision")
-        .map(String::as_str)
-        .unwrap_or("");
-    if assigned_revision.is_empty() || assigned_revision != revision {
+    let current = run_self_output(&["workflow", "value", workflow_id, "iteration"])?;
+    let iteration = String::from_utf8_lossy(&current.stdout).trim().to_string();
+    let assigned_iteration = meta.get("iteration").map(String::as_str).unwrap_or("");
+    if assigned_iteration.is_empty() || assigned_iteration != iteration {
         return Err(format!(
-            "assignment decision revision is stale: assignment={} workflow={revision}",
-            if assigned_revision.is_empty() {
+            "assignment iteration is stale: assignment={} workflow={iteration}",
+            if assigned_iteration.is_empty() {
                 "missing"
             } else {
-                assigned_revision
+                assigned_iteration
             }
         ));
     }
@@ -6068,14 +5912,14 @@ mod tests {
 
     #[test]
     fn reviewer_pass_marker_is_accepted_evidence() {
-        let report = "authority-findings: blocked sets remain unchanged\n\
-review-record: type=decision-authority verdict=pass diff=-\n";
+        let report = "alignment: aligned\n\
+review-record: type=plan-alignment verdict=pass diff=-\n";
         assert!(accepted_report(report));
         assert!(accepted_report(
             "3. `review-record: type=scope verdict=pass diff=abc`"
         ));
         assert!(accepted_report(
-            "**review-record: type=decision-authority verdict=pass diff=-**"
+            "**review-record: type=plan-alignment verdict=pass diff=-**"
         ));
     }
 
@@ -6086,10 +5930,9 @@ review-record: type=decision-authority verdict=pass diff=-\n";
             review_output_verdict(pass, "technical", "abc"),
             Some("pass")
         );
-        let findings =
-            "BLOCKING\n**review-record: type=decision-drift verdict=findings diff=abc**\n";
+        let findings = "BLOCKING\n**review-record: type=scope verdict=findings diff=abc**\n";
         assert_eq!(
-            review_output_verdict(findings, "decision-drift", "abc"),
+            review_output_verdict(findings, "scope", "abc"),
             Some("findings")
         );
         assert_eq!(review_output_verdict("ACCEPTED", "technical", "abc"), None);
@@ -6137,19 +5980,6 @@ review-record: type=decision-authority verdict=pass diff=-\n";
             kind: ITERATION_PLAN_KIND.into(),
             workflow_id: "workflow-1".into(),
             iteration: 1,
-            decision: IterationDecision {
-                id: "decision-1".into(),
-                title: "Bounded change".into(),
-                selected_plan: "plan-1".into(),
-                reason: "Task specifies the exact output".into(),
-                rollback_policy: "Revert the bounded artifact".into(),
-                alternatives: vec![IterationAlternative {
-                    id: "plan-1".into(),
-                    summary: "Write the exact artifact".into(),
-                    expected_outcome: "Artifact matches the contract".into(),
-                    risk: "Low".into(),
-                }],
-            },
             implementation_context: "Write only the authenticated artifact.".into(),
             workers: vec![worker("worker-a", "one.json", vec![])],
             resolves_todos: vec![],
@@ -6271,9 +6101,9 @@ review-record: type=decision-authority verdict=pass diff=-\n";
             "ops-reviewer.md"
         ));
         assert!(role_can_start_before_contract_gate(
-            "decision-authority-reviewer-01",
+            "plan-alignment-reviewer-01",
             "reviewer",
-            "decision-authority-reviewer.md"
+            "plan-alignment-reviewer.md"
         ));
         assert!(!role_can_start_before_contract_gate(
             "worker-01-implementation",

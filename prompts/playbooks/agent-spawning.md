@@ -6,8 +6,7 @@ replace, verify, or finalize worker windows or named subagents.
 ## Read-Only Reader Spawn
 
 Readers are investigation roles, not implementation assignments. Spawn them
-without `--own`, `--assignment-id`, `--decision-id`, `--plan-id`, or
-`--decision-revision`:
+without `--own`, `--assignment-id`, `--decision-id`, or `--plan-id`:
 
 ```bash
 SUBAGENT_CLI="$VERIFIER_CLI" multiagent subagent spawn reader-01-question \

@@ -179,44 +179,31 @@ fn register_launch(args: &[String], renew: bool) -> Result<(), String> {
     let state = config::state_dir()?;
     let workflow_id = env::var("MULTIAGENT_WORKFLOW_ID").unwrap_or_default();
     let directory = state.join("launch-authorizations").join(name);
-    let decision_authority = role == "reviewer" && name.contains("decision-authority-reviewer");
+    let plan_alignment = role == "reviewer" && name.contains("plan-alignment-reviewer");
     let prior = if renew && directory.join("launch.env").is_file() {
         read_env_file(&directory.join("launch.env"))?
     } else {
         BTreeMap::new()
     };
-    let decision_value = |flag: &str, key: &str| {
+    let metadata_value = |flag: &str, key: &str| {
         options
             .get(flag)
             .cloned()
             .or_else(|| prior.get(key).cloned())
             .unwrap_or_default()
     };
-    let decision_id = decision_value("--decision-id", "decision_id");
-    let plan_id = decision_value("--plan-id", "plan_id");
-    let decision_revision = decision_value("--decision-revision", "decision_revision");
-    let decision_capsule = if decision_authority {
-        if workflow_id.is_empty()
-            || decision_id.is_empty()
-            || plan_id.is_empty()
-            || decision_revision.is_empty()
-        {
-            return Err("decision-authority launch requires workflow, decision, plan, and revision metadata".into());
+    let plan_sha256 = metadata_value("--plan-sha256", "iteration_plan_sha256");
+    let alignment_binding = if plan_alignment {
+        if workflow_id.is_empty() || plan_sha256.is_empty() {
+            return Err("plan-alignment launch requires workflow and sealed-plan metadata".into());
         }
-        Some(crate::workflow::decision_authority_capsule(
+        Some(crate::workflow::plan_alignment_binding(
             &workflow_id,
-            &decision_id,
-            &plan_id,
-            &decision_revision,
+            &plan_sha256,
         )?)
     } else {
-        if options.contains_key("--decision-id")
-            || options.contains_key("--plan-id")
-            || options.contains_key("--decision-revision")
-        {
-            return Err(
-                "decision capsule metadata is reserved for the decision-authority reviewer".into(),
-            );
+        if options.contains_key("--plan-sha256") {
+            return Err("sealed-plan metadata is reserved for the plan-alignment reviewer".into());
         }
         None
     };
@@ -277,13 +264,13 @@ fn register_launch(args: &[String], renew: bool) -> Result<(), String> {
                 "renewed launch cannot change role or coding-agent identity: {name}"
             ));
         }
-        if decision_authority
-            && current.get("decision_capsule_sha256").map(String::as_str)
-                != decision_capsule
+        if plan_alignment
+            && current.get("alignment_binding_sha256").map(String::as_str)
+                != alignment_binding
                     .as_ref()
-                    .map(|capsule| capsule.sha256.as_str())
+                    .map(|binding| binding.sha256.as_str())
         {
-            return Err("renewed decision-authority launch changed the decision capsule".into());
+            return Err("renewed plan-alignment launch changed the sealed binding".into());
         }
     } else if renew {
         return Err(format!("launch authorization does not exist: {name}"));
@@ -292,32 +279,41 @@ fn register_launch(args: &[String], renew: bool) -> Result<(), String> {
         .map_err(|error| format!("create launch authorization: {error}"))?;
     let mut instruction = fs::read(&instruction_source)
         .map_err(|error| format!("read registered instruction: {error}"))?;
-    if let Some(capsule) = &decision_capsule {
+    if let Some(binding) = &alignment_binding {
         instruction.extend_from_slice(
             format!(
-                "\n\n## Supervisor-Generated Decision Authority Capsule\n\n\
-This immutable capsule is the only selected-plan artifact authorized for this review. \
-Independently compare it with the original task. Include exactly one standalone decision-review marker matching your verdict.\n\n\
-decision-capsule-sha256={}\n{}\n\
-Passing marker: decision-review: capsule-sha256={} verdict=pass\n\
-Findings marker: decision-review: capsule-sha256={} verdict=findings\n",
-                capsule.sha256, capsule.content, capsule.sha256, capsule.sha256
+                "\n\n## Supervisor-Generated Plan Alignment Binding\n\n\
+This binding identifies the exact original task and sealed plan under review. \
+It prevents input substitution but does not define user intent or grant authority.\n\n\
+alignment-binding-sha256={}\n{}\n\
+Aligned marker: plan-alignment-review: plan-sha256={} original-task-sha256={} alignment=aligned\n\
+Misaligned marker: plan-alignment-review: plan-sha256={} original-task-sha256={} alignment=misaligned\n",
+                binding.sha256,
+                binding.content,
+                binding.plan_sha256,
+                binding.original_task_sha256,
+                binding.plan_sha256,
+                binding.original_task_sha256
             )
             .as_bytes(),
         );
         atomic_write_bytes(
-            &directory.join("decision-capsule.json"),
-            capsule.content.as_bytes(),
+            &directory.join("plan-alignment-binding.json"),
+            binding.content.as_bytes(),
         )?;
     }
     let instruction_path = directory.join("instruction.txt");
     atomic_write_bytes(&instruction_path, &instruction)?;
     let metadata = format!(
-        "name={name}\nrole={role}\naccess={access}\nworkflow_id={workflow_id}\ncli={cli}\ncli_bin={cli_bin}\ninstruction_sha256={:x}\ndecision_id={decision_id}\nplan_id={plan_id}\ndecision_revision={decision_revision}\ndecision_capsule_sha256={}\nstate=registered\n",
+        "name={name}\nrole={role}\naccess={access}\nworkflow_id={workflow_id}\ncli={cli}\ncli_bin={cli_bin}\ninstruction_sha256={:x}\niteration_plan_sha256={plan_sha256}\noriginal_task_sha256={}\nalignment_binding_sha256={}\nstate=registered\n",
         Sha256::digest(&instruction),
-        decision_capsule
+        alignment_binding
             .as_ref()
-            .map(|capsule| capsule.sha256.as_str())
+            .map(|binding| binding.original_task_sha256.as_str())
+            .unwrap_or(""),
+        alignment_binding
+            .as_ref()
+            .map(|binding| binding.sha256.as_str())
             .unwrap_or("")
     );
     atomic_write_bytes(&directory.join("launch.env"), metadata.as_bytes())?;
@@ -464,7 +460,7 @@ pub fn seal_role_output(
         atomic_write_bytes(&directory.join("last-message.txt"), &bytes)?;
         let completed_at = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
         let mut binding_metadata = String::new();
-        let mut decision_metadata = String::new();
+        let mut alignment_metadata = String::new();
         if role == "reviewer" {
             let binding_path = trace_dir.join("review-binding.json");
             if binding_path.exists() {
@@ -486,32 +482,31 @@ pub fn seal_role_output(
             }
             let launch_directory = state.join("launch-authorizations").join(name);
             let launch = read_env_file(&launch_directory.join("launch.env"))?;
-            let capsule_hash = launch
-                .get("decision_capsule_sha256")
+            let binding_hash = launch
+                .get("alignment_binding_sha256")
                 .map(String::as_str)
                 .unwrap_or("");
-            if !capsule_hash.is_empty() {
-                let capsule = fs::read(launch_directory.join("decision-capsule.json"))
-                    .map_err(|error| format!("read supervisor decision capsule: {error}"))?;
-                if format!("{:x}", Sha256::digest(&capsule)) != capsule_hash {
+            if !binding_hash.is_empty() {
+                let binding = fs::read(launch_directory.join("plan-alignment-binding.json"))
+                    .map_err(|error| format!("read supervisor plan-alignment binding: {error}"))?;
+                if format!("{:x}", Sha256::digest(&binding)) != binding_hash {
                     return Err(
-                        "supervisor decision capsule changed before evidence sealing".into(),
+                        "supervisor plan-alignment binding changed before evidence sealing".into(),
                     );
                 }
-                atomic_write_bytes(&directory.join("decision-capsule.json"), &capsule)?;
-                decision_metadata = format!(
-                    "decision_id={}\nplan_id={}\ndecision_revision={}\ndecision_capsule_sha256={capsule_hash}\n",
-                    launch.get("decision_id").map(String::as_str).unwrap_or(""),
-                    launch.get("plan_id").map(String::as_str).unwrap_or(""),
+                atomic_write_bytes(&directory.join("plan-alignment-binding.json"), &binding)?;
+                alignment_metadata = format!(
+                    "iteration_plan_sha256={}\noriginal_task_sha256={}\nalignment_binding_sha256={binding_hash}\n",
                     launch
-                        .get("decision_revision")
+                        .get("iteration_plan_sha256")
                         .map(String::as_str)
-                        .unwrap_or("")
+                        .unwrap_or(""),
+                    launch.get("original_task_sha256").map(String::as_str).unwrap_or("")
                 );
             }
         }
         let metadata = format!(
-            "name={name}\nrole={role}\naccess=read-only\nworkflow_id={workflow_id}\nstate=completed\ncompleted_at={completed_at}\noutput_sha256={:x}\n{binding_metadata}{decision_metadata}",
+            "name={name}\nrole={role}\naccess=read-only\nworkflow_id={workflow_id}\nstate=completed\ncompleted_at={completed_at}\noutput_sha256={:x}\n{binding_metadata}{alignment_metadata}",
             Sha256::digest(&bytes)
         );
         atomic_write_bytes(&directory.join("evidence.env"), metadata.as_bytes())?;
@@ -556,10 +551,9 @@ fn write_launch_state(
             .unwrap_or("")
     ));
     for key in [
-        "decision_id",
-        "plan_id",
-        "decision_revision",
-        "decision_capsule_sha256",
+        "iteration_plan_sha256",
+        "original_task_sha256",
+        "alignment_binding_sha256",
     ] {
         text.push_str(&format!(
             "{key}={}\n",
@@ -613,7 +607,7 @@ fn parse_options(args: &[String]) -> Result<BTreeMap<String, String>, String> {
                 | "--instruction-file"
                 | "--decision-id"
                 | "--plan-id"
-                | "--decision-revision"
+                | "--plan-sha256"
         ) || pair[1].contains(['\n', '\r'])
         {
             return Err(format!("invalid register-launch option: {}", pair[0]));
@@ -1235,9 +1229,9 @@ pub fn start(_state: &Path, _executable: &Path) -> Result<u32, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::launch_access;
     #[cfg(target_os = "linux")]
     use super::serve_connection;
+    use super::{launch_access, parse_options};
     #[cfg(target_os = "linux")]
     use std::os::unix::net::UnixStream;
 
@@ -1263,5 +1257,21 @@ mod tests {
             .contains("reserved"));
         assert!(launch_access("reviewer", Some("workspace-write")).is_err());
         assert!(launch_access("worker", Some("unknown")).is_err());
+    }
+
+    #[test]
+    fn supervisor_accepts_only_current_plan_alignment_metadata() {
+        let options = parse_options(&[
+            "--role".into(),
+            "reviewer".into(),
+            "--plan-sha256".into(),
+            "abc123".into(),
+        ])
+        .unwrap();
+        assert_eq!(
+            options.get("--plan-sha256").map(String::as_str),
+            Some("abc123")
+        );
+        assert!(parse_options(&["--decision-revision".into(), "1".into()]).is_err());
     }
 }

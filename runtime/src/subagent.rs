@@ -492,24 +492,9 @@ fn assignment_create(args: &[String]) -> Result<(), String> {
                 "lifecycle enforcement requires --workflow-id for exploitation assignments".into(),
             );
         }
-        if options.decision_id.is_empty() {
-            return Err(
-                "lifecycle enforcement requires --decision-id for exploitation assignments".into(),
-            );
-        }
-        if options.plan_id.is_empty() {
-            return Err(
-                "lifecycle enforcement requires --plan-id for exploitation assignments".into(),
-            );
-        }
-        Some(
-            workflow::assignment_context(&workflow_id, &options.decision_id, &options.plan_id)
-                .map_err(|_| {
-                    format!(
-                        "workflow implementation gate rejected assignment for workflow {workflow_id}"
-                    )
-                })?,
-        )
+        Some(workflow::assignment_context(&workflow_id).map_err(|_| {
+            format!("workflow implementation gate rejected assignment for workflow {workflow_id}")
+        })?)
     } else {
         None
     };
@@ -533,10 +518,14 @@ fn assignment_create(args: &[String]) -> Result<(), String> {
         ("decision_id", options.decision_id.as_str()),
         ("plan_id", options.plan_id.as_str()),
         (
-            "decision_revision",
+            "iteration",
+            context.as_ref().map(|v| v.iteration.as_str()).unwrap_or(""),
+        ),
+        (
+            "iteration_plan_sha256",
             context
                 .as_ref()
-                .map(|v| v.decision_revision.as_str())
+                .map(|v| v.iteration_plan_sha256.as_str())
                 .unwrap_or(""),
         ),
         (

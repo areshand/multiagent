@@ -163,7 +163,7 @@ python3 -m evaluation.cli \
 
 `baseline` is one ordinary Codex CLI invocation. `multiagent` runs the current
 production Rust/tmux lifecycle in Linux, including its contract scout,
-authority reviewers, workers, verifiers, and final reviews. Build the exact
+plan-alignment reviewers, workers, verifiers, and final reviews. Build the exact
 checkout before a live multiagent comparison:
 
 ```bash

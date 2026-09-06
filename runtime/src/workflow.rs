@@ -18,14 +18,13 @@ const PHASES: &[&str] = &[
 const ACTIVE: &[&str] = &["open", "assigned", "in-progress"];
 const TODO_KINDS: &[&str] = &["direct", "evidence", "decision"];
 const REVIEW_TYPES: &[&str] = &[
-    "decision-authority",
+    "plan-alignment",
     "read-only-integrity",
-    "decision-drift",
     "scope",
     "technical",
     "reflection",
 ];
-const POST_REVIEWS: &[&str] = &["decision-drift", "scope", "technical", "reflection"];
+const POST_REVIEWS: &[&str] = &["scope", "technical", "reflection"];
 const ENV_ORDER: &[&str] = &[
     "workflow_id",
     "phase",
@@ -36,14 +35,9 @@ const ENV_ORDER: &[&str] = &[
     "contract_artifact",
     "contract_artifact_sha256",
     "preimplementation_gate",
-    "decision_id",
-    "plan_id",
-    "decision_revision",
-    "decision_capsule",
-    "decision_capsule_sha256",
     "implementation_context",
     "implementation_context_sha256",
-    "authority_review_id",
+    "alignment_review_id",
     "iteration_plan_sha256",
     "iteration_worker_count",
     "candidate_diff_hash",
@@ -70,14 +64,14 @@ const USAGE: &str = r#"Usage:
   multiagent workflow context WORKFLOW_ID
   multiagent workflow contract-register WORKFLOW_ID --scout NAME
   multiagent workflow seal-iteration WORKFLOW_ID --plan-sha256 SHA256 --worker-count COUNT
-  multiagent workflow prepare-implementation WORKFLOW_ID --decision-id ID --plan-id ID --decision-revision REV --implementation-context PATH --authority-review ID
+  multiagent workflow prepare-implementation WORKFLOW_ID --plan-sha256 SHA256 --implementation-context PATH --alignment-review ID
   multiagent workflow transition WORKFLOW_ID PHASE [--diff-hash HASH]
   multiagent workflow add-todo WORKFLOW_ID TODO_ID --kind KIND --summary TEXT [--origin TEXT]
   multiagent workflow todo-status WORKFLOW_ID TODO_ID STATUS [--assignment-id ID]
   multiagent workflow resolve-todo WORKFLOW_ID TODO_ID --resolution STATUS --evidence TEXT [OPTIONS]
   multiagent workflow require-review WORKFLOW_ID OBLIGATION_ID --type TYPE --trigger TRIGGER --artifact-digest DIGEST --reason TEXT
   multiagent workflow record-review WORKFLOW_ID REVIEW_ID --type TYPE --verdict VERDICT [--diff-hash HASH] --evidence TEXT [--reviewer NAME]
-  multiagent workflow gate WORKFLOW_ID implementation|completion [--decision-id ID] [--plan-id ID]
+  multiagent workflow gate WORKFLOW_ID implementation|completion [--plan-sha256 SHA256]
   multiagent workflow completion-check WORKFLOW_ID
   multiagent workflow value WORKFLOW_ID KEY"#;
 
@@ -112,7 +106,8 @@ pub fn run(args: &[String]) -> Result<(), String> {
 }
 
 pub struct AssignmentContext {
-    pub decision_revision: String,
+    pub iteration: String,
+    pub iteration_plan_sha256: String,
     pub implementation_context: String,
     pub implementation_context_sha256: String,
 }
@@ -125,12 +120,11 @@ pub struct SemanticEnvelope {
     pub candidate_diff_hash: String,
 }
 
-pub struct DecisionAuthorityCapsule {
+pub struct PlanAlignmentBinding {
     pub content: String,
     pub sha256: String,
-    pub decision_id: String,
-    pub plan_id: String,
-    pub revision: String,
+    pub plan_sha256: String,
+    pub original_task_sha256: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -147,15 +141,12 @@ pub struct ActiveTodo {
     pub summary: String,
 }
 
-pub fn assignment_context(
-    workflow_id: &str,
-    decision_id: &str,
-    plan_id: &str,
-) -> Result<AssignmentContext, String> {
+pub fn assignment_context(workflow_id: &str) -> Result<AssignmentContext, String> {
     let store = Store::configured()?;
-    let state = implementation_gate_state(&store, workflow_id, decision_id, plan_id, false)?;
+    let state = implementation_gate_state(&store, workflow_id, "", false)?;
     Ok(AssignmentContext {
-        decision_revision: state_value(&state, "decision_revision").to_string(),
+        iteration: state_value(&state, "iteration").to_string(),
+        iteration_plan_sha256: state_value(&state, "iteration_plan_sha256").to_string(),
         implementation_context: state_value(&state, "implementation_context").to_string(),
         implementation_context_sha256: state_value(&state, "implementation_context_sha256")
             .to_string(),
@@ -177,91 +168,46 @@ pub fn semantic_envelope(workflow_id: &str) -> Result<SemanticEnvelope, String> 
     })
 }
 
-pub fn decision_authority_capsule(
-    workflow_id: &str,
-    decision_id: &str,
-    plan_id: &str,
-    revision: &str,
-) -> Result<DecisionAuthorityCapsule, String> {
-    valid_id("workflow ID", workflow_id)?;
-    valid_id("decision ID", decision_id)?;
-    valid_id("plan ID", plan_id)?;
-    if revision.is_empty() || !revision.chars().all(|value| value.is_ascii_digit()) {
-        return Err(format!("invalid decision revision: {revision}"));
-    }
-
+pub fn sealed_iteration_plan_sha256(workflow_id: &str) -> Result<String, String> {
     let store = Store::configured()?;
     let paths = store.paths(workflow_id)?;
     let state = read_env(&paths.state, workflow_id)?;
     if state_value(&state, "phase") != "pre-implementation" {
-        return Err("decision capsule requires phase=pre-implementation".into());
+        return Err("plan-alignment review requires phase=pre-implementation".into());
     }
-    validate_original_task(&state)?;
-    validate_contract(&state)?;
-    if revision != state_value(&state, "iteration") {
-        return Err(format!(
-            "decision revision does not match workflow iteration: requested={revision} current={}",
-            state_value(&state, "iteration")
-        ));
+    let digest = state_value(&state, "iteration_plan_sha256");
+    if digest.len() != 64 || !digest.chars().all(|value| value.is_ascii_hexdigit()) {
+        return Err("plan-alignment review requires a sealed iteration plan".into());
     }
-    validate_committed_decision(decision_id, plan_id)?;
+    Ok(digest.to_string())
+}
 
-    let decision_dir = store.state_dir.join("decisions").join(decision_id);
-    let decision = read_simple_env(&decision_dir.join("decision.env"))?;
-    let outcome = read_simple_env(&decision_dir.join("outcome.env"))?;
-    let selected = read_lines(&decision_dir.join("alternatives.tsv"))?
-        .into_iter()
-        .map(|line| parse_fields::<8>(&line))
-        .find(|row| row[0] == plan_id)
-        .ok_or_else(|| format!("selected decision alternative is missing: {plan_id}"))?;
+pub fn plan_alignment_binding(
+    workflow_id: &str,
+    plan_sha256: &str,
+) -> Result<PlanAlignmentBinding, String> {
+    let sealed = sealed_iteration_plan_sha256(workflow_id)?;
+    if sealed != plan_sha256 {
+        return Err("plan-alignment digest does not match the sealed iteration plan".into());
+    }
+    let envelope = semantic_envelope(workflow_id)?;
     let value = serde_json::json!({
         "apiVersion": "multiagent.moveindustries.io/v1",
-        "kind": "DecisionAuthorityCapsule",
+        "kind": "PlanAlignmentBinding",
         "workflowId": workflow_id,
-        "revision": revision,
-        "iterationPlan": {
-            "sha256": state_value(&state, "iteration_plan_sha256"),
-            "workerCount": state_value(&state, "iteration_worker_count"),
-        },
-        "originalTaskSha256": state_value(&state, "original_task_sha256"),
-        "contractArtifactSha256": state_value(&state, "contract_artifact_sha256"),
-        "decision": {
-            "id": decision_id,
-            "title": state_value(&decision, "title"),
-            "owner": state_value(&decision, "owner"),
-            "status": state_value(&decision, "status"),
-        },
-        "selectedPlan": {
-            "id": selected[0],
-            "summary": selected[1],
-            "proposedBy": selected[2],
-            "branch": selected[3],
-            "assignmentName": selected[4],
-            "expectedOutcome": selected[5],
-            "risk": selected[6],
-            "addedAt": selected[7],
-        },
-        "outcome": {
-            "selectedPlan": state_value(&outcome, "selected_plan"),
-            "reason": state_value(&outcome, "reason"),
-            "rollbackPolicy": state_value(&outcome, "rollback_policy"),
-            "reflectionDue": state_value(&outcome, "reflection_due"),
-            "committedAt": state_value(&outcome, "committed_at"),
-            "status": state_value(&outcome, "status"),
-        },
+        "originalTaskSha256": envelope.original_task_sha256,
+        "iterationPlanSha256": plan_sha256,
     });
     let content = format!(
         "{}\n",
         serde_json::to_string(&value)
-            .map_err(|error| format!("encode decision authority capsule: {error}"))?
+            .map_err(|error| format!("encode plan-alignment binding: {error}"))?
     );
-    let sha256 = format!("{:x}", Sha256::digest(content.as_bytes()));
-    Ok(DecisionAuthorityCapsule {
+    Ok(PlanAlignmentBinding {
+        sha256: format!("{:x}", Sha256::digest(content.as_bytes())),
         content,
-        sha256,
-        decision_id: decision_id.into(),
-        plan_id: plan_id.into(),
-        revision: revision.into(),
+        plan_sha256: plan_sha256.into(),
+        original_task_sha256: envelope.original_task_sha256,
     })
 }
 
@@ -320,18 +266,6 @@ pub fn passing_review_recorded(
             && row.get(2) == "pass"
             && row.get(5) == iteration
     }))
-}
-
-pub fn committed_decision_matches(decision_id: &str, plan_id: &str) -> Result<bool, String> {
-    let decision = config::state_dir()?
-        .join("decisions")
-        .join(decision_id)
-        .join("decision.env");
-    if !decision.is_file() {
-        return Ok(false);
-    }
-    validate_committed_decision(decision_id, plan_id)?;
-    Ok(true)
 }
 
 pub fn contract_or_approved_context(workflow_id: &str) -> Result<bool, String> {
@@ -530,12 +464,9 @@ fn initialize_id(id: &str, resume: bool) -> Result<(), String> {
         ("contract_artifact", ""),
         ("contract_artifact_sha256", ""),
         ("preimplementation_gate", "pending"),
-        ("decision_id", ""),
-        ("plan_id", ""),
-        ("decision_revision", ""),
         ("implementation_context", ""),
         ("implementation_context_sha256", ""),
-        ("authority_review_id", ""),
+        ("alignment_review_id", ""),
         ("iteration_plan_sha256", ""),
         ("iteration_worker_count", ""),
         ("candidate_diff_hash", ""),
@@ -728,7 +659,7 @@ fn context(args: &[String]) -> Result<(), String> {
         "workflowId": id,
         "phase": bounded_state_label(state_value(&state, "phase"), "phase")?,
         "iteration": bounded_state_label(state_value(&state, "iteration"), "iteration")?,
-        "stateRevision": bounded_state_label(state_value(&state, "decision_revision"), "state revision")?,
+        "stateRevision": bounded_state_label(state_value(&state, "iteration"), "state revision")?,
         "originalTask": {
             "path": task_path,
             "sha256": state_value(&state, "original_task_sha256"),
@@ -843,14 +774,10 @@ fn prepare(args: &[String]) -> Result<(), String> {
     }
     let id = &args[0];
     let o = options(&args[1..])?;
-    let decision = required(&o, "--decision-id")?;
-    let plan = required(&o, "--plan-id")?;
-    let revision = required(&o, "--decision-revision")?;
+    let plan_sha256 = required(&o, "--plan-sha256")?;
     let context_arg = required(&o, "--implementation-context")?;
-    let authority = required(&o, "--authority-review")?;
-    valid_id("decision ID", decision)?;
-    valid_id("plan ID", plan)?;
-    valid_id("review ID", authority)?;
+    let alignment_review = required(&o, "--alignment-review")?;
+    valid_id("review ID", alignment_review)?;
     let store = Store::configured()?;
     let p = store.paths(id)?;
     let _lock = store.lock(&p)?;
@@ -859,20 +786,19 @@ fn prepare(args: &[String]) -> Result<(), String> {
         return Err("prepare-implementation requires phase=pre-implementation".into());
     }
     let reviews = read_reviews(&p.reviews)?;
-    let authority_review = reviews
+    let alignment = reviews
         .iter()
-        .find(|r| r.get(0) == authority && r.get(1) == "decision-authority" && r.get(2) == "pass")
-        .ok_or_else(|| {
-            "prepare-implementation requires a passing decision-authority review".to_string()
-        })?;
-    let capsule = decision_authority_capsule(id, decision, plan, revision)?;
+        .find(|r| {
+            r.get(0) == alignment_review && r.get(1) == "plan-alignment" && r.get(2) == "pass"
+        })
+        .ok_or_else(|| "prepare-implementation requires an aligned plan review".to_string())?;
+    if state_value(&state, "iteration_plan_sha256") != plan_sha256 {
+        return Err(
+            "prepare-implementation plan digest does not match the sealed iteration plan".into(),
+        );
+    }
     if secure_reviewer_evidence() {
-        validate_decision_authority_capsule_evidence(
-            &store,
-            id,
-            authority_review.get(7),
-            &capsule,
-        )?;
+        validate_plan_alignment_evidence(&store, id, alignment.get(7), plan_sha256)?;
     }
     let todos = read_todos(&p.todos)?;
     let blockers: Vec<&str> = todos
@@ -941,18 +867,11 @@ fn prepare(args: &[String]) -> Result<(), String> {
             ));
         }
     }
-    let capsule_path = p.base.join("decision-authority-capsule.json");
-    atomic_write(&capsule_path, &capsule.content)?;
     for (key, value) in [
         ("preimplementation_gate", "passed".to_string()),
-        ("decision_id", decision.to_string()),
-        ("plan_id", plan.to_string()),
-        ("decision_revision", revision.to_string()),
-        ("decision_capsule", capsule_path.display().to_string()),
-        ("decision_capsule_sha256", capsule.sha256.clone()),
         ("implementation_context", context.display().to_string()),
         ("implementation_context_sha256", sha256(&context)?),
-        ("authority_review_id", authority.to_string()),
+        ("alignment_review_id", alignment_review.to_string()),
         ("updated_at", timestamp()),
     ] {
         state.insert(key.into(), value);
@@ -961,12 +880,9 @@ fn prepare(args: &[String]) -> Result<(), String> {
     event(
         &p.events,
         "implementation_prepared",
-        &format!(
-            "decision_id={decision}\tplan_id={plan}\trevision={revision}\tcapsule_sha256={}\treview_id={authority}",
-            capsule.sha256
-        ),
+        &format!("plan_sha256={plan_sha256}\treview_id={alignment_review}"),
     )?;
-    println!("implementation prepared\t{id}\t{decision}\t{plan}");
+    println!("implementation prepared\t{id}\t{plan_sha256}");
     Ok(())
 }
 
@@ -1004,7 +920,7 @@ fn transition(args: &[String]) -> Result<(), String> {
         ));
     }
     if current == "pre-implementation" {
-        implementation_gate_state(&store, id, "", "", true)?;
+        implementation_gate_state(&store, id, "", true)?;
         state.insert("phase".into(), "implementation".into());
     } else if current == "implementation" {
         if diff.is_empty() {
@@ -1024,17 +940,6 @@ fn transition(args: &[String]) -> Result<(), String> {
             "source diff requires independent technical validation",
             iteration,
         )?;
-        if decision_drift_required(&store.state_dir, state_value(&state, "decision_id"))? {
-            ensure_review_obligation(
-                &mut obligations,
-                &format!("auto-{iteration}-decision-drift"),
-                "decision-drift",
-                "candidate-diff",
-                diff,
-                "material alternatives or assumptions require an independent drift check",
-                iteration,
-            )?;
-        }
         if iteration.parse::<u64>().unwrap_or(1) > 1 {
             ensure_review_obligation(
                 &mut obligations,
@@ -1053,12 +958,9 @@ fn transition(args: &[String]) -> Result<(), String> {
         }
         let iteration = state_value(&state, "iteration").parse::<u64>().unwrap_or(1) + 1;
         for key in [
-            "decision_revision",
-            "decision_capsule",
-            "decision_capsule_sha256",
             "implementation_context",
             "implementation_context_sha256",
-            "authority_review_id",
+            "alignment_review_id",
             "iteration_plan_sha256",
             "iteration_worker_count",
             "candidate_diff_hash",
@@ -1082,16 +984,6 @@ fn transition(args: &[String]) -> Result<(), String> {
     )?;
     println!("workflow transitioned\t{id}\t{current}\t{target}");
     Ok(())
-}
-
-fn decision_drift_required(state_dir: &Path, decision_id: &str) -> Result<bool, String> {
-    if decision_id.is_empty() {
-        return Ok(true);
-    }
-    let directory = state_dir.join("decisions").join(decision_id);
-    let alternatives = read_lines(&directory.join("alternatives.tsv"))?.len();
-    let assumptions = read_lines(&directory.join("assumptions.tsv"))?.len();
-    Ok(alternatives > 1 || assumptions > 0)
 }
 
 fn add_todo(args: &[String]) -> Result<(), String> {
@@ -1276,9 +1168,9 @@ fn record_review(args: &[String]) -> Result<(), String> {
     let p = store.paths(id)?;
     let _lock = store.lock(&p)?;
     let state = read_env(&p.state, id)?;
-    let diff = if kind == "decision-authority" {
+    let diff = if kind == "plan-alignment" {
         if state_value(&state, "phase") != "pre-implementation" {
-            return Err("decision-authority review requires phase=pre-implementation".into());
+            return Err("plan-alignment review requires phase=pre-implementation".into());
         }
         "-"
     } else {
@@ -1315,7 +1207,7 @@ fn record_review(args: &[String]) -> Result<(), String> {
         ],
     });
     write_reviews(&p.reviews, &rows)?;
-    if verdict == "pass" && kind != "decision-authority" {
+    if verdict == "pass" && kind != "plan-alignment" {
         let mut obligations = read_review_obligations(&p.review_obligations)?;
         let mut changed = false;
         for obligation in obligations.iter_mut().filter(|obligation| {
@@ -1443,16 +1335,10 @@ fn gate(args: &[String]) -> Result<(), String> {
     let store = Store::configured()?;
     match args[1].as_str() {
         "implementation" => {
-            let state = implementation_gate_state(
-                &store,
-                id,
-                opt(&o, "--decision-id"),
-                opt(&o, "--plan-id"),
-                false,
-            )?;
+            let state = implementation_gate_state(&store, id, opt(&o, "--plan-sha256"), false)?;
             println!(
                 "gate passed\t{id}\timplementation\t{}\t{}",
-                state_value(&state, "decision_revision"),
+                state_value(&state, "iteration_plan_sha256"),
                 state_value(&state, "implementation_context_sha256")
             );
         }
@@ -1905,8 +1791,8 @@ fn parse_human_review_request(report: &str) -> Result<Option<(String, String)>, 
     let first = lines.first().copied().unwrap_or("");
     let reason = if first.eq_ignore_ascii_case("Verdict: HUMAN_REVIEW_REQUIRED") {
         Some("ops-verification")
-    } else if first.eq_ignore_ascii_case("verdict: user-choice-required") {
-        Some("decision-authority")
+    } else if first.eq_ignore_ascii_case("alignment: misaligned") {
+        Some("plan-alignment")
     } else {
         None
     };
@@ -1918,7 +1804,7 @@ fn parse_human_review_request(report: &str) -> Result<Option<(String, String)>, 
     } else {
         &["user-question:"]
     };
-    let questions = lines
+    let values = lines
         .iter()
         .filter_map(|line| {
             labels.iter().find_map(|label| {
@@ -1927,6 +1813,12 @@ fn parse_human_review_request(report: &str) -> Result<Option<(String, String)>, 
                     .map(|_| line[label.len()..].trim())
             })
         })
+        .collect::<Vec<_>>();
+    if reason == "plan-alignment" && values.len() == 1 && values[0].eq_ignore_ascii_case("none") {
+        return Ok(None);
+    }
+    let questions = values
+        .into_iter()
         .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("none"))
         .collect::<Vec<_>>();
     if questions.len() != 1 {
@@ -2189,14 +2081,11 @@ fn source_implementation_started(state: &BTreeMap<String, String>) -> bool {
             "contract_scout",
             "contract_artifact",
             "contract_artifact_sha256",
-            "decision_id",
-            "plan_id",
-            "decision_revision",
-            "decision_capsule",
-            "decision_capsule_sha256",
             "implementation_context",
             "implementation_context_sha256",
-            "authority_review_id",
+            "alignment_review_id",
+            "iteration_plan_sha256",
+            "iteration_worker_count",
             "candidate_diff_hash",
             "reviewed_diff_hash",
         ]
@@ -2220,8 +2109,7 @@ fn value(args: &[String]) -> Result<(), String> {
 fn implementation_gate_state(
     store: &Store,
     id: &str,
-    expected_decision: &str,
-    expected_plan: &str,
+    expected_plan_sha256: &str,
     allow_pre: bool,
 ) -> Result<BTreeMap<String, String>, String> {
     let p = store.paths(id)?;
@@ -2248,17 +2136,10 @@ fn implementation_gate_state(
             blockers.join(",")
         ));
     }
-    if !expected_decision.is_empty() && expected_decision != state_value(&state, "decision_id") {
-        return Err(format!(
-            "assignment decision {expected_decision} does not match workflow decision {}",
-            state_value(&state, "decision_id")
-        ));
-    }
-    if !expected_plan.is_empty() && expected_plan != state_value(&state, "plan_id") {
-        return Err(format!(
-            "assignment plan {expected_plan} does not match workflow plan {}",
-            state_value(&state, "plan_id")
-        ));
+    if !expected_plan_sha256.is_empty()
+        && expected_plan_sha256 != state_value(&state, "iteration_plan_sha256")
+    {
+        return Err("assignment plan digest does not match the active workflow plan".into());
     }
     Ok(state)
 }
@@ -2508,31 +2389,32 @@ fn validate_reviewer_evidence(
             "reviewer {reviewer} final message is missing marker: {marker}"
         ));
     }
-    if secure && kind == "decision-authority" {
-        let capsule_hash = state_value(&metadata, "decision_capsule_sha256");
-        if capsule_hash.is_empty() {
+    if kind == "plan-alignment" {
+        let plan_hash = state_value(&metadata, "iteration_plan_sha256");
+        let task_hash = state_value(&metadata, "original_task_sha256");
+        if plan_hash.is_empty() || task_hash.is_empty() {
             return Err(format!(
-                "decision-authority reviewer evidence has no supervisor decision capsule: {reviewer}"
+                "plan-alignment reviewer evidence has no sealed input digests: {reviewer}"
             ));
         }
-        let capsule_marker =
-            format!("decision-review: capsule-sha256={capsule_hash} verdict={verdict}");
+        let alignment = if verdict == "pass" {
+            "aligned"
+        } else {
+            "misaligned"
+        };
+        let binding_marker = format!(
+            "plan-alignment-review: plan-sha256={plan_hash} original-task-sha256={task_hash} alignment={alignment}"
+        );
         if !message
             .lines()
-            .any(|line| review_marker_matches(line, &capsule_marker))
+            .any(|line| review_marker_matches(line, &binding_marker))
         {
             return Err(format!(
-                "reviewer {reviewer} final message is missing marker: {capsule_marker}"
-            ));
-        }
-        let capsule_path = dir.join("decision-capsule.json");
-        if !capsule_path.is_file() || sha256(&capsule_path)? != capsule_hash {
-            return Err(format!(
-                "decision-authority reviewer capsule evidence is missing or changed: {reviewer}"
+                "reviewer {reviewer} final message is missing marker: {binding_marker}"
             ));
         }
     }
-    if matches!(kind, "decision-authority" | "technical") {
+    if matches!(kind, "plan-alignment" | "technical") {
         let p = store.paths(workflow_id)?;
         let state = read_env(&p.state, workflow_id)?;
         validate_original_task(&state)?;
@@ -2555,32 +2437,31 @@ fn validate_reviewer_evidence(
     Ok(())
 }
 
-fn validate_decision_authority_capsule_evidence(
+fn validate_plan_alignment_evidence(
     store: &Store,
     workflow_id: &str,
     reviewer: &str,
-    capsule: &DecisionAuthorityCapsule,
+    plan_sha256: &str,
 ) -> Result<(), String> {
     valid_id("reviewer name", reviewer)?;
     let directory = store.state_dir.join("reviewer-evidence").join(reviewer);
     let metadata = read_simple_env(&directory.join("evidence.env"))?;
     for (key, expected) in [
         ("workflow_id", workflow_id),
-        ("decision_id", capsule.decision_id.as_str()),
-        ("plan_id", capsule.plan_id.as_str()),
-        ("decision_revision", capsule.revision.as_str()),
-        ("decision_capsule_sha256", capsule.sha256.as_str()),
+        ("iteration_plan_sha256", plan_sha256),
     ] {
         if state_value(&metadata, key) != expected {
             return Err(format!(
-                "decision-authority review binding mismatch: {key} expected={expected} actual={}",
+                "plan-alignment review binding mismatch: {key} expected={expected} actual={}",
                 state_value(&metadata, key)
             ));
         }
     }
-    let capsule_path = directory.join("decision-capsule.json");
-    if !capsule_path.is_file() || sha256(&capsule_path)? != capsule.sha256 {
-        return Err("decision-authority review capsule does not match committed decision".into());
+    let binding_hash = state_value(&metadata, "alignment_binding_sha256");
+    let binding_path = directory.join("plan-alignment-binding.json");
+    if binding_hash.is_empty() || !binding_path.is_file() || sha256(&binding_path)? != binding_hash
+    {
+        return Err("plan-alignment review binding evidence is missing or changed".into());
     }
     Ok(())
 }
@@ -2804,27 +2685,6 @@ fn contract_rule_statement(rule: &str) -> &str {
         })
         .unwrap_or("")
 }
-fn validate_committed_decision(decision: &str, plan: &str) -> Result<(), String> {
-    let dir = config::state_dir()?.join("decisions").join(decision);
-    let meta = read_simple_env(&dir.join("decision.env"))?;
-    let outcome = read_simple_env(&dir.join("outcome.env"))?;
-    if state_value(&meta, "status") != "committed" {
-        return Err(format!("decision ledger is not committed: {decision}"));
-    }
-    let selected = state_value(&outcome, "selected_plan");
-    if selected != plan {
-        return Err(format!(
-            "decision ledger selected plan {} does not match requested plan {plan}",
-            if selected.is_empty() {
-                "missing"
-            } else {
-                selected
-            }
-        ));
-    }
-    Ok(())
-}
-
 fn read_env(path: &Path, id: &str) -> Result<BTreeMap<String, String>, String> {
     if !path.is_file() {
         return Err(format!("workflow lifecycle does not exist: {id}"));
@@ -3013,9 +2873,9 @@ mod tests {
         let mut state = BTreeMap::from([("preimplementation_gate".into(), "pending".into())]);
         assert!(!source_implementation_started(&state));
 
-        state.insert("decision_id".into(), "DEC-1".into());
+        state.insert("iteration_plan_sha256".into(), "abc".into());
         assert!(source_implementation_started(&state));
-        state.remove("decision_id");
+        state.remove("iteration_plan_sha256");
 
         state.insert("contract_artifact".into(), "/tmp/contract.md".into());
         assert!(source_implementation_started(&state));
@@ -3037,6 +2897,21 @@ mod tests {
             &format!("evidence includes {marker}"),
             marker
         ));
+    }
+
+    #[test]
+    fn plan_misalignment_routes_only_genuine_questions_to_the_user() {
+        let replan = "alignment: misaligned\nfindings: missed main task\nuser-question: none\n";
+        assert_eq!(parse_human_review_request(replan).unwrap(), None);
+
+        let question = "alignment: misaligned\nfindings: missing target\nuser-question: Which target repository should be changed?\n";
+        assert_eq!(
+            parse_human_review_request(question).unwrap(),
+            Some((
+                "Which target repository should be changed?".into(),
+                "plan-alignment".into()
+            ))
+        );
     }
 
     #[test]
@@ -3080,47 +2955,6 @@ mod tests {
                 .unwrap_err()
                 .contains("unfinished")
         );
-    }
-
-    #[test]
-    fn decision_drift_policy_tracks_material_choice_or_assumption() {
-        let root = std::env::temp_dir().join(format!(
-            "multiagent-drift-policy-test-{}",
-            std::process::id()
-        ));
-        let decision = root.join("decisions/decision-1");
-        fs::create_dir_all(&decision).unwrap();
-        fs::write(
-            decision.join("alternatives.tsv"),
-            "plan_id\tsummary\nplan-1\tone\n",
-        )
-        .unwrap();
-        fs::write(
-            decision.join("assumptions.tsv"),
-            "assumption_id\tstatement\n",
-        )
-        .unwrap();
-        assert!(!decision_drift_required(&root, "decision-1").unwrap());
-
-        fs::write(
-            decision.join("alternatives.tsv"),
-            "plan_id\tsummary\nplan-1\tone\nplan-2\ttwo\n",
-        )
-        .unwrap();
-        assert!(decision_drift_required(&root, "decision-1").unwrap());
-
-        fs::write(
-            decision.join("alternatives.tsv"),
-            "plan_id\tsummary\nplan-1\tone\n",
-        )
-        .unwrap();
-        fs::write(
-            decision.join("assumptions.tsv"),
-            "assumption_id\tstatement\na-1\tmaterial unknown\n",
-        )
-        .unwrap();
-        assert!(decision_drift_required(&root, "decision-1").unwrap());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
