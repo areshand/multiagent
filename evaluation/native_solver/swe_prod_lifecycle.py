@@ -286,7 +286,11 @@ def run_prod_solver(
             authenticated_user_request=original_user_request,
         )
     elif prompt_profile == "conversation":
-        autonomous_prompt = make_conversation_prompt(repo_root, issue)
+        autonomous_prompt = make_conversation_prompt(
+            repo_root,
+            issue,
+            authenticated_user_request=original_user_request,
+        )
     else:
         raise RuntimeError(f"unsupported production prompt profile: {prompt_profile}")
     session = f"swe-prod-{os.getpid()}"

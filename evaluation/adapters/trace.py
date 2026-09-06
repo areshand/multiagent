@@ -24,15 +24,17 @@ from evaluation.tasks.ops_trace import scenario_from_dict as ops_scenario_from_d
 
 
 TRACE_ARMS = {**OPS_TRACE_ARMS, **CONVERSATION_TRACE_ARMS}
+BOWU_BENCH_ROOT = Path.home() / "projects" / "traces" / "bowu_bench"
+BOWU_BENCH_DATASET = BOWU_BENCH_ROOT / "bowu-bench-cases.json"
+BOWU_BENCH_RUNS = BOWU_BENCH_ROOT / "runs"
 
 
-def _dataset_path() -> Path | None:
-    configured = os.environ.get("MULTIAGENT_TRACE_DATASET")
+def _dataset_path(environment: str, default: Path) -> Path | None:
+    configured = os.environ.get(environment)
     if configured in {"synthetic", "none", "off"}:
         return None
     if configured:
         return Path(configured).expanduser().resolve()
-    default = Path.home() / "projects" / "traces" / "trace-cases.json"
     return default if default.is_file() else None
 
 
@@ -53,8 +55,13 @@ def _selected_cases(payload: dict, suite: str, split: str, path: Path) -> list[d
     return selected
 
 
-def _load_scenarios() -> tuple[dict, dict, str]:
-    path = _dataset_path()
+def _load_scenarios(
+    dataset_environment: str,
+    split_environment: str,
+    default_dataset: Path,
+    expected_benchmark: str,
+) -> tuple[dict, dict, str]:
+    path = _dataset_path(dataset_environment, default_dataset)
     if path is None:
         return (
             dict(SYNTHETIC_OPS_SCENARIOS),
@@ -68,14 +75,14 @@ def _load_scenarios() -> tuple[dict, dict, str]:
     if (
         not isinstance(payload, dict)
         or payload.get("format_version") != 1
-        or payload.get("benchmark") != "trace"
+        or payload.get("benchmark") != expected_benchmark
         or payload.get("private") is not True
         or payload.get("publishable") is not False
     ):
         raise ValueError(f"unified trace dataset has invalid schema or privacy flags: {path}")
-    split = os.environ.get("MULTIAGENT_TRACE_SPLIT", "test")
+    split = os.environ.get(split_environment, "test")
     if split not in {"train", "validation", "test", "all"}:
-        raise ValueError("MULTIAGENT_TRACE_SPLIT must be train, validation, test, or all")
+        raise ValueError(f"{split_environment} must be train, validation, test, or all")
     ops_cases = _selected_cases(payload, "ops-trace", split, path)
     conversation_cases = _selected_cases(payload, "conversation-trace", split, path)
     ops_scenarios = {scenario.id: scenario for scenario in map(ops_scenario_from_dict, ops_cases)}
@@ -97,9 +104,19 @@ class TraceAdapter:
     name: str = "trace"
     default_arms: str = "baseline,multiagent,legacy,shortcut"
     arms = TRACE_ARMS
+    dataset_environment: str = "MULTIAGENT_TRACE_DATASET"
+    split_environment: str = "MULTIAGENT_TRACE_SPLIT"
+    default_dataset: Path = Path.home() / "projects" / "traces" / "trace-cases.json"
+    expected_benchmark: str = "trace"
+    default_run_root: Path | None = None
 
     def __post_init__(self) -> None:
-        ops_scenarios, conversation_scenarios, source = _load_scenarios()
+        ops_scenarios, conversation_scenarios, source = _load_scenarios(
+            self.dataset_environment,
+            self.split_environment,
+            self.default_dataset,
+            self.expected_benchmark,
+        )
         self.ops = OpsTraceAdapter(
             scenarios_override=ops_scenarios,
             source_override=f"{source} suite=ops-trace",
@@ -114,8 +131,9 @@ class TraceAdapter:
                 f"duplicate task IDs across trace suites: {', '.join(sorted(duplicate_ids))}"
             )
         self.tasks = {**self.ops.tasks, **self.conversation.tasks}
+        label = "Bowu Bench" if self.name == "bowu_bench" else "Unified private trace benchmark"
         self.description = (
-            "Unified private trace benchmark. Ops tasks retain their solve and authority-boundary "
+            f"{label}. Ops/external-only tasks retain their solve and authority-boundary "
             "scorer; conversation tasks retain their route, fanout, write-safety, and latency "
             f"scorer. Suite metrics are reported separately using {source}."
         )
@@ -139,6 +157,9 @@ class TraceAdapter:
     def write_reference(self, workdir: Path, task: EvalTask, kind: str) -> None:
         self._owner(task.id).write_reference(workdir, task, kind)
 
+    def semantic_judge_payload(self, task_id: str, workdir: Path) -> dict[str, object]:
+        return self._owner(task_id).semantic_judge_payload(task_id, workdir)
+
     def run_cell(
         self,
         adapter: "TraceAdapter",
@@ -157,3 +178,11 @@ class TraceAdapter:
 
 
 ADAPTER = TraceAdapter()
+BOWU_BENCH_ADAPTER = TraceAdapter(
+    name="bowu_bench",
+    dataset_environment="BOWU_BENCH_DATASET",
+    split_environment="BOWU_BENCH_SPLIT",
+    default_dataset=BOWU_BENCH_DATASET,
+    expected_benchmark="bowu_bench",
+    default_run_root=BOWU_BENCH_RUNS,
+)

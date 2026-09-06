@@ -20,6 +20,15 @@ from typing import Any, Callable, Dict, Protocol
 ROOT = Path(__file__).resolve().parents[1]
 RUNS_ROOT = ROOT / "evaluation" / "runs"
 CODE_EXT = {".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs", ".java", ".rb", ".sh"}
+EXECUTION_METADATA_KEYS = {
+    "agent_cli",
+    "duration_ms",
+    "cost",
+    "turns",
+    "input_tokens",
+    "output_tokens",
+    "cache_tokens",
+}
 
 Score = Dict[str, Any]
 
@@ -37,6 +46,8 @@ class EvalTask:
     # Direct request authenticated by the supervisor. ``prompt`` may also
     # contain evaluator-owned evidence, schemas, and output constraints.
     user_request: str | None = None
+    # Use Codex's enforced read-only sandbox for non-coding replay tasks.
+    read_only: bool = False
 
 
 class Adapter(Protocol):
@@ -101,6 +112,12 @@ NO_RUN = """\
 Write the implementation and stop. Do not run a dev server, install dependencies, open a browser,
 or call external services. You may edit files in this workspace. Only the code left on disk is
 measured.
+"""
+
+READ_ONLY_REPLAY = """\
+Answer the task using only the supplied local fixture files. Do not modify files, run external
+commands, use the network, or contact external services. Historical mock evidence is not current
+production state.
 """
 
 ARMS = {
@@ -353,32 +370,51 @@ def build_claude_command(prompt: str, system: str, model: str) -> list[str]:
     ]
 
 
-def build_codex_command(prompt: str, system: str, model: str, workdir: Path) -> list[str]:
+def build_codex_command(
+    prompt: str,
+    system: str,
+    model: str,
+    workdir: Path,
+    *,
+    read_only: bool = False,
+) -> list[str]:
     codex = shutil.which("codex")
     if not codex:
         die("codex CLI not found on PATH")
-    combined = system + "\n" + NO_RUN + "\n\nTask:\n" + prompt
+    guard = READ_ONLY_REPLAY if read_only else NO_RUN
+    combined = system + "\n" + guard + "\n\nTask:\n" + prompt
     cmd = [
         codex,
         "exec",
         "--cd",
         str(workdir),
-        "--dangerously-bypass-approvals-and-sandbox",
         "--json",
         "--output-last-message",
         str(workdir / "_agent.final.txt"),
     ]
+    if read_only:
+        cmd += ["--sandbox", "read-only"]
+    else:
+        cmd.append("--dangerously-bypass-approvals-and-sandbox")
     if model:
         cmd += ["--model", model]
     cmd.append(combined)
     return cmd
 
 
-def build_agent_command(agent_cli: str, prompt: str, system: str, model: str, workdir: Path) -> list[str]:
+def build_agent_command(
+    agent_cli: str,
+    prompt: str,
+    system: str,
+    model: str,
+    workdir: Path,
+    *,
+    read_only: bool = False,
+) -> list[str]:
     if agent_cli == "claude":
         return build_claude_command(prompt, system, model)
     if agent_cli == "codex":
-        return build_codex_command(prompt, system, model, workdir)
+        return build_codex_command(prompt, system, model, workdir, read_only=read_only)
     die(f"unknown agent CLI: {agent_cli}; expected claude or codex")
 
 
@@ -421,7 +457,14 @@ def run_agent_cell(
     )
     git_snapshot(workdir)
 
-    cmd = build_agent_command(agent_cli, task.prompt, system_for_adapter_arm(adapter, arm), model, workdir)
+    cmd = build_agent_command(
+        agent_cli,
+        task.prompt,
+        system_for_adapter_arm(adapter, arm),
+        model,
+        workdir,
+        read_only=task.read_only,
+    )
     stderr_path = workdir / "_agent.stderr.txt"
     stdout_path = workdir / ("_agent.json" if agent_cli == "claude" else "_agent.stdout.jsonl")
     started = dt.datetime.now(dt.timezone.utc)
@@ -455,6 +498,20 @@ def run_agent_cell(
 def rescore(adapter: Adapter, run_dir: Path) -> list[dict[str, Any]]:
     if not run_dir.exists():
         die(f"run dir does not exist: {run_dir}")
+    previous_rows: dict[str, dict[str, Any]] = {}
+    previous_path = run_dir / "results.json"
+    if previous_path.is_file():
+        try:
+            previous_payload = json.loads(previous_path.read_text(encoding="utf-8"))
+            raw_results = previous_payload.get("results", []) if isinstance(previous_payload, dict) else []
+            for row in raw_results:
+                if not isinstance(row, dict):
+                    continue
+                workspace = row.get("workspace")
+                if workspace:
+                    previous_rows[Path(str(workspace)).name] = row
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            previous_rows = {}
     results: list[dict[str, Any]] = []
     for workdir in sorted(path for path in run_dir.iterdir() if path.is_dir()):
         parts = workdir.name.split("__")
@@ -467,7 +524,12 @@ def rescore(adapter: Adapter, run_dir: Path) -> list[dict[str, Any]]:
             run_id = int(run_text)
         except ValueError:
             continue
-        results.append(score_workspace(adapter, task_id, arm, model, run_id, workdir))
+        row = score_workspace(adapter, task_id, arm, model, run_id, workdir)
+        previous = previous_rows.get(workdir.name, {})
+        for key in EXECUTION_METADATA_KEYS:
+            if row.get(key) is None and previous.get(key) is not None:
+                row[key] = previous[key]
+        results.append(row)
     return results
 
 
@@ -549,8 +611,11 @@ def write_json_report(run_dir: Path, adapter: Adapter, results: list[dict[str, A
 
 def markdown_report(adapter: Adapter, results: list[dict[str, Any]]) -> str:
     rows = aggregate(results)
-    show_suite = adapter.name == "trace" or len({row["adapter"] for row in rows}) > 1
+    show_suite = adapter.name in {"trace", "bowu_bench"} or len({row["adapter"] for row in rows}) > 1
     extra_columns = [
+        ("Contract Correct", "contract_correct_mean"),
+        ("Semantic Correct", "semantic_correct_mean"),
+        ("Semantic Score", "semantic_score_mean"),
         ("First Wave", "first_wave_agents_mean"),
         ("Max Agents", "max_concurrent_agents_mean"),
         ("Avg Agents", "avg_concurrent_agents_mean"),

@@ -51,12 +51,20 @@ def make_prompt(
     return prompt_path
 
 
-def make_conversation_prompt(repo_root: Path, issue: str) -> Path:
+def make_conversation_prompt(
+    repo_root: Path,
+    issue: str,
+    *,
+    authenticated_user_request: str | None = None,
+) -> Path:
     """Build a neutral conversational replay prompt without SWE implementation bias."""
 
     base_prompt = repo_root / "prompts/orchestrator.md"
     require_path(base_prompt, "production orchestrator prompt")
-    ORIGINAL_TASK_PATH.write_text(issue, encoding="utf-8")
+    ORIGINAL_TASK_PATH.write_text(
+        authenticated_user_request if authenticated_user_request is not None else issue,
+        encoding="utf-8",
+    )
     prompt = (
         base_prompt.read_text(encoding="utf-8")
         + "\n\n## Isolated Conversation Trace Replay\n\n"

@@ -31,21 +31,27 @@ class ConversationTraceScenario:
         return EXPECTED_ROUTE[self.response_kind]
 
     @property
-    def prompt(self) -> str:
+    def authenticated_request(self) -> str:
         rendered_history = "\n\n".join(
             f"{item['role'].title()}:\n{item['content']}" for item in self.history
         ) or "(No prior public conversation is needed.)"
+        return f"""\
+Conversation history:
+{rendered_history}
+
+Latest user message:
+{self.request}
+"""
+
+    @property
+    def prompt(self) -> str:
         return f"""\
 This is a privacy-preserving replay of one user turn from a real, multi-turn
 Codex session. Treat the history as bounded public conversation context. Do not
 contact external services or perform production operations. Do not edit the
 repository merely to answer the user.
 
-Conversation history:
-{rendered_history}
-
-Latest user message:
-{self.request}
+{self.authenticated_request}
 
 Respond naturally to the latest user message. The production supervisor owns
 completion and access enforcement. This is conversation-trace contract

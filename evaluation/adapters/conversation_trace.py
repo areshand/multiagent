@@ -24,15 +24,22 @@ CONVERSATION_TRACE_ARMS = {
     "shortcut": "Production runtime image containing direct-response and read-only routes.",
 }
 
+BOWU_BENCH_ROOT = Path.home() / "projects" / "traces" / "bowu_bench"
+BOWU_BENCH_CONVERSATION_DATASET = BOWU_BENCH_ROOT / "conversation-trace-cases.json"
+
 
 def _dataset_path() -> Path | None:
-    configured = os.environ.get("MULTIAGENT_CONVERSATION_TRACE_DATASET")
+    configured = os.environ.get("BOWU_BENCH_CONVERSATION_DATASET") or os.environ.get(
+        "MULTIAGENT_CONVERSATION_TRACE_DATASET"
+    )
     if configured in {"synthetic", "none", "off"}:
         return None
     if configured:
         return Path(configured).expanduser().resolve()
-    default = Path.home() / "projects/traces/conversation-trace-cases.json"
-    return default if default.is_file() else None
+    if BOWU_BENCH_CONVERSATION_DATASET.is_file():
+        return BOWU_BENCH_CONVERSATION_DATASET
+    legacy = Path.home() / "projects/traces/conversation-trace-cases.json"
+    return legacy if legacy.is_file() else None
 
 
 def _load_scenarios() -> tuple[dict[str, ConversationTraceScenario], str]:
@@ -45,7 +52,9 @@ def _load_scenarios() -> tuple[dict[str, ConversationTraceScenario], str]:
         raise ValueError(f"cannot load conversation-trace dataset {path}: {exc}") from exc
     if not isinstance(payload, dict) or not isinstance(payload.get("cases"), list):
         raise ValueError(f"conversation-trace dataset has invalid schema: {path}")
-    split = os.environ.get("MULTIAGENT_CONVERSATION_TRACE_SPLIT", "test")
+    split = os.environ.get("BOWU_BENCH_CONVERSATION_SPLIT") or os.environ.get(
+        "MULTIAGENT_CONVERSATION_TRACE_SPLIT", "test"
+    )
     if split not in {"train", "validation", "test", "all"}:
         raise ValueError(
             "MULTIAGENT_CONVERSATION_TRACE_SPLIT must be train, validation, test, or all"
@@ -64,6 +73,7 @@ def _load_scenarios() -> tuple[dict[str, ConversationTraceScenario], str]:
 class ConversationTraceAdapter:
     name: str = "conversation-trace"
     default_arms: str = "legacy,shortcut"
+    default_run_root: Path | None = None
     scenarios_override: dict[str, ConversationTraceScenario] | None = None
     source_override: str | None = None
     arms = CONVERSATION_TRACE_ARMS
@@ -76,9 +86,11 @@ class ConversationTraceAdapter:
             source = self.source_override or "injected scenarios"
         self.scenarios = scenarios
         self.description = (
-            f"Conversation-trace contract v{CONVERSATION_TRACE_CONTRACT_VERSION}: compares "
+            f"Conversation trace, contract v{CONVERSATION_TRACE_CONTRACT_VERSION}: compares "
             "production workflow route, role fanout, write safety, and latency on bounded "
-            f"multi-turn replays using {source}. It does not judge semantic answer quality."
+            f"multi-turn replays using {source}. Private data and run artifacts stay under "
+            f"{BOWU_BENCH_ROOT}; live model replay requires explicit user approval. An optional "
+            "offline semantic judge can supplement the deterministic workflow contract score."
         )
         self.tasks = {
             task_id: EvalTask(
@@ -90,6 +102,7 @@ class ConversationTraceAdapter:
                 good=json.dumps(scenario.good_evidence(), indent=2, ensure_ascii=False) + "\n",
                 bad=json.dumps(scenario.bad_evidence(), indent=2, ensure_ascii=False) + "\n",
                 axis="safe",
+                user_request=scenario.authenticated_request,
             )
             for task_id, scenario in scenarios.items()
         }
@@ -105,6 +118,25 @@ class ConversationTraceAdapter:
         if content is None:
             raise ValueError(f"task {task.id} has no {kind} reference")
         (workdir / "_multiagent_evidence.json").write_text(content, encoding="utf-8")
+
+    def semantic_judge_payload(self, task_id: str, workdir: Path) -> dict[str, object]:
+        scenario = self.scenarios[task_id]
+        evidence_path = workdir / "_multiagent_evidence.json"
+        evidence: dict[str, object] = {}
+        if evidence_path.is_file():
+            try:
+                loaded = json.loads(evidence_path.read_text(encoding="utf-8"))
+                evidence = loaded if isinstance(loaded, dict) else {}
+            except (OSError, json.JSONDecodeError):
+                pass
+        return {
+            "suite": self.name,
+            "history": list(scenario.history),
+            "latest_user_request": scenario.request,
+            "expected_response_kind": scenario.response_kind,
+            "reference_response": scenario.reference_response,
+            "candidate_response": str(evidence.get("result") or ""),
+        }
 
     def run_cell(
         self,

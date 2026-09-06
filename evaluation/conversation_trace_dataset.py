@@ -409,6 +409,7 @@ def write_dataset(output: Path, cases: Iterable[dict[str, Any]]) -> dict[str, An
         json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    temporary.chmod(0o600)
     temporary.replace(output)
     return payload
 
@@ -423,7 +424,13 @@ def main() -> int:
     )
     parser.add_argument(
         "--output",
-        default=str(Path.home() / "projects/traces/conversation-trace-cases.json"),
+        default=str(
+            Path.home()
+            / "projects"
+            / "traces"
+            / "bowu_bench"
+            / "conversation-trace-cases.json"
+        ),
     )
     parser.add_argument("--max-cases", type=int, default=12)
     parser.add_argument("--salt", default="conversation-trace-v1")
