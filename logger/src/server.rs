@@ -429,14 +429,21 @@ mod tests {
             .unwrap();
         let key_file = directory.path().join("signing-key.pem");
         fs::write(&key_file, key.as_bytes()).unwrap();
-        let token = "test-token-0123456789abcdef";
+        let trace_token = "trace-token-0123456789abcdef";
+        let reader_token = "reader-token-0123456789abcdef";
         let clients_file = directory.path().join("clients.json");
         fs::write(
             &clients_file,
             serde_json::to_vec(&json!({"clients":[{
-                "id":"test-client",
-                "tokenSha256":format!("sha256:{:x}", Sha256::digest(token)),
-                "permissions":["append","read","verify"],
+                "id":"trace-producer",
+                "tokenSha256":format!("sha256:{:x}", Sha256::digest(trace_token)),
+                "permissions":["append"],
+                "eventTypes":["trace.artifact_exported"],
+                "sessions":["session-*"]
+            },{
+                "id":"audit-reader",
+                "tokenSha256":format!("sha256:{:x}", Sha256::digest(reader_token)),
+                "permissions":["read","verify"],
                 "eventTypes":["*"],
                 "sessions":["session-*"]
             }]}))
@@ -464,11 +471,16 @@ mod tests {
     async fn append_and_read_require_scoped_auth_and_return_no_receipt() {
         let (_directory, app) = application();
         let event = json!({
-            "eventId":"event-1",
+            "eventId":"trace-export-1111111111111111111111111111111111111111111111111111111111111111",
             "sessionId":"session-1",
-            "eventType":"reviewer.verdict",
+            "eventType":"trace.artifact_exported",
             "payloadDigest":format!("sha256:{}", "1".repeat(64)),
-            "artifactReferences":[]
+            "artifactReferences":[{
+                "uri":"s3://audit/production/artifacts/session-1/trace.jsonl",
+                "digest":format!("sha256:{}", "1".repeat(64)),
+                "size":42,
+                "mediaType":"application/jsonl"
+            }]
         });
         let unauthorized = app
             .clone()
@@ -486,7 +498,7 @@ mod tests {
             .clone()
             .oneshot(
                 Request::post("/v1/events")
-                    .header("authorization", "Bearer test-token-0123456789abcdef")
+                    .header("authorization", "Bearer trace-token-0123456789abcdef")
                     .header("content-type", "application/json")
                     .body(Body::from(event.to_string()))
                     .unwrap(),
@@ -503,10 +515,36 @@ mod tests {
             0
         );
 
-        let head = app
+        let duplicate = app
+            .clone()
+            .oneshot(
+                Request::post("/v1/events")
+                    .header("authorization", "Bearer trace-token-0123456789abcdef")
+                    .header("content-type", "application/json")
+                    .body(Body::from(event.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(duplicate.status(), StatusCode::NO_CONTENT);
+
+        let producer_cannot_read = app
+            .clone()
             .oneshot(
                 Request::get("/v1/logs/session-1/head")
-                    .header("authorization", "Bearer test-token-0123456789abcdef")
+                    .header("authorization", "Bearer trace-token-0123456789abcdef")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(producer_cannot_read.status(), StatusCode::FORBIDDEN);
+
+        let head = app
+            .clone()
+            .oneshot(
+                Request::get("/v1/logs/session-1/head")
+                    .header("authorization", "Bearer reader-token-0123456789abcdef")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -518,5 +556,45 @@ mod tests {
             serde_json::from_slice::<Value>(&body).unwrap()["sequence"],
             1
         );
+
+        let checkpoints = app
+            .clone()
+            .oneshot(
+                Request::get("/v1/logs/session-1/checkpoints")
+                    .header("authorization", "Bearer reader-token-0123456789abcdef")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(checkpoints.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(checkpoints.into_body(), 16_384)
+            .await
+            .unwrap();
+        let decoded: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(decoded["checkpoints"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            decoded["checkpoints"][0]["loggerSignature"]["algorithm"],
+            "Ed25519"
+        );
+
+        let verified = app
+            .oneshot(
+                Request::post("/v1/verify")
+                    .header("authorization", "Bearer reader-token-0123456789abcdef")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"logId":"session-1"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(verified.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(verified.into_body(), 4096)
+            .await
+            .unwrap();
+        let decoded: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(decoded["ok"], true);
+        assert_eq!(decoded["checkedEntries"], 1);
+        assert_eq!(decoded["checkedCheckpoints"], 1);
     }
 }

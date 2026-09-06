@@ -33,8 +33,11 @@ applicable, and relevant evidence are complete.
   restart tests for newline-aligned tail truncation and missing checkpoints.
   This does not require producer-assigned sequence numbers; the Logger remains
   the sole sequencer.
-- [ ] Integrate producer outboxes or a deployment-owned durable queue so Logger
-  delivery retries independently and backlog alerts are testable.
+- [ ] Deploy and prove the metadata-only S3 trace commitment outbox so delivery
+  retries independently across exporter restarts, backlog is observable, and a
+  production Logger outage/recovery drains without duplicate ledger entries.
+  Additional structural-event producers must adopt the same durable delivery
+  property before they are enabled in production.
 - [ ] Add deployment-owned Loki/OpenTelemetry projections if operational demand
   justifies them; these must remain derived from the authoritative ledger.
 

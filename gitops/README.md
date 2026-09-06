@@ -28,6 +28,12 @@ The application-owned Logger deployment contract is:
 - give producers a durable retry path or outbox and alert on delivery backlog;
 - keep the existing trace sidecar and S3 data path, then submit a bounded
   `trace.artifact_exported` commitment after a successful upload;
+- keep the existing exporter responsible for trace staging, delta detection,
+  retry, and S3 sync. After a successful sync, run `trace-commitment` with the
+  stable staged tree and a trace-commitment-only token. It writes the commitment
+  manifest, event outbox, and delivered marker as separate metadata objects in
+  the same existing S3 location, and reports `loggerPending`, `loggerOk`, and
+  delivery timestamps without changing S3 export `ok` or workflow progression;
 - configure at most one active Logger replica for a ledger volume. A
   standby must not write until deployment fencing has transferred ownership.
 
