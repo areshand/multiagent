@@ -173,6 +173,13 @@ enough matching results, it scans a deterministic, configured bound of remaining
 Markdown pages. Results include path, content SHA-256, bounded excerpt, score,
 and whether the page came through the catalog or fallback.
 
+The score means lexical relevance to this query only. It is not usage,
+popularity, confidence, dependency weight, or business importance. The query
+API does not aggregate repository activity. Questions such as "top used
+repositories" require a cited Wiki topic that already contains that aggregate
+or a separate authoritative external read; agents must report insufficient
+evidence when neither exists.
+
 Important bounds can be configured with `WIKI_MAX_REQUEST_BYTES`,
 `WIKI_MAX_CORPUS_FILES`, `WIKI_MAX_CORPUS_BYTES`,
 `WIKI_MAX_FALLBACK_FILES`, and `WIKI_MAX_FALLBACK_BYTES`. Agent requests
