@@ -20,9 +20,11 @@ class ContainerRuntimeContractTests(unittest.TestCase):
 
     def test_runtime_exposes_only_the_wiki_query_command(self):
         dockerfile = (ROOT / "docker/runtime/Dockerfile").read_text()
+        dockerignore = (ROOT / "docker/runtime/Dockerfile.dockerignore").read_text()
         self.assertIn("wiki-service/bin/wiki-query.mjs /usr/local/bin/wiki-query", dockerfile)
         self.assertNotIn("npm install --global /opt/multiagent/wiki-service", dockerfile)
         self.assertNotIn("WIKI_ROOT=/var/lib/wiki", dockerfile)
+        self.assertIn("wiki-service/catalog", dockerignore.splitlines())
 
     def test_wiki_image_is_independent_and_unprivileged(self):
         dockerfile = (ROOT / "docker/wiki-service/Dockerfile").read_text()

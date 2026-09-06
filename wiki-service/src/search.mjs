@@ -89,6 +89,8 @@ export function searchCorpus(corpus, request, bounds) {
     })),
     retrieval: Object.freeze({
       mode: needFallback ? "index+fallback" : "index",
+      scoreMeaning: "lexical-relevance-only",
+      supportsAggregation: false,
       indexedCandidates: corpus.indexed.length,
       fallbackFilesScanned: fallbackFiles,
       fallbackBytesScanned: fallbackBytes,

@@ -123,6 +123,8 @@ test("index-first query locates InternalServices architecture with citation", as
     assert.match(body.results[0].excerpt, /owns Kubernetes clusters/);
     assert.match(body.results[0].sha256, /^[a-f0-9]{64}$/);
     assert.equal(body.retrieval.mode, "index");
+    assert.equal(body.retrieval.scoreMeaning, "lexical-relevance-only");
+    assert.equal(body.retrieval.supportsAggregation, false);
     assert.equal(body.retrieval.fallbackFilesScanned, 0);
   });
 });
