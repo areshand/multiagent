@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 
+import importlib.util
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from trace_commitment.trace_commitment import TraceCommitter
+
+MODULE_PATH = Path(__file__).parents[1] / "logger" / "trace_commitment.py"
+SPEC = importlib.util.spec_from_file_location("logger_trace_commitment", MODULE_PATH)
+assert SPEC is not None and SPEC.loader is not None
+MODULE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(MODULE)
+TraceCommitter = MODULE.TraceCommitter
 
 
 class MemoryS3:

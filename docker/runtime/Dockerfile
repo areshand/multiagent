@@ -20,10 +20,10 @@ RUN cd control-server && npm ci --omit=dev
 COPY . .
 COPY --from=multiagent-builder /src/target/release/multiagent /opt/multiagent/bin/multiagent
 RUN ln -s /opt/multiagent/wiki-service/bin/wiki-query.mjs /usr/local/bin/wiki-query \
- && ln -s /opt/multiagent/trace_commitment/trace_commitment.py /usr/local/bin/trace-commitment \
+ && ln -s /opt/multiagent/logger/trace_commitment.py /usr/local/bin/trace-commitment \
  && install -m 0755 docker/runtime/container-entrypoint.sh /opt/multiagent/bin/container-entrypoint.sh \
  && install -m 0755 control-server/bin/prepare-repository.mjs /opt/multiagent/bin/prepare-repository.mjs \
- && chmod +x launch.sh control-server/bin/*.mjs trace_commitment/trace_commitment.py \
+ && chmod +x launch.sh control-server/bin/*.mjs logger/trace_commitment.py \
  && groupadd --gid 10000 multiagent-control \
  && groupadd --gid 10001 multiagent-role \
  && groupadd --gid 10004 multiagent-credentials \

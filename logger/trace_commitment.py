@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Commit an already-exported trace tree to Logger without sending trace bodies."""
+"""Commit an already-exported trace tree to this Logger without sending trace bodies."""
 
 from __future__ import annotations
 

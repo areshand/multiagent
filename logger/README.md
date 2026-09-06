@@ -60,6 +60,19 @@ the trace body. Use a deterministic event ID and retain the event in a durable
 outbox until the Logger returns `204`, because acknowledgement remains
 idempotent transport evidence rather than workflow authority.
 
+For the production sidecar, `trace_commitment.py` complements that low-level
+CLI with durable S3 outbox delivery. The existing trace exporter remains
+responsible for staging, delta detection, retry, and uploading trace bodies.
+After a successful sync, `trace-commitment` hashes the stable staged tree,
+writes a deterministic commitment manifest as a separate metadata object in
+the same S3 location, and retries a bounded `trace.artifact_exported` event.
+
+Required environment is `TRACE_COMMITMENT_SOURCE`, `TRACE_EXPORT_DESTINATION`,
+`TRACE_SESSION_ID`, `LOGGER_URL`, and `LOGGER_TOKEN_FILE`.
+`TRACE_COMMITMENT_WORK_DIR` and `TRACE_EXPORT_STATUS_FILE` are optional. Logger
+delivery updates `loggerOk`, `loggerPending`, and Logger timestamps/errors in
+the existing status file without changing its S3 export `ok` field.
+
 ## API and configuration
 
 The API exposes event append, log heads/entries/checkpoints, the public key,
