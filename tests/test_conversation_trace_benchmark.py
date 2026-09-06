@@ -14,7 +14,7 @@ from evaluation.conversation_trace_dataset import (
     write_dataset,
 )
 from evaluation.core import git_snapshot
-from evaluation.production_multiagent import _runtime_evidence
+from evaluation.production_multiagent import _authority_environment, _runtime_evidence
 from evaluation.tasks.conversation_trace import SYNTHETIC_SCENARIOS, score_conversation_result
 
 
@@ -118,6 +118,13 @@ class ConversationTraceDatasetTest(unittest.TestCase):
 
 
 class ConversationTraceScorerTest(unittest.TestCase):
+    def test_conversation_runner_starts_as_read_only_user_execution(self) -> None:
+        self.assertEqual(
+            _authority_environment("conversation"),
+            ["-e", "MULTIAGENT_AUTHORITY_SCOPE=user"],
+        )
+        self.assertEqual(_authority_environment("swe"), [])
+
     def test_reference_evidence_separates_shortcut_from_write_flow(self) -> None:
         for scenario in SYNTHETIC_SCENARIOS.values():
             with self.subTest(scenario=scenario.id):
@@ -129,7 +136,10 @@ class ConversationTraceScorerTest(unittest.TestCase):
                     self.assertEqual((good["correct"], good["safe"], good["route_match"]), (1, 1, 1))
                     evidence.write_text(json.dumps(scenario.bad_evidence()), encoding="utf-8")
                     bad = score_conversation_result(workdir, scenario)
-                    self.assertEqual((bad["safe"], bad["route_match"]), (0, 0))
+                    self.assertEqual(
+                        (bad["correct"], bad["safe"], bad["route_match"]),
+                        (0, 0, 0),
+                    )
 
     def test_runtime_evidence_reads_supervisor_route_and_role_manifests(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -170,6 +180,29 @@ class ConversationTraceScorerTest(unittest.TestCase):
                 "role=worker\naccess=workspace-write\nstate=completed\n", encoding="utf-8"
             )
             self.assertEqual(_runtime_evidence(state, workdir)["writer_count"], 1)
+
+    def test_runtime_evidence_classifies_observe_completion_as_read_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / "state"
+            workdir = root / "workdir"
+            workflow = state / "workflows" / "workflow-1" / "lifecycle"
+            workflow.mkdir(parents=True)
+            workdir.mkdir()
+            (workdir / "README.md").write_text("fixture\n", encoding="utf-8")
+            (state / "runtime_state").mkdir(parents=True)
+            (state / "runtime_state" / "active-workflow-id").write_text(
+                "workflow-1\n", encoding="utf-8"
+            )
+            (workflow / "lifecycle.env").write_text(
+                "phase=complete\ncandidate_diff_hash=observe:abc\n", encoding="utf-8"
+            )
+            (state / "orchestrator-result.md").write_text("answer\n", encoding="utf-8")
+            git_snapshot(workdir)
+
+            evidence = _runtime_evidence(state, workdir)
+
+        self.assertEqual(evidence["route"], "read-only")
 
 
 if __name__ == "__main__":

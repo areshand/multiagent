@@ -21,7 +21,7 @@ from evaluation.tasks.conversation_trace import (
 
 CONVERSATION_TRACE_ARMS = {
     "legacy": "Production runtime image built from the pre-shortcut main revision.",
-    "shortcut": "Production runtime image containing direct-response and read-only routes.",
+    "shortcut": "Production runtime image containing the unified read-only Execution shortcut.",
 }
 
 BOWU_BENCH_ROOT = Path.home() / "projects" / "traces" / "bowu_bench"
@@ -169,4 +169,4 @@ class ConversationTraceAdapter:
         )
 
 
-ADAPTER = ConversationTraceAdapter()
+ADAPTER = ConversationTraceAdapter(default_run_root=BOWU_BENCH_ROOT / "runs")

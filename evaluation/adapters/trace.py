@@ -133,7 +133,7 @@ class TraceAdapter:
         self.tasks = {**self.ops.tasks, **self.conversation.tasks}
         label = "Bowu Bench" if self.name == "bowu_bench" else "Unified private trace benchmark"
         self.description = (
-            f"{label}. Ops/external-only tasks retain their solve and authority-boundary "
+            f"{label}. Ops replay tasks retain their completion and isolation "
             "scorer; conversation tasks retain their route, fanout, write-safety, and latency "
             f"scorer. Suite metrics are reported separately using {source}."
         )

@@ -116,7 +116,7 @@ synthetic contract cases so CI can validate the unified entry point.
 ## Trace-derived operations benchmark
 
 The `ops-trace` adapter replays the direct user turn that owned each captured
-operation. Contract v3 binds an operation to the nearest preceding
+operation. Contract v4 binds an operation to the nearest preceding
 `direct_or_top_level` request in the same rollout, requires a completed source
 answer, and includes bounded prior conversation, a pseudonymized reference
 answer, and pseudonymized captured tool results. It never includes executable

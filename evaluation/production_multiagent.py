@@ -13,6 +13,13 @@ from typing import Any
 from evaluation.core import ROOT, git_snapshot, score_workspace
 
 
+def _authority_environment(prompt_profile: str) -> list[str]:
+    """Conversation replays model a fresh authenticated user Execution."""
+    if prompt_profile == "conversation":
+        return ["-e", "MULTIAGENT_AUTHORITY_SCOPE=user"]
+    return []
+
+
 def _env_file(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     if not path.is_file():
@@ -31,6 +38,8 @@ def _runtime_evidence(state_dir: Path, workdir: Path) -> dict[str, Any]:
     candidate = lifecycle.get("candidate_diff_hash", "")
     if candidate.startswith("direct-response:"):
         route = "direct-response"
+    elif candidate.startswith("observe:"):
+        route = "read-only"
     elif candidate.startswith("read-only:"):
         route = "read-only"
     elif candidate.startswith("external-only:"):
@@ -202,6 +211,7 @@ def run_production_cell(
         "GIT_CONFIG_KEY_0=safe.directory",
         "-e",
         "GIT_CONFIG_VALUE_0=/app",
+        *_authority_environment(prompt_profile),
         image,
         *solver_arguments,
     ]
