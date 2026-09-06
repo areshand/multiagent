@@ -499,6 +499,15 @@ The supervisor authenticates the direct caller, binds the request to the
 session and authenticated task, signs the bounded permit, persists the receipt,
 and retains all transport, KMS, provider, and repository credentials.
 
+The same roles may inspect that live, deployment-scoped catalog through the
+supervisor with `multiagent ops list`, and retrieve one complete contract with
+`multiagent ops describe`. List output is intentionally compact and contains
+no parameter schema; it is discovery metadata, not authorization. The runtime
+must not substitute permit fixtures, prompt-maintained IDs, or image-local
+catalog files for the live response. Exact target, runbook digest, version,
+parameters, and current execution policy are still validated when a request is
+bound and executed.
+
 This is a distinct authority operation, not a relaxation of generic
 `ops execute`. It mechanically rejects write/execute capabilities, mutations,
 approval-bearing operations, arbitrary URLs, caller-selected filesystem
