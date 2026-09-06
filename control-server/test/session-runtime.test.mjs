@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   acceptsLiveInput,
   automaticResumeLimit,
+  boundedFinalMessage,
   completionExitDelayMs,
   controlMode,
   executionTerminalOutcome,
@@ -19,6 +20,7 @@ import {
   shouldAutomaticallyResume,
   submitLocalFollowup,
   validResourceId,
+  waitForTraceFinalization,
   workerReportInterruptedEvent,
   workerReportPublicEvent,
 } from "../src/session-runtime.mjs";
@@ -123,6 +125,39 @@ test("completed session reports prefer the explicit bounded caller result", () =
   assert.equal(normalizeWorkerReport({ report: "bad", terminalOutcome: "retrying" }), null);
   assert.equal(normalizeWorkerReport({ report: "bad", completionRoute: "human-review", terminalOutcome: "succeeded" }), null);
   assert.equal(normalizeWorkerReport({ report: "bad", completionRoute: "human-review", terminalOutcome: "review_requested", message: "not a question" }), null);
+});
+
+test("bounded final messages preserve complete multi-line answers below the byte limit", () => {
+  const message = Array.from({ length: 85 }, (_, index) => `line ${index + 1}`).join("\n");
+  assert.equal(Buffer.byteLength(message, "utf8") < 6000, true);
+  assert.equal(boundedFinalMessage(`\n${message}\n`, 6000), message);
+  const unicode = boundedFinalMessage("界".repeat(3000), 6000);
+  assert.equal(Buffer.byteLength(unicode, "utf8") <= 6000, true);
+  assert.equal(unicode.endsWith("…"), true);
+});
+
+test("trace finalization wait is bounded and observes late normalized events", async () => {
+  let clock = 0;
+  let checks = 0;
+  const ready = await waitForTraceFinalization({
+    ready: () => ++checks >= 3,
+    timeoutMs: 100,
+    pollIntervalMs: 10,
+    now: () => clock,
+    sleep: async (milliseconds) => { clock += milliseconds; },
+  });
+  assert.equal(ready, true);
+  assert.equal(checks, 3);
+
+  clock = 0;
+  assert.equal(await waitForTraceFinalization({
+    ready: () => false,
+    timeoutMs: 25,
+    pollIntervalMs: 10,
+    now: () => clock,
+    sleep: async (milliseconds) => { clock += milliseconds; },
+  }), false);
+  assert.equal(clock, 25);
 });
 
 test("repair reports preserve only explicit source and reviewed-operation effects", () => {
