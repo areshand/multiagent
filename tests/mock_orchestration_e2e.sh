@@ -117,51 +117,50 @@ ma workflow init "$MULTIAGENT_WORKFLOW_ID" >/dev/null
 mkdir -p "$STATE/runtime_state"
 printf '%s\n' "$MULTIAGENT_WORKFLOW_ID" >"$STATE/runtime_state/active-workflow-id"
 
-ma decision init DEC-MOCK --title "Mock source update" --owner orchestrator >/dev/null
-ma decision add-alternative DEC-MOCK --plan-id PLAN-MOCK \
-  --summary "Apply the authenticated bounded update" --proposed-by orchestrator >/dev/null
-ma decision commit DEC-MOCK --selected-plan PLAN-MOCK \
-  --reason "Submit the bounded plan for independent authority review" >/dev/null
+PLAN_SHA="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+TASK_SHA="$(ma workflow value "$MULTIAGENT_WORKFLOW_ID" original_task_sha256)"
+ma workflow seal-iteration "$MULTIAGENT_WORKFLOW_ID" \
+  --plan-sha256 "$PLAN_SHA" --worker-count 1 >/dev/null
 
-AUTH_REVIEWER="decision-authority-reviewer-mock"
-printf 'Claude prompt ready\n' >"$MOCK_CAPTURES/$AUTH_REVIEWER.txt"
-ma subagent spawn "$AUTH_REVIEWER" --role reviewer \
+ALIGNMENT_REVIEWER="plan-alignment-reviewer-mock"
+printf 'Claude prompt ready\n' >"$MOCK_CAPTURES/$ALIGNMENT_REVIEWER.txt"
+ma subagent spawn "$ALIGNMENT_REVIEWER" --role reviewer \
   --workflow-id "$MULTIAGENT_WORKFLOW_ID" \
-  --decision-id DEC-MOCK --plan-id PLAN-MOCK --decision-revision 1 \
-  --instruction "Review the bounded implementation plan and authority." >/dev/null
-cat >"$MOCK_CAPTURES/$AUTH_REVIEWER.txt" <<'EOF'
-verdict: orchestrator-may-decide
-authority-findings: none
-review-record: type=decision-authority verdict=pass diff=-
+  --plan-sha256 "$PLAN_SHA" \
+  --instruction "Compare the bounded implementation plan with the original request." >/dev/null
+cat >"$MOCK_CAPTURES/$ALIGNMENT_REVIEWER.txt" <<EOF
+alignment: aligned
+findings: none
+user-question: none
+review-record: type=plan-alignment verdict=pass diff=-
+plan-alignment-review: plan-sha256=$PLAN_SHA original-task-sha256=$TASK_SHA alignment=aligned
 EOF
-cp "$MOCK_CAPTURES/$AUTH_REVIEWER.txt" "$STATE/subagents/$AUTH_REVIEWER/last-message.txt"
-ma subagent finalize "$AUTH_REVIEWER" >/dev/null
+cp "$MOCK_CAPTURES/$ALIGNMENT_REVIEWER.txt" "$STATE/subagents/$ALIGNMENT_REVIEWER/last-message.txt"
+ma subagent finalize "$ALIGNMENT_REVIEWER" >/dev/null
 
-ma workflow record-review "$MULTIAGENT_WORKFLOW_ID" AUTH-MOCK \
-  --type decision-authority --verdict pass --evidence "mock authority review passed" \
-  --reviewer "$AUTH_REVIEWER" >/dev/null
+ma workflow record-review "$MULTIAGENT_WORKFLOW_ID" ALIGN-MOCK \
+  --type plan-alignment --verdict pass --evidence "mock plan alignment passed" \
+  --reviewer "$ALIGNMENT_REVIEWER" >/dev/null
 
 CONTEXT="$STATE/approved-context.md"
 cat >"$CONTEXT" <<'EOF'
 # Approved implementation context
 goal: update source.txt from before to after
-decision: DEC-MOCK
-plan: PLAN-MOCK
-authority: authenticated caller plus independent authority reviewer
+plan: update the requested file only
 owned-paths: source.txt
 must-do: preserve the bounded file contract
 must-not-do: change unrelated paths
 EOF
 ma workflow prepare-implementation "$MULTIAGENT_WORKFLOW_ID" \
-  --decision-id DEC-MOCK --plan-id PLAN-MOCK --decision-revision 1 \
-  --implementation-context "$CONTEXT" --authority-review AUTH-MOCK >/dev/null
+  --plan-sha256 "$PLAN_SHA" \
+  --implementation-context "$CONTEXT" --alignment-review ALIGN-MOCK >/dev/null
 ma workflow transition "$MULTIAGENT_WORKFLOW_ID" implementation >/dev/null
 
 WORKER="worker-mock-implementation"
 printf 'Claude prompt ready\n' >"$MOCK_CAPTURES/$WORKER.txt"
 ma subagent spawn "$WORKER" --assignment-id ASSIGN-MOCK --branch "$BRANCH" \
   --own source.txt --workflow-id "$MULTIAGENT_WORKFLOW_ID" \
-  --decision-id DEC-MOCK --plan-id PLAN-MOCK --instruction-file "$CONTEXT" >/dev/null
+  --instruction-file "$CONTEXT" >/dev/null
 printf 'after\n' >"$REPO/source.txt"
 cat >"$MOCK_CAPTURES/$WORKER.txt" <<'EOF'
 Final status: completed
@@ -175,8 +174,7 @@ DIFF_HASH="mock-diff-v1"
 ma workflow transition "$MULTIAGENT_WORKFLOW_ID" post-implementation \
   --diff-hash "$DIFF_HASH" >/dev/null
 
-for spec in "decision-drift reviewer-decision-drift-mock REVIEW-DRIFT" \
-            "technical verifier-technical-mock REVIEW-TECH"; do
+for spec in "technical verifier-technical-mock REVIEW-TECH"; do
   read -r review_type reviewer review_id <<<"$spec"
   printf 'Claude prompt ready\n' >"$MOCK_CAPTURES/$reviewer.txt"
   ma subagent spawn "$reviewer" --role reviewer \
@@ -200,7 +198,7 @@ grep -Fq 'role may use `multiagent ops read --request-file PATH`' \
   "$ROOT/prompts/orchestrator.md"
 grep -Fq 'roles use the direct supervisor-mediated path' \
   "$ROOT/prompts/playbooks/orchestration-routing.md"
-[[ "$(grep -c '^new-window ' "$MOCK_LOG")" -eq 4 ]]
+[[ "$(grep -c '^new-window ' "$MOCK_LOG")" -eq 3 ]]
 if find "$STATE/subagents" -mindepth 1 -maxdepth 1 -type d -name '*scout*' | grep -q .; then
   echo "mock workflow spawned an unnecessary scout" >&2
   exit 1

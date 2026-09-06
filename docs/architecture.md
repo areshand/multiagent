@@ -18,11 +18,14 @@ flowchart TD
     U["Original task"] --> O["Orchestrator"]
     O --> SC["Contract scout"]
     SC --> C["Registered contract"]
-    C --> AR["Decision-authority review"]
-    AR --> P["Approved implementation context"]
+    O --> IP["Complete sealed iteration plan"]
+    U --> AR["Plan-alignment review"]
+    C --> AR
+    IP --> AR
+    AR --> P["Aligned implementation context"]
     P --> W["Path-scoped writer"]
     W --> D["Canonical Git diff"]
-    D --> R["Scope, technical, drift, and reflection reviews"]
+    D --> R["Technical and applicable scope/reflection reviews"]
     R --> F{"Open finding or todo?"}
     F -- yes --> P
     F -- no --> G["Supervisor completion gates"]
@@ -124,13 +127,14 @@ pre-implementation -> implementation -> post-implementation -> complete
 ### Pre-implementation
 
 1. The original task is stored immutably and hashed.
-2. A read-only contract scout emits structured `must` and `must-not` rules.
+2. When needed, a read-only contract scout emits structured `must` and
+   `must-not` rules.
 3. The supervisor seals and registers the scout artifact.
-4. A decision record selects a plan.
-5. An independent authority reviewer receives the original task, exact contract,
-   and implementation context.
-6. The writer gate opens only when the decision, plan, context, authority review,
-   and contract hashes agree.
+4. The orchestrator submits one complete iteration plan.
+5. An independent plan-alignment reviewer compares the complete sealed plan
+   directly with the original task and any registered contract.
+6. The writer gate opens only when the review reports `aligned` and its
+   original-task, plan, context, and contract hashes agree.
 
 ### Implementation
 
@@ -141,8 +145,8 @@ in parallel.
 
 ### Post-implementation
 
-The control plane computes one canonical diff hash. Scope, technical,
-decision-drift, and reflection reviewers receive:
+The control plane computes one canonical diff hash. A technical reviewer and
+any applicable scope or reflection reviewers receive:
 
 - the immutable original task;
 - the exact registered contract artifact;

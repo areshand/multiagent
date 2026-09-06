@@ -1013,17 +1013,17 @@ assert_file_contains "$ROOT/prompts/playbooks/agent-spawning.md" 'Do not load, c
 assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" '"kind": "IterationPlan"'
 assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" 'multiagent subagent execute-iteration --plan-file'
 assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" 'worker-ops-plan-01'
-assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" 'The supervisor always requires an independent decision-authority review'
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" 'requires one independent plan-alignment review'
 assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" 'launches independent reviewers in'
 assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" 'status=needs_replan'
 assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "do not spawn another final verifier"
 assert_file_contains "$ROOT/prompts/verifier.md" 'do not substitute the default `technical`'
-assert_file_contains "$ROOT/prompts/roles/decision-authority-reviewer.md" "pre-implementation authority review"
-assert_file_contains "$ROOT/prompts/roles/decision-authority-reviewer.md" "never require implementation"
-assert_file_contains "$ROOT/prompts/roles/decision-authority-reviewer.md" "Supervisor-Generated Decision Authority Capsule"
-assert_file_contains "$ROOT/prompts/roles/decision-authority-reviewer.md" "decision-review: capsule-sha256="
-assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "Neither the orchestrator nor a worker may manufacture or edit it"
-assert_file_contains "$ROOT/prompts/roles/decision-authority-reviewer.md" "instruction file's location never changes"
+assert_file_contains "$ROOT/prompts/roles/plan-alignment-reviewer.md" "independent read-only pre-implementation reviewer"
+assert_file_contains "$ROOT/prompts/roles/plan-alignment-reviewer.md" '`alignment: aligned`'
+assert_file_contains "$ROOT/prompts/roles/plan-alignment-reviewer.md" '`alignment: misaligned`'
+assert_file_contains "$ROOT/prompts/roles/plan-alignment-reviewer.md" "plan-alignment-review: plan-sha256="
+assert_file_contains "$ROOT/prompts/playbooks/implementation-lifecycle.md" "not a substitute contract or a separate authority decision"
+assert_file_contains "$ROOT/prompts/roles/plan-alignment-reviewer.md" "skipping the main task"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" "Skip the scout when the public task"
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" '`/app/_base_commit` is immutable adapter metadata'
 assert_file_contains "$ROOT/evaluation/native_solver/templates/swe_autonomous_appendix.md" '`ops_plan.json` means'

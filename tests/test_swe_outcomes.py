@@ -66,9 +66,9 @@ class NativeOutcomeTest(unittest.TestCase):
         ):
             self.assertEqual(evalscope_multiagent_native_runner.solver_internal_timeout(3600), 3000)
 
-    def test_autonomous_authority_does_not_reopen_explicit_task_behavior(self):
+    def test_plan_alignment_uses_original_request_as_authority(self):
         root = Path(__file__).resolve().parents[1]
-        reviewer = (root / "prompts/roles/decision-authority-reviewer.md").read_text(
+        reviewer = (root / "prompts/roles/plan-alignment-reviewer.md").read_text(
             encoding="utf-8"
         )
         lifecycle = (root / "prompts/playbooks/implementation-lifecycle.md").read_text(
@@ -78,9 +78,9 @@ class NativeOutcomeTest(unittest.TestCase):
             root / "evaluation/native_solver/templates/swe_autonomous_appendix.md"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("original request is itself the user's decision", reviewer)
-        self.assertIn("at least two materially different", reviewer)
-        self.assertIn("explicit task contract is already approved", lifecycle)
+        self.assertIn("original user request", reviewer)
+        self.assertIn("genuinely absent", reviewer)
+        self.assertIn("original user request is authoritative", lifecycle)
         self.assertIn("This run has no interactive user", autonomous)
         self.assertIn("narrowest backward-compatible interpretation", autonomous)
         self.assertIn("new contract outranks pre-change exact-call mocks", autonomous)
@@ -100,27 +100,24 @@ class NativeOutcomeTest(unittest.TestCase):
         self.assertIn("command=... returncode=0", verifier)
         self.assertIn("validation lease for the narrowest visible behavior test", routing)
 
-    def test_authority_reviewer_requires_runtime_parseable_output(self):
+    def test_plan_alignment_reviewer_requires_runtime_parseable_output(self):
         root = Path(__file__).resolve().parents[1]
-        reviewer = (root / "prompts/roles/decision-authority-reviewer.md").read_text(
+        reviewer = (root / "prompts/roles/plan-alignment-reviewer.md").read_text(
             encoding="utf-8"
         )
 
         self.assertIn("Your final response is parsed by the workflow runtime", reviewer)
         self.assertIn("first non-empty line\nmust be exactly one of", reviewer)
-        self.assertIn("Do not write generic verdicts such as `ACCEPTED`", reviewer)
         self.assertIn("Return exactly these fields in this order", reviewer)
-        self.assertIn("Do not replace, rename, reorder,\nor omit", reviewer)
-        self.assertIn("pre-implementation authority review", reviewer)
-        self.assertIn("never require implementation\nas evidence needed to authorize implementation", reviewer)
-        self.assertIn("multiagent decision show\nDECISION_ID", reviewer)
-        self.assertIn("Supervisor-Generated Decision Authority Capsule", reviewer)
-        self.assertIn("orchestrator's prose assignment is not a substitute", reviewer)
-        self.assertIn("decision-review: capsule-sha256=", reviewer)
-        self.assertIn("Post-implementation reviewers and supervisor diff gates", reviewer)
-        self.assertIn("instruction file's location never changes the\ndeliverable target", reviewer)
+        self.assertIn("`alignment: aligned`", reviewer)
+        self.assertIn("`alignment: misaligned`", reviewer)
+        self.assertIn("not a substitute contract", reviewer)
+        self.assertIn("Do not require the requested code", reviewer)
+        self.assertIn("plan-alignment-review: plan-sha256=", reviewer)
+        self.assertIn("separate technical review", reviewer)
+        self.assertIn("skipping the main task", reviewer)
         self.assertIn(
-            "review-record: type=decision-authority verdict=pass diff=-",
+            "review-record: type=plan-alignment verdict=pass diff=-",
             reviewer,
         )
 
@@ -146,8 +143,8 @@ class NativeOutcomeTest(unittest.TestCase):
         self.assertIn('"kind": "IterationPlan"', lifecycle)
         self.assertIn("multiagent subagent execute-iteration --plan-file", lifecycle)
         self.assertIn("worker-ops-plan-01", lifecycle)
-        self.assertIn("The supervisor always requires an independent decision-authority review", lifecycle)
-        self.assertIn("includes the sealed plan\ndigest", lifecycle)
+        self.assertIn("requires one independent plan-alignment review", lifecycle)
+        self.assertIn("sealed plan digest", lifecycle)
         self.assertIn("launches independent reviewers in\nparallel", lifecycle)
         self.assertIn("status=needs_replan", lifecycle)
         self.assertIn("do not\nreplay its internal transitions", lifecycle)

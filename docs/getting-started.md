@@ -151,35 +151,7 @@ project without copying prompt modules into it.
 The orchestrator normally performs the commands in this section. Operators use
 them for inspection or deliberate manual recovery.
 
-### 1. Record the Decision
-
-Create a decision, record alternatives, and commit one plan:
-
-```bash
-multiagent decision init DEC-001 --title "Choose the implementation"
-
-multiagent decision add-alternative DEC-001 \
-  --plan-id PLAN-A \
-  --summary "Small compatible change" \
-  --proposed-by contract-scout-01 \
-  --expected-outcome "Preserve behavior with minimal scope"
-
-multiagent decision add-assumption DEC-001 \
-  --assumption-id ASSUME-1 \
-  --statement "The public interface remains stable" \
-  --validation-method "source and test inspection"
-
-multiagent decision commit DEC-001 \
-  --selected-plan PLAN-A \
-  --reason "Matches the registered contract"
-
-multiagent decision list
-multiagent decision show DEC-001
-```
-
-Decision records are durable under `$MULTIAGENT_STATE_DIR/decisions`.
-
-### 2. Register the Contract
+### 1. Register a Contract When Needed
 
 For tasks with API, compatibility, security, benchmark, or hidden-contract risk,
 spawn a read-only scout:
@@ -199,83 +171,30 @@ multiagent workflow contract-register "$MULTIAGENT_WORKFLOW_ID" \
 The supervisor seals the scout result and records its hash. Later workers and
 reviewers receive the immutable original task and exact registered artifact.
 
-### 3. Open the Implementation Gate
+### 2. Execute One Sealed Iteration
 
-After an independent decision-authority review passes, bind the approved
-implementation context:
-
-```bash
-multiagent workflow prepare-implementation "$MULTIAGENT_WORKFLOW_ID" \
-  --decision-id DEC-001 \
-  --plan-id PLAN-A \
-  --decision-revision 1 \
-  --implementation-context /absolute/path/to/implementation-context.md \
-  --authority-review review-01-authority
-
-multiagent workflow transition "$MULTIAGENT_WORKFLOW_ID" implementation
-```
-
-The context must contain the exact registered contract. A plan that contradicts
-a registered `must-not` rule is rejected before a writer starts.
-
-### 4. Assign and Run a Worker
-
-Create metadata before spawning a writer:
+Write the complete `IterationPlan` JSON described in
+`prompts/playbooks/implementation-lifecycle.md` under
+`$MULTIAGENT_STATE_DIR`, then make one blocking call:
 
 ```bash
-multiagent subagent assignment-create worker-01 \
-  --assignment-id IMPL-001 \
-  --role exploitation \
-  --decision-id DEC-001 \
-  --plan-id PLAN-A \
-  --branch "$(git -C "$MULTIAGENT_ROOT" branch --show-current)" \
-  --owned src/,tests/
-
-SUBAGENT_CLI="${WORKER_CLI:-claude}" \
-multiagent subagent spawn worker-01 \
-  --role worker \
-  --own src/,tests/ \
-  --assignment-id IMPL-001 \
-  --workflow-id "$MULTIAGENT_WORKFLOW_ID" \
-  --decision-id DEC-001 \
-  --plan-id PLAN-A \
-  --instruction-file /absolute/path/to/worker-instruction.md
-
-multiagent subagent wait worker-01 --timeout 1800
-multiagent subagent assignment-check worker-01
+multiagent subagent execute-iteration \
+  --plan-file "$MULTIAGENT_STATE_DIR/iteration-1.json" \
+  --timeout 900
 ```
 
-Only the supervisor-authorized writer receives temporary access to its existing
-owned paths. The global writer lease prevents a second writer from becoming
-active at the same time.
+The runtime seals the plan, launches one read-only plan-alignment reviewer,
+and compares the complete plan directly with the authenticated original task.
+An aligned plan proceeds to bounded workers and post-implementation technical
+review. A misaligned plan returns `needs_replan`; it asks the user only when
+the reviewer identifies genuinely missing input.
 
-Update a durable checkpoint during long work:
+The supervisor binds alignment evidence to the original-task and sealed-plan
+digests, enforces worker path ownership, freezes the candidate diff, and runs
+all applicable post-implementation reviews. The orchestrator must not replay
+those internal transitions around the executor.
 
-```bash
-multiagent subagent checkpoint-update worker-01 \
-  --step "implementation complete; focused tests running" \
-  --idempotency "rerun focused tests before acceptance" \
-  --status running
-```
-
-### 5. Review the Canonical Diff
-
-Freeze the current repository state:
-
-```bash
-multiagent snapshot --root "$MULTIAGENT_ROOT" --base HEAD --format json
-```
-
-Transition to post-implementation with the reported hash, then run read-only
-scope, technical, decision-drift, and reflection reviews. Review instructions
-must include the original task, registered contract, approved context, and
-canonical diff. Finalize each reviewer so the supervisor can seal its output.
-
-Record review findings and todos through `multiagent workflow` and
-`multiagent subagent` commands. A changed diff invalidates previous acceptance.
-An open finding returns the workflow to another pre-implementation iteration.
-
-### 6. Complete Atomically
+### 3. Inspect Completion
 
 Inspect both gates:
 
@@ -284,11 +203,9 @@ multiagent workflow completion-check "$MULTIAGENT_WORKFLOW_ID"
 multiagent subagent gate-check
 ```
 
-Request completion:
-
-```bash
-multiagent orchestrator complete
-```
+When `execute-iteration` reports `status=completed`, it has already requested
+supervisor completion. A `needs_replan` result leaves durable findings for the
+next iteration; do not mutate the sealed plan in place.
 
 The orchestrator cannot directly write `complete`. The supervisor runs the
 lifecycle and technical gates under the lifecycle lock and changes the phase

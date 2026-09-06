@@ -474,7 +474,7 @@ the authorized contract, the system uses a Simplex-style fallback: it issues no
 next operation permit, persists a supervisor-verified human-review request,
 ends the session in `human-review-required` state, and asks the user
 one bounded question. This is the same terminal authority pattern used when a
-decision-authority review detects a user-owned scope or risk choice. A later
+plan-alignment review finds that required input is absent. A later
 user answer starts a new session; model prose alone cannot clear the
 pending human boundary in the completed session.
 
@@ -766,11 +766,15 @@ role instructions, and the immutable artifacts needed for their review. They
 also have read access to the session trace corpus and the supervisor-mediated,
 read-only `prod-mcp` evidence path defined in AD-006, so evidence selection by
 another agent is not a trust boundary.
-Before implementation, the supervisor generates an immutable decision capsule
-containing the workflow revision, committed decision, selected alternative,
-original-task digest, and contract digest. Decision-authority evidence and the
-implementation permit must bind to the same capsule digest; an orchestrator
-summary cannot substitute for that binding.
+Before implementation, one independent reviewer compares the authenticated
+original request directly with the complete sealed iteration plan. The only
+semantic outcomes are `aligned` and `misaligned`: aligned plans may proceed;
+misaligned plans may not. A misaligned result returns to the orchestrator for a
+new plan unless the reviewer identifies genuinely missing user input, in which
+case the supervisor asks one bounded question. Review evidence binds directly
+to both the original-task digest and sealed-plan digest. This binding prevents
+input substitution but does not create a formal contract or a separate
+authority decision.
 
 Provider and model selection remain deployment-owned. The orchestrator chooses
 roles and dependencies, not provider credentials, model names, or prices.
@@ -811,11 +815,11 @@ immutable session grants, assignment ownership, diff binding, and the
 supervisor completion gate enforce these transitions.
 
 For source implementation, adaptivity happens at iteration boundaries. The
-orchestrator submits one complete iteration plan containing the committed
-decision, worker dependency graph, bounded ownership, and any additional
-review requests. The supervisor records the plan digest, adds review
-obligations derived from policy and persisted artifacts, and binds the
-decision-authority capsule to that digest. Once sealed, the runtime—not the
+orchestrator submits one complete iteration plan containing the implementation
+context, worker dependency graph, bounded ownership, and any additional review
+requests. The supervisor records the plan digest, obtains the binary alignment
+review described above, and adds review obligations derived from policy and
+persisted artifacts. Once sealed, the runtime—not the
 orchestrator—advances ready nodes, launches mutually independent agents, waits,
 finalizes durable evidence, freezes the candidate diff, and submits lifecycle
 transitions for that iteration. The runtime may report `needs_replan`, but it

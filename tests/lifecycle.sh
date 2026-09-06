@@ -41,11 +41,10 @@ assert_contains "$TEST_TMP/lifecycle-env-bypass.out" \
   "lifecycle enforcement requires --workflow-id"
 
 IMPLEMENTATION_CONTEXT="$TEST_TMP/approved-implementation-context.md"
+PLAN_SHA="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 printf '%s\n' \
   '# Approved implementation context' \
-  'decision: DEC-1' \
-  'plan: PLAN-1' \
-  'authority: orchestrator' \
+  'plan: implement the authenticated request' \
   'must-not-do: change public behavior' >"$IMPLEMENTATION_CONTEXT"
 
 PROMPT_BUNDLE="$TEST_TMP/orchestrator-bundle.md"
@@ -195,45 +194,44 @@ wf init WF-LIFECYCLE >/dev/null
 wf init WF-REVIEW-EVIDENCE >/dev/null
 if MULTIAGENT_STATE_DIR="$TEST_STATE" MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
   "$MULTIAGENT" workflow record-review WF-REVIEW-EVIDENCE AUTH-MISSING \
-  --type decision-authority --verdict pass --evidence "claimed pass" \
+  --type plan-alignment --verdict pass --evidence "claimed pass" \
   >"$TEST_TMP/missing-reviewer-evidence.out" 2>&1; then
   echo "expected enforced review without reviewer evidence to fail" >&2
   exit 1
 fi
 assert_contains "$TEST_TMP/missing-reviewer-evidence.out" "requires --reviewer NAME"
-REVIEWER_STATE="$TEST_STATE/subagents/authority-reviewer-test"
+REVIEWER_STATE="$TEST_STATE/subagents/plan-alignment-reviewer-test"
 mkdir -p "$REVIEWER_STATE"
-printf '%s\n' 'role=reviewer' 'codex_access=read-only' >"$REVIEWER_STATE/meta.env"
+printf '%s\n' 'role=reviewer' 'codex_access=read-only' \
+  "iteration_plan_sha256=$PLAN_SHA" \
+  'original_task_sha256=1111111111111111111111111111111111111111111111111111111111111111' \
+  >"$REVIEWER_STATE/meta.env"
 printf 'finalized\n' >"$REVIEWER_STATE/status"
 printf '2026-08-15T00:00:00Z\n' >"$REVIEWER_STATE/finalized_at"
-printf 'review-record: type=decision-authority verdict=pass diff=-\n' \
+printf 'review-record: type=plan-alignment verdict=pass diff=-\n' \
   >"$REVIEWER_STATE/last-message.txt"
+printf 'plan-alignment-review: plan-sha256=%s original-task-sha256=%s alignment=aligned\n' \
+  "$PLAN_SHA" '1111111111111111111111111111111111111111111111111111111111111111' \
+  >>"$REVIEWER_STATE/last-message.txt"
 MULTIAGENT_STATE_DIR="$TEST_STATE" MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
   "$MULTIAGENT" workflow record-review WF-REVIEW-EVIDENCE AUTH-DURABLE \
-  --type decision-authority --verdict pass --evidence "durable reviewer pass" \
-  --reviewer authority-reviewer-test >/dev/null
-
-MULTIAGENT_STATE_DIR="$TEST_STATE" "$MULTIAGENT" decision init DEC-1 \
-  --title "Lifecycle decision" --owner orchestrator >/dev/null
-MULTIAGENT_STATE_DIR="$TEST_STATE" "$MULTIAGENT" decision add-alternative DEC-1 \
-  --plan-id PLAN-1 --summary "Implement approved lifecycle plan" \
-  --proposed-by orchestrator >/dev/null
-MULTIAGENT_STATE_DIR="$TEST_STATE" "$MULTIAGENT" decision commit DEC-1 \
-  --selected-plan PLAN-1 --reason "Authority review and evidence support this plan" >/dev/null
+  --type plan-alignment --verdict pass --evidence "durable reviewer pass" \
+  --reviewer plan-alignment-reviewer-test >/dev/null
 if wf transition WF-LIFECYCLE implementation >"$TEST_TMP/no-permit.out" 2>&1; then
   echo "expected implementation without a permit to fail" >&2
   exit 1
 fi
 assert_contains "$TEST_TMP/no-permit.out" "implementation gate has not passed"
 
-wf record-review WF-LIFECYCLE AUTH-1 \
-  --type decision-authority --verdict pass \
-  --evidence "independent authority review passed" >/dev/null
+wf seal-iteration WF-LIFECYCLE --plan-sha256 "$PLAN_SHA" --worker-count 1 >/dev/null
+wf record-review WF-LIFECYCLE ALIGN-1 \
+  --type plan-alignment --verdict pass \
+  --evidence "independent plan alignment passed" >/dev/null
 wf add-todo WF-LIFECYCLE TODO-EVIDENCE \
   --kind evidence --summary "inspect persisted state" >/dev/null
 if wf prepare-implementation WF-LIFECYCLE \
-  --decision-id DEC-1 --plan-id PLAN-1 --decision-revision 1 \
-  --implementation-context "$IMPLEMENTATION_CONTEXT" --authority-review AUTH-1 \
+  --plan-sha256 "$PLAN_SHA" \
+  --implementation-context "$IMPLEMENTATION_CONTEXT" --alignment-review ALIGN-1 \
   >"$TEST_TMP/evidence-open.out" 2>&1; then
   echo "expected active evidence TODO to block implementation" >&2
   exit 1
@@ -242,21 +240,22 @@ assert_contains "$TEST_TMP/evidence-open.out" "active evidence/decision TODOs"
 wf resolve-todo WF-LIFECYCLE TODO-EVIDENCE \
   --resolution completed --evidence "state inspected" >/dev/null
 wf prepare-implementation WF-LIFECYCLE \
-  --decision-id DEC-1 --plan-id PLAN-1 --decision-revision 1 \
-  --implementation-context "$IMPLEMENTATION_CONTEXT" --authority-review AUTH-1 >/dev/null
+  --plan-sha256 "$PLAN_SHA" \
+  --implementation-context "$IMPLEMENTATION_CONTEXT" --alignment-review ALIGN-1 >/dev/null
 wf transition WF-LIFECYCLE implementation >/dev/null
 
 MULTIAGENT_ROOT="$TEST_REPO" MULTIAGENT_STATE_DIR="$TEST_STATE" \
   MULTIAGENT_WORKFLOW_ID=WF-LIFECYCLE MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
   "$MULTIAGENT" subagent assignment-create worker-lifecycle \
     --assignment-id LIFE-1 --role exploitation \
-    --workflow-id WF-LIFECYCLE --decision-id DEC-1 --plan-id PLAN-1 \
+    --workflow-id WF-LIFECYCLE \
     --branch "$TEST_BRANCH" --owned README.md >/dev/null
-assert_contains "$TEST_STATE/assignments/worker-lifecycle/assignment.env" "decision_revision=1"
+assert_contains "$TEST_STATE/assignments/worker-lifecycle/assignment.env" "iteration=1"
+assert_contains "$TEST_STATE/assignments/worker-lifecycle/assignment.env" "iteration_plan_sha256=$PLAN_SHA"
 assert_contains "$TEST_STATE/assignments/worker-lifecycle/assignment.env" "implementation_context_sha256="
 
 printf '\ncontext drift\n' >>"$IMPLEMENTATION_CONTEXT"
-if wf gate WF-LIFECYCLE implementation --decision-id DEC-1 --plan-id PLAN-1 \
+if wf gate WF-LIFECYCLE implementation --plan-sha256 "$PLAN_SHA" \
   >"$TEST_TMP/context-drift.out" 2>&1; then
   echo "expected changed implementation context to invalidate the implementation gate" >&2
   exit 1
@@ -300,33 +299,32 @@ EOF
 MULTIAGENT_STATE_DIR="$CONTRACT_STATE" "$MULTIAGENT" workflow contract-register \
   WF-CONTRACT --scout contract-scout-01-widget >/dev/null
 CONTRACT_HASH="$(MULTIAGENT_STATE_DIR="$CONTRACT_STATE" "$MULTIAGENT" workflow value WF-CONTRACT contract_artifact_sha256)"
+CONTRACT_PLAN_SHA="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+MULTIAGENT_STATE_DIR="$CONTRACT_STATE" "$MULTIAGENT" workflow seal-iteration \
+  WF-CONTRACT --plan-sha256 "$CONTRACT_PLAN_SHA" --worker-count 1 >/dev/null
 
-CONTRACT_REVIEWER="$CONTRACT_STATE/subagents/decision-authority-reviewer-contract"
+CONTRACT_REVIEWER="$CONTRACT_STATE/subagents/plan-alignment-reviewer-contract"
 mkdir -p "$CONTRACT_REVIEWER"
 printf '%s\n' 'role=reviewer' 'codex_access=read-only' 'workflow_id=WF-CONTRACT' \
+  "iteration_plan_sha256=$CONTRACT_PLAN_SHA" \
+  'original_task_sha256=2222222222222222222222222222222222222222222222222222222222222222' \
   >"$CONTRACT_REVIEWER/meta.env"
 printf 'finalized\n' >"$CONTRACT_REVIEWER/status"
 printf '2026-08-17T00:00:00Z\n' >"$CONTRACT_REVIEWER/finalized_at"
 printf '%s\n' \
-  'review-record: type=decision-authority verdict=pass diff=-' \
+  'review-record: type=plan-alignment verdict=pass diff=-' \
+  "plan-alignment-review: plan-sha256=$CONTRACT_PLAN_SHA original-task-sha256=2222222222222222222222222222222222222222222222222222222222222222 alignment=aligned" \
   "contract-review: artifact-sha256=$CONTRACT_HASH verdict=pass" \
   >"$CONTRACT_REVIEWER/last-message.txt"
 MULTIAGENT_STATE_DIR="$CONTRACT_STATE" MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
-  "$MULTIAGENT" workflow record-review WF-CONTRACT AUTH-CONTRACT \
-    --type decision-authority --verdict pass --evidence "contract preserved" \
-    --reviewer decision-authority-reviewer-contract >/dev/null
-MULTIAGENT_STATE_DIR="$CONTRACT_STATE" "$MULTIAGENT" decision init DEC-CONTRACT \
-  --title "Contract plan" --owner orchestrator >/dev/null
-MULTIAGENT_STATE_DIR="$CONTRACT_STATE" "$MULTIAGENT" decision add-alternative DEC-CONTRACT \
-  --plan-id PLAN-CONTRACT --summary "Apply the registered contract" \
-  --proposed-by orchestrator >/dev/null
-MULTIAGENT_STATE_DIR="$CONTRACT_STATE" "$MULTIAGENT" decision commit DEC-CONTRACT \
-  --selected-plan PLAN-CONTRACT --reason "authority reviewer accepted the full artifact" >/dev/null
+  "$MULTIAGENT" workflow record-review WF-CONTRACT ALIGN-CONTRACT \
+    --type plan-alignment --verdict pass --evidence "contract preserved" \
+    --reviewer plan-alignment-reviewer-contract >/dev/null
 CONTRACT_CONTEXT="$TEST_TMP/contract-context.md"
 printf '# Compressed context that omits the negative structural rule\n' >"$CONTRACT_CONTEXT"
 if MULTIAGENT_STATE_DIR="$CONTRACT_STATE" "$MULTIAGENT" workflow prepare-implementation \
-  WF-CONTRACT --decision-id DEC-CONTRACT --plan-id PLAN-CONTRACT --decision-revision 1 \
-  --implementation-context "$CONTRACT_CONTEXT" --authority-review AUTH-CONTRACT \
+  WF-CONTRACT --plan-sha256 "$CONTRACT_PLAN_SHA" \
+  --implementation-context "$CONTRACT_CONTEXT" --alignment-review ALIGN-CONTRACT \
   >"$TEST_TMP/contract-compression.out" 2>&1; then
   echo "expected compressed implementation context to be rejected" >&2
   exit 1
@@ -336,8 +334,8 @@ assert_contains "$TEST_TMP/contract-compression.out" \
 printf 'contract-artifact-sha256=%s\n' "$CONTRACT_HASH" >"$CONTRACT_CONTEXT"
 cat "$CONTRACT_SCOUT/last-message.txt" >>"$CONTRACT_CONTEXT"
 MULTIAGENT_STATE_DIR="$CONTRACT_STATE" "$MULTIAGENT" workflow prepare-implementation \
-  WF-CONTRACT --decision-id DEC-CONTRACT --plan-id PLAN-CONTRACT --decision-revision 1 \
-  --implementation-context "$CONTRACT_CONTEXT" --authority-review AUTH-CONTRACT >/dev/null
+  WF-CONTRACT --plan-sha256 "$CONTRACT_PLAN_SHA" \
+  --implementation-context "$CONTRACT_CONTEXT" --alignment-review ALIGN-CONTRACT >/dev/null
 MULTIAGENT_STATE_DIR="$CONTRACT_STATE" "$MULTIAGENT" workflow transition \
   WF-CONTRACT implementation >/dev/null
 printf '\nmutated\n' >>"$CONTRACT_SCOUT/last-message.txt"
@@ -355,18 +353,13 @@ loop() {
   MULTIAGENT_STATE_DIR="$LOOP_STATE" "$MULTIAGENT" workflow "$@"
 }
 loop init WF-LOOP >/dev/null
-MULTIAGENT_STATE_DIR="$LOOP_STATE" "$MULTIAGENT" decision init DEC-LOOP \
-  --title "Loop decision" --owner orchestrator >/dev/null
-MULTIAGENT_STATE_DIR="$LOOP_STATE" "$MULTIAGENT" decision add-alternative DEC-LOOP \
-  --plan-id PLAN-LOOP --summary "Implement and re-evaluate findings" \
-  --proposed-by orchestrator >/dev/null
-MULTIAGENT_STATE_DIR="$LOOP_STATE" "$MULTIAGENT" decision commit DEC-LOOP \
-  --selected-plan PLAN-LOOP --reason "Recorded lifecycle plan" >/dev/null
-loop record-review WF-LOOP AUTH-LOOP \
-  --type decision-authority --verdict pass --evidence "authority passed" >/dev/null
+LOOP_PLAN_SHA="cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+loop seal-iteration WF-LOOP --plan-sha256 "$LOOP_PLAN_SHA" --worker-count 1 >/dev/null
+loop record-review WF-LOOP ALIGN-LOOP \
+  --type plan-alignment --verdict pass --evidence "plan aligned" >/dev/null
 loop prepare-implementation WF-LOOP \
-  --decision-id DEC-LOOP --plan-id PLAN-LOOP --decision-revision 1 \
-  --implementation-context "$LOOP_CONTEXT" --authority-review AUTH-LOOP >/dev/null
+  --plan-sha256 "$LOOP_PLAN_SHA" \
+  --implementation-context "$LOOP_CONTEXT" --alignment-review ALIGN-LOOP >/dev/null
 loop transition WF-LOOP implementation >/dev/null
 loop transition WF-LOOP post-implementation --diff-hash DIFF-LOOP >/dev/null
 loop record-review WF-LOOP TECH-FINDING \
@@ -377,17 +370,19 @@ loop add-todo WF-LOOP TODO-FOLLOWUP \
 loop transition WF-LOOP pre-implementation >/dev/null
 assert_contains "$LOOP_STATE/workflows/WF-LOOP/lifecycle/lifecycle.env" "iteration=2"
 
-loop record-review WF-LOOP AUTH-LOOP-2 \
-  --type decision-authority --verdict pass --evidence "revised authority passed" >/dev/null
+LOOP_PLAN_SHA_2="dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+loop seal-iteration WF-LOOP --plan-sha256 "$LOOP_PLAN_SHA_2" --worker-count 1 >/dev/null
+loop record-review WF-LOOP ALIGN-LOOP-2 \
+  --type plan-alignment --verdict pass --evidence "revised plan aligned" >/dev/null
 printf 'revision 2\n' >"$LOOP_CONTEXT"
 loop prepare-implementation WF-LOOP \
-  --decision-id DEC-LOOP --plan-id PLAN-LOOP --decision-revision 2 \
-  --implementation-context "$LOOP_CONTEXT" --authority-review AUTH-LOOP-2 >/dev/null
+  --plan-sha256 "$LOOP_PLAN_SHA_2" \
+  --implementation-context "$LOOP_CONTEXT" --alignment-review ALIGN-LOOP-2 >/dev/null
 loop transition WF-LOOP implementation >/dev/null
 loop transition WF-LOOP post-implementation --diff-hash DIFF-FINAL >/dev/null
 loop resolve-todo WF-LOOP TODO-FOLLOWUP \
   --resolution completed --evidence "repair and verifier recheck passed" >/dev/null
-for review_type in decision-drift scope technical reflection; do
+for review_type in scope technical reflection; do
   if [[ "$review_type" == "technical" ]]; then
     reviewer_name="verifier-technical"
   else
