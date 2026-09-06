@@ -26,6 +26,7 @@ import {
 import {
   acceptsLiveInput,
   automaticResumeLimit,
+  boundedFinalMessage,
   completionExitDelayMs,
   controlMode,
   executionTerminalOutcome,
@@ -40,6 +41,7 @@ import {
   shouldAutomaticallyResume,
   submitLocalFollowup,
   validResourceId,
+  waitForTraceFinalization,
 } from "./session-runtime.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -334,13 +336,29 @@ function traceReferences(id) {
   return references;
 }
 
+function latestAgentTracesReady(id) {
+  const agents = path.join(traceRoot(id), "agents");
+  try {
+    return fs.readdirSync(agents, { withFileTypes: true })
+      .filter((item) => item.isDirectory())
+      .every((entry) => {
+        const base = path.join(agents, entry.name);
+        let attempt = "";
+        try { attempt = fs.readFileSync(path.join(base, "latest"), "utf8").trim(); } catch {}
+        return Boolean(attempt) && fs.existsSync(path.join(base, attempt, "events.jsonl"));
+      });
+  } catch {
+    return true;
+  }
+}
+
 function writeTraceSummary(id, status) {
   const root = traceRoot(id);
   fs.mkdirSync(root, { recursive: true });
   let result = "";
   let fallback = "";
-  try { result = conciseTail(fs.readFileSync(path.join(sessionStateDir(id), "orchestrator-result.md"), "utf8"), 80, 6000); } catch {}
-  try { fallback = conciseTail(fs.readFileSync(path.join(sessionStateDir(id), "orchestrator-last-message.txt"), "utf8"), 40, 6000); } catch {}
+  try { result = boundedFinalMessage(fs.readFileSync(path.join(sessionStateDir(id), "orchestrator-result.md"), "utf8"), 6000); } catch {}
+  try { fallback = boundedFinalMessage(fs.readFileSync(path.join(sessionStateDir(id), "orchestrator-last-message.txt"), "utf8"), 6000); } catch {}
   const finalMessage = selectFinalMessage(result, fallback);
   const completionRoute = workflowCompletionRoute(id);
   const terminalOutcome = executionTerminalOutcome({
@@ -893,6 +911,8 @@ async function retireSession(id, status, actor, terminalOutcome = status === "fa
     if (uidSandbox) runSessionControl(id, "stop");
     else runTmux(id, ["kill-session", "-t", id]);
   }
+  await waitForTraceFinalization({ ready: () => latestAgentTracesReady(id) });
+  checkpoint(id);
   const now = new Date().toISOString();
   record.status = status;
   record.terminalOutcome = terminalOutcome;
