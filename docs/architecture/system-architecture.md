@@ -502,7 +502,9 @@ and retains all transport, KMS, provider, and repository credentials.
 The same roles may inspect that live, deployment-scoped catalog through the
 supervisor with `multiagent ops list`, and retrieve one complete contract with
 `multiagent ops describe`. List output is intentionally compact and contains
-no parameter schema; it is discovery metadata, not authorization. The runtime
+no parameter schema. It labels each operation's request path, direct
+eligibility, and any direct-ineligibility reasons so a confined role does not
+mistake a reviewed operation for a direct read. This is discovery metadata, not authorization. The runtime
 must not substitute permit fixtures, prompt-maintained IDs, or image-local
 catalog files for the live response. Exact target, runbook digest, version,
 parameters, and current execution policy are still validated when a request is

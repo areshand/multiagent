@@ -162,6 +162,26 @@ fn list_capabilities(response: &Value, args: &[String]) -> Result<Value, String>
                 "directEligible".into(),
                 Value::Bool(direct_eligible(operation)),
             );
+            descriptor.insert(
+                "requestPath".into(),
+                Value::String(
+                    if direct_eligible(operation) {
+                        "supervisor-direct"
+                    } else {
+                        "reviewed-ops"
+                    }
+                    .into(),
+                ),
+            );
+            descriptor.insert(
+                "directIneligibilityReasons".into(),
+                Value::Array(
+                    direct_ineligibility_reasons(operation)
+                        .into_iter()
+                        .map(|reason| Value::String(reason.into()))
+                        .collect(),
+                ),
+            );
             Value::Object(descriptor)
         })
         .collect::<Vec<_>>();
@@ -179,14 +199,29 @@ fn list_capabilities(response: &Value, args: &[String]) -> Result<Value, String>
 }
 
 fn direct_eligible(operation: &Value) -> bool {
-    matches!(
+    direct_ineligibility_reasons(operation).is_empty()
+}
+
+fn direct_ineligibility_reasons(operation: &Value) -> Vec<&'static str> {
+    let mut reasons = Vec::new();
+    if !matches!(
         operation.get("access").and_then(Value::as_str),
         Some("read" | "materialize")
-    ) && operation.get("mutation").and_then(Value::as_bool) == Some(false)
-        && operation
-            .get("requiredApprovalRoles")
-            .and_then(Value::as_array)
-            .is_some_and(Vec::is_empty)
+    ) {
+        reasons.push("access-requires-reviewed-ops");
+    }
+    if operation.get("mutation").and_then(Value::as_bool) != Some(false) {
+        reasons.push("mutation-requires-reviewed-ops");
+    }
+    match operation
+        .get("requiredApprovalRoles")
+        .and_then(Value::as_array)
+    {
+        Some(roles) if roles.is_empty() => {}
+        Some(_) => reasons.push("approval-roles-required"),
+        None => reasons.push("approval-metadata-missing"),
+    }
+    reasons
 }
 
 fn describe(args: &[String]) -> Result<ExitCode, String> {
@@ -2996,7 +3031,30 @@ mod tests {
         assert_eq!(listed["operations"].as_array().unwrap().len(), 1);
         assert_eq!(listed["operations"][0]["id"], "github.clone");
         assert_eq!(listed["operations"][0]["directEligible"], true);
+        assert_eq!(listed["operations"][0]["requestPath"], "supervisor-direct");
+        assert_eq!(
+            listed["operations"][0]["directIneligibilityReasons"],
+            json!([])
+        );
         assert!(listed["operations"][0].get("parameterSchema").is_none());
+
+        let all = list_capabilities(&response, &[]).unwrap();
+        let create = all["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|operation| operation["id"] == "github.create-pr")
+            .unwrap();
+        assert_eq!(create["directEligible"], false);
+        assert_eq!(create["requestPath"], "reviewed-ops");
+        assert_eq!(
+            create["directIneligibilityReasons"],
+            json!([
+                "access-requires-reviewed-ops",
+                "mutation-requires-reviewed-ops",
+                "approval-roles-required"
+            ])
+        );
     }
 
     #[test]

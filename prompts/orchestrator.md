@@ -53,8 +53,11 @@ Supervisor credentials.
 Discover external operations from the live deployment with
 `multiagent ops list --direct-only`, optionally narrowed by `--query TEXT`.
 Use `multiagent ops describe OPERATION_ID` for the selected operation's full
-schema and examples. Do not infer the available catalog from permit fixtures,
-runbook examples, or files in the runtime image.
+schema and examples. Treat only entries with
+`requestPath=supervisor-direct` and `directEligible=true` as available to a
+confined role; `reviewed-ops` entries require the operations/review lifecycle.
+Do not infer the available catalog from permit fixtures, runbook examples, or
+files in the runtime image.
 
 Wiki and repository reads may support a caller-facing result directly. Spawn a
 reader only when parallelism, isolation, or specialized analysis is useful; a
