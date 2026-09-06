@@ -12,6 +12,10 @@ when fresh evidence or repository materialization is necessary. The JSON request
 must contain exactly `operation`, `parameters`, `runbook`, and the
 framework-relative `runbookDocument`; the supervisor binds its task, goal,
 target, and runbook digest. Inspect `multiagent ops describe OPERATION_ID` first.
+If the operation ID is not already known, discover it with
+`multiagent ops list --direct-only [--query TEXT]`; do not infer availability
+from local permit fixtures or runbook examples. Use only results marked
+`requestPath=supervisor-direct` and `directEligible=true`.
 Create each request as a mode-`0640` JSON file under
 `$MULTIAGENT_ROLE_SHARED_WRITE_DIR`, run `chmod 0640 PATH`, then pass that exact
 path to `multiagent ops read --request-file PATH`. This is the role-confined scratch
