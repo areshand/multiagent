@@ -56,6 +56,23 @@ jobs:
           platforms: linux/amd64
           provenance: mode=max
           sbom: true
+      - uses: docker/metadata-action@c1e51972afc2121e065aed6d45c65596fe445f3f # v5
+        id: logger-metadata
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/multiagent-logger
+          tags: |
+            type=raw,value=main,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+      - uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6
+        with:
+          context: .
+          file: docker/logger/Dockerfile
+          push: true
+          tags: ${{ steps.logger-metadata.outputs.tags }}
+          labels: ${{ steps.logger-metadata.outputs.labels }}
+          platforms: linux/amd64
+          provenance: mode=max
+          sbom: true
 
   publish-wiki:
     runs-on: ubuntu-latest

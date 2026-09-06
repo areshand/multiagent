@@ -54,6 +54,12 @@ cargo run -p multiagent-logger -- submit-trace-commitment \
   --media-type application/gzip
 ```
 
+The helper emits `trace.artifact_exported`. Its payload contains only the
+artifact digest, byte size, media type, and storage reference; it never sends
+the trace body. Use a deterministic event ID and retain the event in a durable
+outbox until the Logger returns `204`, because acknowledgement remains
+idempotent transport evidence rather than workflow authority.
+
 ## API and configuration
 
 The API exposes event append, log heads/entries/checkpoints, the public key,
