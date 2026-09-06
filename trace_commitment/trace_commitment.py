@@ -27,6 +27,10 @@ def sha256_bytes(value: bytes) -> str:
     return f"sha256:{hashlib.sha256(value).hexdigest()}"
 
 
+def remove_prefix(value: str, prefix: str) -> str:
+    return value[len(prefix) :] if value.startswith(prefix) else value
+
+
 def sha256_file(path: Path) -> tuple[str, int]:
     digest = hashlib.sha256()
     size = 0
@@ -56,7 +60,7 @@ def safe_identifier(value: str, name: str) -> str:
 def s3_destination(value: str) -> tuple[str, str]:
     if not value.startswith("s3://") or any(character in value for character in "\r\n?#\\"):
         raise ValueError("trace destination must be a bounded s3:// URI")
-    bucket, separator, raw_prefix = value.removeprefix("s3://").partition("/")
+    bucket, separator, raw_prefix = remove_prefix(value, "s3://").partition("/")
     parts = PurePosixPath(raw_prefix.strip("/")).parts
     if not bucket or not separator or not parts or raw_prefix != raw_prefix.strip("/"):
         raise ValueError("trace destination requires a bucket and relative prefix")
@@ -168,7 +172,7 @@ class TraceCommitter:
         }
         encoded = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode() + b"\n"
         digest = sha256_bytes(encoded)
-        digest_hex = digest.removeprefix("sha256:")
+        digest_hex = remove_prefix(digest, "sha256:")
         manifest_uri = f"s3://{self.bucket}/{self.prefix}/commitments/{digest_hex}.json"
         manifest_file = self.work / "manifests" / f"{digest_hex}.json"
         self._write_bytes_atomic(manifest_file, encoded)

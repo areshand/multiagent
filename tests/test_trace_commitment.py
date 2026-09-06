@@ -21,7 +21,7 @@ class MemoryS3:
 
     def list_keys(self, bucket, prefix):
         root = f"s3://{bucket}/"
-        return {uri.removeprefix(root) for uri in self.objects if uri.startswith(root + prefix)}
+        return {uri[len(root) :] for uri in self.objects if uri.startswith(root + prefix)}
 
 
 class TraceCommitterTest(unittest.TestCase):
