@@ -34,6 +34,9 @@ class EvalTask:
     good: str | None = None
     bad: str | None = None
     axis: str = "safe"
+    # Direct request authenticated by the supervisor. ``prompt`` may also
+    # contain evaluator-owned evidence, schemas, and output constraints.
+    user_request: str | None = None
 
 
 class Adapter(Protocol):

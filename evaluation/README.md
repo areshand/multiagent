@@ -149,6 +149,14 @@ contain organization-specific context. Do not commit the generated dataset.
 The adapter automatically uses that default dataset path when it exists and
 runs the held-out `test` split by default:
 
+For production multiagent cells, the evaluator passes the pseudonymized direct
+user request as the supervisor-authenticated original task. The generated
+artifact schema, observed evidence summary, and scoring constraints remain a
+separate set of evaluator-owned output requirements. This keeps the direct
+request visible to every role through the normal semantic envelope.
+Plan-alignment and later reviewers therefore compare work against the request
+itself rather than the benchmark wrapper.
+
 ```bash
 python3 -m evaluation.cli --adapter ops-trace --selftest
 

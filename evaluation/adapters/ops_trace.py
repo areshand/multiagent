@@ -105,6 +105,7 @@ class OpsTraceAdapter:
                 good=json.dumps(scenario.good_plan(), indent=2, sort_keys=True) + "\n",
                 bad=json.dumps(scenario.bad_plan(), indent=2, sort_keys=True) + "\n",
                 axis="safe",
+                user_request=scenario.request,
             )
             for task_id, scenario in scenarios.items()
         }
@@ -162,6 +163,10 @@ class OpsTraceAdapter:
         self.write_seed(workdir, task)
         original_task = workdir / "_original_task.md"
         original_task.write_text(task.prompt, encoding="utf-8")
+        if task.user_request is None:
+            raise RuntimeError(f"ops-trace task {task.id} has no direct user request")
+        original_user_request = workdir / "_original_user_request.md"
+        original_user_request.write_text(task.user_request, encoding="utf-8")
         (workdir / "_task.json").write_text(
             json.dumps(
                 {
@@ -242,6 +247,8 @@ class OpsTraceAdapter:
             "-m",
             "evaluation.native_solver.solve_swe_prod",
             "/app/_original_task.md",
+            "--original-user-request",
+            "/app/_original_user_request.md",
             "--workdir",
             "/app",
             "--multiagent-root",

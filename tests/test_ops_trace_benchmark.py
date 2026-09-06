@@ -16,8 +16,9 @@ from evaluation.ops_trace_dataset import (
     pseudonymize,
     write_dataset,
 )
-from evaluation.ops_trace_compare import _optimization_summary, _report_path, _runtime_failed
+from evaluation.adapters.ops_trace import OpsTraceAdapter
 from evaluation.core import git_snapshot
+from evaluation.ops_trace_compare import _optimization_summary, _report_path, _runtime_failed
 from evaluation.tasks.ops_trace import SYNTHETIC_SCENARIOS, score_ops_plan
 
 
@@ -26,6 +27,18 @@ def _write_jsonl(path: Path, records: list[dict]) -> None:
 
 
 class OpsTraceScorerTest(unittest.TestCase):
+    def test_adapter_preserves_direct_request_separately_from_benchmark_prompt(self) -> None:
+        scenario = SYNTHETIC_SCENARIOS["synthetic-secret-investigation"]
+        adapter = OpsTraceAdapter(
+            scenarios_override={scenario.id: scenario},
+            source_override="unit test",
+        )
+
+        task = adapter.tasks[scenario.id]
+        self.assertEqual(task.user_request, scenario.request)
+        self.assertNotEqual(task.prompt, task.user_request)
+        self.assertIn("Create `ops_plan.json`", task.prompt)
+
     def test_ops_plan_worker_uses_small_role_specific_prompt(self) -> None:
         root = Path(__file__).resolve().parents[1]
         shared = (root / "prompts/worker.md").read_text(encoding="utf-8")

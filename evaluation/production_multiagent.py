@@ -109,6 +109,10 @@ def run_production_cell(
     adapter.write_seed(workdir, task)
     original_task = workdir / "_original_task.md"
     original_task.write_text(task.prompt, encoding="utf-8")
+    original_user_request = None
+    if task.user_request is not None:
+        original_user_request = workdir / "_original_user_request.md"
+        original_user_request.write_text(task.user_request, encoding="utf-8")
     (workdir / "_task.json").write_text(
         json.dumps(
             {"adapter": adapter.name, "task": task_id, "arm": arm, "model": model, "run": run_id},
@@ -153,6 +157,26 @@ def run_production_cell(
 
     container_name = f"{runtime_prefix}-{os.getpid()}-{task_id[-8:]}-{run_id}"
     model_name = model or "gpt-5.6-sol"
+    solver_arguments = [
+        "-m",
+        "evaluation.native_solver.solve_swe_prod",
+        "/app/_original_task.md",
+    ]
+    if original_user_request is not None:
+        solver_arguments += [
+            "--original-user-request",
+            "/app/_original_user_request.md",
+        ]
+    solver_arguments += [
+        "--workdir",
+        "/app",
+        "--multiagent-root",
+        "/opt/multiagent",
+        "--timeout",
+        str(timeout),
+        "--prompt-profile",
+        prompt_profile,
+    ]
     create_command = [
         docker,
         "create",
@@ -179,17 +203,7 @@ def run_production_cell(
         "-e",
         "GIT_CONFIG_VALUE_0=/app",
         image,
-        "-m",
-        "evaluation.native_solver.solve_swe_prod",
-        "/app/_original_task.md",
-        "--workdir",
-        "/app",
-        "--multiagent-root",
-        "/opt/multiagent",
-        "--timeout",
-        str(timeout),
-        "--prompt-profile",
-        prompt_profile,
+        *solver_arguments,
     ]
 
     runtime_stdout = runtime_dir / "container.stdout.txt"
