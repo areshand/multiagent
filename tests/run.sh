@@ -1247,7 +1247,7 @@ PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 "$ROOT/tests/test_native_s
 PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 "$ROOT/tests/test_swe_outcomes.py"
 PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 "$ROOT/tests/test_swe_provenance.py"
 PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 "$ROOT/tests/test_migration_contracts.py"
-PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 "$ROOT/tests/test_trace_exporter.py"
+PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 "$ROOT/tests/test_trace_commitment.py"
 python3 -m evaluation.swe_bench_pro --help >"$TMPDIR/swe-bench-pro-help.out"
 assert_file_contains "$TMPDIR/swe-bench-pro-help.out" "Evaluate the production multiagent solver"
 assert_file_not_contains "$TMPDIR/swe-bench-pro-help.out" "--agent-framework"

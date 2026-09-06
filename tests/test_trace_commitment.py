@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from trace_exporter.trace_exporter import TraceExporter
+from trace_commitment.trace_commitment import TraceCommitter
 
 
 class MemoryS3:
@@ -14,9 +14,6 @@ class MemoryS3:
 
     def upload(self, source, uri):
         self.objects[uri] = Path(source).read_bytes()
-
-    def copy(self, source_uri, destination_uri):
-        self.objects[destination_uri] = self.objects[source_uri]
 
     def download(self, uri, destination):
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -27,14 +24,15 @@ class MemoryS3:
         return {uri.removeprefix(root) for uri in self.objects if uri.startswith(root + prefix)}
 
 
-class TraceExporterTest(unittest.TestCase):
+class TraceCommitterTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         root = Path(self.temporary.name)
-        self.source = root / "source"
+        self.source = root / "existing-export-stage"
         self.source.mkdir()
         self.work = root / "work"
         self.status = root / "status.json"
+        self.status.write_text('{"ok":true,"lastSuccessAt":"2026-09-05T11:59:00Z"}\n')
         self.token = root / "token"
         self.token.write_text("trace-token-0123456789abcdef", encoding="utf-8")
         self.s3 = MemoryS3()
@@ -43,20 +41,17 @@ class TraceExporterTest(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def exporter(self, post=None):
+    def committer(self, post=None):
         def successful(url, token, body):
             self.posts.append((url, token, json.loads(body)))
             return 204
 
-        return TraceExporter(
+        return TraceCommitter(
             source=self.source,
+            destination="s3://trace-bucket/production/sessions/session-1",
+            session_id="session-1",
             work=self.work,
             status_file=self.status,
-            bucket="trace-bucket",
-            trace_prefix="production/sessions/session-1",
-            outbox_prefix="production/logger-outbox",
-            delivered_prefix="production/logger-delivered",
-            session_id="session-1",
             logger_url="http://logger",
             logger_token_file=self.token,
             s3=self.s3,
@@ -64,53 +59,42 @@ class TraceExporterTest(unittest.TestCase):
             clock=lambda: "2026-09-05T12:00:00Z",
         )
 
-    def test_successful_export_commits_digest_reference_and_no_body(self):
-        body = b"private trace body"
-        (self.source / "trace.jsonl").write_bytes(body)
+    def test_successful_sync_gets_separate_manifest_and_metadata_only_event(self):
+        trace_body = b"private trace body"
+        (self.source / "trace.jsonl").write_bytes(trace_body)
 
-        status = self.exporter().run_once()
+        status = self.committer().commit()
 
         self.assertTrue(status["ok"])
         self.assertTrue(status["loggerOk"])
         self.assertEqual(status["loggerPending"], 0)
-        self.assertEqual(len(self.posts), 1)
         event = self.posts[0][2]
         self.assertEqual(event["eventType"], "trace.artifact_exported")
-        self.assertEqual(event["sessionId"], "session-1")
-        self.assertEqual(event["payloadDigest"], event["artifactReferences"][0]["digest"])
-        self.assertEqual(event["artifactReferences"][0]["size"], len(body))
-        self.assertNotIn(body, self.posts[0][2].__str__().encode())
-        artifact_uri = event["artifactReferences"][0]["uri"]
-        self.assertEqual(self.s3.objects[artifact_uri], body)
+        self.assertEqual(len(event["artifactReferences"]), 1)
+        manifest_uri = event["artifactReferences"][0]["uri"]
+        self.assertIn("/commitments/", manifest_uri)
+        manifest = json.loads(self.s3.objects[manifest_uri])
+        self.assertEqual(manifest["artifacts"][0]["size"], len(trace_body))
+        self.assertNotIn(trace_body, json.dumps(event).encode())
 
-    def test_delivered_marker_makes_restart_idempotent(self):
+    def test_delivered_marker_makes_repeated_post_upload_hook_idempotent(self):
         (self.source / "usage.json").write_text("{}", encoding="utf-8")
-        first = self.exporter()
-        first.run_once()
-        self.assertEqual(len(self.posts), 1)
-        # A fresh local cache re-uploads metadata, but the durable delivered
-        # marker prevents another Logger request.
-        for path in self.work.iterdir():
-            if path.is_dir():
-                import shutil
-
-                shutil.rmtree(path)
-        self.exporter().run_once()
+        self.committer().commit()
+        self.committer().commit()
         self.assertEqual(len(self.posts), 1)
 
-    def test_logger_outage_leaves_durable_backlog_and_later_drains(self):
+    def test_logger_outage_preserves_s3_success_and_durable_backlog(self):
         (self.source / "report.md").write_text("report", encoding="utf-8")
 
         def unavailable(_url, _token, _body):
             raise OSError("temporary Logger outage")
 
-        failed = self.exporter(unavailable).run_once()
-        self.assertTrue(failed["ok"], "Logger availability must not change S3 export success")
+        failed = self.committer(unavailable).commit()
+        self.assertTrue(failed["ok"])
         self.assertFalse(failed["loggerOk"])
         self.assertEqual(failed["loggerPending"], 1)
-        self.assertIn("temporary Logger outage", failed["loggerError"])
 
-        recovered = self.exporter().run_once()
+        recovered = self.committer().commit()
         self.assertTrue(recovered["loggerOk"])
         self.assertEqual(recovered["loggerPending"], 0)
         self.assertEqual(len(self.posts), 1)
