@@ -56,6 +56,10 @@ EXTERNAL_OR_MUTATING_REQUEST_RE = re.compile(
     r"push(?:ed|ing)?|remov(?:e|ed|ing)|restart(?:ed|ing)?|rotat(?:e|ed|ing)|ship(?:ped|ping)?|"
     r"start(?:ed|ing)?|stop(?:ped|ping)?|terminat(?:e|ed|ing)|updat(?:e|ed|ing)|writ(?:e|ing))\b"
 )
+CONFIRMATION_ONLY_REQUEST_RE = re.compile(
+    r"(?i)^\s*(?:yes|yep|confirm(?:ed)?|approv(?:e|ed)|go\s+ahead|proceed|do\s+it|ok(?:ay)?)"
+    r"[.!\s]*$"
+)
 SECRET_REQUEST_RE = re.compile(
     r"(?i)(?:password|passwd|private[_ -]?key|secret|api[_ -]?key|access[_ -]?token|"
     r"credentials?|\.env\b)"
@@ -228,7 +232,13 @@ def _response_kind(turn: dict[str, Any], has_followup: bool) -> str | None:
     return None
 
 
-def _eligible(turn: dict[str, Any], kind: str, has_history: bool) -> bool:
+def _eligible(
+    turn: dict[str, Any],
+    kind: str,
+    has_history: bool,
+    previous_assistant: str = "",
+    previous_had_tool_calls: bool = False,
+) -> bool:
     user = str(turn["user"]).strip()
     assistant = str(turn["assistant"]).strip()
     if (
@@ -241,7 +251,14 @@ def _eligible(turn: dict[str, Any], kind: str, has_history: bool) -> bool:
         return False
     if DELEGATION_REQUEST_RE.search(user):
         return False
-    if kind != "clarification" and EXTERNAL_OR_MUTATING_REQUEST_RE.search(user):
+    if kind != "read_only" and previous_had_tool_calls:
+        return False
+    if EXTERNAL_OR_MUTATING_REQUEST_RE.search(user):
+        return False
+    if (
+        CONFIRMATION_ONLY_REQUEST_RE.fullmatch(user)
+        and EXTERNAL_OR_MUTATING_REQUEST_RE.search(previous_assistant)
+    ):
         return False
     if kind == "clarification" and len(assistant) > 400:
         return False
@@ -305,7 +322,19 @@ def build_cases(
         source_sha = hashlib.sha256(path.read_bytes()).hexdigest()
         for index, turn in enumerate(turns):
             kind = _response_kind(turn, index + 1 < len(turns))
-            if kind is None or not _eligible(turn, kind, index > 0):
+            previous_assistant = (
+                str(turns[index - 1].get("assistant") or "") if index > 0 else ""
+            )
+            previous_had_tool_calls = (
+                bool(turns[index - 1]["calls"]) if index > 0 else False
+            )
+            if kind is None or not _eligible(
+                turn,
+                kind,
+                index > 0,
+                previous_assistant,
+                previous_had_tool_calls,
+            ):
                 continue
             history = []
             if index > 0:
@@ -322,7 +351,7 @@ def build_cases(
                         {
                             "role": "assistant",
                             "content": pseudonymize_conversation(
-                                str(previous["assistant"]), 1_200
+                                str(previous["assistant"]), 4_000
                             ),
                         }
                     )
@@ -409,6 +438,7 @@ def write_dataset(output: Path, cases: Iterable[dict[str, Any]]) -> dict[str, An
         json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    temporary.chmod(0o600)
     temporary.replace(output)
     return payload
 
@@ -423,7 +453,13 @@ def main() -> int:
     )
     parser.add_argument(
         "--output",
-        default=str(Path.home() / "projects/traces/conversation-trace-cases.json"),
+        default=str(
+            Path.home()
+            / "projects"
+            / "traces"
+            / "bowu_bench"
+            / "conversation-trace-cases.json"
+        ),
     )
     parser.add_argument("--max-cases", type=int, default=12)
     parser.add_argument("--salt", default="conversation-trace-v1")
