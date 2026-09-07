@@ -239,11 +239,14 @@ python3 -m evaluation.trace_dataset \
 The generator accepts only multi-turn cases, removes runtime-injected context,
 rejects requests mentioning credentials or external mutations, and classifies
 read-only cases only when every observed tool call is on a conservative local
-read allowlist. The resulting dataset contains pseudonymized user/assistant
-prose, remains `private: true` and `publishable: false`, and must not be
-committed or replayed through a model without explicit approval. The combined
-manifest nests the source manifests and their hashes; it does not copy raw
-traces.
+read allowlist. Prose-only answers and clarifications are excluded when the
+preceding turn used tools, because their reference answers can depend on hidden
+evidence that the replay does not provide. Standalone confirmations of a
+preceding external mutation are excluded for the same reason. The resulting
+dataset contains pseudonymized user/assistant prose, remains `private: true`
+and `publishable: false`, and must not be committed or replayed through a model
+without explicit approval. The combined manifest nests the source manifests
+and their hashes; it does not copy raw traces.
 
 Build the production images for the revisions being compared. Then exhaust all
 36 rows serially so candidate latency does not include inter-cell contention:

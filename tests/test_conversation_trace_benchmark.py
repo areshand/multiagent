@@ -95,6 +95,53 @@ class ConversationTraceDatasetTest(unittest.TestCase):
         self.assertEqual({case["response_kind"] for case in cases}, {"answer", "clarification", "read_only"})
         self.assertFalse(any("Change the configuration" in case["request"] for case in cases))
 
+    def test_dataset_excludes_confirmation_of_external_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            rollout = Path(tmp) / "rollout.jsonl"
+            records = []
+            records += _turn(
+                "What remains for the release?",
+                "Confirm merging service #35 and then service #37.",
+            )
+            records += _turn(
+                "Confirm",
+                "Service #35 merged. Service #37 is blocked. Which merge mode should I use?",
+            )
+            records += _turn("Use auto-merge.", "Auto-merge was enabled.")
+            rollout.write_text(
+                "".join(json.dumps(item) + "\n" for item in records),
+                encoding="utf-8",
+            )
+
+            cases = build_cases([Path(tmp)], max_cases=20, salt="test")
+
+        self.assertFalse(any(case["request"] == "Confirm" for case in cases))
+
+    def test_dataset_excludes_followup_that_depends_on_hidden_tool_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            rollout = Path(tmp) / "rollout.jsonl"
+            records = []
+            records += _turn(
+                "Inspect the repository configuration.",
+                "The configured destination is wallet A.",
+                [("exec_command", {"cmd": "rg -n destination config.yaml"})],
+            )
+            records += _turn(
+                "Does that cover refunds too?",
+                "Yes. The hidden repository evidence also routes refunds to wallet A.",
+            )
+            records += _turn("Thanks, what was the result?", "Refunds route to wallet A.")
+            rollout.write_text(
+                "".join(json.dumps(item) + "\n" for item in records),
+                encoding="utf-8",
+            )
+
+            cases = build_cases([Path(tmp)], max_cases=20, salt="test")
+
+        self.assertFalse(
+            any(case["request"] == "Does that cover refunds too?" for case in cases)
+        )
+
     def test_dataset_is_private_and_does_not_store_raw_paths(self) -> None:
         cases = [
             {
