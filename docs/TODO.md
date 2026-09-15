@@ -84,17 +84,43 @@ must also be represented or linked from this file.
   the query service nor the maintenance agent receives Wiki-write or trace-read
   credentials.
 
-## Production MCP Joint Test
+## Production MCP Integration Status
+
+The initial deployed integration completed in August 2026. The milestones below
+record that historical result; they do not certify the current deployment
+against later architecture requirements. Status was reconciled with retained
+deployment records on September 15, 2026; no live acceptance test was rerun.
+
+### Completed Deployment Milestones
 
 - [x] Activate the existing Linux UID and Landlock boundary in the production container.
 - [x] Prevent role processes from inheriting AWS, KMS, prod-mcp, and GitHub credentials.
 - [x] Add supervisor-owned KMS permit signing for generic runbook operations with a sealed independent reviewer gate.
-- [x] Configure the multiagent StatefulSet with the correct runtime variables and credential group.
-- [ ] Pin the immutable multiagent KMS public key in prod-mcp.
-- [ ] Persist multiagent traces to a scoped S3 prefix.
-- [ ] Provision an approved repository for task execution.
+- [x] Configure the initial multiagent StatefulSet with the correct runtime variables and credential group.
+- [x] Pin the supervisor verification key in prod-mcp using an immutable KMS key
+  ARN, explicit key ID, and region. The August 22 deployment configuration and
+  later deployment records contain the pin.
+- [x] Persist session traces, requests, and operation receipts to a scoped S3
+  prefix. The August 23 Grafana session has recorded S3 object verification.
+- [x] Provision a catalog-backed repository for task execution. The later
+  [deployed Wiki MVP](https://github.com/areshand/multiagent/pull/87) also records
+  a completed production thread initially targeting multiagent and a catalog
+  covering 111 repositories.
 - [x] Pass the local malicious-agent boundary and joint contract tests.
-- [ ] Pass the deployed testnet Grafana log-read joint test.
+- [x] Pass the initial deployed testnet Grafana log-read integration: the
+  August 23 session retrieved real Loki logs through prod-mcp and retained a
+  successful operation receipt and S3 evidence.
+
+### Remaining Deployment Verification
+
+- [ ] Run the full
+  [current end-to-end acceptance path](architecture/system-architecture.md#required-end-to-end-acceptance-path)
+  on the intended deployed revisions. Record component image/commit identifiers,
+  authenticated caller and confined-role evidence, reviewer approval, KMS permit
+  verification, a real Grafana/Loki receipt, S3 trace persistence, independent
+  Logger commitment ingestion, checkpoint readback and restart continuity, and
+  accurate integration health/readiness. The August Grafana result predates the
+  independent Logger and does not close this broader acceptance item.
 
 ## OSS Positioning And Adoption
 
