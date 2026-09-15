@@ -88,9 +88,8 @@ must also be represented or linked from this file.
 
 The initial deployed integration completed in August 2026. The milestones below
 record that historical result; they do not certify the current deployment
-against later architecture requirements. See the
-[deployment evidence note](evidence/2026-08-production-integration.md) for dates,
-receipt identifiers, source provenance, and verification limits.
+against later architecture requirements. Status was reconciled with retained
+deployment records on September 15, 2026; no live acceptance test was rerun.
 
 ### Completed Deployment Milestones
 
@@ -249,4 +248,5 @@ Evidence rules for checking these boxes (see
 - [x] Add a reproducible benchmark section with exact commands and a compact,
   relocatable provenance validator built on reusable framework primitives.
 - [x] Complete these credibility basics before significant external promotion.
+
 
