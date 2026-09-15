@@ -248,5 +248,3 @@ Evidence rules for checking these boxes (see
 - [x] Add a reproducible benchmark section with exact commands and a compact,
   relocatable provenance validator built on reusable framework primitives.
 - [x] Complete these credibility basics before significant external promotion.
-
-
