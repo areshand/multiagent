@@ -26,6 +26,7 @@ printf 'test\n' >"$TEST_REPO/README.md"
 git -C "$TEST_REPO" add README.md
 git -C "$TEST_REPO" commit -q -m initial
 TEST_BRANCH="$(git -C "$TEST_REPO" branch --show-current)"
+export MULTIAGENT_ROOT="$TEST_REPO"
 
 BYPASS_STATE="$TEST_TMP/bypass-state"
 if MULTIAGENT_ROOT="$TEST_REPO" MULTIAGENT_STATE_DIR="$BYPASS_STATE" \
@@ -154,12 +155,16 @@ printf 'Diagnose the alert and propose a bounded repair if necessary.\n' >"$REPA
 printf 'Approve repairing deploy/service.yaml and allowing reviewed operations?\n' >"$REPAIR_RESULT"
 MULTIAGENT_STATE_DIR="$REPAIR_STATE" MULTIAGENT_ORIGINAL_TASK_FILE="$REPAIR_TASK" \
   "$MULTIAGENT" workflow init WF-REPAIR >/dev/null
+# Escalation must preserve unresolved work rather than claiming success.
+mkdir -p "$REPAIR_STATE/todos/NEEDS-HUMAN"
+printf 'open\n' >"$REPAIR_STATE/todos/NEEDS-HUMAN/status"
 MULTIAGENT_STATE_DIR="$REPAIR_STATE" MULTIAGENT_WORKFLOW_ID=WF-REPAIR \
   MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 MULTIAGENT_AUTHORITY_SCOPE=observe \
   "$MULTIAGENT" orchestrator complete --request-review --result-file "$REPAIR_RESULT" \
     --path deploy/service.yaml --reviewed-ops >/dev/null
 assert_contains "$REPAIR_STATE/workflows/WF-REPAIR/lifecycle/lifecycle.env" \
   "terminal_outcome=review_requested"
+assert_contains "$REPAIR_STATE/todos/NEEDS-HUMAN/status" "open"
 assert_contains "$REPAIR_STATE/workflows/WF-REPAIR/lifecycle/human-review-repair-paths.json" \
   '["deploy/service.yaml"]'
 assert_contains "$REPAIR_STATE/workflows/WF-REPAIR/lifecycle/human-review-effects.json" '["source-write","reviewed-ops"]'
@@ -576,6 +581,8 @@ EMPTY_DIFF_SHA256="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b
 printf 'review-record: type=read-only-integrity verdict=pass diff=%s\n' \
   "$EMPTY_DIFF_SHA256" \
   >"$READ_ONLY_STATE/reviewer-evidence/$READ_ONLY_REVIEWER/last-message.txt"
+printf 'output_sha256=%s\n' "$(shasum -a 256 "$READ_ONLY_STATE/reviewer-evidence/$READ_ONLY_REVIEWER/last-message.txt" | awk '{print $1}')" \
+  >>"$READ_ONLY_STATE/reviewer-evidence/$READ_ONLY_REVIEWER/evidence.env"
 READ_ONLY_RESULT="$READ_ONLY_STATE/read-only-result.md"
 printf 'The repository evidence supports the bounded answer.\n' >"$READ_ONLY_RESULT"
 MULTIAGENT_ROOT="$SHORTCUT_REPO" MULTIAGENT_STATE_DIR="$READ_ONLY_STATE" \
@@ -611,6 +618,107 @@ if MULTIAGENT_ROOT="$SHORTCUT_REPO" MULTIAGENT_STATE_DIR="$READ_ONLY_WRITE_STATE
   exit 1
 fi
 assert_contains "$TEST_TMP/read-only-write.out" "non-read-only launch"
+
+# A caller that explicitly asks for a reviewer cannot substitute its report.
+REVIEW_SEAL_STATE="$TEST_TMP/read-only-review-seal"
+cp -R "$READ_ONLY_STATE" "$REVIEW_SEAL_STATE"
+sed -i.bak \
+  -e 's/phase=complete/phase=pre-implementation/' \
+  -e 's/^candidate_diff_hash=.*/candidate_diff_hash=/' \
+  -e 's/^reviewed_diff_hash=.*/reviewed_diff_hash=/' \
+  "$REVIEW_SEAL_STATE/workflows/WF-READ-ONLY/lifecycle/lifecycle.env"
+printf 'changed report\n' >>"$REVIEW_SEAL_STATE/reviewer-evidence/$READ_ONLY_REVIEWER/last-message.txt"
+if MULTIAGENT_ROOT="$SHORTCUT_REPO" MULTIAGENT_STATE_DIR="$REVIEW_SEAL_STATE" \
+  MULTIAGENT_WORKFLOW_ID=WF-READ-ONLY MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
+  "$MULTIAGENT" orchestrator complete --read-only --result-file "$REVIEW_SEAL_STATE/read-only-result.md" \
+    --reviewer "$READ_ONLY_REVIEWER" >"$TEST_TMP/read-only-review-seal.out" 2>&1; then
+  echo 'expected requested reviewer evidence seal to be checked' >&2
+  exit 1
+fi
+assert_contains "$TEST_TMP/read-only-review-seal.out" 'failed its supervisor output seal'
+
+# All supported read-only routes enforce completion without a model verdict.
+for shortcut_route in --read-only --observe --auto; do
+  for shortcut_case in valid direct-evidence running writer source-state task-digest lifecycle-todo todo finding dirty untracked reviewed pending-request no-reader; do
+    shortcut_state="$TEST_TMP/shortcut-${shortcut_route#--}-$shortcut_case"
+    mkdir -p "$shortcut_state/launch-authorizations/reader-01"
+    MULTIAGENT_STATE_DIR="$shortcut_state" MULTIAGENT_ORIGINAL_TASK_FILE="$SHORTCUT_TASK" \
+      "$MULTIAGENT" workflow init WF-SHORTCUT >/dev/null
+    shortcut_lifecycle="$shortcut_state/workflows/WF-SHORTCUT/lifecycle"
+    printf '%s\n' 'name=reader-01' 'role=reader' 'access=read-only' \
+      'workflow_id=WF-SHORTCUT' 'state=completed' \
+      >"$shortcut_state/launch-authorizations/reader-01/launch.env"
+    printf 'The completed reader supports this answer.\n' >"$shortcut_state/result.md"
+    expected_rejection=""
+    case "$shortcut_case" in
+      valid) ;;
+      direct-evidence)
+        mkdir -p "$shortcut_state/operations/direct-read"
+        printf '{}\n' >"$shortcut_state/operations/direct-read/direct-request.json"
+        printf '{}\n' >"$shortcut_state/operations/direct-read/receipt.redacted.json"
+        ;;
+      running)
+        sed -i.bak 's/state=completed/state=running/' "$shortcut_state/launch-authorizations/reader-01/launch.env"
+        expected_rejection='unfinished launch' ;;
+      writer)
+        sed -i.bak 's/access=read-only/access=workspace-write/' "$shortcut_state/launch-authorizations/reader-01/launch.env"
+        expected_rejection='non-read-only launch' ;;
+      source-state)
+        sed -i.bak 's/^iteration_plan_sha256=.*/iteration_plan_sha256=sealed-plan/' "$shortcut_lifecycle/lifecycle.env"
+        expected_rejection='started source lifecycle' ;;
+      task-digest)
+        sed -i.bak 's/^original_task_sha256=.*/original_task_sha256=wrong-digest/' "$shortcut_lifecycle/lifecycle.env"
+        expected_rejection='original task' ;;
+      lifecycle-todo)
+        printf 'TODO-A\tdirect\tunfinished work\ttest\topen\n' >>"$shortcut_lifecycle/todos.tsv"
+        expected_rejection='active TODOs' ;;
+      todo)
+        mkdir -p "$shortcut_state/todos/TODO-OPEN"
+        printf 'open\n' >"$shortcut_state/todos/TODO-OPEN/status"
+        expected_rejection='open-todo' ;;
+      finding)
+        mkdir -p "$shortcut_state/findings/FINDING-OPEN"
+        printf 'severity=blocking\n' >"$shortcut_state/findings/FINDING-OPEN/finding.env"
+        expected_rejection='unqueued-blocking-finding' ;;
+      dirty)
+        printf 'changed\n' >>"$SHORTCUT_REPO/README.md"
+        expected_rejection='unchanged repository diff' ;;
+      untracked)
+        printf 'new source\n' >"$SHORTCUT_REPO/new-source.txt"
+        expected_rejection='unchanged repository diff' ;;
+      reviewed)
+        mkdir -p "$shortcut_state/operations/reviewed-op"
+        printf '{}\n' >"$shortcut_state/operations/reviewed-op/receipt.json"
+        expected_rejection='external operation receipts' ;;
+      pending-request)
+        mkdir -p "$shortcut_state/operations/requests/digest"
+        printf '{}\n' >"$shortcut_state/operations/requests/digest/request.json"
+        expected_rejection='reviewed operation requests' ;;
+      no-reader)
+        rm -rf "$shortcut_state/launch-authorizations/reader-01"
+        if [[ "$shortcut_route" == --read-only ]]; then
+          expected_rejection='at least one reader'
+        fi ;;
+    esac
+    shortcut_exit=0
+    MULTIAGENT_ROOT="$SHORTCUT_REPO" MULTIAGENT_STATE_DIR="$shortcut_state" \
+      MULTIAGENT_WORKFLOW_ID=WF-SHORTCUT MULTIAGENT_LIFECYCLE_ENFORCEMENT=1 \
+      MULTIAGENT_AUTHORITY_SCOPE=user \
+      "$MULTIAGENT" orchestrator complete "$shortcut_route" --result-file "$shortcut_state/result.md" \
+      >"$shortcut_state/completion.out" 2>&1 || shortcut_exit=$?
+    git -C "$SHORTCUT_REPO" restore README.md
+    rm -f "$SHORTCUT_REPO/new-source.txt"
+    if [[ -n "$expected_rejection" ]]; then
+      [[ "$shortcut_exit" -ne 0 ]] || { echo "unexpected completion: $shortcut_route $shortcut_case" >&2; exit 1; }
+      assert_contains "$shortcut_state/completion.out" "$expected_rejection"
+      assert_contains "$shortcut_lifecycle/lifecycle.env" 'phase=pre-implementation'
+    else
+      [[ "$shortcut_exit" -eq 0 ]] || { cat "$shortcut_state/completion.out" >&2; exit 1; }
+      assert_contains "$shortcut_lifecycle/lifecycle.env" 'terminal_outcome=succeeded'
+      [[ "$(wc -l <"$shortcut_lifecycle/reviews.tsv")" -eq 1 ]] || exit 1
+    fi
+  done
+done
 
 EXTERNAL_STATE="$TEST_TMP/external-state"
 EXTERNAL_ROOT="$TEST_TMP/external-non-git-root"

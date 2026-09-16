@@ -808,9 +808,19 @@ The primary Session and Execution transitions are small and mechanically selecte
   still requires the runbook, independent reviewer, signed permit, target
   allowlist, receipt, Logger, and trace gates.
 
-The older direct-response and reviewed read-only completion commands remain
-compatibility routes for existing callers, not requirements for read-only
-sessions. Route prose never grants authority: UID separation, Landlock,
+The older direct-response and read-only completion commands remain
+compatibility routes. Repository read-only completion does not require an
+independent model reviewer; an explicitly supplied reviewer remains a checked
+quality gate. Its semantic answer assessment is not mutation authority.
+All successful read-only routes reject started source lifecycles, active TODOs
+and blocking findings, changed repository diffs, unfinished or writable launches,
+and reviewed operation requests or receipts. The repository investigation route
+also requires a completed reader; direct-response forbids launches. Observe
+completion additionally requires a read-only Execution. These completion checks
+supplement, rather than replace, pre-execution confinement. Direct evidence
+reads under AD-020 retain their separate capability checks and receipts; they
+are not generic reviewed operations, even when both return read-only data.
+Route prose never grants authority: UID separation, Landlock,
 immutable session grants, assignment ownership, diff binding, and the
 supervisor completion gate enforce these transitions.
 
