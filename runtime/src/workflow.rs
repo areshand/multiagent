@@ -1551,7 +1551,8 @@ pub fn supervisor_complete_observe(id: &str) -> Result<String, String> {
     let store = Store::configured()?;
     let p = store.paths(id)?;
     let _lock = store.lock(&p)?;
-    let mut state = observe_completion_state(&p, id)?;
+    let mut state = shortcut_completion_state(&store, &p, id)?;
+    validate_observation_launches(&workflow_launches(&store, id)?)?;
     let result_hash = shortcut_result_hash(&store)?;
     let result = format!("observe:{result_hash}");
     complete_shortcut(&p, &mut state, "observe", &result)?;
@@ -1649,6 +1650,8 @@ fn require_observe_authority() -> Result<(), String> {
     }
 }
 
+// Escalation does not claim success or clear pending work. Keep its gate
+// separate from successful read-only completion so findings can reach a human.
 fn observe_completion_state(paths: &Paths, id: &str) -> Result<BTreeMap<String, String>, String> {
     let state = read_env(&paths.state, id)?;
     if state_value(&state, "phase") != "pre-implementation" {
@@ -1839,75 +1842,79 @@ fn parse_human_review_request(report: &str) -> Result<Option<(String, String)>, 
     Ok(Some((question.into(), reason.into())))
 }
 
-/// Completes a repository investigation whose workers and independent reviewer
-/// were all mechanically read-only and whose repository diff stayed empty.
-pub fn supervisor_complete_read_only(id: &str, reviewer: &str) -> Result<String, String> {
+/// Completes a mechanically read-only investigation. An explicitly requested
+/// semantic reviewer remains a quality gate, but is not required for authority.
+pub fn supervisor_complete_read_only(id: &str, reviewer: Option<&str>) -> Result<String, String> {
     require_supervisor_completion_authority()?;
-    valid_id("read-only reviewer", reviewer)?;
+    if let Some(reviewer) = reviewer {
+        valid_id("read-only reviewer", reviewer)?;
+    }
     let store = Store::configured()?;
     let p = store.paths(id)?;
     let _lock = store.lock(&p)?;
     let mut state = shortcut_completion_state(&store, &p, id)?;
-    let diff = crate::snapshot::canonical_diff(&config::root()?, "HEAD")?;
-    let diff_hash = format!("{:x}", Sha256::digest(&diff));
     let launches = workflow_launches(&store, id)?;
     if launches.is_empty() {
         return Err("read-only completion requires at least one reader launch".into());
     }
     validate_read_only_launches(&launches, reviewer)?;
-    let evidence_dir = store.state_dir.join("reviewer-evidence").join(reviewer);
-    let evidence = read_simple_env(&evidence_dir.join("evidence.env"))?;
-    if state_value(&evidence, "role") != "reviewer"
-        || state_value(&evidence, "access") != "read-only"
-        || state_value(&evidence, "workflow_id") != id
-        || state_value(&evidence, "state") != "completed"
-    {
-        return Err(
-            "read-only reviewer evidence is not supervisor-sealed for this workflow".into(),
-        );
-    }
-    let marker = format!("review-record: type=read-only-integrity verdict=pass diff={diff_hash}");
-    let findings_marker =
-        format!("review-record: type=read-only-integrity verdict=findings diff={diff_hash}");
-    let report = fs::read_to_string(evidence_dir.join("last-message.txt"))
-        .map_err(io_error("read read-only reviewer evidence"))?;
-    let passing_markers = report
-        .lines()
-        .filter(|line| review_marker_matches(line, &marker))
-        .count();
-    let findings_markers = report
-        .lines()
-        .filter(|line| review_marker_matches(line, &findings_marker))
-        .count();
-    if passing_markers != 1 || findings_markers != 0 {
-        return Err(
-            "read-only reviewer evidence requires exactly one passing integrity marker and no findings marker"
-                .into(),
-        );
-    }
-    let review_id = format!("read-only-integrity-{}", state_value(&state, "iteration"));
-    let mut reviews = read_reviews(&p.reviews)?;
-    if !reviews.iter().any(|row| row.get(0) == review_id) {
-        reviews.push(Review {
-            fields: [
-                review_id.clone(),
-                "read-only-integrity".into(),
-                "pass".into(),
-                diff_hash.clone(),
-                evidence_dir.display().to_string(),
-                state_value(&state, "iteration").into(),
-                timestamp(),
-                reviewer.into(),
-            ],
-        });
-        write_reviews(&p.reviews, &reviews)?;
-        event(
-            &p.events,
-            "review_recorded",
-            &format!(
+    if let Some(reviewer) = reviewer {
+        let diff = crate::snapshot::canonical_diff(&config::root()?, "HEAD")?;
+        let diff_hash = format!("{:x}", Sha256::digest(&diff));
+        let evidence_dir = store.state_dir.join("reviewer-evidence").join(reviewer);
+        let evidence = read_simple_env(&evidence_dir.join("evidence.env"))?;
+        if state_value(&evidence, "role") != "reviewer"
+            || state_value(&evidence, "access") != "read-only"
+            || state_value(&evidence, "workflow_id") != id
+            || state_value(&evidence, "state") != "completed"
+        {
+            return Err(
+                "read-only reviewer evidence is not supervisor-sealed for this workflow".into(),
+            );
+        }
+        let marker =
+            format!("review-record: type=read-only-integrity verdict=pass diff={diff_hash}");
+        let findings_marker =
+            format!("review-record: type=read-only-integrity verdict=findings diff={diff_hash}");
+        let report = fs::read_to_string(evidence_dir.join("last-message.txt"))
+            .map_err(io_error("read read-only reviewer evidence"))?;
+        if format!("{:x}", Sha256::digest(report.as_bytes()))
+            != state_value(&evidence, "output_sha256")
+        {
+            return Err("read-only reviewer evidence failed its supervisor output seal".into());
+        }
+        let passing_markers = report
+            .lines()
+            .filter(|line| review_marker_matches(line, &marker))
+            .count();
+        let findings_markers = report
+            .lines()
+            .filter(|line| review_marker_matches(line, &findings_marker))
+            .count();
+        if passing_markers != 1 || findings_markers != 0 {
+            return Err("read-only reviewer evidence requires exactly one passing integrity marker and no findings marker".into());
+        }
+        let review_id = format!("read-only-integrity-{}", state_value(&state, "iteration"));
+        let mut reviews = read_reviews(&p.reviews)?;
+        if !reviews.iter().any(|row| row.get(0) == review_id) {
+            reviews.push(Review {
+                fields: [
+                    review_id.clone(),
+                    "read-only-integrity".into(),
+                    "pass".into(),
+                    diff_hash.clone(),
+                    evidence_dir.display().to_string(),
+                    state_value(&state, "iteration").into(),
+                    timestamp(),
+                    reviewer.into(),
+                ],
+            });
+            write_reviews(&p.reviews, &reviews)?;
+            let detail = format!(
                 "review_id={review_id}\ttype=read-only-integrity\tverdict=pass\tdiff_hash={diff_hash}"
-            ),
-        )?;
+            );
+            event(&p.events, "review_recorded", &detail)?;
+        }
     }
     let result_hash = shortcut_result_hash(&store)?;
     let result = format!("read-only:{result_hash}");
@@ -1917,24 +1924,15 @@ pub fn supervisor_complete_read_only(id: &str, reviewer: &str) -> Result<String,
 
 fn validate_read_only_launches(
     launches: &[(String, BTreeMap<String, String>)],
-    reviewer: &str,
+    reviewer: Option<&str>,
 ) -> Result<(), String> {
+    validate_observation_launches(launches)?;
     let mut readers = 0usize;
     let mut reviewer_launch = None;
     for (name, launch) in launches {
-        if state_value(launch, "access") != "read-only" {
-            return Err(format!(
-                "read-only completion found non-read-only launch: {name}"
-            ));
-        }
-        if state_value(launch, "state") != "completed" {
-            return Err(format!(
-                "read-only completion found unfinished launch: {name}"
-            ));
-        }
         match state_value(launch, "role") {
             "reader" => readers += 1,
-            "reviewer" if name == reviewer => reviewer_launch = Some(launch),
+            "reviewer" if Some(name.as_str()) == reviewer => reviewer_launch = Some(launch),
             "reviewer" => {}
             role => {
                 return Err(format!(
@@ -1946,10 +1944,30 @@ fn validate_read_only_launches(
     if readers == 0 {
         return Err("read-only completion requires at least one completed reader".into());
     }
-    if reviewer_launch.is_none() {
-        return Err(format!(
-            "read-only completion requires completed reviewer launch: {reviewer}"
-        ));
+    if let Some(reviewer) = reviewer {
+        if reviewer_launch.is_none() {
+            return Err(format!(
+                "read-only completion requires completed reviewer launch: {reviewer}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_observation_launches(
+    launches: &[(String, BTreeMap<String, String>)],
+) -> Result<(), String> {
+    for (name, launch) in launches {
+        if state_value(launch, "access") != "read-only" {
+            return Err(format!(
+                "read-only completion found non-read-only launch: {name}"
+            ));
+        }
+        if state_value(launch, "state") != "completed" {
+            return Err(format!(
+                "read-only completion found unfinished launch: {name}"
+            ));
+        }
     }
     Ok(())
 }
@@ -1998,6 +2016,16 @@ fn shortcut_completion_state(
     if reviewed_operation_receipt_exists(&store.state_dir)? {
         return Err("shortcut completion forbids external operation receipts".into());
     }
+    let requests = store.state_dir.join("operations/requests");
+    if requests.is_dir()
+        && fs::read_dir(requests)
+            .map_err(io_error("list operation requests"))?
+            .next()
+            .is_some()
+    {
+        return Err("shortcut completion forbids reviewed operation requests".into());
+    }
+    crate::subagent::external_completion_gate_check()?;
     Ok(state)
 }
 
@@ -2933,28 +2961,31 @@ mod tests {
                 launch("reviewer", "read-only", "completed"),
             ),
         ];
-        assert!(validate_read_only_launches(&valid, "read-only-integrity-reviewer-01").is_ok());
+        assert!(
+            validate_read_only_launches(&valid, Some("read-only-integrity-reviewer-01")).is_ok()
+        );
+
+        assert!(validate_read_only_launches(&valid[..1], None).is_ok());
+        assert!(validate_read_only_launches(&valid[..1], Some("missing-reviewer")).is_err());
+        assert!(validate_read_only_launches(&[], None).is_err());
+        assert!(validate_observation_launches(&[]).is_ok());
 
         let mut writer = valid.clone();
         writer.push((
             "worker-01".into(),
             launch("worker", "workspace-write", "completed"),
         ));
-        assert!(
-            validate_read_only_launches(&writer, "read-only-integrity-reviewer-01")
-                .unwrap_err()
-                .contains("non-read-only")
-        );
+        assert!(validate_read_only_launches(&writer, None)
+            .unwrap_err()
+            .contains("non-read-only"));
 
         let unfinished = vec![
             ("reader-01".into(), launch("reader", "read-only", "running")),
             valid[1].clone(),
         ];
-        assert!(
-            validate_read_only_launches(&unfinished, "read-only-integrity-reviewer-01")
-                .unwrap_err()
-                .contains("unfinished")
-        );
+        assert!(validate_read_only_launches(&unfinished, None)
+            .unwrap_err()
+            .contains("unfinished"));
     }
 
     #[test]

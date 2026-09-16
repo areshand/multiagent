@@ -10,6 +10,17 @@ applicable, and relevant evidence are complete.
 
 ## Architecture Target-State Work
 
+- [ ] Validate reviewer-free read-only completion in the deployed Linux runtime:
+  a real confined reader must finish through `--read-only` and `--auto` without
+  a reviewer; premature completion and writable launches must be rejected.
+  Retain evidence for UID/Landlock enforcement and the actual prod-mcp direct
+  read versus reviewed-ops boundaries. Local fixture tests do not prove deployment.
+- [ ] Harden external-only completion accounting: reconcile every pending
+  reviewed request and live role against terminal receipts before sealing the
+  session, while retaining the persistent ops identity/resume protocol. Add
+  regressions for unfinished non-verifier roles and requests lacking receipts;
+  current external completion scans receipts and verifier/TODO gates only.
+
 - [ ] Add stale runtime cleanup, artifact materialization, and child-process
   reaping around the file-backed thread manifest and existing S3 trace
   lifecycle.

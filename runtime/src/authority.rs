@@ -90,6 +90,7 @@ impl AuthorityRequest {
                             && matches!(
                                 args[1].as_str(),
                                 "--external-only"
+                                    | "--read-only"
                                     | "--direct-response"
                                     | "--auto"
                                     | "--clarification"
@@ -600,7 +601,12 @@ mod tests {
         )
         .expect("direct completion request");
         assert!(direct_completion.authorized_for(config::ORCHESTRATOR_UID));
-        for route in ["--clarification", "--auto-clarification", "--auto"] {
+        for route in [
+            "--clarification",
+            "--auto-clarification",
+            "--auto",
+            "--read-only",
+        ] {
             let clarification_completion = AuthorityRequest::from_cli(
                 "orchestrator",
                 &strings(&[

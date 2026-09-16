@@ -71,10 +71,14 @@ validation-scheduling.md and hold one validation lease per package. Give technic
 - A source worker needs an approved implementation context and active
   implementation permit.
 - Observe completion is available only while the current Execution is
-  mechanically read-only.
-  Source writes and mutating production operations are denied before execution,
-  so completion does not infer safety from role count, a second model, or a
-  post-hoc diff check.
+  mechanically read-only. Wait for every launched role to complete before
+  requesting completion. The supervisor also rejects changed source, started
+  implementation, unresolved TODOs/findings, and reviewed operation artifacts.
+  Pre-execution confinement remains the mutation boundary.
+- The repository investigation compatibility command is
+  `multiagent orchestrator complete --read-only --result-file PATH`. It requires
+  a completed reader but no independent model reviewer. Use `--reviewer NAME`
+  only for an explicitly requested additional quality gate.
 - A repair review request must contain one bounded question and at least one
   explicit effect: exact repository-relative source paths, `reviewed-ops`, or
   both. Approval starts a fresh user Session whose first Execution contains

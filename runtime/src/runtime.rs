@@ -1209,7 +1209,7 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
             .iter()
             .any(|arg| matches!(arg.as_str(), "-h" | "--help"))
     {
-        println!("Usage:\n  multiagent orchestrator request-mutation [--path REPO_PATH ...] [--reviewed-ops]\n  multiagent orchestrator complete\n  multiagent orchestrator complete --auto --result-file PATH\n  multiagent orchestrator complete --observe --result-file PATH\n  multiagent orchestrator complete --request-review --result-file PATH [--path REPO_PATH ...] [--reviewed-ops]\n  multiagent orchestrator complete --direct-response --result-file PATH\n  multiagent orchestrator complete --clarification --result-file PATH\n  multiagent orchestrator complete --auto-clarification --result-file PATH\n  multiagent orchestrator complete --read-only --result-file PATH --reviewer NAME\n  multiagent orchestrator complete --human-review --result-file PATH --reviewer NAME\n  multiagent orchestrator complete --external-only --result-file PATH\n\nEach user session starts with a read-only Execution. The orchestrator may request exact source paths and/or reviewed-ops from the Supervisor without starting another session. External observe sessions must request human review instead.");
+        println!("Usage:\n  multiagent orchestrator request-mutation [--path REPO_PATH ...] [--reviewed-ops]\n  multiagent orchestrator complete\n  multiagent orchestrator complete --auto --result-file PATH\n  multiagent orchestrator complete --observe --result-file PATH\n  multiagent orchestrator complete --request-review --result-file PATH [--path REPO_PATH ...] [--reviewed-ops]\n  multiagent orchestrator complete --direct-response --result-file PATH\n  multiagent orchestrator complete --clarification --result-file PATH\n  multiagent orchestrator complete --auto-clarification --result-file PATH\n  multiagent orchestrator complete --read-only --result-file PATH [--reviewer NAME]\n  multiagent orchestrator complete --human-review --result-file PATH --reviewer NAME\n  multiagent orchestrator complete --external-only --result-file PATH\n\nEach user session starts with a read-only Execution. The orchestrator may request exact source paths and/or reviewed-ops from the Supervisor without starting another session. External observe sessions must request human review instead.");
         return Ok(ExitCode::SUCCESS);
     }
     if let Some((paths, reviewed_ops)) = mutation_request_options(args) {
@@ -1229,8 +1229,14 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
         RequestReview(&'a str),
         Clarification(&'a str),
         AutoClarification(&'a str),
-        ReadOnly { result: &'a str, reviewer: &'a str },
-        HumanReview { result: &'a str, reviewer: &'a str },
+        ReadOnly {
+            result: &'a str,
+            reviewer: Option<&'a str>,
+        },
+        HumanReview {
+            result: &'a str,
+            reviewer: &'a str,
+        },
         External(&'a str),
     }
     let route = if args.len() == 1 && args[0] == "complete" {
@@ -1277,15 +1283,14 @@ pub fn orchestrator(args: &[String]) -> Result<ExitCode, String> {
         && args[2] == "--result-file"
     {
         CompletionRoute::AutoClarification(&args[3])
-    } else if args.len() == 6
+    } else if (args.len() == 4 || (args.len() == 6 && args[4] == "--reviewer"))
         && args[0] == "complete"
         && args[1] == "--read-only"
         && args[2] == "--result-file"
-        && args[4] == "--reviewer"
     {
         CompletionRoute::ReadOnly {
             result: &args[3],
-            reviewer: &args[5],
+            reviewer: args.get(5).map(String::as_str),
         }
     } else if args.len() == 6
         && args[0] == "complete"
