@@ -76,6 +76,38 @@ export function selectFinalMessage(result, fallback) {
   return String(result || "").trim() || String(fallback || "").trim();
 }
 
+export function boundedFinalMessage(value, maximumBytes = 6000) {
+  const text = String(value || "").trim();
+  if (Buffer.byteLength(text, "utf8") <= maximumBytes) return text;
+  const suffix = "…";
+  const budget = Math.max(0, maximumBytes - Buffer.byteLength(suffix, "utf8"));
+  let result = "";
+  let bytes = 0;
+  for (const character of text) {
+    const size = Buffer.byteLength(character, "utf8");
+    if (bytes + size > budget) break;
+    result += character;
+    bytes += size;
+  }
+  return `${result.trimEnd()}${suffix}`;
+}
+
+export async function waitForTraceFinalization({
+  ready,
+  timeoutMs = 2000,
+  pollIntervalMs = 50,
+  now = Date.now,
+  sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+}) {
+  const deadline = now() + timeoutMs;
+  while (!ready()) {
+    const remaining = deadline - now();
+    if (remaining <= 0) return false;
+    await sleep(Math.min(pollIntervalMs, remaining));
+  }
+  return true;
+}
+
 export function responseTypeForMessage(message, completionRoute = "") {
   if (!["direct-response", "observe", "request-review", "human-review"].includes(completionRoute)) return "assistant_message";
   const text = String(message || "").trim();
