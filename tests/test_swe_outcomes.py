@@ -50,6 +50,39 @@ from evaluation.native_solver import swe_prod_repository  # noqa: E402
 
 
 class NativeOutcomeTest(unittest.TestCase):
+    def test_native_prompt_separates_user_intent_from_evaluator_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prompts = root / "prompts"
+            prompts.mkdir()
+            (prompts / "orchestrator.md").write_text("orchestrator rules\n", encoding="utf-8")
+            runtime = root / "runtime"
+            runtime.mkdir()
+            original_task = runtime / "original-public-task.md"
+
+            with mock.patch.multiple(
+                swe_prod_repository,
+                AUTONOMOUS_APPENDIX="autonomous rules\n",
+                ORIGINAL_TASK_PATH=original_task,
+                RUNTIME_ROOT=runtime,
+            ):
+                prompt_path = swe_prod_repository.make_prompt(
+                    root,
+                    root,
+                    "Create ops_plan.json using the evaluator schema.",
+                    authenticated_user_request="Why is the secret value not shown?",
+                )
+
+            self.assertEqual(
+                original_task.read_text(encoding="utf-8"),
+                "Why is the secret value not shown?",
+            )
+            prompt = prompt_path.read_text(encoding="utf-8")
+            self.assertIn("## Evaluator-Owned Output Requirements", prompt)
+            self.assertIn("Create ops_plan.json using the evaluator schema.", prompt)
+            self.assertIn("does not replace the user's intended outcome", prompt)
+            self.assertIn("architecture controls alone is incomplete", prompt)
+
     def test_solver_timeout_reserves_only_orderly_shutdown_by_default(self):
         with mock.patch.dict(
             evalscope_multiagent_native_runner.os.environ,

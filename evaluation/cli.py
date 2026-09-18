@@ -21,6 +21,7 @@ from evaluation.core import (
     write_json_report,
     write_markdown_report,
 )
+from evaluation.semantic_judge import judge_results
 
 
 def main() -> int:
@@ -39,7 +40,18 @@ def main() -> int:
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument("--run-root", help="directory for new run outputs; default evaluation/runs")
+    parser.add_argument(
+        "--judge-model",
+        help="run an offline Codex semantic judge with this model after candidate execution",
+    )
+    parser.add_argument("--judge-workers", type=int, default=1)
+    parser.add_argument("--judge-timeout", type=int, default=180)
     args = parser.parse_args()
+
+    if args.judge_workers < 1:
+        die("--judge-workers must be positive")
+    if args.judge_timeout < 1:
+        die("--judge-timeout must be positive")
 
     if args.list:
         for name in adapter_names():
@@ -51,6 +63,8 @@ def main() -> int:
         adapter = load_adapter(args.adapter)
     except KeyError:
         die(f"unknown adapter: {args.adapter}; expected one of {', '.join(adapter_names())}")
+    if args.judge_model and not callable(getattr(adapter, "semantic_judge_payload", None)):
+        die(f"adapter {adapter.name} does not support semantic judging")
 
     if (
         args.agent_cli == "codex"
@@ -65,6 +79,15 @@ def main() -> int:
     if args.rescore:
         run_dir = Path(args.rescore)
         results = rescore(adapter, run_dir)
+        if args.judge_model:
+            results = judge_results(
+                adapter,
+                results,
+                run_dir,
+                model=args.judge_model,
+                workers=args.judge_workers,
+                timeout=args.judge_timeout,
+            )
         json_path = write_json_report(run_dir, adapter, results)
         md_path = write_markdown_report(run_dir, adapter, results)
         print_summary(results)
@@ -73,7 +96,8 @@ def main() -> int:
         return 0
 
     tasks = parse_csv(args.task or ",".join(adapter.tasks), adapter.tasks)
-    run_root = Path(args.run_root) if args.run_root else None
+    configured_run_root = getattr(adapter, "default_run_root", None)
+    run_root = Path(args.run_root) if args.run_root else configured_run_root
 
     if args.reference_report:
         kinds = parse_csv(args.reference_kind, {"good", "bad"})
@@ -83,6 +107,17 @@ def main() -> int:
             kinds,
             **({"runs_root": run_root} if run_root else {}),
         )
+        if args.judge_model:
+            results = judge_results(
+                adapter,
+                results,
+                run_dir,
+                model=args.judge_model,
+                workers=args.judge_workers,
+                timeout=args.judge_timeout,
+            )
+            write_json_report(run_dir, adapter, results)
+            write_markdown_report(run_dir, adapter, results)
         print_summary(results)
         print(f"\nwrote {run_dir / 'results.json'}")
         print(f"wrote {run_dir / 'report.md'}")
@@ -108,6 +143,15 @@ def main() -> int:
         agent_cli=args.agent_cli,
         **({"runs_root": run_root} if run_root else {}),
     )
+    if args.judge_model:
+        results = judge_results(
+            adapter,
+            results,
+            run_dir,
+            model=args.judge_model,
+            workers=args.judge_workers,
+            timeout=args.judge_timeout,
+        )
     json_path = write_json_report(run_dir, adapter, results)
     md_path = write_markdown_report(run_dir, adapter, results)
     print_summary(results)

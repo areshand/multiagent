@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,6 +46,7 @@ class NativeSolverImportModelTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("--multiagent-root", result.stdout)
+        self.assertIn("--original-user-request", result.stdout)
 
     def test_entrypoint_exposes_only_submission_entrypoints(self) -> None:
         from evaluation.native_solver import solve_swe_prod
@@ -52,6 +54,39 @@ class NativeSolverImportModelTest(unittest.TestCase):
         self.assertIs(solve_swe_prod.run_prod_solver, solve_swe_prod._lifecycle.run_prod_solver)
         self.assertFalse(hasattr(solve_swe_prod, "validation_coverage_blockers"))
         self.assertFalse(hasattr(solve_swe_prod, "implementation_scope_blockers"))
+
+    def test_entrypoint_forwards_separate_original_user_request(self) -> None:
+        from evaluation.native_solver import solve_swe_prod
+
+        with mock.patch.object(
+            solve_swe_prod._lifecycle,
+            "run_prod_solver",
+            return_value=0,
+        ) as run:
+            result = solve_swe_prod.main(
+                [
+                    "solve_swe_prod.py",
+                    "output-requirements.md",
+                    "--original-user-request",
+                    "direct-user-request.md",
+                    "--workdir",
+                    "/app",
+                    "--multiagent-root",
+                    "/opt/multiagent",
+                    "--timeout",
+                    "90",
+                ]
+            )
+
+        self.assertEqual(result, 0)
+        run.assert_called_once_with(
+            "output-requirements.md",
+            Path("/app"),
+            Path("/opt/multiagent"),
+            90,
+            "swe",
+            "direct-user-request.md",
+        )
 
     def test_launcher_uses_exact_container_module_command(self) -> None:
         launcher = assigned_string(

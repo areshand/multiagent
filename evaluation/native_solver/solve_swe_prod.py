@@ -14,6 +14,10 @@ from . import swe_prod_lifecycle as _lifecycle
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("prompt", nargs="?")
+    parser.add_argument(
+        "--original-user-request",
+        help="path to the direct user request, separate from evaluator-owned output constraints",
+    )
     parser.add_argument("--workdir", default=os.environ.get("EVAL_TASK_WORKDIR", str(_contracts.DEFAULT_WORKDIR)))
     parser.add_argument(
         "--multiagent-root",
@@ -32,6 +36,7 @@ def main(argv: list[str]) -> int:
         Path(args.multiagent_root),
         args.timeout,
         args.prompt_profile,
+        args.original_user_request,
     )
 
 

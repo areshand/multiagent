@@ -8,8 +8,9 @@ the runner.
 ## Concepts
 
 - **Adapter**: loads evaluation tasks, prepares each task workspace, and
-  scores completed work. `trace` is the unified trace entry point; focused
-  adapters remain available for `ops-trace` and `conversation-trace`.
+  scores completed work. `trace` and `bowu_bench` are unified trace entry
+  points; focused adapters remain available for `ops-trace` and
+  `conversation-trace`.
 - **Task**: a single assignment with a prompt, seed files, and a scorer.
 - **Arm**: an instruction profile to compare, such as `baseline` or
   `ponytail-full`. Adapters may load the worker rules or the full orchestrator
@@ -34,6 +35,7 @@ python3 -m evaluation.cli --adapter ponytail --selftest
 python3 -m evaluation.cli --adapter orchestration --selftest
 python3 -m evaluation.cli --adapter trace --selftest
 python3 -m evaluation.cli --adapter ops-trace --selftest
+python3 -m evaluation.cli --adapter bowu_bench --selftest
 ```
 
 Generate a no-agent reference report:
@@ -69,12 +71,13 @@ The `trace` adapter combines the 24-row ops dataset and 12-row conversational
 dataset under one private manifest, one CLI entry point, and one report. It is
 a suite composition, not a scorer merge:
 
-- ops rows keep measuring whether the requested operations plan is solved
-  within the architecture and authority contract;
+- ops rows replay the actual user request against pseudonymized mock tool
+  evidence without contacting production;
 - conversation rows keep measuring completion, route, fanout, write safety,
-  and latency without claiming semantic answer quality;
+  and latency;
 - reports group rows by suite and never average the two scoring contracts into
-  one benchmark-wide correctness claim.
+  one benchmark-wide correctness claim. An optional LLM judge assesses answer
+  quality after candidate timing has stopped.
 
 After generating the two focused datasets, combine them locally:
 
@@ -112,25 +115,20 @@ synthetic contract cases so CI can validate the unified entry point.
 
 ## Trace-derived operations benchmark
 
-The `ops-trace` adapter evaluates multiagent production-operations planning.
-It rewards the architecture contract rather than AWS command recall. Scoring
-contract v2 makes the following semantics explicit:
+The `ops-trace` adapter replays the direct user turn that owned each captured
+operation. Contract v4 binds an operation to the nearest preceding
+`direct_or_top_level` request in the same rollout, requires a completed source
+answer, and includes bounded prior conversation, a pseudonymized reference
+answer, and pseudonymized captured tool results. It never includes executable
+commands or secret-bearing outputs.
 
-- the orchestrator routes but does not execute production procedures;
-- the ops agent selects a versioned runbook and proposes bounded operations;
-- the ops reviewer independently checks goal/runbook/evidence alignment;
-- the supervisor mediates bearer-token and signed-permit authority;
-- `prod-mcp` remains the only executable production boundary;
-- independent read discovery may run in parallel, but conservative serial reads
-  are valid; any declared parallel scope must be limited to observed services;
-- a present CloudTrail/time correlation is `heuristic`, while absent correlation
-  is `unverified`; neither is proof of causation;
-- required architecture controls are scored semantically across the structured
-  plan, including roles and completion gates, rather than by field location.
-
-The contract version and scorer SHA-256 belong in comparison provenance.
-Rescoring an archived run with a newer contract is a new interpretation of the
-same artifacts and must not overwrite the original report.
+Candidate runs operate in an isolated fixture. They must use
+`mock-ops-evidence.md`, must not contact production or edit the fixture, and
+must distinguish historical mock evidence from current production state.
+Deterministic scoring covers completion, result presence, route, repository
+cleanliness, and absence of external operations. The optional semantic judge
+assesses whether the response addresses the request. Legacy synthetic plan
+cases remain available for CI contract checks.
 
 Generate a private pseudonymized dataset from a redacted trace export:
 
@@ -141,13 +139,22 @@ python3 -m evaluation.ops_trace_dataset \
   --max-cases 24
 ```
 
-The generator records source hashes but does not copy raw commands, raw tool
-outputs, account IDs, ARNs, emails, or local paths into cases. The result is
-still marked `private` and `publishable: false` because request prose may
-contain organization-specific context. Do not commit the generated dataset.
+The generator rejects internal role prompts, incomplete turns, and requests
+whose meaning would be lost by credential or opaque-token redaction. It records
+source hashes but does not copy raw commands, raw outputs, account IDs, ARNs,
+emails, URLs, or local paths into cases. The result remains `private` and
+`publishable: false`; keep it outside the repository.
 
 The adapter automatically uses that default dataset path when it exists and
 runs the held-out `test` split by default:
+
+For production multiagent cells, the evaluator passes the pseudonymized direct
+user request as the supervisor-authenticated original task. The generated
+artifact schema, observed evidence summary, and scoring constraints remain a
+separate set of evaluator-owned output requirements. This keeps the direct
+request visible to every role through the normal semantic envelope.
+Plan-alignment and later reviewers therefore compare work against the request
+itself rather than the benchmark wrapper.
 
 ```bash
 python3 -m evaluation.cli --adapter ops-trace --selftest
@@ -162,9 +169,9 @@ python3 -m evaluation.cli \
 ```
 
 `baseline` is one ordinary Codex CLI invocation. `multiagent` runs the current
-production Rust/tmux lifecycle in Linux, including its contract scout,
-plan-alignment reviewers, workers, verifiers, and final reviews. Build the exact
-checkout before a live multiagent comparison:
+production Rust/tmux lifecycle in Linux. Both receive the same authenticated
+conversation and mock evidence. Build the exact checkout before a live
+multiagent comparison:
 
 ```bash
 docker build -f docker/runtime/Dockerfile -t multiagent:ops-trace-current .
@@ -185,7 +192,7 @@ MULTIAGENT_OPS_TRACE_SPLIT=all python3 -m evaluation.cli \
   --model gpt-5.6-sol \
   --arms baseline,multiagent \
   --runs 1 \
-  --workers 4 \
+  --workers 1 \
   --timeout 900
 ```
 
@@ -202,51 +209,79 @@ dataset exists, the adapter falls back to three synthetic contract cases so CI
 can verify scorer behavior without private data. Set
 `MULTIAGENT_OPS_TRACE_DATASET=synthetic` to force that fallback explicitly.
 
-## Trace-derived conversational workflow comparison
+## Bowu Bench
 
-`conversation-trace` is the focused compatibility entry point for the
-conversation suite included by `trace`. It does not change or extend the ops
-scorer. It replays bounded
-follow-up context from real Codex sessions and compares only production
-workflow behavior: completion, selected route, role fanout, writer launches,
-repository cleanliness, and latency. It deliberately does not claim to judge
-semantic answer quality.
+`bowu_bench` is the named local benchmark containing 24 ops rows and 12
+conversation rows. Ops rows compare `baseline,multiagent`; conversation rows
+compare `legacy,shortcut`. The suites share one manifest, run directory, and
+report while retaining their own deterministic scorers.
 
-Generate a private, pseudonymized 12-case dataset locally:
+The canonical local root is `$HOME/projects/traces/bowu_bench`. Generated data
+stays outside the coding repository and remains `private: true`,
+`publishable: false`, and mode `0600`.
+
+Generate the 12 conversation rows, then combine them with the 24 ops rows:
 
 ```bash
 python3 -m evaluation.conversation_trace_dataset \
   --sessions "$HOME/.codex/sessions" \
   --sessions "$HOME/.codex/archived_sessions" \
-  --output "$HOME/projects/traces/conversation-trace-cases.json" \
+  --output "$HOME/projects/traces/bowu_bench/conversation-trace-cases.json" \
   --max-cases 12
+
+python3 -m evaluation.trace_dataset \
+  --benchmark bowu_bench \
+  --ops "$HOME/projects/traces/ops-trace-cases.json" \
+  --conversation "$HOME/projects/traces/bowu_bench/conversation-trace-cases.json" \
+  --output "$HOME/projects/traces/bowu_bench/bowu-bench-cases.json"
 ```
 
 The generator accepts only multi-turn cases, removes runtime-injected context,
 rejects requests mentioning credentials or external mutations, and classifies
 read-only cases only when every observed tool call is on a conservative local
-read allowlist. The resulting dataset contains pseudonymized user/assistant
-prose, remains `private: true` and `publishable: false`, and must not be
-committed or replayed through a model without explicit approval.
+read allowlist. Prose-only answers and clarifications are excluded when the
+preceding turn used tools, because their reference answers can depend on hidden
+evidence that the replay does not provide. Standalone confirmations of a
+preceding external mutation are excluded for the same reason. The resulting
+dataset contains pseudonymized user/assistant prose, remains `private: true`
+and `publishable: false`, and must not be committed or replayed through a model
+without explicit approval. The combined manifest nests the source manifests
+and their hashes; it does not copy raw traces.
 
-Build the two production images from the revisions being compared, then run:
+Build the production images for the revisions being compared. Then exhaust all
+36 rows serially so candidate latency does not include inter-cell contention:
 
 ```bash
-MULTIAGENT_CONVERSATION_TRACE_SPLIT=all python3 -m evaluation.cli \
-  --adapter conversation-trace \
+BOWU_BENCH_SPLIT=all python3 -m evaluation.cli \
+  --adapter bowu_bench \
   --agent-cli codex \
   --model gpt-5.6-sol \
-  --arms legacy,shortcut \
+  --arms baseline,multiagent,legacy,shortcut \
   --runs 1 \
-  --workers 2 \
-  --timeout 900
+  --workers 1 \
+  --timeout 900 \
+  --judge-model gpt-5.6-sol \
+  --judge-workers 1 \
+  --judge-timeout 180
 ```
 
-The default image tags are `multiagent:conversation-trace-legacy` and
+Candidate cells finish before judging starts, so judge latency does not affect
+candidate latency. With judging enabled, `contract_correct` preserves the
+deterministic score, `semantic_correct` records the judge verdict at the fixed
+0.75 threshold, and `correct` requires both. Safety remains deterministic.
+Per-cell judgments and concise reasons are retained in the run directory.
+
+Bowu Bench runs default to `$HOME/projects/traces/bowu_bench/runs`. Override the
+manifest with `BOWU_BENCH_DATASET` and select `train`, `validation`, `test`, or
+`all` with `BOWU_BENCH_SPLIT`. A live run sends pseudonymized prompts, bounded
+history, mock evidence, and reference answers to the selected model provider;
+that disclosure requires explicit approval.
+
+The conversation images default to `multiagent:conversation-trace-legacy` and
 `multiagent:conversation-trace-shortcut`. Override them with
 `MULTIAGENT_CONVERSATION_TRACE_LEGACY_IMAGE` and
-`MULTIAGENT_CONVERSATION_TRACE_SHORTCUT_IMAGE`. When no private dataset is
-present, the adapter uses three synthetic cases for scorer self-tests.
+`MULTIAGENT_CONVERSATION_TRACE_SHORTCUT_IMAGE`; override the ops image with
+`MULTIAGENT_OPS_TRACE_IMAGE`. The focused adapters remain available.
 
 Use `--agent-cli claude` for Claude Code or `--agent-cli codex` for Codex. The
 Codex path uses the local Codex configuration and default model unless
@@ -261,7 +296,7 @@ python3 -m evaluation.cli --adapter ponytail --rescore evaluation/runs/ponytail/
 python3 -m evaluation.cli --adapter orchestration --rescore evaluation/runs/orchestration/<stamp>
 python3 -m evaluation.cli --adapter trace --rescore evaluation/runs/trace/<stamp>
 python3 -m evaluation.cli --adapter ops-trace --rescore evaluation/runs/ops-trace/<stamp>
-python3 -m evaluation.cli --adapter conversation-trace --rescore evaluation/runs/conversation-trace/<stamp>
+python3 -m evaluation.cli --adapter bowu_bench --rescore "$HOME/projects/traces/bowu_bench/runs/bowu_bench/<stamp>"
 ```
 
 ## Outputs
@@ -279,6 +314,9 @@ Core metrics:
 - `src_loc`, `src_files`: changed source size from `git diff`.
 - `test_loc`, `test_files`: tests are tracked separately.
 - `duration`, `turns`, `tokens`, `cost`: included when the agent CLI reports them.
+- `contract_correct`, `semantic_correct`, `semantic_score`: present when the
+  optional judge is enabled; `correct` then requires both contract and semantic
+  correctness.
 
 Adapter-specific metrics may also appear. The `orchestration` adapter reports
 `fanout`, `first_wave_agents`, `max_concurrent_agents`,

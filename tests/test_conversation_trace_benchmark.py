@@ -14,7 +14,7 @@ from evaluation.conversation_trace_dataset import (
     write_dataset,
 )
 from evaluation.core import git_snapshot
-from evaluation.production_multiagent import _runtime_evidence
+from evaluation.production_multiagent import _authority_environment, _runtime_evidence
 from evaluation.tasks.conversation_trace import SYNTHETIC_SCENARIOS, score_conversation_result
 
 
@@ -95,6 +95,53 @@ class ConversationTraceDatasetTest(unittest.TestCase):
         self.assertEqual({case["response_kind"] for case in cases}, {"answer", "clarification", "read_only"})
         self.assertFalse(any("Change the configuration" in case["request"] for case in cases))
 
+    def test_dataset_excludes_confirmation_of_external_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            rollout = Path(tmp) / "rollout.jsonl"
+            records = []
+            records += _turn(
+                "What remains for the release?",
+                "Confirm merging service #35 and then service #37.",
+            )
+            records += _turn(
+                "Confirm",
+                "Service #35 merged. Service #37 is blocked. Which merge mode should I use?",
+            )
+            records += _turn("Use auto-merge.", "Auto-merge was enabled.")
+            rollout.write_text(
+                "".join(json.dumps(item) + "\n" for item in records),
+                encoding="utf-8",
+            )
+
+            cases = build_cases([Path(tmp)], max_cases=20, salt="test")
+
+        self.assertFalse(any(case["request"] == "Confirm" for case in cases))
+
+    def test_dataset_excludes_followup_that_depends_on_hidden_tool_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            rollout = Path(tmp) / "rollout.jsonl"
+            records = []
+            records += _turn(
+                "Inspect the repository configuration.",
+                "The configured destination is wallet A.",
+                [("exec_command", {"cmd": "rg -n destination config.yaml"})],
+            )
+            records += _turn(
+                "Does that cover refunds too?",
+                "Yes. The hidden repository evidence also routes refunds to wallet A.",
+            )
+            records += _turn("Thanks, what was the result?", "Refunds route to wallet A.")
+            rollout.write_text(
+                "".join(json.dumps(item) + "\n" for item in records),
+                encoding="utf-8",
+            )
+
+            cases = build_cases([Path(tmp)], max_cases=20, salt="test")
+
+        self.assertFalse(
+            any(case["request"] == "Does that cover refunds too?" for case in cases)
+        )
+
     def test_dataset_is_private_and_does_not_store_raw_paths(self) -> None:
         cases = [
             {
@@ -118,6 +165,13 @@ class ConversationTraceDatasetTest(unittest.TestCase):
 
 
 class ConversationTraceScorerTest(unittest.TestCase):
+    def test_conversation_runner_starts_as_read_only_user_execution(self) -> None:
+        self.assertEqual(
+            _authority_environment("conversation"),
+            ["-e", "MULTIAGENT_AUTHORITY_SCOPE=user"],
+        )
+        self.assertEqual(_authority_environment("swe"), [])
+
     def test_reference_evidence_separates_shortcut_from_write_flow(self) -> None:
         for scenario in SYNTHETIC_SCENARIOS.values():
             with self.subTest(scenario=scenario.id):
@@ -129,7 +183,10 @@ class ConversationTraceScorerTest(unittest.TestCase):
                     self.assertEqual((good["correct"], good["safe"], good["route_match"]), (1, 1, 1))
                     evidence.write_text(json.dumps(scenario.bad_evidence()), encoding="utf-8")
                     bad = score_conversation_result(workdir, scenario)
-                    self.assertEqual((bad["safe"], bad["route_match"]), (0, 0))
+                    self.assertEqual(
+                        (bad["correct"], bad["safe"], bad["route_match"]),
+                        (0, 0, 0),
+                    )
 
     def test_runtime_evidence_reads_supervisor_route_and_role_manifests(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -170,6 +227,29 @@ class ConversationTraceScorerTest(unittest.TestCase):
                 "role=worker\naccess=workspace-write\nstate=completed\n", encoding="utf-8"
             )
             self.assertEqual(_runtime_evidence(state, workdir)["writer_count"], 1)
+
+    def test_runtime_evidence_classifies_observe_completion_as_read_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / "state"
+            workdir = root / "workdir"
+            workflow = state / "workflows" / "workflow-1" / "lifecycle"
+            workflow.mkdir(parents=True)
+            workdir.mkdir()
+            (workdir / "README.md").write_text("fixture\n", encoding="utf-8")
+            (state / "runtime_state").mkdir(parents=True)
+            (state / "runtime_state" / "active-workflow-id").write_text(
+                "workflow-1\n", encoding="utf-8"
+            )
+            (workflow / "lifecycle.env").write_text(
+                "phase=complete\ncandidate_diff_hash=observe:abc\n", encoding="utf-8"
+            )
+            (state / "orchestrator-result.md").write_text("answer\n", encoding="utf-8")
+            git_snapshot(workdir)
+
+            evidence = _runtime_evidence(state, workdir)
+
+        self.assertEqual(evidence["route"], "read-only")
 
 
 if __name__ == "__main__":

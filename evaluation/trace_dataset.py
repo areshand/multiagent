@@ -47,7 +47,10 @@ def combine_datasets(
     ops_payload: dict[str, Any],
     conversation_payload: dict[str, Any],
     source_hashes: dict[str, str] | None = None,
+    benchmark: str = "trace",
 ) -> dict[str, Any]:
+    if benchmark not in {"trace", "bowu_bench"}:
+        raise ValueError(f"unsupported combined benchmark name: {benchmark}")
     suites = {
         "ops-trace": ops_payload,
         "conversation-trace": conversation_payload,
@@ -70,7 +73,7 @@ def combine_datasets(
 
     return {
         "format_version": 1,
-        "benchmark": "trace",
+        "benchmark": benchmark,
         "private": True,
         "publishable": False,
         "generated_at_utc": dt.datetime.now(tz=dt.timezone.utc).isoformat().replace(
@@ -101,6 +104,7 @@ def write_dataset(
     output: Path,
     ops_path: Path,
     conversation_path: Path,
+    benchmark: str = "trace",
 ) -> dict[str, Any]:
     ops_payload = load_suite(ops_path, "ops-trace")
     conversation_payload = load_suite(conversation_path, "conversation-trace")
@@ -111,6 +115,7 @@ def write_dataset(
             "ops-trace": _sha256(ops_path),
             "conversation-trace": _sha256(conversation_path),
         },
+        benchmark=benchmark,
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(output.name + ".tmp")
@@ -128,16 +133,29 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Combine private trace benchmark manifests")
     parser.add_argument("--ops", default=str(trace_root / "ops-trace-cases.json"))
     parser.add_argument(
-        "--conversation", default=str(trace_root / "conversation-trace-cases.json")
+        "--conversation",
+        default=str(trace_root / "bowu_bench" / "conversation-trace-cases.json"),
     )
-    parser.add_argument("--output", default=str(trace_root / "trace-cases.json"))
+    parser.add_argument(
+        "--benchmark",
+        choices=("trace", "bowu_bench"),
+        default="trace",
+        help="top-level benchmark name stored in the combined manifest",
+    )
+    parser.add_argument("--output")
     args = parser.parse_args()
 
-    output = Path(args.output).expanduser().resolve()
+    default_output = (
+        trace_root / "bowu_bench" / "bowu-bench-cases.json"
+        if args.benchmark == "bowu_bench"
+        else trace_root / "trace-cases.json"
+    )
+    output = Path(args.output or default_output).expanduser().resolve()
     payload = write_dataset(
         output,
         Path(args.ops).expanduser().resolve(),
         Path(args.conversation).expanduser().resolve(),
+        benchmark=args.benchmark,
     )
     print(json.dumps({"output": str(output), **payload["counts"]}, indent=2, sort_keys=True))
     return 0

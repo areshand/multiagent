@@ -204,6 +204,7 @@ def run_prod_solver(
     repo_root: Path,
     timeout: int,
     prompt_profile: str = "swe",
+    original_user_request_path: str | None = None,
 ) -> int:
     """Run the production workflow and leave its current diff for SWE-bench.
 
@@ -269,12 +270,27 @@ def run_prod_solver(
     write_rg_fallback()
 
     issue = read_prompt(prompt_path)
+    original_user_request = (
+        read_prompt(original_user_request_path)
+        if original_user_request_path
+        else issue
+    )
     task_metadata = read_task_metadata()
     log("solver metadata is public-only; official expected-test metadata is not exposed to the solver")
     if prompt_profile == "swe":
-        autonomous_prompt = make_prompt(repo_root, workdir, issue, task_metadata)
+        autonomous_prompt = make_prompt(
+            repo_root,
+            workdir,
+            issue,
+            task_metadata,
+            authenticated_user_request=original_user_request,
+        )
     elif prompt_profile == "conversation":
-        autonomous_prompt = make_conversation_prompt(repo_root, issue)
+        autonomous_prompt = make_conversation_prompt(
+            repo_root,
+            issue,
+            authenticated_user_request=original_user_request,
+        )
     else:
         raise RuntimeError(f"unsupported production prompt profile: {prompt_profile}")
     session = f"swe-prod-{os.getpid()}"

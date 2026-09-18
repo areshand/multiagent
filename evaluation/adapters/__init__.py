@@ -26,8 +26,19 @@ def load_adapter(name: str) -> Adapter:
         from evaluation.adapters.conversation_trace import ADAPTER
 
         return ADAPTER
+    if name in ("bowu_bench", "bowu-bench"):
+        from evaluation.adapters.trace import BOWU_BENCH_ADAPTER
+
+        return BOWU_BENCH_ADAPTER
     raise KeyError(name)
 
 
 def adapter_names() -> list[str]:
-    return ["trace", "conversation-trace", "ops-trace", "orchestration", "ponytail"]
+    return [
+        "trace",
+        "bowu_bench",
+        "conversation-trace",
+        "ops-trace",
+        "orchestration",
+        "ponytail",
+    ]

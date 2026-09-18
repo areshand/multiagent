@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "verdict": {"type": "string", "enum": ["correct", "incorrect", "uncertain"]},
+    "score": {"type": "number", "minimum": 0, "maximum": 1},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "dimensions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "answers_user_intent": {"type": "integer", "minimum": 0, "maximum": 4},
+        "factual_correctness": {"type": "integer", "minimum": 0, "maximum": 4},
+        "completeness": {"type": "integer", "minimum": 0, "maximum": 4},
+        "instruction_following": {"type": "integer", "minimum": 0, "maximum": 4}
+      },
+      "required": ["answers_user_intent", "factual_correctness", "completeness", "instruction_following"]
+    },
+    "critical_error": {"type": "boolean"},
+    "missing_requirements": {"type": "array", "items": {"type": "string"}},
+    "unsupported_claims": {"type": "array", "items": {"type": "string"}},
+    "reason": {"type": "string", "minLength": 1}
+  },
+  "required": ["verdict", "score", "confidence", "dimensions", "critical_error", "missing_requirements", "unsupported_claims", "reason"]
+}
