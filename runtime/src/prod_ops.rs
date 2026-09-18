@@ -18,7 +18,7 @@ const MAX_RUNBOOK_BYTES: u64 = 1_048_576;
 const MATERIALIZATION_TIMEOUT: StdDuration = StdDuration::from_secs(120);
 const MAX_MATERIALIZATION_FILES: u64 = 200_000;
 const MAX_MATERIALIZATION_BYTES: u64 = 1024 * 1024 * 1024;
-const OPS_USAGE: &str = "usage:\n  multiagent ops describe OPERATION_ID\n  multiagent ops read --request-file PATH\n  multiagent ops template\n  multiagent ops bind-runbook --request-file PATH --runbook-document PATH\n  multiagent ops publish --draft-file PATH --runbook-document PATH\n  multiagent ops review-bind --request-file PATH\n  multiagent ops execute --request-file PATH --reviewer NAME [--reviewed-request PATH]";
+const OPS_USAGE: &str = "usage:\n  multiagent ops list [--direct-only] [--query TEXT]\n  multiagent ops describe OPERATION_ID\n  multiagent ops read --request-file PATH\n  multiagent ops template\n  multiagent ops bind-runbook --request-file PATH --runbook-document PATH\n  multiagent ops publish --draft-file PATH --runbook-document PATH\n  multiagent ops review-bind --request-file PATH\n  multiagent ops execute --request-file PATH --reviewer NAME [--reviewed-request PATH]";
 
 pub(crate) struct PublishedRequest {
     artifact_path: PathBuf,
@@ -48,6 +48,7 @@ struct TrustedApproval {
 
 pub fn run(args: &[String]) -> Result<ExitCode, String> {
     match args.first().map(String::as_str) {
+        Some("list") => list(&args[1..]),
         Some("describe") => describe(&args[1..]),
         Some("read") => execute_direct_read(&args[1..]),
         Some("template") => template(&args[1..]),
@@ -62,6 +63,165 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
         }
         _ => Err(OPS_USAGE.into()),
     }
+}
+
+fn list(args: &[String]) -> Result<ExitCode, String> {
+    let response = call_prod_mcp_tool("operations_capabilities", json!({}))?;
+    let result = list_capabilities(&response, args)?;
+    println!(
+        "{}",
+        serde_json::to_string(&result)
+            .map_err(|error| format!("encode prod-mcp capability list: {error}"))?
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+fn list_capabilities(response: &Value, args: &[String]) -> Result<Value, String> {
+    let mut direct_only = false;
+    let mut query: Option<String> = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--direct-only" if !direct_only => {
+                direct_only = true;
+                index += 1;
+            }
+            "--query" if query.is_none() => {
+                let value = args
+                    .get(index + 1)
+                    .filter(|value| !value.is_empty())
+                    .ok_or("--query requires a non-empty value")?;
+                query = Some(value.to_ascii_lowercase());
+                index += 2;
+            }
+            "--direct-only" => return Err("duplicate option: --direct-only".into()),
+            "--query" => return Err("duplicate option: --query".into()),
+            _ => return Err("usage: multiagent ops list [--direct-only] [--query TEXT]".into()),
+        }
+    }
+    let result = response
+        .get("result")
+        .and_then(Value::as_object)
+        .ok_or("prod-mcp capabilities response has no result object")?;
+    if result.get("isError").and_then(Value::as_bool) == Some(true) {
+        return Err(format!(
+            "prod-mcp capabilities failed: {}",
+            Value::Object(result.clone())
+        ));
+    }
+    let structured = result
+        .get("structuredContent")
+        .and_then(Value::as_object)
+        .ok_or("prod-mcp capabilities response has no structured content")?;
+    let operations = structured
+        .get("operations")
+        .and_then(Value::as_array)
+        .ok_or("prod-mcp capabilities response has no operations array")?;
+    let mut compact = operations
+        .iter()
+        .filter(|operation| !direct_only || direct_eligible(operation))
+        .filter(|operation| {
+            query.as_ref().is_none_or(|query| {
+                [
+                    operation.get("id").and_then(Value::as_str),
+                    operation.get("connector").and_then(Value::as_str),
+                    operation.get("description").and_then(Value::as_str),
+                ]
+                .into_iter()
+                .flatten()
+                .any(|value| value.to_ascii_lowercase().contains(query))
+                    || operation
+                        .get("allowedRunbooks")
+                        .and_then(Value::as_array)
+                        .is_some_and(|values| {
+                            values
+                                .iter()
+                                .filter_map(Value::as_str)
+                                .any(|value| value.to_ascii_lowercase().contains(query))
+                        })
+            })
+        })
+        .map(|operation| {
+            let mut descriptor = serde_json::Map::new();
+            for key in [
+                "id",
+                "version",
+                "connector",
+                "description",
+                "access",
+                "mutation",
+                "allowedRunbooks",
+                "requiredApprovalRoles",
+                "requireChangeTicket",
+            ] {
+                if let Some(value) = operation.get(key) {
+                    descriptor.insert(key.into(), value.clone());
+                }
+            }
+            descriptor.insert(
+                "directEligible".into(),
+                Value::Bool(direct_eligible(operation)),
+            );
+            descriptor.insert(
+                "requestPath".into(),
+                Value::String(
+                    if direct_eligible(operation) {
+                        "supervisor-direct"
+                    } else {
+                        "reviewed-ops"
+                    }
+                    .into(),
+                ),
+            );
+            descriptor.insert(
+                "directIneligibilityReasons".into(),
+                Value::Array(
+                    direct_ineligibility_reasons(operation)
+                        .into_iter()
+                        .map(|reason| Value::String(reason.into()))
+                        .collect(),
+                ),
+            );
+            Value::Object(descriptor)
+        })
+        .collect::<Vec<_>>();
+    compact.sort_by(|left, right| {
+        left.get("id")
+            .and_then(Value::as_str)
+            .cmp(&right.get("id").and_then(Value::as_str))
+    });
+    Ok(json!({
+        "apiVersion": "multiagent.moveindustries.io/v1",
+        "kind": "OperationCapabilityList",
+        "scope": structured.get("scope").cloned().unwrap_or(Value::Null),
+        "operations": compact,
+    }))
+}
+
+fn direct_eligible(operation: &Value) -> bool {
+    direct_ineligibility_reasons(operation).is_empty()
+}
+
+fn direct_ineligibility_reasons(operation: &Value) -> Vec<&'static str> {
+    let mut reasons = Vec::new();
+    if !matches!(
+        operation.get("access").and_then(Value::as_str),
+        Some("read" | "materialize")
+    ) {
+        reasons.push("access-requires-reviewed-ops");
+    }
+    if operation.get("mutation").and_then(Value::as_bool) != Some(false) {
+        reasons.push("mutation-requires-reviewed-ops");
+    }
+    match operation
+        .get("requiredApprovalRoles")
+        .and_then(Value::as_array)
+    {
+        Some(roles) if roles.is_empty() => {}
+        Some(_) => reasons.push("approval-roles-required"),
+        None => reasons.push("approval-metadata-missing"),
+    }
+    reasons
 }
 
 fn describe(args: &[String]) -> Result<ExitCode, String> {
@@ -2787,12 +2947,13 @@ mod tests {
     use super::{
         base64_decode, base64url_encode, build_request, canonical, clone_summary, curl_command,
         direct_request_runbook, ecdsa_der_to_raw, execute_mode, git_auth_config, git_clone_command,
-        materialization_usage, operation_capability, parse_mcp_body, persist_direct_receipt,
-        private_temp_path, redacted_direct_receipt, reject_arbitrary_urls, review_binding_marker,
-        review_binding_matches, review_binding_value, review_evidence_is_bound, reviewer_accepted,
-        runbook_content_digest, validate_diagnosis_capability, validate_direct_capability,
-        validate_evidence_scope, validate_read_capability, validate_request_template,
-        write_mcp_headers, DirectAccess, ExecuteMode, TrustedApproval,
+        list_capabilities, materialization_usage, operation_capability, parse_mcp_body,
+        persist_direct_receipt, private_temp_path, redacted_direct_receipt, reject_arbitrary_urls,
+        review_binding_marker, review_binding_matches, review_binding_value,
+        review_evidence_is_bound, reviewer_accepted, runbook_content_digest,
+        validate_diagnosis_capability, validate_direct_capability, validate_evidence_scope,
+        validate_read_capability, validate_request_template, write_mcp_headers, DirectAccess,
+        ExecuteMode, TrustedApproval,
     };
     use chrono::{TimeZone, Utc};
     use serde_json::json;
@@ -2820,6 +2981,80 @@ mod tests {
     fn base64_round_trip_fixture() {
         assert_eq!(base64_decode("AQIDBA==").unwrap(), [1, 2, 3, 4]);
         assert_eq!(base64url_encode(&[251, 255]), "-_8");
+    }
+
+    #[test]
+    fn capability_list_is_compact_searchable_and_marks_direct_operations() {
+        let response = json!({
+            "result": {
+                "structuredContent": {
+                    "scope": "deployment-enabled",
+                    "operations": [
+                        {
+                            "id": "github.create-pr",
+                            "version": "1.0.0",
+                            "connector": "github",
+                            "description": "Create a pull request",
+                            "access": "write",
+                            "mutation": true,
+                            "allowedRunbooks": ["github.repository-work@1.1.0"],
+                            "requiredApprovalRoles": ["operations-reviewer"],
+                            "requireChangeTicket": false,
+                            "parameterSchema": {"type": "object"}
+                        },
+                        {
+                            "id": "github.clone",
+                            "version": "1.0.0",
+                            "connector": "github",
+                            "description": "Materialize a repository",
+                            "access": "materialize",
+                            "mutation": false,
+                            "allowedRunbooks": ["github.repository-work@1.1.0"],
+                            "requiredApprovalRoles": [],
+                            "requireChangeTicket": false,
+                            "parameterSchema": {"type": "object"}
+                        }
+                    ]
+                }
+            }
+        });
+        let listed = list_capabilities(
+            &response,
+            &[
+                "--direct-only".into(),
+                "--query".into(),
+                "repository".into(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(listed["scope"], "deployment-enabled");
+        assert_eq!(listed["operations"].as_array().unwrap().len(), 1);
+        assert_eq!(listed["operations"][0]["id"], "github.clone");
+        assert_eq!(listed["operations"][0]["directEligible"], true);
+        assert_eq!(listed["operations"][0]["requestPath"], "supervisor-direct");
+        assert_eq!(
+            listed["operations"][0]["directIneligibilityReasons"],
+            json!([])
+        );
+        assert!(listed["operations"][0].get("parameterSchema").is_none());
+
+        let all = list_capabilities(&response, &[]).unwrap();
+        let create = all["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|operation| operation["id"] == "github.create-pr")
+            .unwrap();
+        assert_eq!(create["directEligible"], false);
+        assert_eq!(create["requestPath"], "reviewed-ops");
+        assert_eq!(
+            create["directIneligibilityReasons"],
+            json!([
+                "access-requires-reviewed-ops",
+                "mutation-requires-reviewed-ops",
+                "approval-roles-required"
+            ])
+        );
     }
 
     #[test]
