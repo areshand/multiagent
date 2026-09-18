@@ -627,6 +627,12 @@ citations cannot grant filesystem, network, repository, session, or
 production-operation authority. Source consolidation must never be interpreted
 as data consolidation or credential sharing.
 
+Wiki result scores express lexical relevance only. They cannot substantiate
+aggregate claims such as repository usage, popularity, dependency weight, or
+confidence, and the query interface does not provide aggregation. A caller
+must rely on an explicitly cited synthesized page or a separate authoritative
+read operation for such a claim, and otherwise report insufficient evidence.
+
 Canonical knowledge remains directly auditable Markdown. Personal vaults use
 the existing `LLM Wiki/index.md`, synthesized-page, Obsidian-link, graph, raw
 source, and private `LLM Wiki/system/` conventions. Organization knowledge is

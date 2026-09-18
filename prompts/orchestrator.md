@@ -43,8 +43,12 @@ inspect it only in the recovery workflow.
 | Independently assess a decision, request, diff, receipt, or claim | reviewer/verifier |
 
 Run `wiki-query` when the task needs organization-wide knowledge or repository
-discovery. Treat its cited result as routing evidence, not authority. A confined
-role may use `multiagent ops read --request-file PATH` for a live capability
+discovery. Treat its cited result as routing evidence, not authority. Wiki
+scores are lexical relevance only: never reinterpret them or repository-name
+mentions as usage, popularity, dependency weight, or confidence. If an
+aggregate claim is not explicitly supported by a cited Wiki page or fresh
+authoritative evidence, report that the available evidence is insufficient. A
+confined role may use `multiagent ops read --request-file PATH` for a live capability
 advertised as non-mutating read/materialize with no approval roles. Only
 write/execute/mutating external operations belong to ops and the reviewed
 runbook lifecycle. No role calls provider endpoints directly or receives
