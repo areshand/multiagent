@@ -100,7 +100,7 @@ async fn submit(trace: bool, args: Vec<String>) -> Result<(), String> {
         Event {
             event_id: event_id.ok_or("--event-id is required")?,
             session_id: session.ok_or("--session-id is required")?,
-            event_type: "trace.commitment".into(),
+            event_type: "trace.artifact_exported".into(),
             payload_digest: digest.clone(),
             artifact_references: vec![ArtifactReference {
                 uri: storage_reference.ok_or("--storage-reference is required")?,

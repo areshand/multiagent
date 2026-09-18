@@ -931,10 +931,15 @@ function traceExportStatus() {
       lastAttemptAt: value.lastAttemptAt,
       lastSuccessAt: value.lastSuccessAt || null,
       fileCount: Number(value.fileCount || 0),
+      uploadedCount: Number(value.uploadedCount || 0),
+      loggerOk: value.loggerOk === true,
+      loggerPending: Number(value.loggerPending || 0),
+      loggerLastSuccessAt: value.loggerLastSuccessAt || null,
+      loggerError: value.loggerError || null,
       ageSeconds: Number.isFinite(ageSeconds) ? Math.floor(ageSeconds) : null,
     };
   } catch {
-    return { configured: true, ready: false, ok: false, lastAttemptAt: null, lastSuccessAt: null, fileCount: 0, ageSeconds: null };
+    return { configured: true, ready: false, ok: false, lastAttemptAt: null, lastSuccessAt: null, fileCount: 0, uploadedCount: 0, loggerOk: false, loggerPending: 0, loggerLastSuccessAt: null, loggerError: null, ageSeconds: null };
   }
 }
 
